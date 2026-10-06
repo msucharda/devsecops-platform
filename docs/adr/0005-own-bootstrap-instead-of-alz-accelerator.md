@@ -6,3 +6,9 @@ Platformní tým spustí bootstrap jednou lokálně. Bootstrap vytvoří state b
 
 - Bootstrap ALZ acceleratoru. Zamítnuto: Accelerator vyžaduje dva PAT, generuje vlastní repozitář a workflow ze šablony a pokrývá jen landing zone. Platforma nasazuje i enterprise GitHubu a zákazník přebírá moduly z release, ne z vygenerované šablony.
 - Nasazení všech modulů lokálně. Zamítnuto: Změna instance by neprošla PR a schválením.
+
+## Consequences
+
+- Setup user enterprise EMU smí podle dokumentace GitHubu jen konfigurovat autentizaci a provisioning, ne vytvářet organizace. Bootstrap proto spouští člen platformního týmu, kterému administrátor Entra ID přímo přiřadil app roli Enterprise Owner. Bootstrap používá jeho OAuth token z `gh auth login`.
+- Modul `emu-identity` přiřadí roli Enterprise Owner skupině platformního týmu. Ruční krok pak odebere přímé přiřazení.
+- Vytvoření GitHub App přes manifest flow musí člověk potvrdit v prohlížeči, proto bootstrap nejde spustit bez obsluhy.

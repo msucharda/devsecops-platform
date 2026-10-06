@@ -9,8 +9,8 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 
 | Modul | Schopnost | Předpoklady |
 |---|---|---|
-| `bootstrap` | State backend, identity pro plan a apply, organizace platformy, repozitář instance, GitHub App. Platformní tým ho spustí jednou lokálně. | – |
-| `emu-identity` | Skupiny a přiřazení aplikací v Entra ID. SCIM z nich vytvoří enterprise týmy. | `bootstrap` |
+| `bootstrap` | State backend, identity pro plan a apply, organizace platformy, repozitář instance, dvě GitHub App. Člen platformního týmu ho spustí jednou lokálně. | – |
+| `emu-identity` | Skupiny a přiřazení aplikací v Entra ID: platformní tým (Enterprise Owner), security tým (security manager ve všech organizacích), uživatelé Copilotu (licence) a servisní uživatel pro PAT. SCIM ze skupin vytvoří enterprise týmy. | `bootstrap` |
 | `organizations` | Organizace akcí a organizace workloadů. | `emu-identity` |
 | `actions-catalog` | Vendorované akce v organizaci akcí. | `organizations` |
 | `enterprise-baseline` | Enterprise rulesety, code security configurations, politika akcí, custom patterns. | `actions-catalog` |
@@ -24,7 +24,7 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 | `shared-app-lz` | Spoke, privátní AKS, ACR pro staging a prod, Key Vault, Defender for Containers. | `slz-connectivity`, `slz-management` |
 | `runner-pool` | Self-hosted runnery na ACA s managed identity v privátní síti. | `shared-app-lz`, `actions-catalog` |
 | `image-promotion` | Povýšení image ze staging do prod po skenu. | `runner-pool`, `required-workflows` |
-| `workload-onboarding` | Repozitář, tým, namespace a identita pro nový workload. | `image-promotion` |
+| `workload-onboarding` | Repozitář, skupina týmu workloadu, namespace a identita pro nový workload. | `image-promotion` |
 
 Modul `lz-vending` (subscription pro workload) přijde později.
 
@@ -35,6 +35,8 @@ Modul `lz-vending` (subscription pro workload) přijde později.
 3. Dodávka: `shared-app-lz`, `runner-pool`, `required-workflows`, `image-promotion`, `workload-onboarding`.
 4. Copilot: `copilot-catalog`, `copilot-workstation`.
 
+Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
+
 ## Nasazení instance
 
 - Repozitář instance obsahuje adresář `platform/` s vendorovaným release, soubor `instance.yaml` a workflow. Adresář `platform/` mění jen PR importu release.
@@ -42,6 +44,7 @@ Modul `lz-vending` (subscription pro workload) přijde později.
 - State backend je storage account v management subscription. Má zapnutý versioning, soft delete a lock. Každý modul má vlastní kontejner.
 - Workflow zapíše nepotvrzené ruční kroky do job summary jako varování. Platformní tým potvrdí ruční krok v `instance.yaml` přes PR.
 - Po merge PR schválí platformní tým jednou celý běh apply. Běh modulu `enterprise-baseline` navíc schvaluje security tým.
+- Každou noc proběhne plan všech modulů na větvi `main`. Pokud plan najde drift, workflow otevře nebo aktualizuje issue v repozitáři instance.
 
 ## Názvy
 

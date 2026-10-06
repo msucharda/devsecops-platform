@@ -32,6 +32,10 @@ _Avoid_: config repo, alz-mgmt
 Soubor `instance.yaml` v repozitáři instance. Určuje vybrané moduly, jejich parametry a potvrzené ruční kroky.
 _Avoid_: tfvars, nastavení
 
+**Drift** (drift):
+Rozdíl mezi stavem instance v GitHubu nebo Azure a kódem v repozitáři instance, který vznikl mimo workflow nasazení.
+_Avoid_: odchylka, nesoulad
+
 **Teardown** (odstranění instance):
 Odstranění všech modulů instance v obráceném pořadí předpokladů. Teardown zachová ruční předpoklady.
 _Avoid_: destroy, smazání instance
@@ -53,7 +57,7 @@ Modul, který jiný modul vyžaduje. Výběr modulu přidá do instance i jeho p
 _Avoid_: závislost
 
 **Manual prerequisite** (ruční předpoklad):
-Podmínka instance, kterou platforma neumí vytvořit: tenant Entra ID, enterprise EMU s nastaveným OIDC a SCIM, subscriptions a licence. Platformní tým ji splní před bootstrapem a teardown ji zachová.
+Podmínka instance, kterou platforma neumí vytvořit: tenant Entra ID, enterprise EMU s nastaveným OIDC a SCIM, první enterprise owner, subscriptions a licence. Platformní tým ji splní před bootstrapem a teardown ji zachová.
 _Avoid_: předpoklad bez upřesnění, požadavek
 
 **Deployment identifier** (identifikátor nasazení):
