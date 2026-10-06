@@ -40,11 +40,17 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 ## Nasazení instance
 
 - Repozitář instance obsahuje adresář `platform/` s vendorovaným release, soubor `instance.yaml` a workflow. Adresář `platform/` mění jen PR importu release.
-- JSON Schema z release validuje `instance.yaml`. Workflow určí pořadí modulů z manifestů modulů.
+- JSON Schema z release validuje `instance.yaml`. Z manifestů modulů vygeneruje CI zdrojového repozitáře workflow s jobem pro každý modul (ADR 0014).
 - State backend je storage account v management subscription. Má zapnutý versioning, soft delete a lock. Každý modul má vlastní kontejner.
 - Workflow zapíše nepotvrzené ruční kroky do job summary jako varování. Platformní tým potvrdí ruční krok v `instance.yaml` přes PR.
 - Po merge PR schválí platformní tým jednou celý běh apply. Běh modulu `enterprise-baseline` navíc schvaluje security tým.
 - Každou noc proběhne plan všech modulů na větvi `main`. Pokud plan najde drift, workflow otevře nebo aktualizuje issue v repozitáři instance.
+
+## Regiony
+
+- `regions.primary` je povinný, `regions.secondary` volitelný.
+- Ve verzi 1 obsahuje sekundární region jen druhý hub s Azure Firewall, propojený s primárním hubem peeringem. Politika SLZ povolí obě lokace.
+- Management a sdílená aplikační landing zone jsou jen v primárním regionu.
 
 ## Názvy
 
@@ -62,6 +68,7 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - Workflow `teardown` odstraní moduly v obráceném pořadí předpokladů, kromě `bootstrap`. Modul `bootstrap` odstraní lokální skript.
 - Workflow se spustí jen při `teardown.allowed: true` v `instance.yaml`. Výchozí hodnota je `false`.
 - Environment `teardown` vyžaduje schválení od platformního týmu i od security týmu.
+- Teardown vrátí politiky enterprise na výchozí hodnoty GitHubu a smaže enterprise rulesety, code security configurations a custom patterns. Enterprise jako ruční předpoklad zůstane.
 
 ## Testování release
 

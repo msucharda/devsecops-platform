@@ -64,6 +64,14 @@ _Avoid_: předpoklad bez upřesnění, požadavek
 Krátký řetězec, který vznikne při nasazení instance. Je jen v názvech prostředků, jejichž název zůstává po smazání blokovaný.
 _Avoid_: suffix, salt
 
+**Primary region** (primární region):
+Region Azure, ve kterém běží všechny moduly instance.
+_Avoid_: hlavní region, default region
+
+**Secondary region** (sekundární region):
+Volitelný druhý region Azure instance. Ve verzi 1 v něm je jen druhý hub konektivity.
+_Avoid_: DR region, záložní region
+
 **Control** (kontrola):
 Mechanismus, který zachytí incident. Advisory control jen doporučuje, enforcing control vynucuje.
 _Avoid_: guardrail, ochrana
