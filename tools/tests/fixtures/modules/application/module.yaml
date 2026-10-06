@@ -1,0 +1,17 @@
+name: application
+description: Local application fixture.
+prerequisites:
+  - foundation
+manualSteps:
+  - id: verify-access
+    description: Verify access after deployment.
+permissions:
+  azure:
+    - role: Reader
+      scope: /subscriptions/example
+  microsoftGraph:
+    - Group.Create
+  githubApp:
+    contents: read
+  adminPat:
+    - enterprise-rulesets

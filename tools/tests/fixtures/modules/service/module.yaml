@@ -1,0 +1,11 @@
+name: service
+description: Transitive local fixture.
+prerequisites:
+  - application
+  - foundation
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp: {}
+  adminPat: []

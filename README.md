@@ -10,10 +10,104 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 | Cesta | Obsah |
 |---|---|
 | `modules/<name>/` | Manifest `module.yaml`, Terraform root a README se specifikací modulu. |
+| `schemas/module.schema.json` | JSON Schema Module manifest (manifest modulu). |
 | `schemas/instance.schema.json` | JSON Schema konfigurace instance. |
 | `tools/` | Runner modulu a generátor workflow v PowerShell 7, testy Pester. |
 | `.github/workflows/` | CI zdrojového repozitáře. |
 | `templates/instance/` | Šablona repozitáře instance: vygenerovaný workflow nasazení, workflow vendoringu, příklad `instance.yaml`. |
+
+## Nástroje platformy
+
+Nástroje vyžadují PowerShell 7.4 nebo novější. Verze modulů PowerShellu určuje `tools/requirements.psd1`. Následující příkazy spusť z kořene repozitáře v PowerShellu:
+
+```powershell
+.\tools\Install-ToolDependencies.ps1 -Development
+.\tools\Test-ModuleManifests.ps1 -Verbose
+.\tools\Generate-DeploymentWorkflow.ps1
+.\tools\Test-PowerShell.ps1
+.\tools\Invoke-Tests.ps1
+```
+
+Instalační skript stáhne chybějící verze modulů z PowerShell Gallery do rozsahu `CurrentUser`. Bez `-Development` instaluje jen parser YAML pro běh nástrojů.
+
+### Module manifest (manifest modulu)
+
+Generátor čte Module manifest v cestě `modules/<name>/module.yaml`. Hodnota `name` musí odpovídat adresáři a používat malá písmena, číslice a pomlčky; první znak musí být písmeno. Adresář bez manifestu představuje pouze specifikaci a generátor ho nezahrne do workflow.
+
+```yaml
+name: example
+description: Příklad manifestu modulu.
+prerequisites: []
+manualSteps:
+  - id: verify-access
+    description: Platformní tým ověří přístup po nasazení.
+permissions:
+  azure:
+    - role: Reader
+      scope: /subscriptions/00000000-0000-0000-0000-000000000000
+  microsoftGraph:
+    - Group.Create
+  githubApp:
+    contents: read
+  adminPat:
+    - enterprise-rulesets
+```
+
+Všechny položky příkladu jsou povinné. Prázdné seznamy a prázdná mapa `githubApp` znamenají, že dané kroky ani oprávnění nejsou potřeba. `azure` deklaruje role a jejich rozsah, `microsoftGraph` názvy oprávnění, `githubApp` mapu oprávnění na `read` nebo `write` a `adminPat` prostředky vyžadující admin PAT. Module manifest nesmí obsahovat tokeny ani jiná secrets. Schéma odmítá neznámé položky a neplatné typy. Generátor navíc odmítá opakované identifikátory Manual step (ruční krok), neexistující Prerequisite (předpoklad) a cykly.
+
+### Generování workflow a výběr
+
+Generátor zapisuje `templates/instance/.github/workflows/deploy.yml`. Přepínač `-Check` pouze porovná obsah a při rozdílu skončí chybou; soubor nezmění. Výstup používá UTF-8 bez BOM a konce řádků LF. Pořadí adresářů ani pořadí Prerequisite v Module manifest nemění výstup.
+
+```powershell
+.\tools\Generate-DeploymentWorkflow.ps1 -Check
+.\tools\Generate-DeploymentWorkflow.ps1 -ModulesPath .\tools\tests\fixtures\modules -OutputPath .\tools\tests\fixtures\deploy.yml
+```
+
+Mapa `modules` v Instance configuration (konfigurace instance), v souboru `instance.yaml`, přiřazuje názvu Module (modul) jeho konfiguraci:
+
+```yaml
+modules:
+  application:
+    parameters: {}
+```
+
+`Select-InstanceModules.ps1` vrátí seřazené JSON pole názvů vybraných Module včetně všech jejich Prerequisite. Prázdná mapa vrátí `[]`. Neznámý název nebo jiný typ konfigurace způsobí chybu s cestou `$.modules`. Volitelný `-GitHubOutputPath` připojí stejný výběr jako výstup jobu `modules`.
+
+```powershell
+.\tools\Select-InstanceModules.ps1 -ModulesPath .\tools\tests\fixtures\modules -InstancePath .\instance.yaml
+```
+
+Workflow nejprve spustí job `select`. Každý Module má vlastní job `module_<name>`, environment `<name>-plan` a `needs` pro job `select` i své přímé Prerequisite. Podmínka jobu vyžaduje úspěšný výběr, členství ve výběru a úspěšné Prerequisite. Nevybraný job se přeskočí. Selhání Prerequisite blokuje joby, které ho vyžadují, nikoli nezávislou větev grafu.
+
+**Současný rozsah:** produkční adresáře zatím obsahují jen specifikace. Commitnutá šablona proto obsahuje jen job `select`; úplný graf ověřuje fixture workflow v `tools/tests/fixtures/deploy.yml`. Generátor připravuje ručně spouštěný workflow pro `plan` a očekává vendorovaný Release (release) v `platform/`. Runner `platform/tools/Invoke-Module.ps1` a úplné schéma Instance configuration dodá [#8](https://github.com/msucharda/devsecops-platform/issues/8). Autentizaci, přenos výstupů, triggery PR a apply a pravidla schválení dodá [#9](https://github.com/msucharda/devsecops-platform/issues/9). Bootstrap zůstává lokálním krokem; jeho zapojení do finální šablony určí tyto navazující issues.
+
+### Testy a CI
+
+Testy Pester volají veřejné skripty generátoru a výběru Module. Kontrolují výsledné YAML, JSON a chyby pomocí fixture bez cloudu. Jeden soubor můžeš spustit přímo:
+
+```powershell
+Import-Module Pester -RequiredVersion 5.7.1
+Invoke-Pester -Path .\tools\tests\WorkflowGenerator.Tests.ps1 -Output Detailed
+```
+
+Workflow `Source CI` spouští Pester, syntaktickou a statickou kontrolu PowerShellu, validaci Module manifest a kontrolu aktuálnosti obou commitnutých workflow. `Get-TerraformRoots.ps1` vyhledá v repozitáři každý adresář se soubory `.tf` nebo `.tf.json`, včetně fixture; vynechá `.git`, `.terraform` a symbolické adresáře. CI na každém nalezeném rootu spustí `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`, tflint a Trivy. Nález Trivy úrovně `HIGH` nebo `CRITICAL` způsobí chybu CI. Pokud repozitář nemá žádný Terraform root, CI tuto část přeskočí.
+
+Stejné kontroly Terraformu můžeš spustit lokálně s nainstalovanými nástroji `terraform`, `tflint` a `trivy`:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+$roots = .\tools\Get-TerraformRoots.ps1 | ConvertFrom-Json
+foreach ($root in $roots) {
+    terraform "-chdir=$root" fmt -check -diff
+    terraform "-chdir=$root" init -backend=false -input=false
+    terraform "-chdir=$root" validate
+    tflint "--chdir=$root" --init
+    tflint "--chdir=$root"
+    trivy config --exit-code 1 --severity HIGH,CRITICAL $root
+}
+```
 
 ## Moduly
 

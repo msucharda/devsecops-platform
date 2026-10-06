@@ -1,0 +1,86 @@
+name: Source CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    name: Platform tools
+    runs-on: ubuntu-latest
+    outputs:
+      roots: ${{ steps.terraform-roots.outputs.roots }}
+      has-roots: ${{ steps.terraform-roots.outputs.has-roots }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install tool dependencies
+        shell: pwsh
+        run: ./tools/Install-ToolDependencies.ps1 -Development
+      - name: Check PowerShell
+        shell: pwsh
+        run: ./tools/Test-PowerShell.ps1
+      - name: Validate module manifests
+        shell: pwsh
+        run: |
+          ./tools/Test-ModuleManifests.ps1 -Verbose
+          ./tools/Test-ModuleManifests.ps1 -ModulesPath ./tools/tests/fixtures/modules -Verbose
+      - name: Run Pester
+        shell: pwsh
+        run: ./tools/Invoke-Tests.ps1 -CI
+      - name: Check generated workflows
+        shell: pwsh
+        run: |
+          ./tools/Generate-DeploymentWorkflow.ps1 -Check
+          ./tools/Generate-DeploymentWorkflow.ps1 -ModulesPath ./tools/tests/fixtures/modules -OutputPath ./tools/tests/fixtures/deploy.yml -Check
+      - name: Discover Terraform roots
+        id: terraform-roots
+        shell: pwsh
+        run: ./tools/Get-TerraformRoots.ps1 -GitHubOutputPath $env:GITHUB_OUTPUT
+      - name: Upload test results
+        if: ${{ !cancelled() && hashFiles('artifacts/pester.xml') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pester-results
+          path: artifacts/pester.xml
+          if-no-files-found: error
+
+  terraform:
+    name: Terraform (${{ matrix.root }})
+    needs: platform
+    if: ${{ needs.platform.outputs.has-roots == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root: ${{ fromJSON(needs.platform.outputs.roots) }}
+    env:
+      TF_ROOT: ${{ matrix.root }}
+      TF_IN_AUTOMATION: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337
+        with:
+          tflint_version: v0.60.0
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567
+        with:
+          version: v0.72.0
+          cache: false
+      - name: Terraform format
+        run: terraform -chdir="$TF_ROOT" fmt -check -diff
+      - name: Terraform validate
+        run: |
+          terraform -chdir="$TF_ROOT" init -backend=false -input=false
+          terraform -chdir="$TF_ROOT" validate
+      - name: TFLint
+        run: |
+          tflint --chdir="$TF_ROOT" --init
+          tflint --chdir="$TF_ROOT"
+      - name: Trivy
+        run: trivy config --exit-code 1 --severity HIGH,CRITICAL "$TF_ROOT"
