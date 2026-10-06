@@ -1,6 +1,6 @@
 # Nastavení bez Terraform resource spravuje generic REST provider
 
-Nastavení GitHubu, pro které provider `integrations/github` nemá resource, spravuje Terraform přes generic REST provider (například `Mastercard/restapi`). Týká se to například enterprise rulesetů, code security configurations, custom patterns pro secret scanning a streamování audit logu. Terraform tak detekuje drift u všech nastavení stejně. Nastavení bez veřejného API pro zápis (například politiky Copilotu) popisuje ruční checklist modulu.
+Nastavení GitHubu, pro které provider `integrations/github` nemá resource, spravuje Terraform přes generic REST provider (například `Mastercard/restapi`). Týká se to například enterprise rulesetů, code security configurations, custom patterns pro secret scanning a streamování audit logu. Terraform tak detekuje drift u všech nastavení stejně. Nastavení bez veřejného API pro zápis (například většina politik Copilotu) popisuje ruční checklist modulu.
 
 ## Considered Options
 
