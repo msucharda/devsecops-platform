@@ -16,9 +16,21 @@ _Avoid_: řešení, akcelerátor
 Jedno nasazení platformy: jeden enterprise EMU na GHE.com, jeden tenant Entra ID a jedna Sovereign Landing Zone. Instance jde nasadit a odstranit jako celek.
 _Avoid_: prostředí, deployment
 
+**Reference instance** (referenční instance):
+Instance autora platformy, na které autor testuje release. Referenční instance získá release stejným postupem jako zákazník.
+_Avoid_: testovací prostředí, demo
+
+**Instance configuration** (konfigurace instance):
+Soubor `instance.yaml`, který určuje vybrané moduly a jejich parametry. JSON Schema ho validuje.
+_Avoid_: tfvars, nastavení
+
 **Module** (modul):
 Jedna samostatně nasaditelná schopnost platformy, například baseline organizace, povinná workflow nebo povýšení image. Modul poskytuje jednu nebo více kontrol. Modul může vyžadovat jiné moduly jako předpoklad.
 _Avoid_: akcelerátor, komponenta
+
+**Module manifest** (manifest modulu):
+Soubor `module.yaml` v adresáři modulu. Deklaruje předpoklady modulu. Workflow nasazení z manifestů určí pořadí modulů.
+_Avoid_: metadata
 
 **Prerequisite** (předpoklad):
 Modul, který jiný modul vyžaduje. Výběr modulu přidá do instance i jeho předpoklady.
