@@ -3,6 +3,25 @@ BeforeAll {
     $toolsPath = Split-Path $PSScriptRoot -Parent
     $generator = Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1'
     $fixtures = Join-Path $PSScriptRoot 'fixtures/modules'
+
+    function New-ModuleGraphFixture {
+        [CmdletBinding(SupportsShouldProcess)]
+        param(
+            [Parameter(Mandatory)][string] $ModuleName,
+            [Parameter(Mandatory)][scriptblock] $Change
+        )
+
+        $modules = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        if (-not $PSCmdlet.ShouldProcess($modules, 'Create module graph fixture')) {
+            return
+        }
+        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
+        $manifestPath = Join-Path $modules "$ModuleName/module.yaml"
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        & $Change $manifest
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        return $modules
+    }
 }
 
 Describe 'Deployment workflow generation' {
@@ -87,6 +106,9 @@ Describe 'Deployment workflow generation' {
         @{ Name = 'values' }
         @{ Name = 'count' }
         @{ Name = 'select' }
+        @{ Name = 'null' }
+        @{ Name = 'true' }
+        @{ Name = 'false' }
     ) {
         $modules = Join-Path $TestDrive "member-$Name"
         Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
@@ -101,6 +123,7 @@ Describe 'Deployment workflow generation' {
 
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
         $workflow.jobs.Keys | Should -Contain "module_$Name"
+        $workflow.jobs["module_$Name"].name | Should -BeExactly $Name
         $workflow.jobs.Keys | Should -Contain 'module_application'
         $workflow.jobs.Keys | Should -Contain 'select'
     }
@@ -126,23 +149,20 @@ Describe 'Deployment workflow generation' {
     }
 
     It 'rejects duplicate manual step identifiers even if their descriptions differ' {
-        $modules = Join-Path $TestDrive 'duplicate-steps'
-        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
-        $manifestPath = Join-Path $modules 'application/module.yaml'
-        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
-        $manifest.manualSteps += @{ id = 'verify-access'; description = 'A different description.' }
-        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $modules = New-ModuleGraphFixture -ModuleName application -Change {
+            param($manifest)
+            $manifest.manualSteps += @{ id = 'verify-access'; description = 'A different description.' }
+        }
 
         { & $generator -ModulesPath $modules -OutputPath (Join-Path $modules 'invalid.yml') } |
             Should -Throw '*application*duplicate manual step*verify-access*'
     }
 
     It 'rejects module names that do not match their directory' {
-        $modules = Join-Path $TestDrive 'mismatched-name'
-        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
-        $manifestPath = Join-Path $modules 'observer/module.yaml'
-        (Get-Content -LiteralPath $manifestPath -Raw).Replace('name: observer', 'name: different') |
-            Set-Content -LiteralPath $manifestPath
+        $modules = New-ModuleGraphFixture -ModuleName observer -Change {
+            param($manifest)
+            $manifest.name = 'different'
+        }
 
         { & $generator -ModulesPath $modules -OutputPath (Join-Path $modules 'invalid.yml') } |
             Should -Throw '*different*directory*observer*'
@@ -153,12 +173,10 @@ Describe 'Deployment workflow generation' {
         @{ Case = 'a prerequisite cycle'; Module = 'foundation'; Prerequisites = '[application]'; Error = "*Prerequisite cycle*application*foundation*application*" }
         @{ Case = 'a self cycle'; Module = 'observer'; Prerequisites = '[observer]'; Error = "*Prerequisite cycle*observer*observer*" }
     ) {
-        $modules = Join-Path $TestDrive $Module
-        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
-        $manifestPath = Join-Path $modules "$Module/module.yaml"
-        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
-        $manifest.prerequisites = ConvertFrom-Yaml $Prerequisites
-        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $modules = New-ModuleGraphFixture -ModuleName $Module -Change {
+            param($manifest)
+            $manifest.prerequisites = ConvertFrom-Yaml $Prerequisites
+        }
         $output = Join-Path $modules 'invalid.yml'
 
         { & $generator -ModulesPath $modules -OutputPath $output } | Should -Throw $Error
@@ -178,17 +196,15 @@ Describe 'Deployment workflow generation' {
         @{ Field = 'permissions.adminPat'; Value = @(42) }
         @{ Field = 'unexpected'; Value = 'unknown property' }
     ) {
-        $modules = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
-        $manifestPath = Join-Path $modules 'application/module.yaml'
-        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
-        $segments = $Field.Split('.')
-        $parent = $manifest
-        foreach ($segment in $segments[0..($segments.Count - 1)] | Select-Object -SkipLast 1) {
-            $parent = $parent[$segment]
+        $modules = New-ModuleGraphFixture -ModuleName application -Change {
+            param($manifest)
+            $segments = $Field.Split('.')
+            $parent = $manifest
+            foreach ($segment in $segments[0..($segments.Count - 1)] | Select-Object -SkipLast 1) {
+                $parent = $parent[$segment]
+            }
+            $parent[$segments[-1]] = $Value
         }
-        $parent[$segments[-1]] = $Value
-        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
 
         { & $generator -ModulesPath $modules -OutputPath (Join-Path $modules 'invalid.yml') } |
             Should -Throw '*Invalid module manifest*application*'
@@ -205,18 +221,16 @@ Describe 'Deployment workflow generation' {
         @{ Field = 'permissions.githubApp' }
         @{ Field = 'permissions.adminPat' }
     ) {
-        $modules = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
-        $manifestPath = Join-Path $modules 'application/module.yaml'
-        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
-        $segments = $Field.Split('.')
-        if ($segments.Count -eq 1) {
-            $manifest.Remove($Field)
+        $modules = New-ModuleGraphFixture -ModuleName application -Change {
+            param($manifest)
+            $segments = $Field.Split('.')
+            if ($segments.Count -eq 1) {
+                $manifest.Remove($Field)
+            }
+            else {
+                $manifest.permissions.Remove($segments[1])
+            }
         }
-        else {
-            $manifest.permissions.Remove($segments[1])
-        }
-        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
 
         { & $generator -ModulesPath $modules -OutputPath (Join-Path $modules 'invalid.yml') } |
             Should -Throw '*Invalid module manifest*application*'

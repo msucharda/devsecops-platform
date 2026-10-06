@@ -12,14 +12,21 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $instance = Get-PlatformYaml -Path $InstancePath
+$manifestSchema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/module.schema.json') -Raw | ConvertFrom-Json
+$moduleNameSchema = ConvertTo-Json -InputObject $manifestSchema.definitions.moduleName -Compress
 if (-not $instance.Contains('modules') -or $instance.modules -isnot [System.Collections.IDictionary]) {
     throw "Invalid instance configuration '$InstancePath': $.modules must be a mapping of selected module names to their configuration."
 }
 
 $pending = [System.Collections.Generic.Queue[string]]::new()
 foreach ($name in $instance.modules.PSBase.Keys) {
-    if ($name -isnot [string] -or $name -cnotmatch '^[a-z][a-z0-9]*(-[a-z0-9]+)*$' -or
-        $instance.modules[$name] -isnot [System.Collections.IDictionary]) {
+    try {
+        $validName = Test-Json -Json (ConvertTo-Json -InputObject $name -Compress) -Schema $moduleNameSchema -ErrorAction Stop
+    }
+    catch {
+        throw "Invalid instance configuration '$InstancePath': $.modules.$name has an invalid module name: $($_.Exception.Message)"
+    }
+    if (-not $validName -or $instance.modules[$name] -isnot [System.Collections.IDictionary]) {
         throw "Invalid instance configuration '$InstancePath': $.modules.$name must be a module name with a configuration mapping."
     }
     if (-not $modules.Contains($name)) {

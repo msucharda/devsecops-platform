@@ -37,7 +37,7 @@ $lines.Add('        run: ./platform/tools/Select-InstanceModules.ps1 -InstancePa
 foreach ($manifest in $modules.PSBase.Values) {
     $jobId = 'module_' + $manifest.name.Replace('-', '_')
     $lines.Add("  ${jobId}:")
-    $lines.Add("    name: $($manifest.name)")
+    $lines.Add("    name: '$($manifest.name)'")
     $lines.Add('    runs-on: ubuntu-latest')
     $needs = @('select') + @($manifest.prerequisites | ForEach-Object { 'module_' + $_.Replace('-', '_') })
     $lines.Add("    needs: [$($needs -join ', ')]")
