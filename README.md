@@ -34,3 +34,22 @@ Modul `lz-vending` (subscription pro workload) přijde později.
 2. SLZ: `slz-core`, `slz-management`, `slz-connectivity`, `audit-streaming`.
 3. Dodávka: `shared-app-lz`, `runner-pool`, `required-workflows`, `image-promotion`, `workload-onboarding`.
 4. Copilot: `copilot-catalog`, `copilot-workstation`.
+
+## Nasazení instance
+
+- Repozitář instance obsahuje adresář `platform/` s vendorovaným release, soubor `instance.yaml` a workflow. Adresář `platform/` mění jen PR importu release.
+- JSON Schema z release validuje `instance.yaml`. Workflow určí pořadí modulů z manifestů modulů.
+- State backend je storage account v management subscription. Má zapnutý versioning, soft delete a lock. Každý modul má vlastní kontejner.
+- Workflow zapíše nepotvrzené ruční kroky do job summary jako varování. Platformní tým potvrdí ruční krok v `instance.yaml` přes PR.
+
+## Teardown
+
+- Workflow `teardown` odstraní moduly v obráceném pořadí předpokladů, kromě `bootstrap`. Modul `bootstrap` odstraní lokální skript.
+- Workflow se spustí jen při `teardown.allowed: true` v `instance.yaml`. Výchozí hodnota je `false`.
+- Environment `teardown` vyžaduje schválení od platformního týmu i od security týmu.
+
+## Testování release
+
+- CI ve zdrojovém repozitáři spouští `terraform fmt`, `terraform validate`, tflint, Trivy, validaci JSON Schema a kontrolu cyklů v předpokladech.
+- Každý release candidate se nasadí celý na referenční instanci.
+- Před každým minor release proběhne teardown referenční instance a její nové nasazení.

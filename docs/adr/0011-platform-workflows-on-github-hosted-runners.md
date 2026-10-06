@@ -9,5 +9,5 @@ Workflow platformy běží na GitHub-hosted runnerech. Moduly, které potřebuj�
 
 ## Consequences
 
-- State backend musí být dostupný z GitHub-hosted runnerů.
+- State backend je storage account v management subscription s veřejným endpointem, protože k němu přistupují GitHub-hosted runnery. Přístup je jen přes Entra ID a shared key je vypnutý.
 - Moduly s privátním data plane vyžadují `runner-pool` jako předpoklad.

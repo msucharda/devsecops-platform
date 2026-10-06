@@ -20,17 +20,29 @@ _Avoid_: prostředí, deployment
 Instance autora platformy, na které autor testuje release. Referenční instance získá release stejným postupem jako zákazník.
 _Avoid_: testovací prostředí, demo
 
+**Instance repository** (repozitář instance):
+Repozitář v organizaci platformy s vendorovaným release, konfigurací instance a workflow nasazení. Každá instance má jeden repozitář instance.
+_Avoid_: config repo, alz-mgmt
+
 **Instance configuration** (konfigurace instance):
-Soubor `instance.yaml`, který určuje vybrané moduly a jejich parametry. JSON Schema ho validuje.
+Soubor `instance.yaml` v repozitáři instance. Určuje vybrané moduly, jejich parametry a potvrzené ruční kroky.
 _Avoid_: tfvars, nastavení
+
+**Teardown** (odstranění instance):
+Odstranění všech modulů instance v obráceném pořadí předpokladů. Teardown zachová ruční předpoklady.
+_Avoid_: destroy, smazání instance
 
 **Module** (modul):
 Jedna samostatně nasaditelná schopnost platformy, například baseline organizace, povinná workflow nebo povýšení image. Modul poskytuje jednu nebo více kontrol. Modul může vyžadovat jiné moduly jako předpoklad.
 _Avoid_: akcelerátor, komponenta
 
 **Module manifest** (manifest modulu):
-Soubor `module.yaml` v adresáři modulu. Deklaruje předpoklady modulu. Workflow nasazení z manifestů určí pořadí modulů.
+Soubor `module.yaml` v adresáři modulu. Deklaruje předpoklady a ruční kroky modulu.
 _Avoid_: metadata
+
+**Manual step** (ruční krok):
+Krok modulu, který platforma neumí provést přes API, například nastavení politiky Copilotu. Na rozdíl od ručního předpokladu patří ruční krok k modulu a platformní tým ho provede po nasazení modulu.
+_Avoid_: checklist, TODO
 
 **Prerequisite** (předpoklad):
 Modul, který jiný modul vyžaduje. Výběr modulu přidá do instance i jeho předpoklady.
