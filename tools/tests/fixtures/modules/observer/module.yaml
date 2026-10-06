@@ -1,0 +1,9 @@
+name: observer
+description: Independent local fixture.
+prerequisites: []
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp: {}
+  adminPat: []

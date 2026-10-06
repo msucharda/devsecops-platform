@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Module manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "prerequisites", "manualSteps", "permissions"],
+  "properties": {
+    "name": { "$ref": "#/definitions/moduleName" },
+    "description": { "$ref": "#/definitions/nonBlankString" },
+    "prerequisites": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/moduleName" }
+    },
+    "manualSteps": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description"],
+        "properties": {
+          "id": { "$ref": "#/definitions/moduleName" },
+          "description": { "$ref": "#/definitions/nonBlankString" }
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["azure", "microsoftGraph", "githubApp", "adminPat"],
+      "properties": {
+        "azure": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["role", "scope"],
+            "properties": {
+              "role": { "$ref": "#/definitions/nonBlankString" },
+              "scope": { "$ref": "#/definitions/nonBlankString" }
+            }
+          }
+        },
+        "microsoftGraph": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z][A-Za-z0-9]*)*$"
+          }
+        },
+        "githubApp": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+          "additionalProperties": { "enum": ["read", "write"] }
+        },
+        "adminPat": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/nonBlankString" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "moduleName": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+    },
+    "nonBlankString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    }
+  }
+}
