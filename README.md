@@ -41,6 +41,18 @@ Modul `lz-vending` (subscription pro workload) přijde později.
 - JSON Schema z release validuje `instance.yaml`. Workflow určí pořadí modulů z manifestů modulů.
 - State backend je storage account v management subscription. Má zapnutý versioning, soft delete a lock. Každý modul má vlastní kontejner.
 - Workflow zapíše nepotvrzené ruční kroky do job summary jako varování. Platformní tým potvrdí ruční krok v `instance.yaml` přes PR.
+- Po merge PR schválí platformní tým jednou celý běh apply. Běh modulu `enterprise-baseline` navíc schvaluje security tým.
+
+## Názvy
+
+- `instance.name` má 2–8 znaků. Organizace se jmenují `{name}-platform`, `{name}-actions` a `{name}-workloads`.
+- Prostředky v Azure používají zkratky typů prostředků podle CAF.
+- Identifikátor nasazení je jen v názvech podle ADR 0008.
+
+## Release a upgrade
+
+- Release má jednu verzi SemVer pro všechny moduly (ADR 0013).
+- Jeden opakovaně použitelný workflow vendoringu importuje release platformy, akce i skilly. Workflow stáhne zdroj podle tagu, ověří attestaci, pokud existuje, a otevře PR s diffem.
 
 ## Teardown
 

@@ -13,3 +13,4 @@ Platforma volá API GitHubu přes dvě GitHub App nainstalované na enterprise a
 - Manifest modulu uvádí prostředky, které vyžadují PAT. Až GitHub App doplní podporu, modul PAT přestane potřebovat.
 - GET politiky akcí vyžaduje `admin:enterprise`, takže plan modulu `enterprise-baseline` potřebuje PAT. PAT je jen v environmentu modulu `enterprise-baseline`. Security tým schvaluje každé spuštění v tomto environmentu, i plan.
 - Conditional Access s podmínkou na IP adresu zablokuje PAT z GitHub-hosted runnerů. Servisní uživatel nesmí mít v Conditional Access podmínku na IP adresu.
+- Privátní klíče GitHub App a PAT jsou environment secrets v repozitáři instance. Key Vault s privátním endpointem by vyžadoval runner v síti Azure, což je v rozporu s ADR 0011. Do Azure se workflow přihlašuje přes OIDC bez secretu.

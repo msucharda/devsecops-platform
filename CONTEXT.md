@@ -20,6 +20,10 @@ _Avoid_: prostředí, deployment
 Instance autora platformy, na které autor testuje release. Referenční instance získá release stejným postupem jako zákazník.
 _Avoid_: testovací prostředí, demo
 
+**Release** (release):
+Tagovaná verze platformy. Release má jednu verzi SemVer pro všechny moduly.
+_Avoid_: verze modulu, balíček
+
 **Instance repository** (repozitář instance):
 Repozitář v organizaci platformy s vendorovaným release, konfigurací instance a workflow nasazení. Každá instance má jeden repozitář instance.
 _Avoid_: config repo, alz-mgmt
