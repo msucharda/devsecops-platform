@@ -13,12 +13,24 @@ Sada modulů, ze kterých zákazník sestaví vývojovou platformu od enterprise
 _Avoid_: řešení, akcelerátor
 
 **Instance** (instance):
-Jedno nasazení platformy: jeden enterprise EMU na GHE.com, jeden tenant Entra ID a jedna Sovereign Landing Zone. Instance obsahuje organizaci pro workloady a organizaci pro vendorované akce. Instance jde nasadit a odstranit jako celek.
+Jedno nasazení platformy: jeden enterprise EMU na GHE.com, jeden tenant Entra ID a jedna Sovereign Landing Zone. Instance jde nasadit a odstranit jako celek.
 _Avoid_: prostředí, deployment
 
 **Module** (modul):
 Jedna samostatně nasaditelná schopnost platformy, například baseline organizace, povinná workflow nebo povýšení image. Modul poskytuje jednu nebo více kontrol. Modul může vyžadovat jiné moduly jako předpoklad.
 _Avoid_: akcelerátor, komponenta
+
+**Prerequisite** (předpoklad):
+Modul, který jiný modul vyžaduje. Výběr modulu přidá do instance i jeho předpoklady.
+_Avoid_: závislost
+
+**Manual prerequisite** (ruční předpoklad):
+Podmínka instance, kterou platforma neumí vytvořit: tenant Entra ID, enterprise EMU s nastaveným OIDC a SCIM, subscriptions a licence. Platformní tým ji splní před bootstrapem a teardown ji zachová.
+_Avoid_: předpoklad bez upřesnění, požadavek
+
+**Deployment identifier** (identifikátor nasazení):
+Krátký řetězec, který vznikne při nasazení instance. Je jen v názvech prostředků, jejichž název zůstává po smazání blokovaný.
+_Avoid_: suffix, salt
 
 **Control** (kontrola):
 Mechanismus, který zachytí incident. Advisory control jen doporučuje, enforcing control vynucuje.
@@ -31,6 +43,34 @@ _Avoid_: klient, tenant
 **Vendoring** (vendoring):
 Převzetí externího kódu do organizace zákazníka jako kopie po review, s pinovanou verzí a určeným vlastníkem. Platí pro akce, skilly i release platformy.
 _Avoid_: mirror, import
+
+### Týmy
+
+**Platform team** (platformní tým):
+Tým zákazníka, který vlastní instanci a mění ji jen přes PR.
+_Avoid_: admin tým, ops
+
+**Security team** (security tým):
+Tým zákazníka, který schvaluje vendoring a změny kontrol.
+_Avoid_: SOC, bezpečáci
+
+**Workload team** (tým workloadu):
+Tým zákazníka, který vlastní jeden nebo více workloadů.
+_Avoid_: aplikační tým, vývojový tým
+
+### GitHub
+
+**Platform organization** (organizace platformy):
+Organizace, ve které platformní tým spravuje instanci. Týmy workloadů do ní nemají přístup.
+_Avoid_: admin organizace
+
+**Actions organization** (organizace akcí):
+Organizace s vendorovanými akcemi. Workflow v instanci smí používat jen akce z této organizace.
+_Avoid_: mirror akcí
+
+**Workload organization** (organizace workloadů):
+Organizace s repozitáři workloadů.
+_Avoid_: vývojová organizace
 
 ### Azure
 
@@ -45,5 +85,5 @@ _Avoid_: sdílený cluster, runtime
 ### Workloady
 
 **Workload** (workload):
-Aplikace jednoho týmu zákazníka, kterou platforma onboarduje a chrání.
+Aplikace, kterou vlastní jeden tým workloadu a kterou platforma onboarduje a chrání.
 _Avoid_: aplikace, projekt
