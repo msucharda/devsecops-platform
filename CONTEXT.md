@@ -57,7 +57,7 @@ Modul, který jiný modul vyžaduje. Výběr modulu přidá do instance i jeho p
 _Avoid_: závislost
 
 **Manual prerequisite** (ruční předpoklad):
-Podmínka instance, kterou platforma neumí vytvořit: tenant Entra ID, enterprise EMU s nastaveným OIDC a SCIM, první enterprise owner, subscriptions a licence. Platformní tým ji splní před bootstrapem a teardown ji zachová.
+Podmínka instance, kterou platforma neumí vytvořit: tenant Entra ID, enterprise EMU s nastaveným OIDC a SCIM, první enterprise owner, servisní uživatel pro admin PAT, subscriptions a licence. Platformní tým ji splní před bootstrapem a teardown ji zachová.
 _Avoid_: předpoklad bez upřesnění, požadavek
 
 **Deployment identifier** (identifikátor nasazení):

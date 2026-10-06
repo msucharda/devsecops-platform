@@ -5,12 +5,22 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 - [Glosář](CONTEXT.md)
 - [Rozhodnutí (ADR)](docs/adr/)
 
+## Struktura repozitáře
+
+| Cesta | Obsah |
+|---|---|
+| `modules/<name>/` | Manifest `module.yaml`, Terraform root a README se specifikací modulu. |
+| `schemas/instance.schema.json` | JSON Schema konfigurace instance. |
+| `tools/` | Runner modulu a generátor workflow v PowerShell 7, testy Pester. |
+| `.github/workflows/` | CI zdrojového repozitáře. |
+| `templates/instance/` | Šablona repozitáře instance: vygenerovaný workflow nasazení, workflow vendoringu, příklad `instance.yaml`. |
+
 ## Moduly
 
 | Modul | Schopnost | Předpoklady |
 |---|---|---|
-| `bootstrap` | State backend, identity pro plan a apply, organizace platformy, repozitář instance, dvě GitHub App. Člen platformního týmu ho spustí jednou lokálně. | – |
-| `emu-identity` | Skupiny a přiřazení aplikací v Entra ID: platformní tým (Enterprise Owner), security tým (security manager ve všech organizacích), uživatelé Copilotu (licence) a servisní uživatel pro PAT. SCIM ze skupin vytvoří enterprise týmy. | `bootstrap` |
+| `bootstrap` | State backend, identity modulů pro plan a apply, organizace platformy, repozitář instance, dvě GitHub App. Člen platformního týmu ho spustí jednou lokálně. | – |
+| `emu-identity` | Skupiny a přiřazení aplikací v Entra ID: platformní tým (Enterprise Owner), security tým (security manager ve všech organizacích), uživatelé Copilotu (licence). Servisnímu uživateli přiřadí roli Enterprise Owner. SCIM ze skupin vytvoří enterprise týmy. | `bootstrap` |
 | `organizations` | Organizace akcí a organizace workloadů. | `emu-identity` |
 | `actions-catalog` | Vendorované akce v organizaci akcí. | `organizations` |
 | `enterprise-baseline` | Enterprise rulesety, code security configurations, politika akcí, custom patterns. | `actions-catalog` |
@@ -42,6 +52,7 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - Repozitář instance obsahuje adresář `platform/` s vendorovaným release, soubor `instance.yaml` a workflow. Adresář `platform/` mění jen PR importu release.
 - JSON Schema z release validuje `instance.yaml`. Z manifestů modulů vygeneruje CI zdrojového repozitáře workflow s jobem pro každý modul (ADR 0014).
 - State backend je storage account v management subscription. Má zapnutý versioning, soft delete a lock. Každý modul má vlastní kontejner.
+- Každý modul má vlastní managed identity pro plan a pro apply (ADR 0015).
 - Workflow zapíše nepotvrzené ruční kroky do job summary jako varování. Platformní tým potvrdí ruční krok v `instance.yaml` přes PR.
 - Po merge PR schválí platformní tým jednou celý běh apply. Běh modulu `enterprise-baseline` navíc schvaluje security tým.
 - Každou noc proběhne plan všech modulů na větvi `main`. Pokud plan najde drift, workflow otevře nebo aktualizuje issue v repozitáři instance.
