@@ -11,4 +11,4 @@ Platformní tým spustí bootstrap jednou lokálně. Bootstrap vytvoří state b
 
 - Setup user enterprise EMU smí podle dokumentace GitHubu jen konfigurovat autentizaci a provisioning, ne vytvářet organizace. Bootstrap proto spouští člen platformního týmu, kterému administrátor Entra ID přímo přiřadil app roli Enterprise Owner. Bootstrap používá jeho OAuth token z `gh auth login`.
 - Modul `emu-identity` přiřadí roli Enterprise Owner skupině platformního týmu. Ruční krok pak odebere přímé přiřazení.
-- Vytvoření GitHub App přes manifest flow musí člověk potvrdit v prohlížeči, proto bootstrap nejde spustit bez obsluhy.
+- Enterprise kontroly z ADR 0016 musí platit před bootstrapem a teardown je zachová. První založení enterprise-owned GitHub Apps a vložení jejich klíčů mohou být řízené ruční kroky bootstrapu.

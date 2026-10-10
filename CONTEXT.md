@@ -57,7 +57,7 @@ Modul, který jiný modul vyžaduje. Výběr modulu přidá do instance i jeho p
 _Avoid_: závislost
 
 **Manual prerequisite** (ruční předpoklad):
-Podmínka instance, kterou platforma neumí vytvořit: tenant Entra ID, enterprise EMU s nastaveným OIDC a SCIM, první enterprise owner, servisní uživatel pro admin PAT, subscriptions a licence. Platformní tým ji splní před bootstrapem a teardown ji zachová.
+Podmínka instance, kterou platforma neumí vytvořit: tenant Entra ID, enterprise EMU s nastaveným OIDC a SCIM, první enterprise owner, neautomatizované enterprise kontroly, subscriptions a licence. Platformní tým ji splní před bootstrapem a teardown ji zachová.
 _Avoid_: předpoklad bez upřesnění, požadavek
 
 **Deployment identifier** (identifikátor nasazení):
@@ -99,6 +99,10 @@ Tým zákazníka, který vlastní jeden nebo více workloadů.
 _Avoid_: aplikační tým, vývojový tým
 
 ### GitHub
+
+**GitHub App installation token** (instalační token GitHub App):
+Přihlašovací údaj reprezentující instalaci GitHub App, nikoli uživatelský účet. Jeho oprávnění vycházejí z oprávnění App a rozsahu její instalace.
+_Avoid_: admin token, servisní PAT
 
 **Platform organization** (organizace platformy):
 Organizace, ve které platformní tým spravuje instanci. Týmy workloadů do ní nemají přístup.
