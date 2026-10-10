@@ -8,6 +8,13 @@ teams:
 modules: {}
 customPatterns: []
 manualSteps: {}
+bootstrap:
+  tenantId: '00000000-0000-0000-0000-000000000000'
+  managementSubscriptionId: '00000000-0000-0000-0000-000000000000'
+  subscriptionIds: ['00000000-0000-0000-0000-000000000000']
+  enterpriseApplicationObjectId: '00000000-0000-0000-0000-000000000000'
+  githubHost: example.ghe.com
+  enterprise: example
 manualPrerequisites:
   tenant: false
   enterpriseOidc: false

@@ -50,7 +50,8 @@
             "required": ["role", "scope"],
             "properties": {
               "role": { "$ref": "#/definitions/nonBlankString" },
-              "scope": { "$ref": "#/definitions/nonBlankString" }
+              "scope": { "$ref": "#/definitions/nonBlankString" },
+              "phase": { "enum": ["plan", "apply"], "default": "apply" }
             }
           }
         },
@@ -58,8 +59,18 @@
           "type": "array",
           "uniqueItems": true,
           "items": {
-            "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z][A-Za-z0-9]*)*$"
+            "oneOf": [
+              { "$ref": "#/definitions/graphPermission" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["permission", "phase"],
+                "properties": {
+                  "permission": { "$ref": "#/definitions/graphPermission" },
+                  "phase": { "enum": ["plan", "apply"] }
+                }
+              }
+            ]
           }
         },
         "githubApp": {
@@ -131,6 +142,10 @@
       "type": "string",
       "maxLength": 39,
       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "graphPermission": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z][A-Za-z0-9]*)*$"
     },
     "moduleName": {
       "type": "string",
