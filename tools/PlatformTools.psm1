@@ -386,4 +386,17 @@ function Get-PlatformModuleSelection {
     return ,$names
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson
+function Assert-PlatformManualPrerequisite {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Instance)
+
+    $schema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/instance.schema.json') -Raw |
+        ConvertFrom-Json -AsHashtable
+    $missing = @($schema['properties']['manualPrerequisites']['properties'].PSBase.Keys |
+        Where-Object { -not $Instance['manualPrerequisites'].Contains($_) -or -not $Instance['manualPrerequisites'][$_] })
+    if ($missing.Count -gt 0) {
+        throw "Bootstrap requires manual prerequisite confirmations: $(($missing | ForEach-Object { '$.manualPrerequisites.' + $_ }) -join ', ')."
+    }
+}
+
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Assert-PlatformManualPrerequisite

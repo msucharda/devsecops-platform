@@ -78,6 +78,27 @@
         "githubAppAvailabilityVerified": { "$ref": "#/definitions/confirmation" }
       }
     },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tenantId", "managementSubscriptionId", "subscriptionIds", "enterpriseApplicationObjectId", "githubHost", "enterprise"],
+      "properties": {
+        "tenantId": { "$ref": "#/definitions/uuid" },
+        "managementSubscriptionId": { "$ref": "#/definitions/uuid" },
+        "subscriptionIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/uuid" }
+        },
+        "enterpriseApplicationObjectId": { "$ref": "#/definitions/uuid" },
+        "githubHost": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*\\.ghe\\.com$"
+        },
+        "enterprise": { "$ref": "module.schema.json#/definitions/moduleName" }
+      }
+    },
     "manualSteps": {
       "type": "object",
       "propertyNames": { "$ref": "module.schema.json#/definitions/moduleName" },
@@ -142,6 +163,10 @@
     }
   },
   "definitions": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
     "parameterName": {
       "type": "string",
       "not": {

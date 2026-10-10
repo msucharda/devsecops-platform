@@ -12,7 +12,7 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 | `modules/<name>/` | Manifest `module.yaml`, Terraform root a README se specifikací modulu. |
 | `schemas/module.schema.json` | JSON Schema Module manifest (manifest modulu). |
 | `schemas/instance.schema.json` | JSON Schema konfigurace instance. |
-| `tools/` | Runner modulu a generátor workflow v PowerShell 7, testy Pester. |
+| `tools/` | Lokální bootstrap Azure, runner modulu a generátor workflow v PowerShell 7, testy Pester. |
 | `.github/workflows/` | CI zdrojového repozitáře. |
 | `templates/instance/` | Šablona repozitáře instance: vygenerovaný workflow nasazení, příklad `instance.yaml`, CODEOWNERS a kontrakt bootstrapu. |
 
@@ -44,6 +44,7 @@ Instalační skript stáhne chybějící verze modulů z PowerShell Gallery do r
 | `customPatterns` | Volitelný seznam položek s `name` a `secretRegex`; `beforeSecret` a `afterSecret` jsou volitelné řetězce. |
 | `manualSteps` | Volitelná mapa `<module>: {<step-id>: true nebo false}`. Validátor odmítne neznámý modul nebo identifikátor kroku. |
 | `manualPrerequisites` | Volitelná mapa ručních potvrzení před bootstrapem. Chybějící potvrzení znamená nepotvrzený předpoklad. |
+| `bootstrap` | Pro lokální bootstrap povinné identifikátory tenantu, management subscription, všech použitých subscriptions, enterprise aplikace EMU a enterprise na GHE.com. [Provozní postup](docs/bootstrap.md) popisuje položky a oprávnění. |
 | `githubApps` | Volitelná mapa aliasů enterprise-owned Apps. Položka obsahuje `appId`, `installationId`, slug `enterprise`, skutečná `permissions` a skutečné `resources`. Oba identifikátory jsou kladná desetinná čísla zapsaná jako řetězce. |
 | `credentials` | Volitelné vazby modulů na `plan`, `apply` a případně `rulesetPlan`. Každá vazba obsahuje `environment` a volitelný alias `githubApp`. Pokud modul vazby deklaruje, musí uvést `plan` i `apply`. |
 | `teardown.allowed` | Volitelný boolean s výchozí hodnotou `false`. Runner s touto hodnotou odmítne `destroy`. |
@@ -88,9 +89,9 @@ Alias musí existovat v `githubApps`. Validátor doplní výchozí environmenty 
 
 Validátor porovná oprávnění aliasu s manifestem a rozsah prostředků s parametry modulu. Stejné `appId` lze sdílet jen při shodné fázi, enterprise, oprávněních a prostředcích, i když má App více aliasů či klíčů. Běžný plan odmítne App s libovolným write oprávněním, nikoli pouze široký token. `resources.organizations` uvádí přesné slugy všech instalací App. Volitelná mapa `resources.repositories` omezí danou organizaci na přesný seznam repozitářů; bez její položky musí instalace pokrývat všechny repozitáře organizace. `installationId` identifikuje jednu z deklarovaných instalací; job ověří i ostatní a vydá token pro každou cílovou organizaci.
 
-**Manual prerequisites (ruční předpoklady):** bootstrap pro `plan` i `apply` vyžaduje `true` pro všechna potvrzení: `tenant`, `enterpriseOidc`, `enterpriseScim`, `enterpriseOwner`, `subscriptions`, `licenses`, `privateInternalForksDisabled`, `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired`, `patMaxLifetime90Days` a `githubAppAvailabilityVerified`. Chybějící nebo nepravdivá hodnota zastaví runner před Terraformem. Potvrzení dostupnosti Apps musí vycházet z ručního ověření na konkrétní instanci GHE.com, ne pouze z veřejné dokumentace.
+**Manual prerequisites (ruční předpoklady):** lokální bootstrap vyžaduje `true` pro všechna potvrzení: `tenant`, `enterpriseOidc`, `enterpriseScim`, `enterpriseOwner`, `subscriptions`, `licenses`, `privateInternalForksDisabled`, `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired`, `patMaxLifetime90Days` a `githubAppAvailabilityVerified`. Runner vyžaduje stejná potvrzení při volání modulu `bootstrap` s akcí `plan` nebo `apply`; chybějící nebo nepravdivá hodnota ho zastaví před Terraformem. Potvrzení dostupnosti Apps musí vycházet z ručního ověření na konkrétní instanci GHE.com, ne pouze z veřejné dokumentace.
 
-Ruční potvrzení není automaticky ověřený stav. Runner nevolá API k ověření enterprise politik ani ručních kroků. Ostatní moduly nepotvrzený ruční krok nezastaví; job summary uvádí varování, vlastníka a omezení planu, driftu a teardownu. Potvrzený krok zůstává označený jako ruční deklarace. Runner při teardownu nemění konfiguraci ani ruční předpoklady.
+Ruční potvrzení není automaticky ověřený stav. Runner nevolá API k ověření enterprise politik ani ručních kroků. Lokální `Invoke-Bootstrap.ps1` navíc ověří tenant, subscriptions, OIDC aplikaci, aktivní SCIM job, přímé přiřazení Enterprise Owner, vlastnictví enterprise uživatelem OAuth a licenci Entra ID P1 nebo P2. Enterprise politiky a ostatní licence zůstávají ručně potvrzené. Ostatní moduly nepotvrzený ruční krok nezastaví; job summary uvádí varování, vlastníka a omezení planu, driftu a teardownu. Potvrzený krok zůstává označený jako ruční deklarace. Runner při teardownu nemění konfiguraci ani ruční předpoklady.
 
 ### Module manifest (manifest modulu)
 
@@ -112,15 +113,18 @@ permissions:
   azure:
     - role: Reader
       scope: /subscriptions/00000000-0000-0000-0000-000000000000
+      phase: plan
   microsoftGraph:
     - Group.Create
+    - permission: Group.Read.All
+      phase: plan
   githubApp: {}
   adminPat: []
 ```
 
 Povinné jsou `name`, `description`, `prerequisites`, `manualSteps`, `permissions` a všechny kategorie oprávnění. Ruční krok vyžaduje `id` a `description`. Volitelný `owner` vybírá tým `platform` nebo `security`; výchozí vlastník je platformní tým. Volitelné `limitations` musí uvést všechny tři položky `plan`, `drift` a `teardown`. Bez nich runner přizná, že ruční stav automaticky neověří, nezachytí jeho drift ani ho nevrátí při teardownu.
 
-Prázdné seznamy a prázdná mapa `githubApp` znamenají, že dané kroky ani oprávnění nejsou potřeba. `azure` deklaruje role a jejich rozsah, `microsoftGraph` názvy oprávnění. Pole `adminPat` musí být `[]`; schéma odmítne jakýkoli PAT požadavek. Module manifest nesmí obsahovat tokeny ani jiná secrets. Schéma odmítá neznámé položky a neplatné typy. Generátor navíc odmítá opakované identifikátory Manual step (ruční krok), neexistující Prerequisite (předpoklad) a cykly.
+Prázdné seznamy a prázdná mapa `githubApp` znamenají, že dané kroky ani oprávnění nejsou potřeba. `azure` deklaruje názvy rolí, jejich absolutní ARM scope a volitelnou `phase` (`plan` nebo `apply`); bez fáze přidělí bootstrap roli jen apply. `microsoftGraph` přijímá název oprávnění pro apply nebo objekt `permission` a `phase`. Plan musí deklarovat vlastní oprávnění ke čtení; bootstrap odmítne zápisová oprávnění. Obě identity mají navíc `Storage Blob Data Contributor` jen na vlastním kontejneru, protože i Terraform plan používá lease a může zapsat state. Pole `adminPat` musí být `[]`; schéma odmítne jakýkoli PAT požadavek. Module manifest nesmí obsahovat tokeny ani jiná secrets. Schéma odmítá neznámé položky a neplatné typy. Generátor navíc odmítá opakované identifikátory Manual step (ruční krok), neexistující Prerequisite (předpoklad) a cykly.
 
 Neprázdná mapa `githubApp` deklaruje `plan`, `apply` a volitelně `rulesetPlan`. Každá fáze obsahuje mapu `permissions` na `read` nebo `write` a `resources`. Hodnoty `resources.organizations` a volitelné `resources.repositories` jsou názvy parametrů modulu, ze kterých validátor získá skutečné cíle. Tím může vendorovaný manifest fungovat v různých instancích:
 
@@ -223,11 +227,12 @@ $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
 
 ### Testy a CI
 
-Testy Pester volají veřejné skripty generátoru, výběru, validátorů, token issueru, reportování a runneru. Kontrolují výsledné YAML, JSON, summary, environmenty, pořadí jobů, PR původ, členství autora a oddělení skutečných App oprávnění. GitHub API testy nahrazují jen HTTP hranici; nevolají cloud. Testy runneru používají skutečný lokální backend a vestavěný provider `terraform_data`, včetně úplných pravidel a bypass driftu izolovaného ruleset rootu. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
+Testy Pester volají veřejné skripty bootstrapu, generátoru, výběru, validátorů, token issueru, reportování a runneru. Kontrolují výsledné YAML, JSON, summary, environmenty, pořadí jobů, PR původ, členství autora a oddělení skutečných App oprávnění. GitHub API testy nahrazují jen HTTP hranici; nevolají cloud. Testy bootstrapu nahrazují jen GitHub CLI, Azure CLI a HTTP API; ověřují potvrzení před změnou, ochrany backendu, scope identit, oddělení fází, opakovaný běh a dokončení přerušeného běhu. Testy runneru vyžadují Terraform; CI ho instaluje před Pesterem. Používají skutečný lokální backend a vestavěný provider `terraform_data`, včetně úplných pravidel a bypass driftu izolovaného ruleset rootu. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
 
 ```powershell
 Import-Module Pester -RequiredVersion 5.7.1
 Invoke-Pester -Path .\tools\tests\ModuleRunner.Tests.ps1 -Output Detailed
+Invoke-Pester -Path .\tools\tests\Bootstrap.Tests.ps1 -Output Detailed
 ```
 
 Workflow `Source CI` spouští Pester, syntaktickou a statickou kontrolu PowerShellu, validaci Module manifest a kontrolu aktuálnosti obou commitnutých workflow. `Get-TerraformRoots.ps1` vyhledá v repozitáři každý adresář se soubory `.tf` nebo `.tf.json`, včetně fixture; vynechá `.git`, `.terraform` a symbolické adresáře. CI na každém nalezeném rootu spustí `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`, tflint a Trivy. Nález Trivy úrovně `HIGH` nebo `CRITICAL` způsobí chybu CI. Pokud repozitář nemá žádný Terraform root, CI tuto část přeskočí.

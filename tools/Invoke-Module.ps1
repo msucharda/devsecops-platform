@@ -139,13 +139,7 @@ if ($Action -eq 'destroy' -and -not $instance['teardown']['allowed']) {
     throw "Destroy is denied: $.teardown.allowed must be true."
 }
 if ($Module -eq 'bootstrap' -and $Action -ne 'destroy') {
-    $schema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/instance.schema.json') -Raw |
-        ConvertFrom-Json -AsHashtable
-    $missing = @($schema['properties']['manualPrerequisites']['properties'].PSBase.Keys |
-        Where-Object { -not $instance['manualPrerequisites'].Contains($_) -or -not $instance['manualPrerequisites'][$_] })
-    if ($missing.Count -gt 0) {
-        throw "Bootstrap requires manual prerequisite confirmations: $(($missing | ForEach-Object { '$.manualPrerequisites.' + $_ }) -join ', ')."
-    }
+    Assert-PlatformManualPrerequisite -Instance $instance
 }
 $manualStates = [System.Collections.Generic.List[object]]::new()
 $summary = [System.Collections.Generic.List[string]]::new()
