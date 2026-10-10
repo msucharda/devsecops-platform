@@ -1,6 +1,6 @@
 # Každý modul má vlastní Terraform root a state
 
-Každý modul je samostatný Terraform root s vlastním state. Modul čte výstupy svých předpokladů ze state předpokladů. Chyba v jednom modulu tak nezablokuje plan ostatních modulů a identita modulu potřebuje oprávnění jen na své prostředky.
+Každý modul je samostatný Terraform root s vlastním state. Přenos výstupů upřesňuje ADR 0014: runner předá necitlivé výstupy předpokladů z artifactů jako proměnné; modul nečte state předpokladů. Chyba v jednom modulu tak nezablokuje plan nezávislých modulů a identita modulu potřebuje oprávnění jen na své prostředky.
 
 ## Considered Options
 

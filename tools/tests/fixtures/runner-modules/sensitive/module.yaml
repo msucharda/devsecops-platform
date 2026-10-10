@@ -1,0 +1,9 @@
+name: sensitive
+description: Sensitive output rejection fixture.
+prerequisites: []
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp: {}
+  adminPat: []

@@ -1,0 +1,14 @@
+instance:
+  name: demo
+regions:
+  primary: westeurope
+teams:
+  platform: [platform@example.test]
+  security: [security@example.test]
+modules:
+  foundation:
+    parameters:
+      message: hello
+  application: {}
+teardown:
+  allowed: true

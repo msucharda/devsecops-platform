@@ -27,6 +27,18 @@ jobs:
         run: |
           ./tools/Test-ModuleManifests.ps1 -Verbose
           ./tools/Test-ModuleManifests.ps1 -ModulesPath ./tools/tests/fixtures/modules -Verbose
+      - name: Install Terraform for offline runner tests
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - name: Validate instance examples
+        shell: pwsh
+        run: |
+          ./tools/Test-InstanceConfiguration.ps1 -InstancePath ./templates/instance/instance.yaml
+          ./tools/Test-InstanceConfiguration.ps1 -InstancePath ./tools/tests/fixtures/instance.yaml -ModulesPath ./tools/tests/fixtures/modules
+          ./tools/Test-InstanceConfiguration.ps1 -InstancePath ./tools/tests/fixtures/runner-instance.yaml -ModulesPath ./tools/tests/fixtures/runner-modules
+          ./tools/Test-ModuleManifests.ps1 -ModulesPath ./tools/tests/fixtures/runner-modules
       - name: Run Pester
         shell: pwsh
         run: ./tools/Invoke-Tests.ps1 -CI
