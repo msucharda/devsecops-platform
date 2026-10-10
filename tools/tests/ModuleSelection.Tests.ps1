@@ -47,7 +47,7 @@ modules:
         $json = & $selector -ModulesPath $fixtures -InstancePath $instance -GitHubOutputPath $githubOutput
 
         $json | Should -Be '["application","foundation"]'
-        [IO.File]::ReadAllText($githubOutput) | Should -Be "previous=value`nmodules=[`"application`",`"foundation`"]`nenvironments={`"application`":`"application-plan`",`"foundation`":`"foundation-plan`"}`n"
+        [IO.File]::ReadAllText($githubOutput) | Should -Be "previous=value`nmodules=[`"application`",`"foundation`"]`nenvironments={`"application`":`"application-plan`",`"foundation`":`"foundation-plan`"}`napplyEnvironments={`"application`":`"application-apply`",`"foundation`":`"foundation-apply`"}`nrulesetEnvironments={}`nrulesetModules=[]`n"
     }
 
     It 'can select a module named keys without treating it as a dictionary property' {

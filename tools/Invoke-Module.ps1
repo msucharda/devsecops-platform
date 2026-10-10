@@ -4,6 +4,7 @@
 param(
     [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')][string] $Module,
     [Parameter(Mandatory)][ValidateSet('plan', 'apply', 'destroy')][string] $Action,
+    [switch] $Rulesets,
     [Parameter(Mandatory)][string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
     [ValidateSet('azurerm', 'local')][string] $Backend = 'azurerm',
@@ -117,7 +118,20 @@ if ($Module -cnotin (Get-PlatformModuleSelection -Instance $instance -Modules $m
     throw "Module '$Module' is not selected in $.modules or required by a selected module."
 }
 $moduleRoot = [IO.Path]::GetFullPath((Join-Path $ModulesPath $Module))
-$artifactFile = [IO.Path]::GetFullPath((Join-Path $ArtifactsPath "$Module.json"))
+$outputName = $Module
+$stateKey = 'terraform.tfstate'
+if ($Rulesets) {
+    if (-not $modules[$Module]['permissions']['githubApp'].Contains('rulesetPlan')) {
+        throw "Module '$Module' requires a declared ruleset exception before running its rulesets root."
+    }
+    $moduleRoot = Join-Path $moduleRoot 'rulesets'
+    $outputName = "$Module.rulesets"
+    $stateKey = 'terraform.rulesets.tfstate'
+}
+if (-not (Test-Path -LiteralPath $moduleRoot -PathType Container)) {
+    throw "Terraform root '$moduleRoot' does not exist."
+}
+$artifactFile = [IO.Path]::GetFullPath((Join-Path $ArtifactsPath "$outputName.json"))
 if (Test-Path -LiteralPath $artifactFile -PathType Leaf) {
     [IO.File]::Delete($artifactFile)
 }
@@ -181,7 +195,7 @@ if ($Backend -eq 'local') {
     }
     $stateDirectory = [IO.Path]::GetFullPath($StatePath)
     [IO.Directory]::CreateDirectory($stateDirectory) | Out-Null
-    $backendArguments += "-backend-config=path=$(Join-Path $stateDirectory "$Module.tfstate")"
+    $backendArguments += "-backend-config=path=$(Join-Path $stateDirectory "$outputName.tfstate")"
 }
 else {
     if (-not $StorageAccountName -or -not $ResourceGroupName -or $Module.Length -lt 3) {
@@ -191,7 +205,7 @@ else {
         "-backend-config=storage_account_name=$StorageAccountName"
         "-backend-config=resource_group_name=$ResourceGroupName"
         "-backend-config=container_name=$Module"
-        '-backend-config=key=terraform.tfstate'
+        "-backend-config=key=$stateKey"
         '-backend-config=use_azuread_auth=true'
     )
 }
@@ -250,6 +264,9 @@ try {
     }
     $planFile = Join-Path $temporaryDirectory 'module.tfplan'
     $planArguments = @('plan', '-input=false', '-no-color', '-detailed-exitcode', "-var-file=$variableFile", "-out=$planFile")
+    if ($Action -eq 'plan') {
+        $planArguments += '-lock=false'
+    }
     if ($Action -eq 'destroy') {
         $planArguments += '-destroy'
     }

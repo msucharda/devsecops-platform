@@ -36,6 +36,59 @@ Describe 'Module runner with local Terraform' {
         Test-Path -LiteralPath (Join-Path $arguments.StatePath 'foundation.tfstate') | Should -BeTrue
     }
 
+    It 'refuses a ruleset component without a declared isolated exception' {
+        { & $runner -Module foundation -Action plan -Rulesets @arguments 6>$null } |
+            Should -Throw '*declared ruleset*'
+    }
+
+    It 'plans the complete isolated rulesets root including bypass drift without touching ordinary module state' {
+        $null = & $runner -Module foundation -Action apply @arguments 6>$null
+        $ordinaryState = Join-Path $arguments.StatePath 'foundation.tfstate'
+        $stateBefore = [IO.File]::ReadAllText($ordinaryState)
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/rulesets') -Destination (Join-Path $modules 'foundation/rulesets') -Recurse
+        $manifestPath = Join-Path $modules 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.permissions.githubApp = @{
+            plan = @{ permissions = @{ organization_administration = 'read' }; resources = @{ organizations = 'target_organizations' } }
+            apply = @{ permissions = @{ organization_administration = 'write' }; resources = @{ organizations = 'target_organizations' } }
+            rulesetPlan = @{ permissions = @{ organization_administration = 'write' }; resources = @{ organizations = 'target_organizations' }; purpose = 'organization-rulesets-full-read' }
+        }
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $instance.modules.foundation.parameters.target_organizations = @('example')
+        $instance.githubApps = @{
+            reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{ organization_administration = 'read' }; resources = @{ organizations = @('example') } }
+            writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('example') } }
+            rulesets = @{ appId = '103'; installationId = '203'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('example') } }
+        }
+        $instance.credentials = @{
+            foundation = @{
+                plan = @{ environment = 'foundation-plan'; githubApp = 'reader' }
+                apply = @{ environment = 'foundation-apply'; githubApp = 'writer' }
+                rulesetPlan = @{ environment = 'foundation-ruleset-plan'; githubApp = 'rulesets' }
+            }
+        }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $null = & $runner -Module foundation -Action apply -Rulesets @arguments 6>$null
+        $rulesetState = Join-Path $arguments.StatePath 'foundation.rulesets.tfstate'
+        $rulesetStateBefore = [IO.File]::ReadAllText($rulesetState)
+        $instance.modules.foundation.parameters.bypass_actors = @('unexpected-owner')
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        $result = & $runner -Module foundation -Action plan -Rulesets @arguments 6>$null
+
+        $result.HasChanges | Should -BeTrue
+        $result.OutputsPath | Should -Match 'foundation.rulesets.json$'
+        $outputs = Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json
+        $ruleset = $outputs.ruleset
+        $ruleset.rules | Should -Be @('pull_request', 'non_fast_forward', 'deletion')
+        $ruleset.bypass_actors | Should -Be @('unexpected-owner')
+        $outputs.runner_inputs.instance_name | Should -Be 'demo'
+        $outputs.runner_inputs.prerequisite_count | Should -Be 0
+        $outputs.runner_inputs.message | Should -Be 'hello'
+        [IO.File]::ReadAllText($ordinaryState) | Should -BeExactly $stateBefore
+        [IO.File]::ReadAllText($rulesetState) | Should -BeExactly $rulesetStateBefore
+    }
+
     It 'plans known outputs without applying or creating a module state' {
         $result = & $runner -Module foundation -Action plan @arguments 6>$null
 

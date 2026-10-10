@@ -64,18 +64,74 @@
         },
         "githubApp": {
           "type": "object",
-          "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
-          "additionalProperties": { "enum": ["read", "write"] }
+          "additionalProperties": false,
+          "properties": {
+            "plan": { "$ref": "#/definitions/githubAppPhase" },
+            "apply": { "$ref": "#/definitions/githubAppPhase" },
+            "rulesetPlan": { "$ref": "#/definitions/githubAppPhase" }
+          },
+          "if": { "minProperties": 1 },
+          "then": { "required": ["plan", "apply"] }
         },
         "adminPat": {
           "type": "array",
-          "uniqueItems": true,
-          "items": { "$ref": "#/definitions/nonBlankString" }
+          "maxItems": 0
         }
       }
     }
   },
   "definitions": {
+    "githubAppPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["permissions", "resources"],
+      "properties": {
+        "permissions": { "$ref": "#/definitions/githubAppPermissions" },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["organizations"],
+          "properties": {
+            "organizations": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+            "repositories": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+          }
+        },
+        "purpose": { "const": "organization-rulesets-full-read" }
+      }
+    },
+    "githubAppPermissions": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "enum": ["read", "write"] }
+    },
+    "githubAppResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organizations"],
+      "properties": {
+        "organizations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/githubOrganization" }
+        },
+        "repositories": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/definitions/githubOrganization" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" }
+          }
+        }
+      }
+    },
+    "githubOrganization": {
+      "type": "string",
+      "maxLength": 39,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
     "moduleName": {
       "type": "string",
       "maxLength": 63,
