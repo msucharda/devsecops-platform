@@ -19,6 +19,10 @@ Předpoklady: `organizations`.
 | `actions/checkout` | Checkout repozitáře. |
 | `actions/upload-artifact` | Výstupy modulů mezi joby (ADR 0014). |
 | `actions/download-artifact` | Výstupy modulů mezi joby. |
-| `actions/create-github-app-token` | Token GitHub App pro plan a apply. |
+| `actions/create-github-app-token` | Vydání installation tokenu; zvolená verze musí podporovat potřebná oprávnění a GHE.com (ADR 0016). |
 | `azure/login` | Přihlášení do Azure přes OIDC. |
 | `hashicorp/setup-terraform` | Instalace Terraformu. |
+
+## Identita
+
+GitHub API používá installation tokeny podle ADR 0016. Plan čte jen prostředky katalogu; apply a vendoring mají potřebná oprávnění k zápisu. PR importu vytvořený App nesmí automaticky získat plan credentials; cloudový plan proběhne po review a merge na chráněné větvi `main`.

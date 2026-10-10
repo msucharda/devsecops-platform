@@ -47,13 +47,13 @@ permissions:
       scope: /subscriptions/00000000-0000-0000-0000-000000000000
   microsoftGraph:
     - Group.Create
-  githubApp:
-    contents: read
-  adminPat:
-    - enterprise-rulesets
+  githubApp: {}
+  adminPat: []
 ```
 
-Všechny položky příkladu jsou povinné. Prázdné seznamy a prázdná mapa `githubApp` znamenají, že dané kroky ani oprávnění nejsou potřeba. `azure` deklaruje role a jejich rozsah, `microsoftGraph` názvy oprávnění, `githubApp` mapu oprávnění na `read` nebo `write` a `adminPat` prostředky vyžadující admin PAT. Module manifest nesmí obsahovat tokeny ani jiná secrets. Schéma odmítá neznámé položky a neplatné typy. Generátor navíc odmítá opakované identifikátory Manual step (ruční krok), neexistující Prerequisite (předpoklad) a cykly.
+Všechny položky příkladu jsou v současném schématu povinné. Prázdné seznamy a prázdná mapa `githubApp` znamenají, že dané kroky ani oprávnění nejsou potřeba. `azure` deklaruje role a jejich rozsah, `microsoftGraph` názvy oprávnění a `githubApp` mapu oprávnění na `read` nebo `write`. Pole `adminPat` zůstává ve schématu kvůli kompatibilitě; nové moduly musí používat `[]`, protože workflow instance používají jen GitHub App installation tokeny podle ADR 0016. Module manifest nesmí obsahovat tokeny ani jiná secrets. Schéma odmítá neznámé položky a neplatné typy. Generátor navíc odmítá opakované identifikátory Manual step (ruční krok), neexistující Prerequisite (předpoklad) a cykly.
+
+**Navazující implementace:** Současná mapa `githubApp` sama nerozlišuje fázi, cílové prostředky ani samostatný ruleset job. [#9](https://github.com/msucharda/devsecops-platform/issues/9) musí tyto deklarace a jejich validaci doplnit. Generátor nesmí automaticky odvodit write oprávnění běžného planu z oprávnění apply.
 
 ### Generování workflow a výběr
 
@@ -113,11 +113,11 @@ foreach ($root in $roots) {
 
 | Modul | Schopnost | Předpoklady |
 |---|---|---|
-| `bootstrap` | State backend, identity modulů pro plan a apply, organizace platformy, repozitář instance, dvě GitHub App. Člen platformního týmu ho spustí jednou lokálně. | – |
-| `emu-identity` | Skupiny a přiřazení aplikací v Entra ID: platformní tým (Enterprise Owner), security tým (security manager ve všech organizacích), uživatelé Copilotu (licence). Servisnímu uživateli přiřadí roli Enterprise Owner. SCIM ze skupin vytvoří enterprise týmy. | `bootstrap` |
+| `bootstrap` | State backend, identity modulů pro plan a apply, organizace platformy, repozitář instance a zapojení enterprise-owned GitHub Apps. Člen platformního týmu ho spustí jednou lokálně; registrace Apps a vložení klíčů mohou být ruční. | – |
+| `emu-identity` | Skupiny a přiřazení aplikací v Entra ID: platformní tým (Enterprise Owner), security tým (security manager ve všech organizacích), uživatelé Copilotu (licence). SCIM ze skupin vytvoří enterprise týmy. | `bootstrap` |
 | `organizations` | Organizace akcí a organizace workloadů. | `emu-identity` |
 | `actions-catalog` | Vendorované akce v organizaci akcí. | `organizations` |
-| `enterprise-baseline` | Enterprise rulesety, code security configurations, politika akcí, custom patterns. | `actions-catalog` |
+| `enterprise-baseline` | Organizační rulesety, code security configurations, politika akcí a custom patterns. Neautomatizované enterprise kontroly jsou ruční předpoklad. | `actions-catalog` |
 | `required-workflows` | Povinná workflow vynucená rulesetem. | `enterprise-baseline` |
 | `copilot-catalog` | Vendorované skilly a agenti pro Copilot. | `organizations` |
 | `copilot-workstation` | Copilot app a spravovaná nastavení přes Intune. | `emu-identity` |
@@ -147,9 +147,23 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - JSON Schema z release validuje `instance.yaml`. Z manifestů modulů vygeneruje CI zdrojového repozitáře workflow s jobem pro každý modul (ADR 0014).
 - State backend je storage account v management subscription. Má zapnutý versioning, soft delete a lock. Každý modul má vlastní kontejner.
 - Každý modul má vlastní managed identity pro plan a pro apply (ADR 0015).
+- Pro správu GitHubu workflow používají GitHub App installation tokeny. GitHub App identity lze sdílet jen při shodných oprávněních, prostředcích a fázi (ADR 0016).
+- Automatický PR plan s přihlašovacími údaji smí běžet jen pro PR platformního týmu v repozitáři instance. Forky, jiní autoři ani PR vytvořené App je automaticky nedostanou. Po review a merge PR importu proběhne plan na chráněné větvi `main` před apply.
+- Běžný plan je read-only. Plan organizačních rulesetů běží v samostatném jobu s výslovnou výjimkou `Organization Administration: write`; toto oprávnění nesmějí dostat ostatní plan joby.
 - Workflow zapíše nepotvrzené ruční kroky do job summary jako varování. Platformní tým potvrdí ruční krok v `instance.yaml` přes PR.
 - Po merge PR schválí platformní tým jednou celý běh apply. Běh modulu `enterprise-baseline` navíc schvaluje security tým.
 - Každou noc proběhne plan všech modulů na větvi `main`. Pokud plan najde drift, workflow otevře nebo aktualizuje issue v repozitáři instance.
+- Issue driftu zapisuje samostatný reporting job s installation tokenem pro potřebný zápis v repozitáři instance. Plan joby kvůli němu nezískají oprávnění k zápisu.
+
+### Ruční předpoklady a přihlašovací údaje
+
+- Neautomatizované enterprise kontroly musí platit před bootstrapem: zákaz private a internal forků, omezení repozitářů v EMU user namespaces, schvalování fine-grained PAT a maximální platnost PAT 90 dní. O omezení classic PAT zatím není rozhodnuto.
+- Organization owners patří jen do platformního týmu; workload týmy mají nejvýše `Maintain` na svých repozitářích. Organizační kontroly chrání proti workload týmům, ne proti důvěryhodnému ownerovi.
+- Platformní tým spravuje enterprise-owned Apps. Změny jejich oprávnění schvaluje security tým přes PR.
+- Privátní klíče jsou environment secrets oddělené podle modulu a fáze. Klíče neexpirují automaticky; platformní tým je rotuje nejpozději po 90 dnech a při podezření na kompromitaci. Nejprve ověří nový klíč, potom odvolá starý.
+- Běžná workflow si installation tokeny vydávají bez člověka. Lokální bootstrap může použít OAuth token spouštějícího člověka; registrace Apps a vložení klíčů mohou být ruční.
+- Dostupnost enterprise-owned Apps, zvolených API, oprávnění a tokenové akce na GHE.com se musí ověřit před nasazením. Chyba nesmí vést k automatickému přechodu na PAT ani k rozšíření oprávnění.
+- Nepodporované operace jsou deklarované ruční kroky s popsaným omezením planu, driftu a odstranění. Ruční krok se nesmí vykázat jako automaticky ověřená kontrola.
 
 ## Regiony
 
@@ -167,16 +181,19 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 
 - Release má jednu verzi SemVer pro všechny moduly (ADR 0013).
 - Jeden opakovaně použitelný workflow vendoringu importuje release platformy, akce i skilly. Workflow stáhne zdroj podle tagu, ověří attestaci, pokud existuje, a otevře PR s diffem.
+- PR otevírá installation token s oprávněními k cílovému repozitáři. Pokud privátní zdroj release není dostupný installation tokenem enterprise-owned App, import zůstává ruční do jeho zpřístupnění; workflow nepoužije osobní PAT ani OAuth token.
 
 ## Teardown
 
 - Workflow `teardown` odstraní moduly v obráceném pořadí předpokladů, kromě `bootstrap`. Modul `bootstrap` odstraní lokální skript.
 - Workflow se spustí jen při `teardown.allowed: true` v `instance.yaml`. Výchozí hodnota je `false`.
 - Environment `teardown` vyžaduje schválení od platformního týmu i od security týmu.
-- Teardown vrátí politiky enterprise na výchozí hodnoty GitHubu a smaže enterprise rulesety, code security configurations a custom patterns. Enterprise jako ruční předpoklad zůstane.
+- Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu a smaže organizační rulesety, code security configurations a custom patterns. Enterprise a jeho ruční předpoklady zůstanou beze změny.
+- Lokální odstranění bootstrapu odstraní i Apps založené pro instanci a jejich credentials, případně vyžádá deklarovaný ruční krok. Apps nesmějí být odstraněné dřív, než skončí workflow, která je potřebují.
 
 ## Testování release
 
 - CI ve zdrojovém repozitáři spouští `terraform fmt`, `terraform validate`, tflint, Trivy, validaci JSON Schema a kontrolu cyklů v předpokladech.
 - Každý release candidate se nasadí celý na referenční instanci.
+- Akceptace ověří skutečný rozsah oprávnění každého jobu, úplné čtení bypass konfigurace, odmítnutí credentials pro neautorizované PR a zachování ručních enterprise předpokladů při teardownu.
 - Před každým minor release proběhne teardown referenční instance a její nové nasazení.
