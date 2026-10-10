@@ -78,9 +78,13 @@ Describe 'Module runner with local Terraform' {
 
         $result.HasChanges | Should -BeTrue
         $result.OutputsPath | Should -Match 'foundation.rulesets.json$'
-        $ruleset = (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).ruleset
+        $outputs = Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json
+        $ruleset = $outputs.ruleset
         $ruleset.rules | Should -Be @('pull_request', 'non_fast_forward', 'deletion')
         $ruleset.bypass_actors | Should -Be @('unexpected-owner')
+        $outputs.runner_inputs.instance_name | Should -Be 'demo'
+        $outputs.runner_inputs.prerequisite_count | Should -Be 0
+        $outputs.runner_inputs.message | Should -Be 'hello'
         [IO.File]::ReadAllText($ordinaryState) | Should -BeExactly $stateBefore
         [IO.File]::ReadAllText($rulesetState) | Should -BeExactly $rulesetStateBefore
     }

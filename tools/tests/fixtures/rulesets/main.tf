@@ -46,3 +46,11 @@ resource "terraform_data" "ruleset" {
 output "ruleset" {
   value = local.ruleset
 }
+
+output "runner_inputs" {
+  value = {
+    instance_name      = var.instance.name
+    prerequisite_count = length(var.prerequisites)
+    message            = var.message
+  }
+}
