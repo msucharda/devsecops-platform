@@ -23,8 +23,8 @@ Describe 'Instance configuration validation' {
         $instance.customPatterns = @(@{ name = 'internal-id'; secretRegex = 'ID-[0-9]{8}' })
         $instance.manualSteps = @{ application = @{ 'verify-access' = $true } }
         $instance.githubApps = @{
-            reader = @{ appId = '101'; installationId = '201'; enterprise = 'example' }
-            writer = @{ appId = '102'; installationId = '202'; enterprise = 'example' }
+            reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{}; resources = @{ organizations = @('example') } }
+            writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{}; resources = @{ organizations = @('example') } }
         }
         $instance.credentials = @{
             observer = @{
@@ -82,9 +82,10 @@ Describe 'Instance configuration validation' {
     ) {
         $instance = ConvertFrom-Yaml (Get-Content -LiteralPath $example -Raw)
         $instance.githubApps = @{
-            reader = @{ appId = '101'; installationId = '201'; enterprise = 'example' }
-            writer = @{ appId = $WriterId; installationId = '202'; enterprise = 'example' }
+            reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{}; resources = @{ organizations = @('example') } }
+            writer = @{ appId = $WriterId; installationId = '202'; enterprise = 'example'; permissions = @{}; resources = @{ organizations = @('example') } }
         }
+
         $instance.credentials = @{
             observer = @{
                 plan = @{ environment = 'observer-plan'; githubApp = $App }
@@ -95,6 +96,36 @@ Describe 'Instance configuration validation' {
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $file
 
         { & $validator -InstancePath $file -ModulesPath $fixtures } | Should -Throw $Error
+    }
+
+    It 'rejects sharing one App key across different resource scopes in the same phase' {
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath $example -Raw)
+        $instance.githubApps = @{
+            first = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{}; resources = @{ organizations = @('first-org') } }
+            second = @{ appId = '101'; installationId = '202'; enterprise = 'example'; permissions = @{}; resources = @{ organizations = @('second-org') } }
+        }
+        $instance.credentials = @{
+            observer = @{ plan = @{ environment = 'observer-plan'; githubApp = 'first' }; apply = @{ environment = 'observer-apply' } }
+            foundation = @{ plan = @{ environment = 'foundation-plan'; githubApp = 'second' }; apply = @{ environment = 'foundation-apply' } }
+        }
+        $file = Join-Path $TestDrive 'different-resources.yaml'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $file
+
+        { & $validator -InstancePath $file -ModulesPath $fixtures } | Should -Throw '*private-key identity*resources*'
+    }
+
+    It 'rejects a write-capable App key in plan even if a token could be narrowed' {
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath $example -Raw)
+        $instance.githubApps = @{
+            writer = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{ contents = 'write' }; resources = @{ organizations = @('example') } }
+        }
+        $instance.credentials = @{
+            observer = @{ plan = @{ environment = 'observer-plan'; githubApp = 'writer' }; apply = @{ environment = 'observer-apply' } }
+        }
+        $file = Join-Path $TestDrive 'write-key.yaml'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $file
+
+        { & $validator -InstancePath $file -ModulesPath $fixtures } | Should -Throw '*read-only App*write-capable key*'
     }
 
     It 'reserves each effective credential environment for one module and phase: <Case>' -ForEach @(

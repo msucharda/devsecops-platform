@@ -11,7 +11,5 @@ permissions:
       scope: /subscriptions/example
   microsoftGraph:
     - Group.Create
-  githubApp:
-    contents: read
-  adminPat:
-    - enterprise-rulesets
+  githubApp: {}
+  adminPat: []

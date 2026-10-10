@@ -1,0 +1,58 @@
+BeforeAll {
+    $reporter = Join-Path (Split-Path $PSScriptRoot -Parent) 'Write-DeploymentSummary.ps1'
+}
+
+Describe 'Deployment plan status' {
+    It 'explicitly marks denied PR plans as unperformed, not verified' {
+        $summary = Join-Path $TestDrive 'denied.md'
+        $needs = @{ authorize = @{ result = 'success'; outputs = @{ allowed = 'false' } } }
+
+        & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath $summary 6>$null
+
+        [IO.File]::ReadAllText($summary) | Should -Match 'Cloud plan NOT PERFORMED'
+        [IO.File]::ReadAllText($summary) | Should -Match 'validation is not a cloud plan'
+    }
+
+    It 'blocks apply if a selected module or ruleset exception has not completed: <Case>' -ForEach @(
+        @{ Case = 'failed prerequisite'; ModuleStatus = 'failure'; RulesetStatus = 'success' }
+        @{ Case = 'skipped ruleset exception'; ModuleStatus = 'success'; RulesetStatus = 'skipped' }
+    ) {
+        $needs = @{
+            authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
+            validate = @{ result = 'success' }
+            select = @{ result = 'success'; outputs = @{ modules = '["enterprise-baseline"]' } }
+            module_enterprise_baseline = @{ result = $ModuleStatus }
+            ruleset_plan_enterprise_baseline = @{ result = $RulesetStatus }
+        }
+        $summary = Join-Path $TestDrive 'incomplete.md'
+
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath $summary 6>$null } |
+            Should -Throw '*INCOMPLETE*Apply is blocked*'
+    }
+
+    It 'blocks apply when the workflow is stale and lacks a selected module job' {
+        $needs = @{
+            authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
+            validate = @{ result = 'success' }
+            select = @{ result = 'success'; outputs = @{ modules = '["new-module"]' } }
+        }
+
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath (Join-Path $TestDrive 'stale.md') 6>$null } |
+            Should -Throw '*INCOMPLETE*module_new_module*'
+    }
+
+    It 'reports successful complete plans without claiming to verify manual confirmations' {
+        $needs = @{
+            authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
+            validate = @{ result = 'success' }
+            select = @{ result = 'success'; outputs = @{ modules = '["observer"]' } }
+            module_observer = @{ result = 'success' }
+        }
+        $summary = Join-Path $TestDrive 'complete.md'
+
+        & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath $summary 6>$null
+
+        [IO.File]::ReadAllText($summary) | Should -Match 'Cloud plan completed'
+        [IO.File]::ReadAllText($summary) | Should -Match 'Manual confirmations are not automatically verified'
+    }
+}
