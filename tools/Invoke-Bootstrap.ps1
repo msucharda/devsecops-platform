@@ -139,6 +139,14 @@ function Initialize-BootstrapResource {
     )
 
     $current = Invoke-BootstrapRequest -Uri $Uri -AllowNotFound
+    if ($current -and $Uri -match '/storageAccounts/[^/?]+\?') {
+        # These features are enabled only by true; Shared Key and TLS have different defaults.
+        foreach ($property in @('allowBlobPublicAccess', 'isHnsEnabled', 'isNfsV3Enabled', 'isSftpEnabled', 'isLocalUserEnabled')) {
+            if (-not $current['properties'].Contains($property) -or $null -eq $current['properties'][$property]) {
+                $current['properties'][$property] = $false
+            }
+        }
+    }
     if ($current -and $Body.Contains('tags') -and -not (Test-BootstrapDesiredValue -Actual $current['tags'] -Desired $Body['tags'])) {
         throw "Existing resource '$Uri' does not have the expected bootstrap ownership tags; refusing to adopt it."
     }
@@ -218,7 +226,11 @@ if ($user['userPrincipalName'] -notin $instance['teams']['platform']) {
     throw 'The Azure bootstrap user must be a member of $.teams.platform.'
 }
 $enterpriseApplication = Invoke-BootstrapRequest -Uri "$graph/servicePrincipals/$($connection['enterpriseApplicationObjectId'])"
-if ($enterpriseApplication['preferredSingleSignOnMode'] -ne 'oidc') {
+$oidcModeVerified = $enterpriseApplication['preferredSingleSignOnMode'] -eq 'oidc'
+if ($null -eq $enterpriseApplication['preferredSingleSignOnMode']) {
+    Write-Warning 'Graph does not expose the OIDC launch mode. Using the required manual $.manualPrerequisites.enterpriseOidc confirmation; OIDC is not automatically verified.'
+}
+elseif (-not $oidcModeVerified) {
     throw '$.bootstrap.enterpriseApplicationObjectId must identify the EMU OIDC enterprise application.'
 }
 $ownerRoles = @($enterpriseApplication['appRoles'] | Where-Object {
@@ -456,6 +468,7 @@ foreach ($name in $selected) {
     SubscriptionId = $connection['managementSubscriptionId']
     ResourceGroupName = $resourceGroupName
     StorageAccountName = $storageAccountName
+    OidcModeVerified = $oidcModeVerified
     Modules = $moduleResults.ToArray()
     HasChanges = $changedResources.Count -gt 0
 }

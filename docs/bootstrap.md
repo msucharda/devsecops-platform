@@ -1,10 +1,10 @@
 # Lokální bootstrap Azure
 
-`tools/Invoke-Bootstrap.ps1` vytvoří state backend a identity vybraných modulů včetně jejich předpokladů. Spouští ho člen platformního týmu z vendorovaného release. Nástroj nevyžaduje PAT, nemění konfiguraci instance a nevytváří prostředky GitHubu.
+`tools/Invoke-Bootstrap.ps1` vytvoří state backend a identity vybraných modulů včetně jejich předpokladů. Spouští ho člen týmu Platform team (platformní tým) z vendorovaného release. Nástroj nevyžaduje PAT, nemění konfiguraci instance a nevytváří prostředky GitHubu.
 
 ## Konfigurace a přihlášení
 
-Platformní tým nahradí nulové identifikátory v `templates/instance/instance.yaml` skutečnými hodnotami:
+Platform team (platformní tým) nahradí nulové identifikátory v `templates/instance/instance.yaml` skutečnými hodnotami:
 
 | Položka `bootstrap` | Hodnota |
 |---|---|
@@ -33,7 +33,7 @@ Delegovaný token Microsoft Graph musí umožnit čtení uživatele, enterprise 
 
 ## Manual prerequisites (ruční předpoklady)
 
-Platformní tým nastaví `true` až po ověření každé položky. Chybějící nebo nepravdivé potvrzení zastaví bootstrap před přihlášením a před první změnou.
+Platform team (platformní tým) nastaví `true` až po ověření každé položky. Chybějící nebo nepravdivé potvrzení zastaví bootstrap před přihlášením a před první změnou.
 
 | Potvrzení | Co musí člověk ověřit |
 |---|---|
@@ -51,7 +51,7 @@ Platformní tým nastaví `true` až po ověření každé položky. Chybějíc�
 
 O omezení classic PAT zatím není rozhodnuto. Bootstrap žádnou takovou politiku nezavádí.
 
-Bootstrap navíc přes API ověří tenant tokenů, členství uživatele v konfiguraci platformního týmu, OIDC režim aplikace, přímé přiřazení Enterprise Owner, aktivní SCIM job bez quarantine, aktivní licenci Entra ID P1/P2, tenant a stav všech subscriptions a roli ownera pro účet OAuth v GitHubu. Enterprise politiky, správnost cíle a mapování SCIM a ostatní licence ověří člověk. Potvrzení není automatická detekce driftu.
+Bootstrap navíc přes API ověří tenant tokenů, členství uživatele v `teams.platform`, přímé přiřazení Enterprise Owner, aktivní SCIM job bez quarantine, aktivní licenci Entra ID P1/P2, tenant a stav všech subscriptions a roli ownera pro účet OAuth v GitHubu. Pokud Graph vrátí OIDC launch mode, bootstrap odmítne jiný režim než `oidc`. Graph může u platné OIDC aplikace vrátit `null`; v tom případě bootstrap výslovně varuje a používá povinné ruční potvrzení `enterpriseOidc`. Výsledek `OidcModeVerified: false` přizná, že API režim neověřilo. Enterprise politiky, správnost cíle a mapování SCIM a ostatní licence ověří člověk. Potvrzení není automatická detekce Drift (driftu).
 
 ## Spuštění a výstup
 
@@ -64,7 +64,7 @@ $bootstrap | ConvertTo-Json -Depth 10
 
 Při práci ve zdrojovém repozitáři použij `.\tools\Invoke-Bootstrap.ps1`. Parametr `-ModulesPath` může určit jiný adresář manifestů.
 
-Výsledek obsahuje `TenantId`, `SubscriptionId`, `ResourceGroupName`, `StorageAccountName`, `Modules` a `HasChanges`. Každý modul má `Name`, `ContainerName` a záznamy `Plan` a `Apply` s `ResourceId`, `PrincipalId` a `ClientId`. Výstup neobsahuje tokeny. Navazující bootstrap GitHubu z #11 použije tyto identity pro federated credentials environmentů.
+Výsledek obsahuje `TenantId`, `SubscriptionId`, `ResourceGroupName`, `StorageAccountName`, `OidcModeVerified`, `Modules` a `HasChanges`. Každý modul má `Name`, `ContainerName` a záznamy `Plan` a `Apply` s `ResourceId`, `PrincipalId` a `ClientId`. Výstup neobsahuje tokeny. Navazující bootstrap GitHubu z #11 použije tyto identity pro federated credentials environmentů.
 
 Runner modulu používá stejný název kontejneru a key `terraform.tfstate`. Název backendu mu můžeš předat přímo:
 
@@ -77,7 +77,7 @@ Přihlášení runneru přes OIDC a chráněné environmenty dodá #11. Lokáln�
 
 ## Prostředky a oprávnění
 
-Bootstrap používá primární region a zkratky CAF: resource group `rg-<name>-bootstrap`, storage account `st<name>tfstate` a identity `id-<name>-<module>-plan` a `id-<name>-<module>-apply`. Názvy zůstávají stabilní; tyto prostředky nevyžadují identifikátor nasazení podle ADR 0008. Kolize globálního názvu storage account způsobí chybu, ne náhodné přejmenování.
+Bootstrap používá Primary region (primární region) a zkratky CAF: resource group `rg-<name>-bootstrap`, storage account `st<name>tfstate` a identity `id-<name>-<module>-plan` a `id-<name>-<module>-apply`. Názvy zůstávají stabilní; tyto prostředky nevyžadují Deployment identifier (identifikátor nasazení) podle ADR 0008. Kolize globálního názvu storage account způsobí chybu, ne náhodné přejmenování.
 
 Storage account typu `StorageV2`, SKU `Standard_LRS` má HTTPS, TLS 1.2, encryption, vypnutý shared key a public blob access. Nepovoluje HNS, NFS, SFTP ani local users. Autentizace používá Entra ID. Blob service má versioning a soft delete blobů i kontejnerů po 30 dní. Lock `CanNotDelete` chrání účet, ne jednotlivé změny state; změny a lease musí Terraform provádět.
 
@@ -89,7 +89,7 @@ Bootstrap před první změnou vyhodnotí oprávnění všech vybraných modulů
 
 ## Opakování, chyby a odstranění
 
-Bootstrap porovnává požadovaný stav se skutečnými prostředky. Druhý běh při nezměněné konfiguraci neprovádí žádný cloudový zápis a vrátí `HasChanges: false`. Role assignments mají deterministické identifikátory; existující stejné přiřazení s jiným ID se neduplikuje. Identitám s dodatečnými Azure nebo application permissions bootstrap odmítne pokračovat; nadbytečné oprávnění neodstraňuje bez schválené změny přístupu. Kontrola Azure zahrnuje všechny subscriptions uvedené v konfiguraci a zděděná přiřazení vrácená API; oprávnění mimo tento rozsah musí ověřit administrátor.
+Bootstrap porovnává požadovaný stav se skutečnými prostředky. Druhý běh při nezměněné konfiguraci neprovádí žádný cloudový zápis a vrátí `HasChanges: false`. Pokud Storage API vynechá vypnuté volitelné vlastnosti public blob access, HNS, NFS, SFTP a local users, porovnání je vyhodnotí jako `false`. Pro shared key, HTTPS ani TLS tuto normalizaci nepoužívá. Role assignments mají deterministické identifikátory; existující stejné přiřazení s jiným ID se neduplikuje. Identitám s dodatečnými Azure nebo application permissions bootstrap odmítne pokračovat; nadbytečné oprávnění neodstraňuje bez schválené změny přístupu. Kontrola Azure zahrnuje všechny subscriptions uvedené v konfiguraci a zděděná přiřazení vrácená API; oprávnění mimo tento rozsah musí ověřit administrátor.
 
 Bootstrap odmítne převzít prostředek se shodným názvem bez odpovídajících ownership tags. Čeká na dokončení storage account a omezeně opakuje požadavky při replikaci managed identity, HTTP 429 a 503. Ostatní chyby vrací s operací, URI a HTTP stavem. Po přerušeném běhu oprav příčinu a spusť stejný příkaz; existující identity i dokončené prostředky zůstanou zachované. Bootstrap nemá automatický rollback.
 
@@ -99,7 +99,7 @@ Nástroj neimplementuje odstranění. Workflow teardown a lokální odstranění
 
 Offline testy Pester ověřují veřejný skript proti náhradám cloudových API. Neprokazují přístup ani dostupnost API na skutečné instanci.
 
-Platformní tým musí před uzavřením #10 spustit bootstrap na určené referenční instanci, zkontrolovat ochrany backendu, dvě identity každého vybraného modulu a jejich scope. Musí ověřit, že identita přečte a zamkne vlastní state a dostane HTTP 403 pro state jiného modulu. Druhý běh musí vrátit `HasChanges: false`. Přerušený běh musí další spuštění dokončit bez výměny identit. Výsledek včetně data a necitlivých identifikátorů patří do #10. Ověření není součástí dosud provedených offline testů.
+Platform team (platformní tým) musí před uzavřením #10 spustit bootstrap na určené Reference instance (referenční instanci), zkontrolovat ochrany backendu, dvě identity každého vybraného modulu a jejich scope. Musí ověřit, že identita přečte a zamkne vlastní state a dostane HTTP 403 pro state jiného modulu. Druhý běh musí vrátit `HasChanges: false`. Přerušený běh musí další spuštění dokončit bez výměny identit. Výsledek včetně data a necitlivých identifikátorů patří do #10. Ověření není součástí dosud provedených offline testů.
 
 ## Zdroje
 

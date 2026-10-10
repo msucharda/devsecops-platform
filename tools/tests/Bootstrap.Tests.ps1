@@ -42,12 +42,13 @@ Describe 'Local Azure bootstrap' {
             graphAssignments = @{}
             registrationDelay = 0
             failurePattern = ''
-            oidc = $true
+            oidc = 'oidc'
             scimActive = $true
             licensed = $true
             subscriptionTenant = '11111111-1111-1111-1111-111111111111'
             subscriptionState = 'Enabled'
             githubOwner = $true
+            omitDisabledStorageFeatures = $false
         }
         Mock Start-Sleep {}
         Mock gh { $global:LASTEXITCODE = 0; 'gho_test' }
@@ -64,7 +65,7 @@ Describe 'Local Azure bootstrap' {
             }
             if ($Uri -like '*/servicePrincipals/33333333-3333-3333-3333-333333333333') {
                 return Get-TestResponse -Data @{
-                    preferredSingleSignOnMode = if ($cloud.oidc) { 'oidc' } else { 'saml' }
+                    preferredSingleSignOnMode = $cloud.oidc
                     appRoles = @(@{ id = 'owner-role'; displayName = 'Enterprise Owner'; isEnabled = $true; allowedMemberTypes = @('User') })
                 }
             }
@@ -165,7 +166,13 @@ Describe 'Local Azure bootstrap' {
                 $key = $Uri.AbsoluteUri.Split('?')[0]
                 if ($Method -eq 'GET') {
                     if ($cloud.resources.ContainsKey($key)) {
-                        return Get-TestResponse -Data $cloud.resources[$key]
+                        $data = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $cloud.resources[$key] -Depth 100) -AsHashtable
+                        if ($cloud.omitDisabledStorageFeatures -and $key -match '/storageAccounts/[^/]+$') {
+                            foreach ($property in @('allowBlobPublicAccess', 'isHnsEnabled', 'isNfsV3Enabled', 'isSftpEnabled', 'isLocalUserEnabled')) {
+                                if ($data.properties[$property] -eq $false) { $data.properties.Remove($property) }
+                            }
+                        }
+                        return Get-TestResponse -Data $data
                     }
                     return Get-TestResponse -StatusCode 404
                 }
@@ -383,7 +390,7 @@ Describe 'Local Azure bootstrap' {
     }
 
     It 'blocks missing live prerequisite <Case> before the first change' -ForEach @(
-        @{ Case = 'OIDC'; Field = 'oidc'; Value = $false; Error = '*OIDC enterprise application*' }
+        @{ Case = 'OIDC'; Field = 'oidc'; Value = 'saml'; Error = '*OIDC enterprise application*' }
         @{ Case = 'SCIM'; Field = 'scimActive'; Value = $false; Error = '*active SCIM*' }
         @{ Case = 'Entra P1'; Field = 'licensed'; Value = $false; Error = '*Entra ID P1*' }
         @{ Case = 'subscription tenant'; Field = 'subscriptionTenant'; Value = 'another-tenant'; Error = '*Subscription*tenantId*' }
@@ -456,5 +463,45 @@ Describe 'Local Azure bootstrap' {
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
 
         { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } | Should -Throw '*$.bootstrap.tenantId*'
+    }
+
+    It 'uses the required manual OIDC confirmation explicitly when Graph returns a null launch mode' {
+        $cloud.oidc = $null
+        $warnings = @()
+
+        $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath -WarningVariable warnings 3>$null
+
+        $result.Modules.Count | Should -Be 2
+        $result.OidcModeVerified | Should -BeFalse
+        ($warnings -join ' ') | Should -BeLike '*manual*enterpriseOidc*not automatically verified*'
+    }
+
+    It 'does not rewrite storage when the API omits disabled feature flags' {
+        $cloud.omitDisabledStorageFeatures = $true
+        $first = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $writesBefore = $cloud.writes.Count
+
+        $second = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+        $second.HasChanges | Should -BeFalse
+        $cloud.writes.Count | Should -Be $writesBefore
+        $second.StorageAccountName | Should -Be $first.StorageAccountName
+    }
+
+    It 'does not normalize an explicitly enabled unsafe storage property <Property> to false' -ForEach @(
+        @{ Property = 'isSftpEnabled' }
+        @{ Property = 'isLocalUserEnabled' }
+        @{ Property = 'allowSharedKeyAccess' }
+    ) {
+        $cloud.omitDisabledStorageFeatures = $true
+        $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $account = @($cloud.resources.Values | Where-Object { $_.id -match '/storageAccounts/[^/]+$' })[0]
+        $account.properties[$Property] = $true
+
+        $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+        $result.HasChanges | Should -BeTrue
+        $current = @($cloud.resources.Values | Where-Object { $_.id -match '/storageAccounts/[^/]+$' })[0]
+        $current.properties[$Property] | Should -BeFalse
     }
 }
