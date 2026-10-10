@@ -164,7 +164,7 @@ modules:
     parameters: {}
 ```
 
-`Select-InstanceModules.ps1` validuje celou konfiguraci a vrátí seřazené JSON pole názvů vybraných Module včetně všech jejich Prerequisite. Prázdná mapa vrátí `[]`. Neznámý název nebo jiný typ konfigurace způsobí chybu s cestou `$.modules`. Volitelný `-GitHubOutputPath` připojí výstup `modules` a mapu plan environmentů `environments`.
+`Select-InstanceModules.ps1` validuje celou konfiguraci a vrátí seřazené JSON pole názvů vybraných Module včetně všech jejich Prerequisite. Prázdná mapa vrátí `[]`. Neznámý název nebo jiný typ konfigurace způsobí chybu s cestou `$.modules`. Volitelný `-GitHubOutputPath` připojí `modules`, mapy `environments`, `applyEnvironments`, `rulesetEnvironments` a seznam deklarovaných `rulesetModules`. Reportování tím rozpozná i chybějící ruleset job zastaralého workflow.
 
 ```powershell
 .\tools\Select-InstanceModules.ps1 -ModulesPath .\tools\tests\fixtures\modules -InstancePath .\instance.yaml
@@ -174,7 +174,7 @@ Workflow reaguje na `pull_request_target` proti `main`, push do `main` a ruční
 
 Job `validate` bez environmentu, OIDC a cloudových secrets ověří `instance.yaml` schématem vendorovaného release. Autorizovaný job `select` používá trusted nástroje a před zveřejněním environmentů porovná App metadata i credential vazby PR s base konfigurací. Jejich změna vyžaduje review a merge; cloudový plan pak poběží z chráněné `main`.
 
-Každý Module má plan job `module_<name>` a apply job `apply_<name>` s přímými Prerequisite stejné fáze. Deklarovaná výjimka přidá `ruleset_plan_<name>` ve vlastním environmentu; čeká i na běžný plan modulu. Podmínky všech těchto jobů vyžadují autorizaci, úspěšný výběr a úspěšné předpoklady. Nevybraný job se přeskočí. Selhání předpokladu blokuje jen jeho závislé joby.
+Každý Module má plan job `module_<name>` a apply job `apply_<name>` s přímými Prerequisite stejné fáze. Deklarovaná výjimka přidá `ruleset_plan_<name>` ve vlastním environmentu; čeká i na běžný plan modulu. Závislý plan čeká na běžný i deklarovaný ruleset plan předpokladu, než dostane credentials a stáhne jeho výstupy. Podmínky všech těchto jobů vyžadují autorizaci, úspěšný výběr a úspěšné předpoklady. Nevybraný job se přeskočí. Selhání předpokladu blokuje jen jeho závislé joby.
 
 Job se přihlásí do Azure přes OIDC identity svého environmentu. Trusted token issuer ověří enterprise vlastníka App, její skutečná oprávnění a úplný rozsah všech instalací, nikoli jen užší požadovaný token. Odlišná skutečná oprávnění či prostředky zastaví job. Tokeny předá přes environment `PLATFORM_GITHUB_TOKENS` a `TF_VAR_github_tokens`; pro jednu organizaci také jako `GITHUB_TOKEN` a `GH_TOKEN`. Terraform root s více organizacemi musí přijmout mapu `github_tokens`. Job tokeny maskuje a v závěru je odvolá; nikdy je nenahraje jako artifact.
 

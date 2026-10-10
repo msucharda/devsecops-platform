@@ -4,6 +4,8 @@ Bootstrap zkopíruje tuto šablonu do organizace platformy a umístí schválen�
 
 Bootstrap musí nahradit `@example-platform/platform` v `.github/CODEOWNERS` skutečným platformním týmem s write přístupem. Chráněná `main` musí vyžadovat jeho review; změna workflow, vendorovaného release, App oprávnění i konfigurace musí projít PR. CODEOWNERS sám pravidla ochrany nevynucuje.
 
+Změnu App oprávnění musí navíc schválit security tým podle ADR 0016. Bootstrap musí zajistit toto pravidlo review samostatně; jediný platformní vlastník v CODEOWNERS ani další security schválení apply jobu nejsou náhradou za review změny App oprávnění.
+
 ## Environmenty a identity
 
 | Environment | Schválení a přihlašovací údaje |

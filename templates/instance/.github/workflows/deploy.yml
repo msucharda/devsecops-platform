@@ -81,6 +81,7 @@ jobs:
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
+      rulesetModules: ${{ steps.modules.outputs.rulesetModules }}
     steps:
       - name: Check out trusted authorization tools
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

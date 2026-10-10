@@ -109,7 +109,7 @@ Organizace, ve které platformní tým spravuje instanci. Týmy workloadů do n�
 _Avoid_: admin organizace
 
 **Actions organization** (organizace akcí):
-Organizace s vendorovanými akcemi. Workflow v instanci smí používat jen akce z této organizace.
+Organizace se schválenými vendorovanými akcemi pro workflow instance.
 _Avoid_: mirror akcí
 
 **Workload organization** (organizace workloadů):

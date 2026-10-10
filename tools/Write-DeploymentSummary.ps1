@@ -23,10 +23,17 @@ elseif ($needs['validate']['result'] -cne 'success' -or $needs['select']['result
 else {
     $selected = @(ConvertFrom-Json -InputObject $needs['select']['outputs']['modules'])
     $failed = [Collections.Generic.List[string]]::new()
+    $rulesetModules = @()
+    if (-not $needs['select']['outputs'].Contains('rulesetModules')) {
+        $failed.Add('missing declared ruleset selection; regenerate the deployment workflow')
+    }
+    else {
+        $rulesetModules = @(ConvertFrom-Json -InputObject $needs['select']['outputs']['rulesetModules'])
+    }
     foreach ($module in $selected) {
         $suffix = $module.Replace('-', '_')
         foreach ($job in @("module_$suffix", "ruleset_plan_$suffix")) {
-            if ($job.StartsWith('ruleset_plan_') -and -not $needs.Contains($job)) { continue }
+            if ($job.StartsWith('ruleset_plan_') -and $module -cnotin $rulesetModules) { continue }
             if (-not $needs.Contains($job) -or $needs[$job]['result'] -cne 'success') { $failed.Add($job) }
         }
     }

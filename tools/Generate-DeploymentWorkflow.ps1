@@ -59,11 +59,21 @@ function Add-DeploymentJob {
     $needs = @('authorize', 'select')
     if ($Phase -eq 'apply') { $needs += 'approve_apply' }
     $needs += @($Manifest['prerequisites'] | ForEach-Object { $prerequisitePrefix + $_.Replace('-', '_') })
+    $prerequisiteRulesetJobs = @()
+    if ($Phase -ne 'apply') {
+        $prerequisiteRulesetJobs = @($Manifest['prerequisites'] |
+            Where-Object { $modules[$_]['permissions']['githubApp'].Contains('rulesetPlan') } |
+            ForEach-Object { 'ruleset_plan_' + $_.Replace('-', '_') })
+        $needs += $prerequisiteRulesetJobs
+    }
     if ($Phase -eq 'rulesetPlan') { $needs += "module_$suffix" }
     $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), '$name')"
     if ($Phase -eq 'apply') { $condition += " && needs.approve_apply.result == 'success'" }
     foreach ($prerequisite in $Manifest['prerequisites']) {
         $condition += " && needs.$prerequisitePrefix$($prerequisite.Replace('-', '_')).result == 'success'"
+    }
+    foreach ($job in $prerequisiteRulesetJobs) {
+        $condition += " && needs.$job.result == 'success'"
     }
     if ($Phase -eq 'rulesetPlan') { $condition += " && needs.module_$suffix.result == 'success'" }
     $environmentOutput = if ($Phase -eq 'apply') { 'applyEnvironments' } elseif ($Phase -eq 'rulesetPlan') { 'rulesetEnvironments' } else { 'environments' }
@@ -241,6 +251,7 @@ Add-WorkflowBlock @'
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
+      rulesetModules: ${{ steps.modules.outputs.rulesetModules }}
     steps:
 '@
 Add-WorkflowCheckout

@@ -152,6 +152,20 @@ Describe 'Deployment workflow generation' {
         ($workflow.jobs.apply_enterprise_baseline.steps | Where-Object { $_['name'] -like 'Apply the complete*' }).run | Should -Match '-Action apply.*-Rulesets$'
     }
 
+    It 'waits for both roots of a prerequisite before releasing dependent plan credentials' {
+        $modules = New-ModuleGraphFixture -ModuleName observer -Change {
+            param($manifest)
+            $manifest.prerequisites = @('enterprise-baseline')
+        }
+        $output = Join-Path $TestDrive 'ruleset-prerequisite.yml'
+        & $generator -ModulesPath $modules -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+
+        $workflow.jobs.module_observer.needs | Should -Contain 'module_enterprise_baseline'
+        $workflow.jobs.module_observer.needs | Should -Contain 'ruleset_plan_enterprise_baseline'
+        $workflow.jobs.module_observer.if | Should -Match "needs.ruleset_plan_enterprise_baseline.result == 'success'"
+    }
+
     It 'pins all upstream actions and uses secretless Azure OIDC only in credential jobs' {
         $output = Join-Path $TestDrive 'oidc.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output

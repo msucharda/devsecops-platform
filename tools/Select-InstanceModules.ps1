@@ -37,8 +37,9 @@ if ($GitHubOutputPath) {
     $environmentJson = ConvertTo-Json -InputObject $environments -Compress
     $applyJson = ConvertTo-Json -InputObject $applyEnvironments -Compress
     $rulesetJson = ConvertTo-Json -InputObject $rulesetEnvironments -Compress
+    $rulesetModules = ConvertTo-Json -InputObject @($names | Where-Object { $modules[$_]['permissions']['githubApp'].Contains('rulesetPlan') }) -Compress
     [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($GitHubOutputPath),
-        "modules=$json`nenvironments=$environmentJson`napplyEnvironments=$applyJson`nrulesetEnvironments=$rulesetJson`n",
+        "modules=$json`nenvironments=$environmentJson`napplyEnvironments=$applyJson`nrulesetEnvironments=$rulesetJson`nrulesetModules=$rulesetModules`n",
         [System.Text.UTF8Encoding]::new($false))
 }
 $json

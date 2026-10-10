@@ -20,7 +20,7 @@ Describe 'Deployment plan status' {
         $needs = @{
             authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
             validate = @{ result = 'success' }
-            select = @{ result = 'success'; outputs = @{ modules = '["enterprise-baseline"]' } }
+            select = @{ result = 'success'; outputs = @{ modules = '["enterprise-baseline"]'; rulesetModules = '["enterprise-baseline"]' } }
             module_enterprise_baseline = @{ result = $ModuleStatus }
             ruleset_plan_enterprise_baseline = @{ result = $RulesetStatus }
         }
@@ -30,22 +30,46 @@ Describe 'Deployment plan status' {
             Should -Throw '*INCOMPLETE*Apply is blocked*'
     }
 
+    It 'blocks stale workflows that omit a declared ruleset plan job' {
+        $needs = @{
+            authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
+            validate = @{ result = 'success' }
+            select = @{ result = 'success'; outputs = @{ modules = '["enterprise-baseline"]'; rulesetModules = '["enterprise-baseline"]' } }
+            module_enterprise_baseline = @{ result = 'success' }
+        }
+
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath (Join-Path $TestDrive 'missing-ruleset.md') 6>$null } |
+            Should -Throw '*INCOMPLETE*ruleset_plan_enterprise_baseline*'
+    }
+
     It 'blocks apply when the workflow is stale and lacks a selected module job' {
         $needs = @{
             authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
             validate = @{ result = 'success' }
-            select = @{ result = 'success'; outputs = @{ modules = '["new-module"]' } }
+            select = @{ result = 'success'; outputs = @{ modules = '["new-module"]'; rulesetModules = '[]' } }
         }
 
         { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath (Join-Path $TestDrive 'stale.md') 6>$null } |
             Should -Throw '*INCOMPLETE*module_new_module*'
     }
 
-    It 'reports successful complete plans without claiming to verify manual confirmations' {
+    It 'blocks workflows that cannot report their declared ruleset selection' {
         $needs = @{
             authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
             validate = @{ result = 'success' }
             select = @{ result = 'success'; outputs = @{ modules = '["observer"]' } }
+            module_observer = @{ result = 'success' }
+        }
+
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath (Join-Path $TestDrive 'missing-selection.md') 6>$null } |
+            Should -Throw '*INCOMPLETE*missing declared ruleset selection*regenerate*'
+    }
+
+    It 'reports successful complete plans without claiming to verify manual confirmations' {
+        $needs = @{
+            authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
+            validate = @{ result = 'success' }
+            select = @{ result = 'success'; outputs = @{ modules = '["observer"]'; rulesetModules = '[]' } }
             module_observer = @{ result = 'success' }
         }
         $summary = Join-Path $TestDrive 'complete.md'

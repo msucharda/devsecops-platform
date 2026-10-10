@@ -36,6 +36,7 @@ Describe 'Phase-specific App credential contracts' {
         $selection | Should -Be '["application","enterprise-baseline","foundation","service"]'
         [IO.File]::ReadAllText($output) | Should -Match 'applyEnvironments=.*"enterprise-baseline":"enterprise-baseline-apply"'
         [IO.File]::ReadAllText($output) | Should -Match 'rulesetEnvironments=\{"enterprise-baseline":"enterprise-baseline-ruleset-plan"\}'
+        [IO.File]::ReadAllText($output) | Should -Match 'rulesetModules=\["enterprise-baseline"\]'
     }
 
     It 'rejects mismatched target organizations rather than accepting a wider App identity' {
