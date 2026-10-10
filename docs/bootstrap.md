@@ -29,6 +29,8 @@ Uživatel Azure musí patřit do `teams.platform`. Administrátor Entra ID mu mu
 
 Uživatel Azure potřebuje oprávnění vytvářet resource group, storage account, blob service, containers, lock a user-assigned managed identity v management subscription. Potřebuje také `Microsoft.Authorization/roleAssignments/read` a `write` na všech deklarovaných scope a čtení role definitions. Bootstrap nesmí sám rozšířit oprávnění spouštějícího uživatele.
 
+Audit identit navíc vyžaduje čtení hierarchie management groups přes `Microsoft.Management/getEntities/action` a čtení role assignments na všech předcích deklarovaných subscriptions, včetně tenant root group. Chybějící oprávnění nebo neúplný řetězec předků zastaví bootstrap před první změnou.
+
 Delegovaný token Microsoft Graph musí umožnit čtení uživatele, enterprise aplikace a jejích app role assignments, synchronization jobs, subscribed SKUs, Graph application permissions a oprávnění managed identities. Přidělení application permissions vyžaduje administrátorský souhlas a oprávnění pro app role assignment; pro Microsoft Graph ho typicky provádí Privileged Role Administrator nebo Global Administrator. Tato pravomoc patří člověku pro bootstrap, **nikoli** identitě `emu-identity`. Pokud token Azure CLI nebo role uživatele nestačí, API vrátí konkrétní chybu; bootstrap nevytváří další credential ani nepřechází na PAT.
 
 ## Manual prerequisites (ruční předpoklady)
@@ -91,7 +93,11 @@ Bootstrap odmítne také read-only roli, jejíž `dataActions` umožňují čten
 
 ## Opakování, chyby a odstranění
 
-Bootstrap porovnává požadovaný stav se skutečnými prostředky. Druhý běh při nezměněné konfiguraci neprovádí žádný cloudový zápis a vrátí `HasChanges: false`. Pokud Storage API vynechá vypnuté volitelné vlastnosti public blob access, HNS, NFS, SFTP a local users, porovnání je vyhodnotí jako `false`. Pro shared key, HTTPS ani TLS tuto normalizaci nepoužívá. Role assignments mají deterministické identifikátory; existující stejné přiřazení s jiným ID se neduplikuje. Identitám s dodatečnými Azure nebo application permissions bootstrap odmítne pokračovat; nadbytečné oprávnění neodstraňuje bez schválené změny přístupu. Kontrola Azure zahrnuje všechny subscriptions uvedené v konfiguraci a zděděná přiřazení vrácená API; oprávnění mimo tento rozsah musí ověřit administrátor.
+Bootstrap porovnává požadovaný stav se skutečnými prostředky. Druhý běh při nezměněné konfiguraci neprovádí žádný cloudový zápis a vrátí `HasChanges: false`. Pokud Storage API vynechá vypnuté volitelné vlastnosti public blob access, HNS, NFS, SFTP a local users, porovnání je vyhodnotí jako `false`. Pro shared key, HTTPS ani TLS tuto normalizaci nepoužívá. Role assignments mají deterministické identifikátory; existující stejné přiřazení s jiným ID se neduplikuje.
+
+Požadované Azure role musí platit bez ABAC podmínky. Bootstrap odmítne existující přiřazení s neprázdnou `condition`, i když má požadovaný scope a roli. Podmínka by mohla zablokovat čtení nebo lease `terraform.tfstate`; bootstrap ji sám neodstraňuje ani neobchází dalším grantem.
+
+Před první změnou bootstrap zkontroluje všechny existující identity vybraných modulů. Odmítne dodatečné Azure nebo application permissions; nadbytečné oprávnění neodstraňuje bez schválené změny přístupu. Kontrola Azure zahrnuje všechny deklarované subscriptions, všechny jejich předky v management groups včetně tenant root group a scope management groups z manifestů. Subscription API nevrací přiřazení z management groups, proto bootstrap dotazuje tyto scope samostatně. Stejnou kontrolu provede i po vytvoření nové identity. Oprávnění mimo tento rozsah musí ověřit administrátor.
 
 Bootstrap odmítne převzít prostředek se shodným názvem bez odpovídajících ownership tags. Čeká na dokončení storage account a omezeně opakuje požadavky při replikaci managed identity, HTTP 429 a 503. Ostatní chyby vrací s operací, URI a HTTP stavem. Po přerušeném běhu oprav příčinu a spusť stejný příkaz; existující identity i dokončené prostředky zůstanou zachované. Bootstrap nemá automatický rollback.
 
@@ -110,3 +116,4 @@ Platform team (platformní tým) musí před uzavřením #10 spustit bootstrap n
 - [ADR 0005](adr/0005-own-bootstrap-instead-of-alz-accelerator.md), [ADR 0008](adr/0008-deployment-identifier-in-retained-names.md), [ADR 0015](adr/0015-least-privilege-identity-per-module.md) a [ADR 0016](adr/0016-github-app-installation-tokens-for-instance-workflows.md).
 - [EMU OIDC provisioning](https://learn.microsoft.com/en-us/entra/identity/saas-apps/github-enterprise-managed-user-oidc-provisioning-tutorial) a [synchronization API](https://learn.microsoft.com/en-us/graph/api/resources/synchronization-overview).
 - [Storage account REST API](https://learn.microsoft.com/en-us/rest/api/storagerp/storage-accounts/create?view=rest-storagerp-2023-05-01) a [role assignments](https://learn.microsoft.com/en-us/rest/api/authorization/role-assignments/list-for-subscription?view=rest-authorization-2022-04-01).
+- [Management groups: Entities List](https://learn.microsoft.com/en-us/rest/api/managementgroups/entities/list?view=rest-managementgroups-2020-05-01).

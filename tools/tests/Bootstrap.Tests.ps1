@@ -51,6 +51,13 @@ Describe 'Local Azure bootstrap' {
             omitDisabledStorageFeatures = $false
             roleDefinitions = @{}
             transientResponses = [System.Collections.Generic.Queue[object]]::new()
+            managementGroupAncestors = @{
+                '22222222-2222-2222-2222-222222222222' = @('11111111-1111-1111-1111-111111111111', 'platform')
+            }
+            ancestryStatusCode = 200
+            paginateAncestors = $false
+            hideRoleAssignments = $false
+            roleAssignmentFailureScope = ''
         }
         Mock Start-Sleep {}
         Mock gh { $global:LASTEXITCODE = 0; 'gho_test' }
@@ -110,6 +117,35 @@ Describe 'Local Azure bootstrap' {
             if ($Uri -match '^https://management.azure.com/subscriptions/[^/?]+\?') {
                 return Get-TestResponse -Data @{ tenantId = $cloud.subscriptionTenant; state = $cloud.subscriptionState }
             }
+            if ($Uri.AbsolutePath -eq '/providers/Microsoft.Management/getEntities') {
+                if ($Method -ne 'POST') { throw 'Management-group entity discovery requires POST, including continuation pages.' }
+                if ($cloud.ancestryStatusCode -ne 200) {
+                    return Get-TestResponse -StatusCode $cloud.ancestryStatusCode -Data @{
+                        error = @{ code = 'AuthorizationFailed'; message = 'Cannot read subscription ancestors.' }
+                    }
+                }
+                $query = [uri]::UnescapeDataString($Uri.Query)
+                if ($query -notmatch "name eq '([^']+)'") { throw "Invalid entity filter: $Uri" }
+                $subscriptionId = $Matches[1]
+                if ($cloud.paginateAncestors -and $query -notlike '*$skiptoken=next*') {
+                    return Get-TestResponse -Data @{
+                        value = @()
+                        nextLink = "$($Uri.AbsoluteUri)&`$skiptoken=next"
+                    }
+                }
+                $ancestors = @('11111111-1111-1111-1111-111111111111')
+                if ($cloud.managementGroupAncestors.ContainsKey($subscriptionId)) {
+                    $ancestors = $cloud.managementGroupAncestors[$subscriptionId]
+                }
+                return Get-TestResponse -Data @{
+                    value = @(@{
+                        id = "/subscriptions/$subscriptionId"
+                        name = $subscriptionId
+                        type = '/subscriptions'
+                        properties = @{ tenantId = $cloud.subscriptionTenant; parentNameChain = $ancestors }
+                    })
+                }
+            }
             if ($Uri.Host -eq 'graph.microsoft.com' -and $Uri.AbsolutePath -eq '/v1.0/servicePrincipals') {
                 return Get-TestResponse -Data @{
                     value = @(@{ id = 'graph-sp'; appRoles = @(
@@ -159,14 +195,20 @@ Describe 'Local Azure bootstrap' {
                 }
             }
             if ($Uri.AbsolutePath -like '*/roleAssignments') {
+                if ($cloud.hideRoleAssignments) { return Get-TestResponse -Data @{ value = @() } }
                 $scope = $Uri.AbsoluteUri.Split('/providers/Microsoft.Authorization/roleAssignments')[0]
                 $query = [uri]::UnescapeDataString($Uri.Query)
                 $principal = if ($query -match "principalId eq '([^']+)'") { $Matches[1] } else { '' }
                 $scopePath = ([uri] $scope).AbsolutePath
+                if ($scopePath -eq $cloud.roleAssignmentFailureScope) {
+                    return Get-TestResponse -StatusCode 403 -Data @{
+                        error = @{ code = 'AuthorizationFailed'; message = 'Cannot audit management-group role assignments.' }
+                    }
+                }
                 return Get-TestResponse -Data @{
                     value = @($cloud.resources.Values | Where-Object {
                         $_.Contains('properties') -and $_.properties.Contains('scope') -and $_.properties.Contains('principalId') -and $_.properties.principalId -eq $principal -and
-                        ($_.properties.scope -eq $scopePath -or $_.properties.scope.StartsWith("$scopePath/") -or $scopePath.StartsWith("$($_.properties.scope)/"))
+                        ($_.properties.scope -eq $scopePath -or $_.properties.scope.StartsWith("$scopePath/"))
                     })
                 }
             }
@@ -312,6 +354,87 @@ Describe 'Local Azure bootstrap' {
         [IO.File]::ReadAllText($instancePath) | Should -BeExactly $configurationBefore
     }
 
+    It 'rejects a conditional <Phase> state grant before changing existing bootstrap resources' -ForEach @(
+        @{ Phase = 'Plan' }
+        @{ Phase = 'Apply' }
+    ) {
+        $first = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $application = @($first.Modules | Where-Object Name -EQ application)[0]
+        $assignment = @($cloud.resources.Values | Where-Object {
+            $_.Contains('properties') -and $_.properties.Contains('roleDefinitionId') -and
+            $_.properties.principalId -eq $application.$Phase.PrincipalId
+        })[0]
+        $assignment.properties.condition = "(@Resource[Microsoft.Storage/storageAccounts/blobServices/containers/blobs:path] StringEquals 'denied.tfstate')"
+        $assignment.properties.conditionVersion = '2.0'
+        $account = @($cloud.resources.Values | Where-Object { $_.id -match '/storageAccounts/[^/]+$' })[0]
+        $account.properties.allowSharedKeyAccess = $true
+        $writesBefore = $cloud.writes.Count
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*conditional Azure role assignment*'
+        $cloud.writes.Count | Should -Be $writesBefore
+    }
+
+    It 'reuses an unconditional equivalent state grant with a different ID and <Case> condition' -ForEach @(
+        @{ Case = 'null'; Condition = $null }
+        @{ Case = 'empty'; Condition = '' }
+    ) {
+        $first = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $application = @($first.Modules | Where-Object Name -EQ application)[0]
+        $assignment = @($cloud.resources.Values | Where-Object {
+            $_.Contains('properties') -and $_.properties.Contains('roleDefinitionId') -and
+            $_.properties.principalId -eq $application.Plan.PrincipalId
+        })[0]
+        $oldId = $assignment.id
+        $assignment.id = "$($assignment.properties.scope)/providers/Microsoft.Authorization/roleAssignments/equivalent"
+        $assignment.properties.condition = $Condition
+        $cloud.resources.Remove("https://management.azure.com$oldId")
+        $cloud.resources["https://management.azure.com$($assignment.id)"] = $assignment
+        $writesBefore = $cloud.writes.Count
+
+        $second = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+        $second.HasChanges | Should -BeFalse
+        $cloud.writes.Count | Should -Be $writesBefore
+        $second.Modules.Plan.PrincipalId | Should -Be $first.Modules.Plan.PrincipalId
+    }
+
+    It 'rejects a conditional state grant even alongside an unconditional match' {
+        $first = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $application = @($first.Modules | Where-Object Name -EQ application)[0]
+        $assignment = @($cloud.resources.Values | Where-Object {
+            $_.Contains('properties') -and $_.properties.Contains('roleDefinitionId') -and
+            $_.properties.principalId -eq $application.Plan.PrincipalId
+        })[0]
+        $duplicate = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $assignment -Depth 10) -AsHashtable
+        $duplicate.id = "$($assignment.properties.scope)/providers/Microsoft.Authorization/roleAssignments/conditional"
+        $duplicate.properties.condition = "(@Resource[Microsoft.Storage/storageAccounts/blobServices/containers/blobs:path] StringEquals 'denied.tfstate')"
+        $duplicate.properties.conditionVersion = '2.0'
+        $cloud.resources["https://management.azure.com$($duplicate.id)"] = $duplicate
+        $writesBefore = $cloud.writes.Count
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*conditional Azure role assignment*'
+        $cloud.writes.Count | Should -Be $writesBefore
+    }
+
+    It 'rejects a conditional assignment returned by resource GET but omitted from list results' {
+        $first = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $application = @($first.Modules | Where-Object Name -EQ application)[0]
+        $assignment = @($cloud.resources.Values | Where-Object {
+            $_.Contains('properties') -and $_.properties.Contains('roleDefinitionId') -and
+            $_.properties.principalId -eq $application.Plan.PrincipalId
+        })[0]
+        $assignment.properties.condition = "(@Resource[Microsoft.Storage/storageAccounts/blobServices/containers/blobs:path] StringEquals 'denied.tfstate')"
+        $assignment.properties.conditionVersion = '2.0'
+        $cloud.hideRoleAssignments = $true
+        $writesBefore = $cloud.writes.Count
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*conditional Azure role assignment*'
+        $cloud.writes.Count | Should -Be $writesBefore
+    }
+
     It 'waits for managed identity replication before granting Graph permissions' {
         $cloud.registrationDelay = 1
 
@@ -380,6 +503,103 @@ Describe 'Local Azure bootstrap' {
 
         { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
             Should -Throw '*unexpected Azure role*'
+    }
+
+    It 'rejects an inherited <Phase> role at <Group> before changing existing bootstrap resources' -ForEach @(
+        @{ Phase = 'Plan'; Group = 'platform' }
+        @{ Phase = 'Apply'; Group = 'platform' }
+        @{ Phase = 'Plan'; Group = '11111111-1111-1111-1111-111111111111' }
+        @{ Phase = 'Apply'; Group = '11111111-1111-1111-1111-111111111111' }
+    ) {
+        $first = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $application = @($first.Modules | Where-Object Name -EQ application)[0]
+        $scope = "/providers/Microsoft.Management/managementGroups/$Group"
+        $assignmentId = "$scope/providers/Microsoft.Authorization/roleAssignments/extra"
+        $cloud.resources["https://management.azure.com$assignmentId"] = @{
+            id = $assignmentId
+            properties = @{
+                scope = $scope
+                principalId = $application.$Phase.PrincipalId
+                roleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+            }
+        }
+        $account = @($cloud.resources.Values | Where-Object { $_.id -match '/storageAccounts/[^/]+$' })[0]
+        $account.properties.allowSharedKeyAccess = $true
+        $writesBefore = $cloud.writes.Count
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*unexpected Azure role*'
+        $cloud.writes.Count | Should -Be $writesBefore
+    }
+
+    It 'audits ancestors of every configured subscription, not only the backend subscription' {
+        $subscriptionId = '55555555-5555-5555-5555-555555555555'
+        $instance.bootstrap.subscriptionIds += $subscriptionId
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $cloud.managementGroupAncestors[$subscriptionId] = @('11111111-1111-1111-1111-111111111111', 'workloads')
+        $first = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $application = @($first.Modules | Where-Object Name -EQ application)[0]
+        $scope = '/providers/Microsoft.Management/managementGroups/workloads'
+        $assignmentId = "$scope/providers/Microsoft.Authorization/roleAssignments/extra"
+        $cloud.resources["https://management.azure.com$assignmentId"] = @{
+            id = $assignmentId
+            properties = @{
+                scope = $scope
+                principalId = $application.Apply.PrincipalId
+                roleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c'
+            }
+        }
+        $writesBefore = $cloud.writes.Count
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*unexpected Azure role*workloads*'
+        $cloud.writes.Count | Should -Be $writesBefore
+    }
+
+    It 'discovers subscription ancestors across POST continuation pages and deduplicates shared audit scopes' {
+        $instance.bootstrap.subscriptionIds += '55555555-5555-5555-5555-555555555555'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $cloud.paginateAncestors = $true
+
+        $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+        $result.Modules.Count | Should -Be 2
+        Should -Invoke Invoke-WebRequest -Times 4 -Exactly -ParameterFilter {
+            $Uri.AbsolutePath -eq '/providers/Microsoft.Management/getEntities' -and $Method -eq 'POST'
+        }
+        Should -Invoke Invoke-WebRequest -Times 5 -Exactly -ParameterFilter {
+            $Uri.AbsolutePath -eq '/providers/Microsoft.Management/managementGroups/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments'
+        }
+    }
+
+    It 'rejects an incomplete ancestor chain <Case> before any mutation' -ForEach @(
+        @{ Case = 'missing'; Chain = $null }
+        @{ Case = 'empty'; Chain = @() }
+        @{ Case = 'without tenant root'; Chain = @('platform') }
+        @{ Case = 'with a malformed name'; Chain = @('11111111-1111-1111-1111-111111111111', '../platform') }
+        @{ Case = 'with a cycle'; Chain = @('11111111-1111-1111-1111-111111111111', 'platform', 'platform') }
+    ) {
+        $cloud.managementGroupAncestors['22222222-2222-2222-2222-222222222222'] = $Chain
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*management-group ancestor chain*'
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'does not continue when subscription ancestry cannot be read' {
+        $cloud.ancestryStatusCode = 403
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*HTTP 403*Cannot read subscription ancestors*'
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'requires role-assignment read access at tenant root before creating bootstrap resources' {
+        $cloud.roleAssignmentFailureScope = '/providers/Microsoft.Management/managementGroups/11111111-1111-1111-1111-111111111111'
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*HTTP 403*Cannot audit management-group role assignments*'
+        $cloud.writes.Count | Should -Be 0
     }
 
     It 'rejects Graph write permissions on a plan identity before any mutation' {
@@ -547,7 +767,9 @@ Describe 'Local Azure bootstrap' {
         $foundation = @($result.Modules | Where-Object Name -EQ foundation)[0]
         $principalId = if ($Phase -eq 'plan') { $foundation.Plan.PrincipalId } else { $foundation.Apply.PrincipalId }
         $grants = @($cloud.writes | Where-Object {
-            $_.data.Contains('properties') -and $_.data.properties.principalId -eq $principalId -and
+            $_.data.Contains('properties') -and $_.data.properties.Contains('principalId') -and
+            $_.data.properties.Contains('roleDefinitionId') -and
+            $_.data.properties.principalId -eq $principalId -and
             $_.data.properties.roleDefinitionId -like '*/44444444-4444-4444-4444-444444444444'
         })
         $grants.Count | Should -Be 1

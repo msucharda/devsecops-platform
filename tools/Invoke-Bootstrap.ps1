@@ -91,13 +91,14 @@ function Get-BootstrapCollection {
     [OutputType([System.Collections.IDictionary])]
     param(
         [Parameter(Mandatory)][string] $Uri,
+        [ValidateSet('GET', 'POST')][string] $Method = 'GET',
         [switch] $WaitForPrincipal
     )
 
     $visited = [System.Collections.Generic.HashSet[string]]::new()
     while ($Uri) {
         if (-not $visited.Add($Uri)) { throw "API pagination cycle at '$Uri'." }
-        $page = Invoke-BootstrapRequest -Uri $Uri -WaitForPrincipal:$WaitForPrincipal
+        $page = Invoke-BootstrapRequest -Uri $Uri -Method $Method -WaitForPrincipal:$WaitForPrincipal
         if ($page['value'] -isnot [System.Collections.IList]) { throw "API '$Uri' did not return a collection." }
         foreach ($item in $page['value']) {
             if ($item -isnot [System.Collections.IDictionary]) { throw "API '$Uri' returned an invalid collection item." }
@@ -131,6 +132,15 @@ function Test-BootstrapDesiredValue {
     return $Actual -ceq $Desired
 }
 
+function Assert-BootstrapUnconditionalRole {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Assignment)
+
+    if (-not [string]::IsNullOrWhiteSpace($Assignment['properties']['condition'])) {
+        throw "Bootstrap does not support conditional Azure role assignment '$($Assignment['id'])'. Remove its condition through an approved access change before rerunning bootstrap."
+    }
+}
+
 function Initialize-BootstrapResource {
     [CmdletBinding()]
     [OutputType([System.Collections.IDictionary])]
@@ -140,6 +150,9 @@ function Initialize-BootstrapResource {
     )
 
     $current = Invoke-BootstrapRequest -Uri $Uri -AllowNotFound
+    if ($current -and $Uri -like '*/providers/Microsoft.Authorization/roleAssignments/*') {
+        Assert-BootstrapUnconditionalRole -Assignment $current
+    }
     if ($current -and $Uri -match '/storageAccounts/[^/?]+\?') {
         # These features are enabled only by true; Shared Key and TLS have different defaults.
         foreach ($property in @('allowBlobPublicAccess', 'isHnsEnabled', 'isNfsV3Enabled', 'isSftpEnabled', 'isLocalUserEnabled')) {
@@ -178,11 +191,15 @@ function Initialize-BootstrapRoleAssignment {
 
     $filter = [uri]::EscapeDataString("principalId eq '$PrincipalId'")
     $assignments = @(Get-BootstrapCollection -Uri "$arm$Scope/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=$filter")
-    if (@($assignments | Where-Object {
+    $matchingAssignments = @($assignments | Where-Object {
         $_['properties']['principalId'] -eq $PrincipalId -and
         $_['properties']['scope'] -eq $Scope -and
         ($_['properties']['roleDefinitionId'] -split '/')[-1] -eq ($RoleDefinitionId -split '/')[-1]
-    }).Count -gt 0) { return }
+    })
+    foreach ($assignment in $matchingAssignments) {
+        Assert-BootstrapUnconditionalRole -Assignment $assignment
+    }
+    if ($matchingAssignments.Count -gt 0) { return }
     $hash = [System.Security.Cryptography.SHA256]::HashData(
         [Text.Encoding]::UTF8.GetBytes("$Scope|$PrincipalId|$RoleDefinitionId".ToLowerInvariant())
     )
@@ -190,6 +207,47 @@ function Initialize-BootstrapRoleAssignment {
     $null = Initialize-BootstrapResource -Uri "$arm$Scope/providers/Microsoft.Authorization/roleAssignments/$assignmentId`?api-version=2022-04-01" -Body @{
         properties = @{ principalId = $PrincipalId; principalType = 'ServicePrincipal'; roleDefinitionId = $RoleDefinitionId }
     }
+}
+
+function Get-BootstrapIdentityGrant {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][ValidateSet('plan', 'apply')][string] $Phase,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Identity
+    )
+
+    if (-not $Identity['properties']['principalId'] -or -not $Identity['properties']['clientId'] -or
+        $Identity['properties']['tenantId'] -ne $connection['tenantId']) {
+        throw "Managed identity '$Name/$Phase' has no usable principal or belongs to another tenant. Rerun bootstrap to resume."
+    }
+    $principalId = $Identity['properties']['principalId']
+    $expectedAzure = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $containerId = "$storageAccountId/blobServices/default/containers/$Name"
+    $null = $expectedAzure.Add("$containerId|ba92f5b4-2d11-453d-a403-e96b0029c9fe")
+    foreach ($grant in $azureGrants[$Name][$Phase].Values) {
+        $null = $expectedAzure.Add("$($grant['scope'])|$(($grant['roleDefinitionId'] -split '/')[-1])")
+    }
+    $filter = [uri]::EscapeDataString("principalId eq '$principalId'")
+    foreach ($scope in $azureAuditScopes) {
+        $existing = @(Get-BootstrapCollection -Uri "$arm$scope/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=$filter")
+        foreach ($assignment in $existing) {
+            $key = "$($assignment['properties']['scope'])|$(($assignment['properties']['roleDefinitionId'] -split '/')[-1])"
+            if (-not $expectedAzure.Contains($key)) {
+                throw "Identity '$Name/$Phase' has an unexpected Azure role at '$($assignment['properties']['scope'])'. Remove it through an approved access change before rerunning bootstrap."
+            }
+            Assert-BootstrapUnconditionalRole -Assignment $assignment
+        }
+    }
+    $graphAssignments = @(Get-BootstrapCollection -Uri "$graph/servicePrincipals/$principalId/appRoleAssignments" -WaitForPrincipal)
+    foreach ($assignment in $graphAssignments) {
+        if (-not $graphServicePrincipal -or $assignment['resourceId'] -ne $graphServicePrincipal['id'] -or
+            -not $graphGrants[$Name][$Phase].ContainsKey($assignment['appRoleId'])) {
+            throw "Identity '$Name/$Phase' has an unexpected application permission '$($assignment['appRoleId'])'. Remove it through an approved access change before rerunning bootstrap."
+        }
+    }
+    return $graphAssignments
 }
 
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
@@ -301,6 +359,34 @@ $resourceGroupId = "/subscriptions/$($connection['managementSubscriptionId'])/re
 $storageAccountId = "$resourceGroupId/providers/Microsoft.Storage/storageAccounts/$storageAccountName"
 $tags = @{ platformInstance = $instance['instance']['name']; platformComponent = 'bootstrap' }
 $selected = Get-PlatformModuleSelection -Instance $instance -Modules $modules
+$azureAuditScopes = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+if (@($selected).Count -gt 0) {
+    foreach ($subscriptionId in $connection['subscriptionIds']) {
+        $null = $azureAuditScopes.Add("/subscriptions/$subscriptionId")
+        $filter = [uri]::EscapeDataString("name eq '$subscriptionId'")
+        $entities = @(Get-BootstrapCollection -Uri "$arm/providers/Microsoft.Management/getEntities?api-version=2020-05-01&`$filter=$filter" -Method POST)
+        $subscriptionEntities = @($entities | Where-Object {
+            $_['id'] -eq "/subscriptions/$subscriptionId" -and $_['name'] -eq $subscriptionId -and $_['type'] -eq '/subscriptions'
+        })
+        if ($subscriptionEntities.Count -ne 1) {
+            throw "Cannot determine management-group ancestors for subscription '$subscriptionId'."
+        }
+        $properties = $subscriptionEntities[0]['properties']
+        $ancestors = $properties['parentNameChain']
+        if ($properties['tenantId'] -ne $connection['tenantId'] -or
+            $ancestors -isnot [System.Collections.IList] -or $ancestors.Count -eq 0 -or
+            $ancestors[0] -ne $connection['tenantId']) {
+            throw "Subscription '$subscriptionId' requires a complete management-group ancestor chain including its tenant root."
+        }
+        $seenGroups = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($group in $ancestors) {
+            if ($group -isnot [string] -or $group -notmatch '^[A-Za-z0-9_.()-]+$' -or -not $seenGroups.Add($group)) {
+                throw "Subscription '$subscriptionId' has an invalid management-group ancestor chain."
+            }
+            $null = $azureAuditScopes.Add("/providers/Microsoft.Management/managementGroups/$group")
+        }
+    }
+}
 $azureGrants = @{}
 $graphGrants = @{}
 $graphServicePrincipal = $null
@@ -324,6 +410,9 @@ foreach ($name in $selected) {
         }
         elseif ($scope -notmatch '^/providers/Microsoft.Management/managementGroups/[A-Za-z0-9_.()-]+$') {
             throw "Module '$name' role scope '$scope' must be an absolute ARM subscription or management group scope."
+        }
+        else {
+            $null = $azureAuditScopes.Add($scope)
         }
         if ($scope.StartsWith($resourceGroupId, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Module '$name' must not declare permissions on bootstrap resources; state access is assigned only to its own container."
@@ -367,6 +456,24 @@ foreach ($name in $selected) {
         })
         if ($roles.Count -ne 1) { throw "Module '$name' Microsoft Graph application permission '$permission' is missing or disabled." }
         $graphGrants[$name][$phase][$roles[0]['id']] = $permission
+    }
+}
+
+$filter = [uri]::EscapeDataString("principalId eq '$($user['id'])'")
+foreach ($scope in $azureAuditScopes) {
+    $null = @(Get-BootstrapCollection -Uri "$arm$scope/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=$filter")
+}
+
+foreach ($name in $selected) {
+    foreach ($phase in @('plan', 'apply')) {
+        $identityId = "$resourceGroupId/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-$($instance['instance']['name'])-$name-$phase"
+        $identity = Invoke-BootstrapRequest -Uri "$arm$identityId`?api-version=2023-01-31" -AllowNotFound
+        if ($identity) {
+            if (-not (Test-BootstrapDesiredValue -Actual $identity['tags'] -Desired ($tags + @{ platformModule = $name; platformPhase = $phase }))) {
+                throw "Existing resource '$identityId' does not have the expected bootstrap ownership tags; refusing to adopt it."
+            }
+            $null = @(Get-BootstrapIdentityGrant -Name $name -Phase $phase -Identity $identity)
+        }
     }
 }
 
@@ -420,34 +527,9 @@ foreach ($name in $selected) {
             location = $instance['regions']['primary']
             tags = $tags + @{ platformModule = $name; platformPhase = $phase }
         }
-        if (-not $identity['properties']['principalId'] -or -not $identity['properties']['clientId'] -or
-            $identity['properties']['tenantId'] -ne $connection['tenantId']) {
-            throw "Managed identity '$identityId' has no usable principal or belongs to another tenant. Rerun bootstrap to resume."
-        }
+        $graphAssignments = @(Get-BootstrapIdentityGrant -Name $name -Phase $phase -Identity $identity)
         $principalId = $identity['properties']['principalId']
         $stateRoleId = "/subscriptions/$($connection['managementSubscriptionId'])/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe"
-        $expectedAzure = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-        $null = $expectedAzure.Add("$containerId|ba92f5b4-2d11-453d-a403-e96b0029c9fe")
-        foreach ($grant in $azureGrants[$name][$phase].Values) {
-            $null = $expectedAzure.Add("$($grant['scope'])|$(($grant['roleDefinitionId'] -split '/')[-1])")
-        }
-        $filter = [uri]::EscapeDataString("principalId eq '$principalId'")
-        foreach ($subscriptionId in $connection['subscriptionIds']) {
-            $existing = @(Get-BootstrapCollection -Uri "$arm/subscriptions/$subscriptionId/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=$filter")
-            foreach ($assignment in $existing) {
-                $key = "$($assignment['properties']['scope'])|$(($assignment['properties']['roleDefinitionId'] -split '/')[-1])"
-                if (-not $expectedAzure.Contains($key)) {
-                    throw "Identity '$name/$phase' has an unexpected Azure role at '$($assignment['properties']['scope'])'. Remove it through an approved access change before rerunning bootstrap."
-                }
-            }
-        }
-        $graphAssignments = @(Get-BootstrapCollection -Uri "$graph/servicePrincipals/$principalId/appRoleAssignments" -WaitForPrincipal)
-        foreach ($assignment in $graphAssignments) {
-            if (-not $graphServicePrincipal -or $assignment['resourceId'] -ne $graphServicePrincipal['id'] -or
-                -not $graphGrants[$name][$phase].ContainsKey($assignment['appRoleId'])) {
-                throw "Identity '$name/$phase' has an unexpected application permission '$($assignment['appRoleId'])'. Remove it through an approved access change before rerunning bootstrap."
-            }
-        }
         # Terraform plan also needs blob leases and state writes, but never another module's container.
         Initialize-BootstrapRoleAssignment -Scope $containerId -PrincipalId $principalId -RoleDefinitionId $stateRoleId
         foreach ($grant in $azureGrants[$name][$phase].Values) {
