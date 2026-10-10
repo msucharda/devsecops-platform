@@ -336,8 +336,18 @@ foreach ($name in $selected) {
         if ($phase -eq 'plan' -and -not $readOnly) {
             throw "Module '$name' plan role '$($grant['role'])' is not read-only."
         }
-        if (-not $readOnly -and ($storageAccountId.StartsWith("$scope/", [StringComparison]::OrdinalIgnoreCase) -or
-                $scope -like '/providers/Microsoft.Management/managementGroups/*')) {
+        $coversStateBackend = $storageAccountId.StartsWith("$scope/", [StringComparison]::OrdinalIgnoreCase) -or
+            $scope -like '/providers/Microsoft.Management/managementGroups/*'
+        $blobReadOperation = 'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read'
+        $canReadState = @($definition['properties']['permissions'] | Where-Object {
+            $permissionSet = $_
+            @($permissionSet['dataActions'] | Where-Object { $blobReadOperation -like $_ }).Count -gt 0 -and
+            @($permissionSet['notDataActions'] | Where-Object { $blobReadOperation -like $_ }).Count -eq 0
+        }).Count -gt 0
+        if ($coversStateBackend -and $canReadState) {
+            throw "Module '$name' role '$($grant['role'])' could read another module's state; choose a scope outside bootstrap."
+        }
+        if (-not $readOnly -and $coversStateBackend) {
             throw "Module '$name' role '$($grant['role'])' could change the state backend or its access; choose a scope outside bootstrap."
         }
         $azureGrants[$name][$phase]["$scope|$($definition['id'])"] = @{ scope = $scope; roleDefinitionId = $definition['id'] }

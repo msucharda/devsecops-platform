@@ -49,6 +49,7 @@ Describe 'Local Azure bootstrap' {
             subscriptionState = 'Enabled'
             githubOwner = $true
             omitDisabledStorageFeatures = $false
+            roleDefinitions = @{}
         }
         Mock Start-Sleep {}
         Mock gh { $global:LASTEXITCODE = 0; 'gho_test' }
@@ -137,6 +138,9 @@ Describe 'Local Azure bootstrap' {
                 $query = [uri]::UnescapeDataString($Uri.Query)
                 if ($query -notmatch "roleName eq '([^']+)'") { throw "Invalid role lookup: $Uri" }
                 $roleName = $Matches[1]
+                if ($cloud.roleDefinitions.ContainsKey($roleName)) {
+                    return Get-TestResponse -Data @{ value = @($cloud.roleDefinitions[$roleName]) }
+                }
                 $roleId = switch ($roleName) {
                     'Reader' { 'acdd72a7-3385-48ef-bd42-f606fba81ae7' }
                     'Contributor' { 'b24988ac-6180-42a0-ab88-20f7382dd24c' }
@@ -445,6 +449,84 @@ Describe 'Local Azure bootstrap' {
         ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
 
         { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } | Should -Throw '*application permission*missing or disabled*'
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'rejects <Phase> blob-read grants covering other module state at <Scope>' -ForEach @(
+        @{ Phase = 'plan'; Scope = '/subscriptions/22222222-2222-2222-2222-222222222222'; DataAction = 'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read' }
+        @{ Phase = 'apply'; Scope = '/subscriptions/22222222-2222-2222-2222-222222222222'; DataAction = 'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read' }
+        @{ Phase = 'plan'; Scope = '/providers/Microsoft.Management/managementGroups/platform'; DataAction = 'Microsoft.Storage/*/read' }
+        @{ Phase = 'apply'; Scope = '/providers/Microsoft.Management/managementGroups/platform'; DataAction = 'Microsoft.Storage/*/read' }
+    ) {
+        $manifestPath = Join-Path $modulesPath 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.permissions.azure = @(@{ role = 'State Reader'; scope = $Scope; phase = $Phase })
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $cloud.roleDefinitions['State Reader'] = @{
+            id = "$Scope/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444"
+            properties = @{
+                roleName = 'State Reader'
+                permissions = @(@{ actions = @('*/read'); dataActions = @($DataAction); notDataActions = @() })
+            }
+        }
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*could read another module*state*'
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'allows <Phase> read-only data access <Case> without exposing other module state' -ForEach @(
+        @{ Phase = 'plan'; Case = 'outside bootstrap'; Scope = '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-data'; DataAction = 'Microsoft.Storage/*/read'; NotDataActions = @() }
+        @{ Phase = 'apply'; Case = 'outside bootstrap'; Scope = '/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-data'; DataAction = 'Microsoft.Storage/*/read'; NotDataActions = @() }
+        @{ Phase = 'plan'; Case = 'with excluded blob read'; Scope = '/subscriptions/22222222-2222-2222-2222-222222222222'; DataAction = 'Microsoft.Storage/*/read'; NotDataActions = @('Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read') }
+        @{ Phase = 'apply'; Case = 'with excluded blob read'; Scope = '/subscriptions/22222222-2222-2222-2222-222222222222'; DataAction = 'Microsoft.Storage/*/read'; NotDataActions = @('Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read') }
+        @{ Phase = 'plan'; Case = 'for unrelated data'; Scope = '/providers/Microsoft.Management/managementGroups/platform'; DataAction = 'Microsoft.KeyVault/vaults/secrets/read'; NotDataActions = @() }
+        @{ Phase = 'apply'; Case = 'for unrelated data'; Scope = '/providers/Microsoft.Management/managementGroups/platform'; DataAction = 'Microsoft.KeyVault/vaults/secrets/read'; NotDataActions = @() }
+    ) {
+        $manifestPath = Join-Path $modulesPath 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.permissions.azure = @(@{ role = 'Data Reader'; scope = $Scope; phase = $Phase })
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $cloud.roleDefinitions['Data Reader'] = @{
+            id = "$Scope/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444"
+            properties = @{
+                roleName = 'Data Reader'
+                permissions = @(@{ actions = @('*/read'); dataActions = @($DataAction); notDataActions = $NotDataActions })
+            }
+        }
+
+        $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+        $result.Modules.Count | Should -Be 2
+        $foundation = @($result.Modules | Where-Object Name -EQ foundation)[0]
+        $principalId = if ($Phase -eq 'plan') { $foundation.Plan.PrincipalId } else { $foundation.Apply.PrincipalId }
+        $grants = @($cloud.writes | Where-Object {
+            $_.data.Contains('properties') -and $_.data.properties.principalId -eq $principalId -and
+            $_.data.properties.roleDefinitionId -like '*/44444444-4444-4444-4444-444444444444'
+        })
+        $grants.Count | Should -Be 1
+        $grants[0].data.properties.scope | Should -Be $Scope
+    }
+
+    It 'does not let an excluded permission set cancel blob read allowed by another set' {
+        $manifestPath = Join-Path $modulesPath 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $scope = '/subscriptions/22222222-2222-2222-2222-222222222222'
+        $manifest.permissions.azure = @(@{ role = 'Data Reader'; scope = $scope; phase = 'plan' })
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $cloud.roleDefinitions['Data Reader'] = @{
+            id = "$scope/providers/Microsoft.Authorization/roleDefinitions/44444444-4444-4444-4444-444444444444"
+            properties = @{
+                roleName = 'Data Reader'
+                permissions = @(
+                    @{ actions = @('*/read'); dataActions = @('Microsoft.Storage/*/read'); notDataActions = @('Microsoft.Storage/*') }
+                    @{ actions = @(); dataActions = @('Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read'); notDataActions = @() }
+                )
+            }
+        }
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*could read another module*state*'
         $cloud.writes.Count | Should -Be 0
     }
 
