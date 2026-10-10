@@ -60,8 +60,9 @@ function Invoke-BootstrapRequest {
         if ($response.StatusCode -eq 404 -and $AllowNotFound -and $Method -eq 'GET') {
             return $null
         }
+        $transientResponse = $response.StatusCode -in @(429, 503)
         $data = @{}
-        if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
+        if (-not $transientResponse -and -not [string]::IsNullOrWhiteSpace($response.Content)) {
             try {
                 $data = ConvertFrom-Json -InputObject $response.Content -AsHashtable -ErrorAction Stop
             }
@@ -75,7 +76,7 @@ function Invoke-BootstrapRequest {
         if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) { return $data }
         $replicating = $WaitForPrincipal -and $data.Contains('error') -and
             $data['error']['code'] -in @('PrincipalNotFound', 'Request_ResourceNotFound', 'ResourceNotFound')
-        if ($attempt -lt 11 -and ($replicating -or $response.StatusCode -in @(429, 503))) {
+        if ($attempt -lt 11 -and ($replicating -or $transientResponse)) {
             Write-Verbose "Retrying $Method '$Uri' after HTTP $($response.StatusCode)."
             Start-Sleep -Seconds 5
             continue

@@ -50,6 +50,7 @@ Describe 'Local Azure bootstrap' {
             githubOwner = $true
             omitDisabledStorageFeatures = $false
             roleDefinitions = @{}
+            transientResponses = [System.Collections.Generic.Queue[object]]::new()
         }
         Mock Start-Sleep {}
         Mock gh { $global:LASTEXITCODE = 0; 'gho_test' }
@@ -58,6 +59,9 @@ Describe 'Local Azure bootstrap' {
             '{"tenant":"11111111-1111-1111-1111-111111111111","accessToken":"test"}'
         }
         Mock Invoke-WebRequest {
+            if ($cloud.transientResponses.Count -gt 0) {
+                return $cloud.transientResponses.Dequeue()
+            }
             if ($cloud.failurePattern -and $Method -eq 'PUT' -and $Uri.AbsoluteUri -like $cloud.failurePattern) {
                 return Get-TestResponse -StatusCode 403 -Data @{ error = @{ code = 'AuthorizationFailed'; message = 'Injected interruption.' } }
             }
@@ -316,6 +320,48 @@ Describe 'Local Azure bootstrap' {
         $result.Modules.Count | Should -Be 2
         $application = @($result.Modules | Where-Object Name -EQ application)[0]
         @($cloud.graphAssignments[$application.Apply.PrincipalId].appRoleId) | Should -Be @('group-create')
+    }
+
+    It 'retries HTTP <StatusCode> with a non-JSON response before completing bootstrap' -ForEach @(
+        @{ StatusCode = 429; Content = 'Too many requests.' }
+        @{ StatusCode = 503; Content = '<html><body>Service unavailable.</body></html>' }
+    ) {
+        $cloud.transientResponses.Enqueue([pscustomobject]@{ StatusCode = $StatusCode; Content = $Content })
+
+        $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+        $result.Modules.Count | Should -Be 2
+        $result.HasChanges | Should -BeTrue
+        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 5 }
+    }
+
+    It 'stops after twelve HTTP <StatusCode> attempts and reports the last response' -ForEach @(
+        @{ StatusCode = 429 }
+        @{ StatusCode = 503 }
+    ) {
+        for ($attempt = 0; $attempt -lt 12; $attempt++) {
+            $cloud.transientResponses.Enqueue([pscustomobject]@{ StatusCode = $StatusCode; Content = 'Persistent transient failure.' })
+        }
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw "*HTTP $StatusCode*Persistent transient failure*"
+
+        Should -Invoke Invoke-WebRequest -Times 12 -Exactly
+        Should -Invoke Start-Sleep -Times 11 -Exactly -ParameterFilter { $Seconds -eq 5 }
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'rejects <Case> without retrying a nontransient HTTP response' -ForEach @(
+        @{ Case = 'HTML success'; StatusCode = 200; Content = '<html>Not a JSON response.</html>'; Error = '*invalid JSON*HTTP 200*' }
+        @{ Case = 'an array success'; StatusCode = 200; Content = '[]'; Error = '*did not return a JSON object*HTTP 200*' }
+        @{ Case = 'an HTML client error'; StatusCode = 400; Content = '<html>Bad request.</html>'; Error = '*invalid JSON*HTTP 400*' }
+    ) {
+        $cloud.transientResponses.Enqueue([pscustomobject]@{ StatusCode = $StatusCode; Content = $Content })
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } | Should -Throw $Error
+
+        Should -Invoke Start-Sleep -Times 0 -Exactly
+        $cloud.writes.Count | Should -Be 0
     }
 
     It 'rejects an existing identity with state access outside its own container' {

@@ -95,6 +95,8 @@ Bootstrap porovnává požadovaný stav se skutečnými prostředky. Druhý běh
 
 Bootstrap odmítne převzít prostředek se shodným názvem bez odpovídajících ownership tags. Čeká na dokončení storage account a omezeně opakuje požadavky při replikaci managed identity, HTTP 429 a 503. Ostatní chyby vrací s operací, URI a HTTP stavem. Po přerušeném běhu oprav příčinu a spusť stejný příkaz; existující identity i dokončené prostředky zůstanou zachované. Bootstrap nemá automatický rollback.
 
+Požadavky s HTTP 429 nebo 503 bootstrap opakuje podle stavového kódu, i když odpověď obsahuje prostý text nebo HTML místo JSON. Provede nejvýše 12 pokusů s prodlevou 5 sekund. Po vyčerpání pokusů vrátí chybu s HTTP stavem a tělem poslední odpovědi. Ostatní odpovědi musí splnit původní požadavky na JSON.
+
 Nástroj neimplementuje odstranění. Workflow teardown a lokální odstranění bootstrapu dodá #22. Musí zachovat tenant, enterprise, OIDC, SCIM, subscriptions, licence a enterprise kontroly. Před teardownem administrátor obnoví přímé přiřazení Enterprise Owner, které po prvním nasazení odebral ruční krok `emu-identity`. Lock se smí odstranit až při schváleném lokálním odstranění bootstrapu.
 
 ## Ověření na Reference instance (referenční instanci)
