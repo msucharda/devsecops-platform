@@ -1,0 +1,9 @@
+name: foundation
+description: Local foundation fixture.
+prerequisites: []
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp: {}
+  adminPat: []

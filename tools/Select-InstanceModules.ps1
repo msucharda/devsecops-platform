@@ -11,43 +11,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
-$instance = Get-PlatformYaml -Path $InstancePath
-$manifestSchema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/module.schema.json') -Raw | ConvertFrom-Json
-$moduleNameSchema = ConvertTo-Json -InputObject $manifestSchema.definitions.moduleName -Compress
-if (-not $instance.Contains('modules') -or $instance.modules -isnot [System.Collections.IDictionary]) {
-    throw "Invalid instance configuration '$InstancePath': $.modules must be a mapping of selected module names to their configuration."
-}
-
-$pending = [System.Collections.Generic.Queue[string]]::new()
-foreach ($name in $instance.modules.PSBase.Keys) {
-    try {
-        $validName = Test-Json -Json (ConvertTo-Json -InputObject $name -Compress) -Schema $moduleNameSchema -ErrorAction Stop
-    }
-    catch {
-        throw "Invalid instance configuration '$InstancePath': $.modules.$name has an invalid module name: $($_.Exception.Message)"
-    }
-    if (-not $validName -or $instance.modules[$name] -isnot [System.Collections.IDictionary]) {
-        throw "Invalid instance configuration '$InstancePath': $.modules.$name must be a module name with a configuration mapping."
-    }
-    if (-not $modules.Contains($name)) {
-        throw "Invalid instance configuration '$InstancePath': $.modules.$name selects unknown module '$name'."
-    }
-    $pending.Enqueue($name)
-}
-
-$selected = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-while ($pending.Count -gt 0) {
-    $name = $pending.Dequeue()
-    if ($selected.Add($name)) {
-        foreach ($prerequisite in $modules[$name].prerequisites) {
-            $pending.Enqueue($prerequisite)
-        }
-    }
-}
-[string[]] $names = @($selected)
-[System.Array]::Sort($names, [System.StringComparer]::Ordinal)
+$instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
+$names = Get-PlatformModuleSelection -Instance $instance -Modules $modules
 $json = ConvertTo-Json -InputObject $names -Compress
 if ($GitHubOutputPath) {
-    [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($GitHubOutputPath), "modules=$json`n", [System.Text.UTF8Encoding]::new($false))
+    $environments = [ordered]@{}
+    foreach ($name in $names) {
+        $environments[$name] = $instance['credentials'][$name]['plan']['environment']
+    }
+    $environmentJson = ConvertTo-Json -InputObject $environments -Compress
+    [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($GitHubOutputPath), "modules=$json`nenvironments=$environmentJson`n", [System.Text.UTF8Encoding]::new($false))
 }
 $json

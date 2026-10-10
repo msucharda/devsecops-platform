@@ -1,0 +1,9 @@
+name: unknown
+description: Unknown planned output rejection fixture.
+prerequisites: []
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp: {}
+  adminPat: []

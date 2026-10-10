@@ -23,12 +23,60 @@ Nástroje vyžadují PowerShell 7.4 nebo novější. Verze modulů PowerShellu u
 ```powershell
 .\tools\Install-ToolDependencies.ps1 -Development
 .\tools\Test-ModuleManifests.ps1 -Verbose
+.\tools\Test-InstanceConfiguration.ps1 -InstancePath .\templates\instance\instance.yaml
 .\tools\Generate-DeploymentWorkflow.ps1
 .\tools\Test-PowerShell.ps1
 .\tools\Invoke-Tests.ps1
 ```
 
 Instalační skript stáhne chybějící verze modulů z PowerShell Gallery do rozsahu `CurrentUser`. Bez `-Development` instaluje jen parser YAML pro běh nástrojů.
+
+### Instance configuration (konfigurace instance)
+
+`schemas/instance.schema.json` popisuje soubor `instance.yaml`. Výchozí příklad je v `templates/instance/instance.yaml`. Validátor, výběr modulů i runner používají stejné schéma. Chyba uvádí cestu k položce, například `$.instance.name` nebo `$.credentials.organizations.plan.githubApp`.
+
+| Položka | Kontrakt |
+|---|---|
+| `instance.name` | Povinných 2–8 malých písmen nebo číslic; první znak musí být písmeno. |
+| `regions.primary`, `regions.secondary` | Primární region je povinný, sekundární volitelný. Hodnoty používají názvy lokací Azure, například `westeurope`. |
+| `teams.platform`, `teams.security` | Povinné neprázdné seznamy jedinečných UPN. |
+| `modules` | Povinná mapa vybraných modulů. Prázdná mapa je platná. `parameters` předává jmenné proměnné Terraformu; předpoklady se doplní automaticky. |
+| `customPatterns` | Volitelný seznam položek s `name` a `secretRegex`; `beforeSecret` a `afterSecret` jsou volitelné řetězce. |
+| `manualSteps` | Volitelná mapa `<module>: {<step-id>: true nebo false}`. Validátor odmítne neznámý modul nebo identifikátor kroku. |
+| `manualPrerequisites` | Volitelná mapa ručních potvrzení před bootstrapem. Chybějící potvrzení znamená nepotvrzený předpoklad. |
+| `githubApps` | Volitelná mapa aliasů enterprise-owned Apps. Položka obsahuje `appId`, `installationId` a slug `enterprise`. Oba identifikátory jsou kladná desetinná čísla zapsaná jako řetězce. |
+| `credentials` | Volitelné vazby modulů na `plan`, `apply` a případně `rulesetPlan`. Každá vazba obsahuje `environment` a volitelný alias `githubApp`. Pokud modul vazby deklaruje, musí uvést `plan` i `apply`. |
+| `teardown.allowed` | Volitelný boolean s výchozí hodnotou `false`. Runner s touto hodnotou odmítne `destroy`. |
+
+Schéma nepovoluje privátní klíče ani tokeny v záznamech Apps a credentialů. Parametry nesmějí obsahovat credential položky, například `token`, `clientSecret` nebo `privateKey`, ani rozpoznané formáty privátních klíčů a tokenů GitHubu. Doplňující validace kontroluje tyto položky i ve vnořených mapách a seznamech; PowerShell `Test-Json` neumí zde použitou rekurzi přes `additionalProperties` vyhodnotit. Tato kontrola nerozpozná libovolný secret pod obecným názvem. Secrets patří do chráněných environmentů, nikoli do konfigurace. Názvy parametrů `instance` a `prerequisites` jsou rezervované bez ohledu na velikost písmen.
+
+Příklad vazeb pro spustitelný modul `organizations`:
+
+```yaml
+githubApps:
+  governance-reader:
+    appId: '101'
+    installationId: '201'
+    enterprise: example
+  governance-writer:
+    appId: '102'
+    installationId: '202'
+    enterprise: example
+credentials:
+  organizations:
+    plan:
+      environment: organizations-plan
+      githubApp: governance-reader
+    apply:
+      environment: organizations-apply
+      githubApp: governance-writer
+```
+
+Alias musí existovat v `githubApps`. Validátor doplní výchozí environmenty `<module>-plan` a `<module>-apply` pro moduly bez vazeb. Každý environment smí patřit jen jednomu modulu a jedné fázi; kontrola zahrnuje explicitní i výchozí vazby. Validátor také odmítne sdílení stejného `appId` mezi fázemi, i když má App více aliasů. Shodu oprávnění a cílových prostředků při sdílení App identity v jedné fázi musí doplnit [#9](https://github.com/msucharda/devsecops-platform/issues/9). `rulesetPlan` deklaruje vazbu pro samostatný job podle ADR 0016; současný generátor tento job ještě nespouští.
+
+**Manual prerequisites (ruční předpoklady):** bootstrap pro `plan` i `apply` vyžaduje `true` pro všechna potvrzení: `tenant`, `enterpriseOidc`, `enterpriseScim`, `enterpriseOwner`, `subscriptions`, `licenses`, `privateInternalForksDisabled`, `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired`, `patMaxLifetime90Days` a `githubAppAvailabilityVerified`. Chybějící nebo nepravdivá hodnota zastaví runner před Terraformem. Potvrzení dostupnosti Apps musí vycházet z ručního ověření na konkrétní instanci GHE.com, ne pouze z veřejné dokumentace.
+
+Ruční potvrzení není automaticky ověřený stav. Runner nevolá API k ověření enterprise politik ani ručních kroků. Ostatní moduly nepotvrzený ruční krok nezastaví; job summary uvádí varování, vlastníka a omezení planu, driftu a teardownu. Potvrzený krok zůstává označený jako ruční deklarace. Runner při teardownu nemění konfiguraci ani ruční předpoklady.
 
 ### Module manifest (manifest modulu)
 
@@ -41,6 +89,11 @@ prerequisites: []
 manualSteps:
   - id: verify-access
     description: Platformní tým ověří přístup po nasazení.
+    owner: platform
+    limitations:
+      plan: Terraform nastavení přístupu neověří.
+      drift: Platformní tým kontroluje přístup ručně.
+      teardown: Platformní tým odebere přístup ručně.
 permissions:
   azure:
     - role: Reader
@@ -51,7 +104,9 @@ permissions:
   adminPat: []
 ```
 
-Všechny položky příkladu jsou v současném schématu povinné. Prázdné seznamy a prázdná mapa `githubApp` znamenají, že dané kroky ani oprávnění nejsou potřeba. `azure` deklaruje role a jejich rozsah, `microsoftGraph` názvy oprávnění a `githubApp` mapu oprávnění na `read` nebo `write`. Pole `adminPat` zůstává ve schématu kvůli kompatibilitě; nové moduly musí používat `[]`, protože workflow instance používají jen GitHub App installation tokeny podle ADR 0016. Module manifest nesmí obsahovat tokeny ani jiná secrets. Schéma odmítá neznámé položky a neplatné typy. Generátor navíc odmítá opakované identifikátory Manual step (ruční krok), neexistující Prerequisite (předpoklad) a cykly.
+Povinné jsou `name`, `description`, `prerequisites`, `manualSteps`, `permissions` a všechny kategorie oprávnění. Ruční krok vyžaduje `id` a `description`. Volitelný `owner` vybírá tým `platform` nebo `security`; výchozí vlastník je platformní tým. Volitelné `limitations` musí uvést všechny tři položky `plan`, `drift` a `teardown`. Bez nich runner přizná, že ruční stav automaticky neověří, nezachytí jeho drift ani ho nevrátí při teardownu.
+
+Prázdné seznamy a prázdná mapa `githubApp` znamenají, že dané kroky ani oprávnění nejsou potřeba. `azure` deklaruje role a jejich rozsah, `microsoftGraph` názvy oprávnění a `githubApp` mapu oprávnění na `read` nebo `write`. Pole `adminPat` zůstává ve schématu kvůli kompatibilitě; nové moduly musí používat `[]`, protože workflow instance používají jen GitHub App installation tokeny podle ADR 0016. Module manifest nesmí obsahovat tokeny ani jiná secrets. Schéma odmítá neznámé položky a neplatné typy. Generátor navíc odmítá opakované identifikátory Manual step (ruční krok), neexistující Prerequisite (předpoklad) a cykly.
 
 **Navazující implementace:** Současná mapa `githubApp` sama nerozlišuje fázi, cílové prostředky ani samostatný ruleset job. [#9](https://github.com/msucharda/devsecops-platform/issues/9) musí tyto deklarace a jejich validaci doplnit. Generátor nesmí automaticky odvodit write oprávnění běžného planu z oprávnění apply.
 
@@ -64,31 +119,71 @@ Generátor zapisuje `templates/instance/.github/workflows/deploy.yml`. Přepína
 .\tools\Generate-DeploymentWorkflow.ps1 -ModulesPath .\tools\tests\fixtures\modules -OutputPath .\tools\tests\fixtures\deploy.yml
 ```
 
-Mapa `modules` v Instance configuration (konfigurace instance), v souboru `instance.yaml`, přiřazuje názvu Module (modul) jeho konfiguraci:
+Mapa `modules` v Instance configuration přiřazuje názvu Module (modul) jeho konfiguraci. Minimální platný příklad pro fixture:
 
 ```yaml
+instance:
+  name: demo
+regions:
+  primary: westeurope
+teams:
+  platform: [platform@example.test]
+  security: [security@example.test]
 modules:
   application:
     parameters: {}
 ```
 
-`Select-InstanceModules.ps1` vrátí seřazené JSON pole názvů vybraných Module včetně všech jejich Prerequisite. Prázdná mapa vrátí `[]`. Neznámý název nebo jiný typ konfigurace způsobí chybu s cestou `$.modules`. Volitelný `-GitHubOutputPath` připojí stejný výběr jako výstup jobu `modules`.
+`Select-InstanceModules.ps1` validuje celou konfiguraci a vrátí seřazené JSON pole názvů vybraných Module včetně všech jejich Prerequisite. Prázdná mapa vrátí `[]`. Neznámý název nebo jiný typ konfigurace způsobí chybu s cestou `$.modules`. Volitelný `-GitHubOutputPath` připojí výstup `modules` a mapu plan environmentů `environments`.
 
 ```powershell
 .\tools\Select-InstanceModules.ps1 -ModulesPath .\tools\tests\fixtures\modules -InstancePath .\instance.yaml
 ```
 
-Workflow nejprve spustí job `select`. Každý Module má vlastní job `module_<name>`, environment `<name>-plan` a `needs` pro job `select` i své přímé Prerequisite. Podmínka jobu vyžaduje úspěšný výběr, členství ve výběru a úspěšné Prerequisite. Nevybraný job se přeskočí. Selhání Prerequisite blokuje joby, které ho vyžadují, nikoli nezávislou větev grafu.
+Workflow nejprve spustí job `select`. Každý Module má vlastní job `module_<name>` a `needs` pro job `select` i své přímé Prerequisite. Environment určí `credentials.<name>.plan.environment`; bez vazby použije `<name>-plan`. Podmínka jobu vyžaduje úspěšný výběr, členství ve výběru a úspěšné Prerequisite. Nevybraný job se přeskočí. Selhání Prerequisite blokuje joby, které ho vyžadují, nikoli nezávislou větev grafu.
 
-**Současný rozsah:** produkční adresáře zatím obsahují jen specifikace. Commitnutá šablona proto obsahuje jen job `select`; úplný graf ověřuje fixture workflow v `tools/tests/fixtures/deploy.yml`. Generátor připravuje ručně spouštěný workflow pro `plan` a očekává vendorovaný Release (release) v `platform/`. Runner `platform/tools/Invoke-Module.ps1` a úplné schéma Instance configuration dodá [#8](https://github.com/msucharda/devsecops-platform/issues/8). Autentizaci, přenos výstupů, triggery PR a apply a pravidla schválení dodá [#9](https://github.com/msucharda/devsecops-platform/issues/9). Bootstrap zůstává lokálním krokem; jeho zapojení do finální šablony určí tyto navazující issues.
+Job nainstaluje Terraform, stáhne artifact každého přímého Prerequisite a předá jejich adresář runneru. Po úspěchu nahraje jen soubor `<module>.json` jako `module-outputs-<module>`. Terraform plan, proměnné ani state se nenahrávají. Chybějící artifact nebo selhání runneru zastaví příslušnou větev.
+
+**Současný rozsah:** produkční adresáře zatím obsahují jen specifikace. Commitnutá šablona proto obsahuje jen job `select`; úplný graf ověřuje fixture workflow v `tools/tests/fixtures/deploy.yml`. Generátor připravuje ručně spouštěný workflow pro `plan` a očekává vendorovaný Release (release) v `platform/`. Autentizaci, samostatný ruleset job, triggery PR a apply a pravidla schválení dodá [#9](https://github.com/msucharda/devsecops-platform/issues/9). Bootstrap zůstává lokálním krokem.
+
+### Runner modulu
+
+`tools/Invoke-Module.ps1` provede jednu akci `plan`, `apply` nebo `destroy` jednoho vybraného modulu či jeho Prerequisite. Terraform běží v `modules/<name>/`. Root musí deklarovat backend odpovídající parametru `-Backend`; runner odmítne implicitní lokální backend.
+
+Produkční backend `azurerm` používá kontejner s názvem modulu, klíč `terraform.tfstate` a autentizaci Entra ID (`use_azuread_auth=true`). Název modulu musí mít nejméně tři znaky. Storage account a resource group určí `-StorageAccountName` a `-ResourceGroupName`, nebo proměnné `PLATFORM_STATE_STORAGE_ACCOUNT` a `PLATFORM_STATE_RESOURCE_GROUP`. Credentialy Azure a GitHubu připravuje volající; runner nevydává tokeny, neprovádí přihlášení a nepřechází na PAT. Terraform workspace je `default`; pracovní adresář Terraformu se izoluje pro každý běh.
+
+Root deklaruje standardní proměnné `instance` a `prerequisites`. `instance` obsahuje `name`, `regions`, `teams` a `customPatterns`. Položky `modules.<name>.parameters` jsou další jmenné proměnné Terraformu. `prerequisites` obsahuje mapu přímých předpokladů na jejich necitlivé výstupy, například `var.prerequisites.foundation.foundation_name`. Runner čte soubory `<prerequisite>.json` v `-PrerequisiteOutputsPath`, nikdy state jiného modulu.
+
+`plan` vrací známé hodnoty z uloženého planu, ne staré výstupy state. Terraform exit code `2` znamená změny, nikoli chybu. Neznámý nebo částečně neznámý výstup způsobí chybu; před dalším planem musíš nasadit daný předpoklad. Runner ho nenahradí hodnotou `null`, starým state ani prázdným výsledkem. `apply` a `destroy` provedou uložený plan a pak načtou aktuální výstupy. `destroy` vyžaduje `teardown.allowed: true`; pořadí odstranění více modulů a schválení běhu musí zajistit volající workflow.
+
+Runner odmítne výstup s Terraform příznakem `sensitive`. Za správnou deklaraci citlivosti odpovídá autor modulu. Při chybě nepublikuje žádné nové výstupy; před během odstraní i svůj starý výstupní soubor. Dočasné proměnné, plan a pracovní data odstraní v `finally`. Necitlivé hodnoty uloží jako JSON objekt bez obálky Terraformu do `-ArtifactsPath/<module>.json`.
+
+Veřejný výsledek skriptu obsahuje `Module`, `Action`, `HasChanges`, `OutputsPath` a `ManualSteps`. Každý ruční krok obsahuje `Confirmed`, `Verified: false`, vlastníka a omezení. `-JobSummaryPath` určuje soubor summary; výchozí hodnota je `GITHUB_STEP_SUMMARY`. Bez souboru runner vypíše summary do informačního proudu a nepotvrzené kroky jako varování.
+
+Offline příklad používá lokální backend. `-StatePath` je adresář; runner v něm vytvoří vlastní soubor `<module>.tfstate`. Fixture konfigurace povoluje teardown, produkční šablona ho zakazuje:
+
+```powershell
+$arguments = @{
+    InstancePath = '.\tools\tests\fixtures\runner-instance.yaml'
+    ModulesPath = '.\tools\tests\fixtures\runner-modules'
+    Backend = 'local'
+    StatePath = '.\artifacts\state'
+    ArtifactsPath = '.\artifacts\module-outputs'
+    JobSummaryPath = '.\artifacts\summary.md'
+}
+.\tools\Invoke-Module.ps1 -Module foundation -Action plan @arguments
+$arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
+.\tools\Invoke-Module.ps1 -Module application -Action apply @arguments
+.\tools\Invoke-Module.ps1 -Module application -Action destroy @arguments
+```
 
 ### Testy a CI
 
-Testy Pester volají veřejné skripty generátoru a výběru Module. Kontrolují výsledné YAML, JSON a chyby pomocí fixture bez cloudu. Jeden soubor můžeš spustit přímo:
+Testy Pester volají veřejné skripty generátoru, výběru Module, validátoru a runneru. Kontrolují výsledné YAML, JSON, summary a chyby pomocí fixture bez cloudu. Testy runneru vyžadují Terraform; CI ho instaluje před Pesterem. Používají skutečný lokální backend a vestavěný provider `terraform_data`, bez externích providerů. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
 
 ```powershell
 Import-Module Pester -RequiredVersion 5.7.1
-Invoke-Pester -Path .\tools\tests\WorkflowGenerator.Tests.ps1 -Output Detailed
+Invoke-Pester -Path .\tools\tests\ModuleRunner.Tests.ps1 -Output Detailed
 ```
 
 Workflow `Source CI` spouští Pester, syntaktickou a statickou kontrolu PowerShellu, validaci Module manifest a kontrolu aktuálnosti obou commitnutých workflow. `Get-TerraformRoots.ps1` vyhledá v repozitáři každý adresář se soubory `.tf` nebo `.tf.json`, včetně fixture; vynechá `.git`, `.terraform` a symbolické adresáře. CI na každém nalezeném rootu spustí `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`, tflint a Trivy. Nález Trivy úrovně `HIGH` nebo `CRITICAL` způsobí chybu CI. Pokud repozitář nemá žádný Terraform root, CI tuto část přeskočí.

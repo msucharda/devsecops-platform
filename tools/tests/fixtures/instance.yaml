@@ -1,0 +1,22 @@
+instance:
+  name: demo
+regions:
+  primary: westeurope
+teams:
+  platform: [platform@example.test]
+  security: [security@example.test]
+modules:
+  observer:
+    parameters: {}
+manualPrerequisites:
+  tenant: true
+  enterpriseOidc: true
+  enterpriseScim: true
+  enterpriseOwner: true
+  subscriptions: true
+  licenses: true
+  privateInternalForksDisabled: true
+  emuUserNamespacesRestricted: true
+  fineGrainedPatApprovalRequired: true
+  patMaxLifetime90Days: true
+  githubAppAvailabilityVerified: true

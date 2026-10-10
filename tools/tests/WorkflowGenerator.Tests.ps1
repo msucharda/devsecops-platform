@@ -44,6 +44,25 @@ Describe 'Deployment workflow generation' {
         $workflow.jobs.module_observer.needs | Should -Not -Contain 'module_foundation'
     }
 
+    It 'wires Terraform, prerequisite artifacts and publication of only the runner output file' {
+        $output = Join-Path $TestDrive 'runner.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        $job = $workflow.jobs.module_application
+
+        @($job.steps | Where-Object { $_['uses'] -like 'hashicorp/setup-terraform@*' }).Count | Should -Be 1
+        $download = $job.steps | Where-Object { $_['uses'] -like 'actions/download-artifact@*' }
+        $download.with.name | Should -Be 'module-outputs-foundation'
+        $download.with.path | Should -Be './artifacts/prerequisites'
+        $run = $job.steps | Where-Object { $_['name'] -eq 'Run module' }
+        $run.run | Should -Match '-PrerequisiteOutputsPath ./artifacts/prerequisites'
+        $run.run | Should -Match '-ArtifactsPath ./artifacts/module-outputs'
+        $upload = $job.steps | Where-Object { $_['uses'] -like 'actions/upload-artifact@*' }
+        $upload.with.path | Should -Be './artifacts/module-outputs/application.json'
+        $upload.with.'if-no-files-found' | Should -Be 'error'
+        $job.environment | Should -Be '${{ fromJSON(needs.select.outputs.environments)[''application''] }}'
+    }
+
     It 'gates jobs on runtime selection and successful prerequisites without propagating unrelated skips' {
         $output = Join-Path $TestDrive 'selection.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output

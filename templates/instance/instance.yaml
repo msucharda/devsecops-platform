@@ -1,0 +1,26 @@
+instance:
+  name: demo
+regions:
+  primary: westeurope
+teams:
+  platform: [platform@example.test]
+  security: [security@example.test]
+modules: {}
+customPatterns: []
+manualSteps: {}
+manualPrerequisites:
+  tenant: false
+  enterpriseOidc: false
+  enterpriseScim: false
+  enterpriseOwner: false
+  subscriptions: false
+  licenses: false
+  privateInternalForksDisabled: false
+  emuUserNamespacesRestricted: false
+  fineGrainedPatApprovalRequired: false
+  patMaxLifetime90Days: false
+  githubAppAvailabilityVerified: false
+githubApps: {}
+credentials: {}
+teardown:
+  allowed: false

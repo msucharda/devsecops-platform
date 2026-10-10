@@ -21,7 +21,18 @@
         "required": ["id", "description"],
         "properties": {
           "id": { "$ref": "#/definitions/moduleName" },
-          "description": { "$ref": "#/definitions/nonBlankString" }
+          "description": { "$ref": "#/definitions/nonBlankString" },
+          "owner": { "enum": ["platform", "security"], "default": "platform" },
+          "limitations": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["plan", "drift", "teardown"],
+            "properties": {
+              "plan": { "$ref": "#/definitions/nonBlankString" },
+              "drift": { "$ref": "#/definitions/nonBlankString" },
+              "teardown": { "$ref": "#/definitions/nonBlankString" }
+            }
+          }
         }
       }
     },
