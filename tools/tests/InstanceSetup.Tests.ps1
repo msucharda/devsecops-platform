@@ -300,6 +300,28 @@ Describe 'Instance setup wizard' {
     }
 
     Context 'GitHub App helpers' {
+        It 'reuses a registered private App when OAuth slug lookup returns 404' {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                Mock Invoke-SetupApi { @{ Status = 'Missing'; Code = 404; Data = $null; Message = 'HTTP 404: Not Found' } }
+                Mock Confirm-SetupAction { $true }
+                Mock Request-SetupManualStep {}
+                Mock Read-SetupValue { '101' }
+                Mock Find-SetupAppKey { throw 'Reached JWT key verification.' }
+
+                { Get-SetupProbeApp -Setup $Setup -Role admin -Permission @{ members = 'write' } -Selection all } |
+                    Should -Throw '*Reached JWT key verification*'
+                Should -Invoke Request-SetupManualStep -Times 0 -Exactly
+                Should -Invoke Confirm-SetupAction -Times 1 -Exactly -ParameterFilter {
+                    $Prompt -like '*already registered*'
+                }
+            }
+            $setup.State.probe['adminAppId'] | Should -Be '101'
+        }
+
         It 'compares App permissions exactly and ignores implicit metadata read' {
             $results = InModuleScope InstanceSetup {
                 $expected = @{ members = 'read' }

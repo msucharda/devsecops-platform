@@ -1920,13 +1920,20 @@ function Get-SetupProbeApp {
     if (-not $probe[$appIdKey]) {
         $lookup = Invoke-SetupApi -Setup $Setup -Uri "$api/apps/$appName"
         if ($lookup.Status -ne 'Ok') {
-            $query = @("name=$appName", "url=$([uri]::EscapeDataString("https://$githubHost/enterprises/$enterprise"))", 'webhook_active=false') +
-                @($Permission.Keys | ForEach-Object { "$_=$($Permission[$_])" })
-            Request-SetupManualStep -Message "Register the enterprise-owned GitHub App $appName. GitHub has no API for this step." -Url "$appsUrl/new?$($query -join '&')" -Guidance @(
-                "The link pre-fills: name $appName, webhook inactive, permissions $(Format-SetupPermission -Permission $Permission).",
-                'Keep every other permission at No access, then choose Create GitHub App.'
+            Show-SetupMessage -Kind Warning -Message "OAuth lookup of $appName did not succeed. $($lookup.Message)"
+            Show-SetupGuidance -Line @(
+                "Private enterprise Apps can return HTTP 404 even when registered. Check $appsUrl before creating another App.",
+                'An App ID entered below is verified with its private key through GET /app; it is not accepted on trust.'
             )
-            $lookup = Invoke-SetupApi -Setup $Setup -Uri "$api/apps/$appName"
+            if (-not (Confirm-SetupAction -Prompt "Is $appName already registered under this enterprise?")) {
+                $query = @("name=$appName", "url=$([uri]::EscapeDataString("https://$githubHost/enterprises/$enterprise"))", 'webhook_active=false') +
+                    @($Permission.Keys | ForEach-Object { "$_=$($Permission[$_])" })
+                Request-SetupManualStep -Message "Register the enterprise-owned GitHub App $appName. GitHub has no API for this step." -Url "$appsUrl/new?$($query -join '&')" -Guidance @(
+                    "The link pre-fills: name $appName, webhook inactive, permissions $(Format-SetupPermission -Permission $Permission).",
+                    'Keep every other permission at No access, then choose Create GitHub App.'
+                )
+                $lookup = Invoke-SetupApi -Setup $Setup -Uri "$api/apps/$appName"
+            }
         }
         $appId = if ($lookup.Status -eq 'Ok' -and $lookup.Data -is [System.Collections.IDictionary]) { [string] $lookup.Data['id'] } else { '' }
         if (-not $appId) {

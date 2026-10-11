@@ -406,6 +406,8 @@ Příznak: `githubAppAvailabilityVerified`. Dílčí kroky: `Probe organization`
 - Token odvolá nástrojem `tools/Remove-PlatformGitHubToken.ps1` a ověří, že odvolaný token vrátí HTTP 401.
 - Smaže klíč App A a otevře stránku pro smazání App A.
 
+Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tokenem může vrátit HTTP 404 i pro existující App. Průvodce proto nejdřív vyžádá kontrolu registrace v enterprise UI. Pokud App existuje, zadej její App ID a nevytvářej další. Průvodce identitu, vlastníka a oprávnění ověří privátním klíčem přes `GET /app`.
+
 **Průvodce: App B (organizační API)**
 
 - Otevře předvyplněný formulář registrace App `<name>-probe-admin` s oprávněními Administration: Read and write, Members: Read and write a Custom organization roles: Read-only. Klíč uloží jako `$work\keys\probe-admin.pem`. Ověří instalaci do všech repozitářů organizace.
