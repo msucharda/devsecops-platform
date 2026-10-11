@@ -6,7 +6,7 @@
 
 Instance repository (repozitář instance) je repozitář v organizaci platformy s vendorovaným release v `platform/`, souborem `instance.yaml` a workflow nasazení. Vytvoří ho GitHub část bootstrapu v #11. Lokální bootstrap Azure proto poprvé běží dřív, než repozitář instance existuje.
 
-Platform team (platformní tým) zapíše skutečné identifikátory do `instance.yaml` v repozitáři instance. Dokud repozitář instance neexistuje, zkopíruje šablonu `templates/instance/instance.yaml` mimo checkout zdrojového repozitáře a vyplní kopii. Zdrojový repozitář nesmí obsahovat data instance, například ID tenantu, ID subscriptions nebo název enterprise (ADR 0012). Šablona proto zůstává s nulovými identifikátory. Formát všech položek popisuje [README](../README.md#instance-configuration-konfigurace-instance). Hodnoty pro referenční instanci a jejich původ uvádí krok B1 v [runbooku referenční instance](reference-instance.md).
+Platform team (platformní tým) zapíše skutečné identifikátory do `instance.yaml` v repozitáři instance. Dokud repozitář instance neexistuje, leží konfigurace mimo checkout zdrojového repozitáře. Pro referenční instanci ji vygeneruje průvodce `tools/Start-InstanceSetup.ps1` v kroku B1 [runbooku referenční instance](reference-instance.md). Hodnoty a jejich původ uvádí stejný krok. Pro jinou instanci platformní tým zkopíruje šablonu `templates/instance/instance.yaml` mimo checkout a vyplní kopii. Zdrojový repozitář nesmí obsahovat data instance, například ID tenantu, ID subscriptions nebo název enterprise (ADR 0012). Šablona proto zůstává s nulovými identifikátory. Formát všech položek popisuje [README](../README.md#instance-configuration-konfigurace-instance).
 
 Kopie konfigurace obsahuje tyto položky:
 
@@ -39,7 +39,7 @@ Delegovaný token Microsoft Graph musí umožnit čtení uživatele, enterprise 
 
 ## Manual prerequisites (ruční předpoklady)
 
-Platform team (platformní tým) nastaví `true` až po ověření každé položky. Chybějící nebo nepravdivé potvrzení zastaví bootstrap před přihlášením a před první změnou.
+Platform team (platformní tým) nastaví `true` až po ověření každé položky. Pro referenční instanci příznaky nastaví průvodce `tools/Start-InstanceSetup.ps1`, až když prošly kroky, které příznak potvrzují ([runbook referenční instance](reference-instance.md#průvodce)). Chybějící nebo nepravdivé potvrzení zastaví bootstrap před přihlášením a před první změnou.
 
 | Potvrzení | Co musí člověk ověřit |
 |---|---|

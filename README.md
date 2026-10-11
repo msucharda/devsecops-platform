@@ -13,7 +13,7 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 | `modules/<name>/` | Manifest `module.yaml`, Terraform root a README se specifikací modulu. |
 | `schemas/module.schema.json` | JSON Schema Module manifest (manifest modulu). |
 | `schemas/instance.schema.json` | JSON Schema konfigurace instance. |
-| `tools/` | Lokální bootstrap Azure, runner modulu a generátor workflow v PowerShell 7, testy Pester. |
+| `tools/` | Lokální bootstrap Azure, průvodce přípravou referenční instance, runner modulu a generátor workflow v PowerShell 7, testy Pester. |
 | `.github/workflows/` | CI zdrojového repozitáře. |
 | `templates/instance/` | Šablona repozitáře instance: vygenerovaný workflow nasazení, příklad `instance.yaml`, CODEOWNERS a kontrakt bootstrapu. |
 
@@ -342,4 +342,4 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - Každý release candidate se nasadí celý na referenční instanci.
 - Akceptace ověří skutečný rozsah oprávnění každého jobu, úplné čtení bypass konfigurace, odmítnutí credentials pro neautorizované PR a zachování ručních enterprise předpokladů při teardownu.
 - Před každým minor release proběhne teardown referenční instance a její nové nasazení.
-- Kroky platformního týmu na referenční instanci popisuje [Příprava a akceptace referenční instance](docs/reference-instance.md).
+- Kroky platformního týmu na referenční instanci popisuje [Příprava a akceptace referenční instance](docs/reference-instance.md). Ruční předpoklady připraví a ověří průvodce `tools/Start-InstanceSetup.ps1`.

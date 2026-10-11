@@ -1,17 +1,20 @@
 # Příprava a akceptace referenční instance
 
-Začni fází A. Fáze A připraví tenant Entra ID, Azure a enterprise na GHE.com. Na jejím výsledku stojí bootstrap ve fázi B i ověření chování API ve fázi C. Fáze D je akceptace přírůstku 1 po implementaci zbylých issues.
+Začni průvodcem `tools/Start-InstanceSetup.ps1`. Průvodce provede fázi A a krok B1. Ověří tenant Entra ID, Azure a enterprise na GHE.com. Změny, které mají API, provede po tvém potvrzení. Kroky bez API popíše cestou v UI. Na výsledku fáze A stojí bootstrap ve fázi B i ověření chování API ve fázi C. Fáze D je akceptace přírůstku 1 po implementaci zbylých issues.
 
-Postup provádí člen Platform team (platformní tým) na Reference instance (referenční instanci). Každý krok má tři části:
+Postup provádí člen Platform team (platformní tým) na Reference instance (referenční instanci). Kroky mají tyto části:
 
 - **Proč** vysvětluje, co by bez kroku selhalo.
-- **Postup** uvádí příkazy nebo cestu v UI.
+- **Průvodce** ve fázi A popisuje, co průvodce ověří a změní.
+- **Tvoje akce** ve fázi A popisuje kroky bez API, které provedeš v UI.
+- **Postup** ve fázích B–D uvádí příkazy nebo cestu v UI.
 - **Ověření** popisuje výsledek, který musíš vidět, než budeš pokračovat.
 
 ## Proč postup vyžaduje člověka
 
 - Offline testy Pester ověřují nástroje proti náhradám cloudových API. Neprokazují, že skutečné API Azure, Microsoft Graph a GHE.com přijme stejná volání a oprávnění.
-- Platforma nevytváří tenant, enterprise, OIDC SSO, SCIM provisioning, subscriptions ani licence. Tyto položky jsou Manual prerequisites (ruční předpoklady). Bootstrap část z nich ověří přes API. Zbytek potvrdí člověk příznakem v `manualPrerequisites`.
+- Platforma nevytváří tenant, enterprise, OIDC SSO, SCIM provisioning, subscriptions ani licence. Tyto položky jsou Manual prerequisites (ruční předpoklady). Průvodce a bootstrap část z nich ověří přes API. Zbytek potvrdí člověk. Průvodce potvrzení zapíše jako příznak v `manualPrerequisites`.
+- Některé kroky nemají API: zapnutí OIDC SSO, konfigurace SCIM, registrace a instalace GitHub App, část enterprise politik a kontrola licencí GitHubu. Průvodce u nich ukáže cestu v UI a vyžádá potvrzení.
 - Issues #3–#6 ověřují chování API, na kterém stojí návrh modulů `emu-identity`, `organizations` a `enterprise-baseline`. Agent tyto moduly implementuje až podle výsledků.
 - Kroky vyžadují role, které agent nemá: Global Administrator, Privileged Role Administrator a enterprise owner.
 
@@ -19,7 +22,7 @@ Postup provádí člen Platform team (platformní tým) na Reference instance (r
 
 | Fáze | Obsah | Uzavře | Odblokuje |
 |---|---|---|---|
-| A | Ruční předpoklady tenantu, Azure a enterprise | – | B a C |
+| A | Ruční předpoklady tenantu, Azure a enterprise přes průvodce | – | B a C |
 | B | Bootstrap na referenční instanci | #10 | #11 |
 | C | Ověření 73–76 | #3, #4, #5 a #6 | #12, #13 a #18 |
 | D | Akceptace přírůstku 1 | #23 | – |
@@ -52,11 +55,11 @@ Role může mít jeden člověk, nebo kroky provede několik administrátorů. B
 
 | Role | Rozsah | Proč ji potřebuješ | Kroky |
 |---|---|---|---|
-| Global Administrator | Entra ID | Souhlas s aplikací OIDC. Dočasná elevace pro přiřazení role na tenant root group. | A3, A4 |
+| Global Administrator | Entra ID | Souhlas s aplikací OIDC. Dočasná elevace pro přiřazení rolí Owner a Management Group Reader. | A3, A4 |
 | Application Administrator nebo Cloud Application Administrator | Entra ID | Konfigurace SCIM, přiřazení app rolí a čtení synchronization jobs přes Graph. | A5, B, C1, C2 |
 | Privileged Role Administrator | Entra ID | Vytvoření a přiřazení vlastní role Entra. | C1 |
 | User Administrator | Entra ID | Testovací uživatel a skupiny. | C1, C2 |
-| Owner | Management subscription | Bootstrap zapisuje role assignments. Contributor má v `NotActions` `Microsoft.Authorization/*/Write`. | A3, B |
+| Owner | Všechny subscriptions instance | Bootstrap zapisuje role assignments. Contributor má v `NotActions` `Microsoft.Authorization/*/Write`. | A3, B |
 | Management Group Reader | Tenant root group | Bootstrap čte hierarchii management groups a role assignments na všech předcích subscriptions. | A3, B |
 | Enterprise owner | Enterprise na GHE.com | Enterprise politiky, organizace a enterprise-owned Apps. Bootstrap tuto roli ověřuje. | A6–A9, C |
 | Setup user `<shortcode>_admin` | Enterprise na GHE.com | Konfigurace OIDC a SCIM. Před zapnutím OIDC jiný účet neexistuje. | A4, A5 |
@@ -75,14 +78,66 @@ Repozitář instance vytvoří GitHub část bootstrapu v #11. #11 čeká na #10
 
 | Období | Umístění `instance.yaml` | Původ obsahu |
 |---|---|---|
-| Fáze A a B (#10) | `$work\instance.yaml` | Krok B1 soubor vygeneruje z proměnných relace. Hodnoty a jejich důvody uvádí tabulka v kroku B1. |
+| Fáze A a B (#10) | `$work\instance.yaml` | Průvodce soubor vygeneruje v kroku B1 z ověřených výsledků. Hodnoty a jejich důvody uvádí tabulka v kroku B1. |
 | Po #11 | Kořen repozitáře instance | Hodnoty převezmeš z `$work\instance.yaml`. |
 
 Zdrojový repozitář nesmí obsahovat konfiguraci s daty instance (ADR 0012). `templates/instance/instance.yaml` je jen šablona s nulovými identifikátory. Formát všech položek popisuje [README](../README.md#instance-configuration-konfigurace-instance).
 
+## Průvodce
+
+Spusť průvodce v PowerShell 7.4+ v kořeni checkoutu zdrojového repozitáře:
+
+```powershell
+.\tools\Start-InstanceSetup.ps1
+```
+
+| Parametr | Výchozí hodnota | Význam |
+|---|---|---|
+| `-WorkPath` | `$HOME\platform-reference` | Adresář `$work` pro data instance. Průvodce odmítne adresář uvnitř checkoutu (ADR 0012). |
+| `-ModulesPath` | `tools\tests\fixtures\runner-modules` | Manifesty modulů pro validaci konfigurace a preflight. |
+| `-Reconfirm` | vypnuto | Průvodce znovu vyžádá uložená potvrzení kroků bez API a zopakuje testy GitHub Apps z kroku A9. |
+| `-PassThru` | vypnuto | Skript vrátí výsledky dílčích kroků, příznaky `manualPrerequisites` a cestu k `instance.yaml`. |
+
+Průvodce dělí kroky A1–A9 a B1 na dílčí kroky. Každý krok uvádí své dílčí kroky. Pro každý dílčí krok platí:
+
+- Průvodce nejdřív přečte aktuální stav přes API Azure, Microsoft Graph nebo GHE.com. Splněnou podmínku jen ohlásí.
+- Změnu provede až po tvém potvrzení.
+- Krok bez API popíše cestou v UI, podle potřeby otevře stránku v prohlížeči a vyžádá potvrzení.
+- Dílčí krok, jehož předpoklad neprošel, průvodce přeskočí se stavem `Skipped`.
+
+Pokud dílčí krok selže, průvodce vypíše příčinu a opravu a nabídne volby:
+
+| Volba | Význam |
+|---|---|
+| `[r]` | Zopakuje dílčí krok. |
+| `[l]` | Znovu přihlásí Azure CLI nebo GitHub CLI a zopakuje dílčí krok. Použij ji po aktivaci role v PIM. |
+| `[s]` | Přeskočí dílčí krok. Průvodce přeskočí i dílčí kroky, které na něm závisí. |
+| `[q]` | Ukončí průvodce. |
+
+Souhrn na konci uvádí stav každého dílčího kroku a první dílčí krok, který musíš opravit. Krok je splněný, když všechny jeho dílčí kroky mají stav `Ok`.
+
+Průvodce můžeš kdykoli ukončit a spustit znovu. Nový běh znovu ověří všechny dílčí kroky přes API. Vstupy nabídne z `$work\session.ps1` a `$work\instance.yaml`. Potvrzení kroků bez API a výsledky testů GitHub Apps z kroku A9 drží `$work\setup-state.json`. Příznak s hodnotou `true` v existujícím `instance.yaml` průvodce převezme jako potvrzení kroku bez API.
+
+Průvodce přidá do přihlášení `gh` scope, až když ho dílčí krok potřebuje. Scopes `admin:enterprise`, `admin:org` a `repo` jsou dočasné. Na konci průvodce nabídne jejich odebrání. Scope `read:enterprise` zůstane, protože ho potřebuje bootstrap.
+
+Průvodce zapíše do `$work` tyto soubory:
+
+| Soubor | Obsah |
+|---|---|
+| `instance.yaml` | Konfigurace instance z kroku B1. Předchozí verzi průvodce uloží jako `instance.yaml.bak`. |
+| `session.ps1` | Proměnné relace pro příkazy fází B–D. |
+| `setup-state.json` | Potvrzení kroků bez API a výsledky testů z kroku A9. |
+| `keys\probe-admin.pem` | Privátní klíč App B z kroku A9 pro fázi C. |
+
 ## Konvence relace
 
-- Příkazy spouštěj v jedné relaci PowerShell 7.4+ v kořeni checkoutu zdrojového repozitáře. Kroky používají proměnné a funkce z předchozích kroků. Po restartu relace spusť znovu jejich přiřazení a definice.
+- Příkazy fází B–D spouštěj v relaci PowerShell 7.4+ v kořeni checkoutu zdrojového repozitáře. Na začátku každé relace načti proměnné, které zapsal průvodce. Pokud jsi průvodce spustil s `-WorkPath`, použij tuto cestu.
+
+  ```powershell
+  . (Join-Path $HOME 'platform-reference\session.ps1')
+  ```
+
+  `session.ps1` definuje `$name`, `$region`, `$tenantId`, `$mgmtSub`, `$subscriptionIds`, `$enterprise`, `$githubHost`, `$api`, `$upn`, `$spId`, `$userRole`, `$login`, `$probeOrg`, `$adminApp`, `$repo`, `$work`, `$cfg` a `$modulesPath`. Proměnná chybí, pokud její dílčí krok neprošel. Kroky fází B–D používají také proměnné a funkce z předchozích kroků. Po restartu relace spusť znovu jejich přiřazení a definice.
 - Data instance patří jen do adresáře `$work` mimo checkout: identifikátory, konfigurace, privátní klíče a výstupy. Zdrojový repozitář je nesmí obsahovat (ADR 0012).
 - Komentáře v issues nesmí obsahovat ID tenantu, subscriptions a objektů ani název enterprise.
 - `az` je na Windows dávka `az.cmd`. cmd rozdělí argument bez mezery, který obsahuje `&` nebo `|`. Neměň proto mezery kolem `|` a `&&` v `--query`. Parametry URL předávej přes `--url-parameters`.
@@ -90,9 +145,9 @@ Zdrojový repozitář nesmí obsahovat konfiguraci s daty instance (ADR 0012). `
 
 ## Preflight (předběžná kontrola)
 
-`tools/Test-BootstrapPrerequisites.ps1` spustí kontroly bootstrapu a nic nezmění. Na rozdíl od bootstrapu se nezastaví na první chybě. Pro každou kontrolu vrátí řádek se sloupci `Area`, `Check`, `Status` a `Detail`. Preflight nahrazuje ruční ověření přes API v krocích A2–A6 a kontrolu názvu storage account. Kroky v UI ani příznaky `manualPrerequisites` nenahrazuje.
+`tools/Test-BootstrapPrerequisites.ps1` spustí kontroly bootstrapu a nic nezmění. Na rozdíl od bootstrapu se nezastaví na první chybě. Pro každou kontrolu vrátí řádek se sloupci `Area`, `Check`, `Status` a `Detail`. Kroky v UI ani příznaky `manualPrerequisites` neověří.
 
-Preflight čte konfiguraci instance z kroku B1. Konfigurace potřebuje `$upn` z kroku A2 a `$spId` z kroku A4. Po kroku A4 proto můžeš konfiguraci vytvořit podle B1 a preflight spouštět po každém dalším kroku. Příznak, jehož krok ještě neprošel ověřením, nastav na `false`.
+Průvodce spustí preflight jako poslední dílčí krok kroku B1. Ručně ho spusť před bootstrapem a po každé změně v cloudu:
 
 ```powershell
 .\tools\Test-BootstrapPrerequisites.ps1 -InstancePath $cfg -ModulesPath $modulesPath | Format-Table -Wrap
@@ -110,125 +165,93 @@ Bootstrap spusť, až platí všechny podmínky:
 
 - Žádný řádek nemá `Status` `Fail` ani `Skip`.
 - Všechny příznaky mají `Confirmed`.
-- Každý jiný řádek `Manual` jsi ověřil ručně. Například `EMU OIDC enterprise application` má `Manual`, když Graph nevrátí režim SSO. OIDC potom ověř podle kroku A5.
+- Každý jiný řádek `Manual` jsi ověřil ručně. Například `EMU OIDC enterprise application` má `Manual`, když Graph nevrátí režim SSO. OIDC v tom případě ověří přihlášení přes Entra ID v kroku A6.
 
-Preflight nekontroluje ABAC podmínky, deny assignments ani provider `Microsoft.ContainerInstance` pro krok B8. `Detail` může obsahovat ID subscriptions a scope. Výstup proto nevkládej do issue bez úpravy (ADR 0012). Ruční příkazy v sekcích **Ověření** slouží k diagnostice řádku `Fail`.
+Preflight nekontroluje ABAC podmínky, deny assignments ani provider `Microsoft.ContainerInstance` pro krok B8. `Detail` může obsahovat ID subscriptions a scope. Výstup proto nevkládej do issue bez úpravy (ADR 0012). Příčinu řádku `Fail` zjistíš novým během průvodce: dílčí krok vypíše příčinu a opravu.
 
 ## Fáze A: ruční předpoklady
 
-Kroky A1–A9 připraví vše, co bootstrap kontroluje. Každý krok uvádí příznak `manualPrerequisites`, který potvrzuje. Příznaky zapíšeš do konfigurace v kroku B1.
+Kroky A1–A9 připraví vše, co bootstrap kontroluje. Provede je průvodce. Každý krok uvádí příznak `manualPrerequisites`, který potvrzuje. Průvodce nastaví příznak na `true` v kroku B1, až když všechny dílčí kroky, na kterých příznak závisí, mají stav `Ok`.
 
-### A1: Pracovní adresář, nástroje a proměnné
+### A1: Pracovní adresář, nástroje a vstupy
+
+Dílčí kroky: `Command-line tools`, `Instance inputs`.
 
 **Proč:** Bootstrap potřebuje PowerShell 7.4+, parser YAML, Azure CLI a GitHub CLI. Adresář `$work` drží data instance mimo repozitář.
 
-**Postup:**
+**Průvodce:**
 
-```powershell
-$repo = (Get-Location).Path
-$work = Join-Path $HOME 'platform-reference'
-New-Item -ItemType Directory -Force -Path (Join-Path $work 'keys') | Out-Null
-.\tools\Install-ToolDependencies.ps1
+- Ověří `az` a `gh`. Chybějící nástroj ohlásí s příkazem `winget install`.
+- Po potvrzení nainstaluje modul `powershell-yaml` 0.4.12 pro aktuálního uživatele.
+- Vytvoří `$work\keys` a přečte existující `$work\instance.yaml`.
+- Vyžádá vstupy a ověří jejich formát:
 
-$name = '<instance-name>'        # instance.name: ^[a-z][a-z0-9]*$, 2-8 characters
-$region = 'westeurope'           # regions.primary
-$tenantId = '<tenant-id>'
-$mgmtSub = '<management-subscription-id>'
-$enterprise = '<enterprise-slug>'
-$githubHost = "$enterprise.ghe.com"
-$api = "https://api.$githubHost"
-```
+  | Vstup | Položka konfigurace | Pravidlo |
+  |---|---|---|
+  | Název instance | `instance.name` | `^[a-z][a-z0-9]*$`, 2–8 znaků. |
+  | Region Azure | `regions.primary` | Region dostupný v management subscription, například `westeurope`. Dostupnost ověří krok A3. |
+  | ID tenantu Entra ID | `bootstrap.tenantId` | GUID. |
+  | ID management subscription | `bootstrap.managementSubscriptionId` | GUID. |
+  | Slug enterprise | `bootstrap.enterprise` | `<slug>` z `https://<slug>.ghe.com`. Průvodce ověří, že DNS přeloží `api.<slug>.ghe.com`. |
+  | Další subscriptions | `bootstrap.subscriptionIds` | GUID oddělené čárkou, nebo `-`. Management subscription průvodce přidá sám. |
 
-`$name` se stane hodnotou `instance.name`. Bootstrap z ní odvodí názvy `rg-<name>-bootstrap`, `st<name>tfstate` a `id-<name>-<module>-plan|apply`. Název storage account musí být globálně jedinečný. Dostupnost ověří preflight v řádku `State backend names`.
+Název instance se stane hodnotou `instance.name`. Bootstrap z ní odvodí názvy `rg-<name>-bootstrap`, `st<name>tfstate` a `id-<name>-<module>-plan|apply`. Dostupnost názvu storage account ověří krok A3.
 
-**Ověření:** `$PSVersionTable.PSVersion` vrátí 7.4 nebo vyšší. `az version` a `gh --version` vypíšou verzi bez chyby.
+**Tvoje akce:** Pokud chybí `az` nebo `gh`, nainstaluj je vypsaným příkazem `winget install`. Otevři nové okno PowerShellu a spusť průvodce znovu.
 
 ### A2: Tenant a licence Entra ID
 
-Příznaky: `tenant`, část `licenses`.
+Příznaky: `tenant`, část `licenses`. Dílčí kroky: `Azure sign-in`, `Entra ID P1 or P2 license`.
 
 **Proč:**
 
 - Bootstrap odmítne token z jiného tenantu, než uvádí `bootstrap.tenantId`.
 - Přiřazení app role skupině a vlastní role Entra vyžadují Entra ID P1 nebo P2. Bez licence nefunguje provisioning skupin ani ověření #3. Bootstrap licenci kontroluje přes `subscribedSkus`.
 
-**Postup:**
+**Průvodce:**
 
-```powershell
-az login --tenant $tenantId
-$me = az ad signed-in-user show --query id -o tsv
-$upn = az ad signed-in-user show --query userPrincipalName -o tsv
-az account show --query "{tenant:tenantId, user:user.name}" -o table
-az rest --url https://graph.microsoft.com/v1.0/subscribedSkus --query "value[].{sku:skuPartNumber, status:capabilityStatus, units:prepaidUnits.enabled, entra:join(',', servicePlans[?servicePlanName=='AAD_PREMIUM' || servicePlanName=='AAD_PREMIUM_P2'].provisioningStatus)}" -o table
-```
+- Pokud Azure CLI nemá token pro tenant `bootstrap.tenantId`, nabídne `az login`.
+- Odmítne účet, který není členem tenantu, například účet typu Guest.
+- Vypíše tvoje aktivní role Entra ID. Role přes PIM se počítají až po aktivaci.
+- Přes `subscribedSkus` ověří aspoň jednu licenci se stavem `Enabled`, počtem jednotek větším než 0 a plánem `AAD_PREMIUM` nebo `AAD_PREMIUM_P2` ve stavu `Success`.
 
-**Ověření:**
+**Tvoje akce:** Pokud licence chybí, kup ji nebo spusť zkušební verzi: Microsoft 365 admin center → Billing → Purchase services.
 
-- `tenant` se rovná `$tenantId`.
-- Aspoň jeden řádek má `status` `Enabled`, `units` větší než 0 a ve sloupci `entra` hodnotu `Success`.
-- Preflight: řádky `Azure CLI login` a `Entra ID P1 or P2 license` mají `Pass`.
+**Ověření:** Preflight: řádky `Azure CLI login` a `Entra ID P1 or P2 license` mají `Pass`.
 
 ### A3: Subscriptions, resource providers a oprávnění Azure
 
-Příznak: `subscriptions`.
+Příznak: `subscriptions`. Dílčí kroky: `Subscriptions and region`, `Owner role on the subscriptions`, `Resource providers`, `State backend names`, `Management group read access`.
 
 **Proč:**
 
 - Bootstrap vytvoří state backend a identity v management subscription a přiřadí identitám role. Zápis role assignments vyžaduje Owner. Contributor nestačí, protože má v `NotActions` `Microsoft.Authorization/*/Write`.
 - Bootstrap před první změnou kontroluje, že identity modulů nemají oprávnění navíc. Čte proto hierarchii management groups a role assignments na všech předcích subscription včetně tenant root group. Tato čtení pokryje role Management Group Reader na tenant root group.
 - Bootstrap neregistruje resource providers. Bez `Microsoft.Storage` a `Microsoft.ManagedIdentity` selže vytvoření backendu a identit. `Microsoft.ContainerInstance` potřebuje kontrola izolace v kroku B8.
+- Na tenant root group nemá bez elevace nikdo oprávnění přiřazovat role. Elevace ale dává plný přístup ke všem subscriptions v tenantu a nesmí zůstat zapnutá.
 
-**Postup:**
+**Průvodce:**
 
-1. Nastav subscription a zaregistruj resource providers:
+- Ověří, že každá subscription z `bootstrap.subscriptionIds` patří do tenantu a má stav `Enabled`. Ověří, že region je v management subscription dostupný. Nedostupný region nabídne zadat znovu.
+- V každé subscription ověří akce, které bootstrap potřebuje: zápis resource group, storage account, kontejnerů, locků, identit a role assignments. Pokud akce chybí, přiřadí ti roli Owner.
+- Po potvrzení zaregistruje `Microsoft.Storage`, `Microsoft.ManagedIdentity` a `Microsoft.ContainerInstance` ve všech subscriptions. Na stav `Registered` čeká nejdéle 10 minut.
+- Ověří, že `rg-<name>-bootstrap` a `st<name>tfstate` jsou volné, nebo patří instanci `<name>` podle tagů bootstrapu. Pokud je název storage account obsazený, nabídne jiný název instance.
+- Ověří řetězec management groups od každé subscription k tenant root group a čtení role assignments na každém předkovi. Pokud tenant management groups ještě nepoužívá, po potvrzení vytvoří tenant root group a čeká nejdéle 15 minut. Pokud čtení chybí, přiřadí ti roli Management Group Reader na tenant root group.
 
-   ```powershell
-   az account set --subscription $mgmtSub
-   'Microsoft.Storage', 'Microsoft.ManagedIdentity', 'Microsoft.ContainerInstance' | ForEach-Object { az provider register --namespace $_ --wait }
-   ```
+Role Owner a Management Group Reader průvodce přiřazuje přes elevaci Global Administratora:
 
-2. Ověř roli Owner:
+1. Ověří aktivní roli Global Administrator. Bez ní vypíše příkaz `az role assignment create`, který spustí jiný Global Administrator.
+2. Po potvrzení zapne elevaci. Elevace dá roli User Access Administrator na kořeni `/`.
+3. Přiřadí roli a elevaci hned odebere, i když přiřazení selže. Elevaci, která existovala před spuštěním průvodce, odebere po potvrzení.
+4. Na účinnost role čeká nejdéle 5 minut u role Owner a 10 minut u role Management Group Reader.
 
-   ```powershell
-   az role assignment list --assignee-object-id $me --scope "/subscriptions/$mgmtSub" --include-inherited --include-groups --query "[].roleDefinitionName" -o tsv
-   ```
+**Tvoje akce:** Pokud nemáš roli Global Administrator, aktivuj ji v PIM a zvol `[l]`. Jinak předej vypsaný příkaz Global Administratorovi.
 
-3. Global Administrator přiřadí roli Management Group Reader:
-   1. Entra admin center → Identity → Overview → Properties → **Access management for Azure resources** = Yes → Save. Elevace dá Global Administratorovi roli User Access Administrator na kořeni Azure. Bez elevace nemá na tenant root group nikdo oprávnění přiřazovat role.
-   2. Odhlas se a přihlas se znovu, aby se elevace projevila:
-
-      ```powershell
-      az logout
-      az login --tenant $tenantId
-      az account set --subscription $mgmtSub
-      ```
-
-   3. Přiřaď roli. Pokud ji přiřazuje jiný administrátor, použije object ID z `$me`:
-
-      ```powershell
-      az role assignment create --assignee-object-id $me --assignee-principal-type User --role 'Management Group Reader' --scope "/providers/Microsoft.Management/managementGroups/$tenantId"
-      ```
-
-   4. Vrať **Access management for Azure resources** na No. Elevace dává plný přístup ke všem subscriptions v tenantu a nesmí zůstat zapnutá.
-
-   Pokud přiřazení skončí chybou, že management group neexistuje, tenant ještě management groups nepoužívá. Otevři v Azure portálu stránku Management groups. Azure při prvním použití vytvoří tenant root group. Potom přiřazení zopakuj.
-
-4. Ověř řetězec předků management subscription:
-
-   ```powershell
-   az rest --method post --url https://management.azure.com/providers/Microsoft.Management/getEntities --url-parameters api-version=2020-05-01 "`$filter=name eq '$mgmtSub'" --query "value[?name=='$mgmtSub'].properties.parentNameChain | [0]" -o json
-   ```
-
-**Ověření:**
-
-- Krok 2 vypíše `Owner`.
-- Krok 4 vypíše neprázdné pole. První prvek se rovná `$tenantId`. Prázdný výstup znamená chybějící oprávnění; bootstrap by se zastavil před první změnou.
-- Pokud instance používá další subscriptions, zopakuj kroky 1, 2 a 4 pro každou z nich.
-- Preflight: řádky `Subscriptions in the bootstrap tenant`, `Resource providers in the management subscription`, `Bootstrap user permissions in the management subscription`, `Management-group ancestry` a `Role assignment audit` mají `Pass`. Provider `Microsoft.ContainerInstance` preflight nekontroluje.
+**Ověření:** Preflight: řádky `Subscriptions in the bootstrap tenant`, `Resource providers in the management subscription`, `Bootstrap user permissions in the management subscription`, `Management-group ancestry`, `Role assignment audit` a `State backend names` mají `Pass`. Provider `Microsoft.ContainerInstance` preflight nekontroluje.
 
 ### A4: OIDC SSO a enterprise aplikace
 
-Příznak: `enterpriseOidc`.
+Příznak: `enterpriseOidc`. Dílčí krok: `OIDC SSO enterprise application`.
 
 **Proč:**
 
@@ -236,28 +259,25 @@ Příznak: `enterpriseOidc`.
 - Bootstrap potřebuje object ID service principal aplikace GitHub Enterprise Managed User (OIDC). Podle něj čte app role, přiřazení a SCIM job.
 - Graph může u platné aplikace OIDC vrátit `preferredSingleSignOnMode` jako `null`. Bootstrap potom jen varuje, vrátí `OidcModeVerified: false` a spoléhá na příznak `enterpriseOidc`. OIDC proto musí ověřit člověk.
 
-**Postup:**
+**Průvodce:**
+
+- Najde service principal aplikace GitHub Enterprise Managed User (OIDC). Pokud tenant obsahuje víc takových aplikací, zeptá se, která patří k enterprise. Do konfigurace zapíše object ID, ne `appId`.
+- Odmítne aplikaci s jiným režimem SSO než `oidc` nebo `null`.
+- Ověří, že aplikace má právě jednu povolenou app roli Enterprise Owner pro uživatele. ID app role User zapíše do `session.ps1` jako `$userRole` pro C1 a C2.
+- Ověří souhlas za celý tenant. Pokud tvoje role souhlas nepřečte, jen varuje. Přihlášení pak nepřímo ověří kroky A5 a A6.
+- Příznak `enterpriseOidc` nastaví, když Graph vrátí režim `oidc`. Při režimu `null` ho nastaví až po přihlášení přes Entra ID v kroku A6.
+
+**Tvoje akce:** Pokud aplikace v tenantu neexistuje, zapni OIDC SSO:
 
 1. Přihlas se do `https://<enterprise>.ghe.com` jako setup user `<shortcode>_admin`. Stáhni recovery codes a ulož je mimo `$work`. Setup user je jediný účet mimo IdP. Recovery codes obnoví přístup, pokud konfigurace OIDC selže.
 2. Your enterprise → Identity provider → Single sign-on configuration → OIDC single sign-on → **Require OIDC single sign-on** → Save.
 3. GitHub přesměruje na Entra ID. Global Administrator udělí aplikaci souhlas za celý tenant.
-4. Zjisti object ID a režim SSO:
 
-   ```powershell
-   az ad sp list --display-name 'GitHub Enterprise Managed User (OIDC)' --query "[].{name:displayName, objectId:id, appId:appId}" -o table
-   $spId = '<objectId>'
-   az rest --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId" --query preferredSingleSignOnMode
-   ```
-
-**Ověření:**
-
-- Seznam obsahuje jeden řádek. Do `$spId` zapiš `objectId`, ne `appId`.
-- Poslední příkaz vypíše `"oidc"`, nebo nevypíše nic. Jinou hodnotu bootstrap odmítne.
-- Preflight: řádek `EMU OIDC enterprise application` má `Pass`, nebo `Manual`, když Graph nevrátí režim SSO. Při `Manual` ověř OIDC přihlášením přes Entra ID v kroku A5.
+**Ověření:** Preflight: řádek `EMU OIDC enterprise application` má `Pass`, nebo `Manual`, když Graph nevrátí režim SSO.
 
 ### A5: SCIM a přímé přiřazení Enterprise Owner
 
-Příznaky: `enterpriseScim`, `enterpriseOwner`.
+Příznaky: `enterpriseScim`, `enterpriseOwner`. Dílčí kroky: `SCIM provisioning`, `Direct Enterprise Owner assignment`.
 
 **Proč:**
 
@@ -265,7 +285,13 @@ Příznaky: `enterpriseScim`, `enterpriseOwner`.
 - Bootstrap vyžaduje aktivní SCIM job. Job v quarantine nesynchronizuje změny z Entra ID.
 - Bootstrap přijme jen přímé přiřazení app role Enterprise Owner uživateli. Přiřazení přes skupinu nestačí. Po prvním nasazení `emu-identity` platformní tým přímé přiřazení odebere a roli pak dává skupina platformního týmu.
 
-**Postup:**
+**Průvodce:**
+
+- Přečte SCIM job aplikace. Job v quarantine ohlásí s důvodem. Neaktivní job po potvrzení spustí a na stav `Active` čeká nejdéle 2 minuty.
+- Ověří přímé přiřazení app role Enterprise Owner tvému uživateli. Chybějící přiřazení po potvrzení vytvoří.
+- Po novém přiřazení nabídne Provision on demand. Plánovaný cyklus SCIM běží každých 40 minut. Provision on demand založí účet hned.
+
+**Tvoje akce:** Pokud SCIM job chybí, nastav provisioning v UI:
 
 1. Jako setup user vytvoř classic PAT se scope `scim:enterprise` a bez expirace. Entra ID token pro SCIM sám neobnoví. Expirace by zastavila provisioning.
 2. Entra admin center → Enterprise applications → GitHub Enterprise Managed User (OIDC) → Provisioning:
@@ -273,28 +299,16 @@ Příznaky: `enterpriseScim`, `enterpriseOwner`.
    - Tenant URL: `https://api.<enterprise>.ghe.com/scim/v2/enterprises/<enterprise>`.
    - Secret Token: PAT z kroku 1.
    - Test Connection → Save → Provisioning Status: On → Save.
-3. Users and groups → Add user/group → vyber svého uživatele, ne skupinu → role **Enterprise Owner** → Assign.
-4. Provisioning → Provision on demand → vyber svého uživatele. Plánovaný cyklus SCIM běží každých 40 minut. Provision on demand založí účet hned.
 
-**Ověření:**
+Job v quarantine má obvykle chybný token nebo Tenant URL. Oprav je a zvol Provisioning → Restart provisioning.
 
-```powershell
-$ownerRole = az ad sp show --id $spId --query "appRoles[?displayName=='Enterprise Owner' && isEnabled].id | [0]" -o tsv
-$userRole = az ad sp show --id $spId --query "appRoles[?displayName=='User' && isEnabled].id | [0]" -o tsv
-$ownerRole
-az rest --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" --query "value[?principalId=='$me'].{type:principalType, role:appRoleId}" -o table
-az rest --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/synchronization/jobs" --query "value[].{template:templateId, schedule:schedule.state, status:status.code}" -o table
-```
+Pokud Graph vrátí HTTP 403, aktivuj roli Application Administrator nebo Cloud Application Administrator a zvol `[l]`. Pokud 403 trvá, token Azure CLI pravděpodobně nemá potřebný scope. Bootstrap by selhal stejně. Zapiš zjištění do #10 a nepokračuj.
 
-- Přiřazení má `type` `User` a `role` se rovná `$ownerRole`.
-- Sync job má `schedule` i `status` `Active`. Stav `Quarantine` znamená chybný token nebo URL. Oprav je v kroku 2.
-- Provision on demand skončí úspěchem. Přihlášení do `https://<enterprise>.ghe.com` přes Entra ID funguje.
-- Pokud Graph vrátí HTTP 403, aktivuj roli Application Administrator nebo Cloud Application Administrator a přihlas se znovu. Pokud 403 trvá, token Azure CLI pravděpodobně nemá potřebný scope. Bootstrap by selhal stejně. Zapiš zjištění do #10 a nepokračuj.
-- Preflight: řádky `Direct Enterprise Owner assignment` a `SCIM provisioning job` mají `Pass`. Přiřazení `$ownerRole` a `$userRole` spusť i při ověření přes preflight. Fáze C potřebuje `$userRole`.
+**Ověření:** Preflight: řádky `Direct Enterprise Owner assignment` a `SCIM provisioning job` mají `Pass`.
 
 ### A6: Přihlášení GitHub CLI
 
-Příznak: část `enterpriseOwner`.
+Příznak: část `enterpriseOwner`. Dílčí kroky: `GitHub CLI sign-in`, `Enterprise owner`.
 
 **Proč:**
 
@@ -303,32 +317,24 @@ Příznak: část `enterpriseOwner`.
 - Bootstrap přes GraphQL ověří, že účet je owner enterprise.
 - Přihlas se jako spravovaný uživatel EMU s rolí owner, ne jako setup user. Setup user je nouzový účet mimo IdP.
 
-**Postup:**
+**Průvodce:**
 
-```powershell
-Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN, Env:GH_ENTERPRISE_TOKEN, Env:GITHUB_ENTERPRISE_TOKEN -ErrorAction SilentlyContinue
-gh auth login --hostname $githubHost --web --scopes read:enterprise
-$login = gh api --hostname $githubHost user --jq .login
-```
+- Vymaže proměnné tokenů v aktuální relaci. Proměnnou z uživatelského prostředí Windows po potvrzení odstraní. Proměnnou na úrovni počítače musí odstranit administrátor.
+- Pokud `gh` není přihlášené k `<enterprise>.ghe.com`, nabídne `gh auth login --web` se scope `read:enterprise`.
+- Odmítne setup usera `<shortcode>_admin` a nabídne jeho odhlášení.
+- Přes GraphQL ověří, že účet je owner enterprise.
 
-V prohlížeči se přihlas přes Entra ID.
+**Tvoje akce:** V prohlížeči se přihlas přes Entra ID jako spravovaný uživatel EMU. Pokud GitHub účet odmítne, dokonči krok A5.
 
-**Ověření:**
-
-```powershell
-(gh auth token --hostname $githubHost).StartsWith('gho_')
-gh api --hostname $githubHost graphql -f query='query($e:String!){viewer{login} enterprise(slug:$e){viewerIsAdmin}}' -f e=$enterprise --jq .data.enterprise.viewerIsAdmin
-```
-
-První příkaz vrátí `True`, druhý `true`. Preflight: řádky `gh OAuth login` a `Enterprise owner in GitHub` mají `Pass`.
+**Ověření:** Preflight: řádky `gh OAuth login` a `Enterprise owner in GitHub` mají `Pass`.
 
 ### A7: Politiky enterprise
 
-Příznaky: `privateInternalForksDisabled`, `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired`, `patMaxLifetime90Days`.
+Příznaky: `privateInternalForksDisabled`, `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired`, `patMaxLifetime90Days`. Dílčí krok: `Enterprise policies`.
 
 **Proč:** Moduly platformy spravují GitHub jen instalačními tokeny App. Enterprise kontroly, které App-only automatizace nepokrývá, jsou proto ruční předpoklady (ADR 0016). Bez nich může člen enterprise obejít Controls (kontroly) organizací. Může například zkopírovat kód do forku nebo do repozitáře mimo organizace platformy.
 
-**Postup:**
+Požadované politiky:
 
 | Příznak | Cesta v UI | Nastavení | Proč |
 |---|---|---|---|
@@ -341,32 +347,40 @@ U maximální platnosti PAT zapni **Exempt administrators**. Dokumentace GitHubu
 
 Omezení classic PAT nenastavuj. O něm zatím není rozhodnuto.
 
-README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat. Bootstrap pro ni nemá příznak. Nastav ji ve stejné sekci Repositories:
+README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat. Bootstrap pro ni nemá příznak. Politiky jsou ve stejné sekci Repositories:
 
 - Repository creation: členové nesmí zakládat repozitáře.
 - Repository visibility change: členové nesmí měnit viditelnost.
 - Repository deletion and transfer: členové nesmí mazat ani přenášet repozitáře.
 
-Výsledek této kontroly zapiš do komentáře v #10.
+**Průvodce:**
+
+- Přes GraphQL přečte politiky forků, zakládání, změny viditelnosti a mazání repozitářů. Politiku, která nemá hodnotu `DISABLED`, po potvrzení nastaví na `DISABLED`. Pro čtení a změnu dočasně přidá scope `admin:enterprise`.
+- Příznak `privateInternalForksDisabled` nastaví, když všechny 4 politiky mají hodnotu `DISABLED`.
+- Politiky PAT a omezení user namespace nemají API. Průvodce pro každý příznak ukáže cestu v UI a vyžádá potvrzení.
+
+**Tvoje akce:** Nastav v UI politiky příznaků `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired` a `patMaxLifetime90Days` podle tabulky. Výsledek politik zakládání, viditelnosti a mazání repozitářů zapiš do komentáře v #10.
 
 **Ověření:** Každá politika ukazuje hodnotu vynucenou na úrovni enterprise. Organizace ji nemohou změnit.
 
 ### A8: Licence GitHubu
 
-Příznak: část `licenses`.
+Příznak: část `licenses`. Dílčí krok: `GitHub licenses`.
 
 **Proč:**
 
 - Modul `enterprise-baseline` zapíná v code security configuration secret scanning s push protection, Dependabot a CodeQL default setup. GitHub tyto funkce v private a internal repozitářích nezapne bez licencí GitHub Secret Protection a GitHub Code Security.
 - Modul `emu-identity` mapuje skupinu uživatelů Copilotu na licenci Copilot. Pokud instance používá Copilot, potřebuje licenci Copilot Business nebo Copilot Enterprise.
 
-**Postup:** Your enterprise → Settings → Billing and licensing → Licensing. Ověř GitHub Enterprise, GitHub Secret Protection a GitHub Code Security. Podle potřeby ověř Copilot.
+**Průvodce:** Ukáže cestu v UI a vyžádá potvrzení. Příznak `licenses` nastaví, až když prošla i licence Entra ID z kroku A2.
+
+**Tvoje akce:** Your enterprise → Settings → Billing and licensing → Licensing. Ověř GitHub Enterprise, GitHub Secret Protection a GitHub Code Security. Podle potřeby ověř Copilot.
 
 **Ověření:** Licence pokrývají uživatele, kteří budou commitovat do private a internal repozitářů.
 
 ### A9: Dostupnost enterprise-owned GitHub Apps
 
-Příznak: `githubAppAvailabilityVerified`.
+Příznak: `githubAppAvailabilityVerified`. Dílčí kroky: `Probe organization`, `Probe App A: authorization token`, `Probe App B: organization administration`.
 
 **Proč:**
 
@@ -375,147 +389,43 @@ Příznak: `githubAppAvailabilityVerified`.
   - autorizační token, kterým workflow kontroluje autora PR,
   - čtení organizačních politik tokenem `read`,
   - čtení rulesetů včetně bypass aktérů tokenem `write`.
-- Pokud některá část selže, příznak nenastavuj. Zapiš zjištění do #10. Nepřecházej na PAT a nerozšiřuj oprávnění.
+- Pokud některá část selže, příznak zůstane `false`. Zapiš zjištění do #10. Nepřecházej na PAT a nerozšiřuj oprávnění.
 
-**Postup: příprava**
+**Průvodce: organizace pro test**
 
-1. Your enterprise → Organizations → New organization. Název: `probe-<yyyymmdd>`.
-2. V organizaci vytvoř private repozitář `instance-probe` a tým `platform-probe`. Přidej se do týmu.
-3. Nastav proměnné a pomocné funkce. Funkce vydají instalační token se zvolenými oprávněními. Tokeny drží jako `SecureString`, aby se nevypsaly do konzole.
+- Po potvrzení vytvoří organizaci `probe-<yyyymmdd>` s tebou jako owner, private repozitář `instance-probe`, tým `platform-probe` a tvoje členství v týmu. Dočasně přidá scopes `admin:enterprise`, `admin:org` a `repo`.
+- Název organizace uloží do `setup-state.json`. Další běh použije stejnou organizaci.
 
-   ```powershell
-   $probeOrg = 'probe-<yyyymmdd>'
-   $headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
+**Průvodce: App A (autorizační token)**
 
-   function ConvertTo-Base64Url([byte[]] $Bytes) {
-       [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-   }
+- Otevře předvyplněný formulář registrace enterprise-owned App: název `<name>-probe-authorization`, neaktivní webhook a oprávnění Members: Read-only. Registrace App nemá API.
+- Najde privátní klíč v `$work\keys` nebo mezi soubory `*.private-key.pem` staženými do `Downloads` za posledních 24 hodin. Klíč přesune do `$work\keys\probe-authorization.pem`.
+- Ověří, že App vlastní enterprise a má přesně požadovaná oprávnění. Otevře stránku instalace a ověří instalaci jen do `instance-probe`.
+- Spustí `tools/New-PlatformGitHubToken.ps1 -Authorization` stejně jako workflow `deploy.yml`.
+- Tokenem přečte tvoje členství v `platform-probe`. Workflow tak ověřuje, že autor PR patří do platformního týmu, než předá přihlašovací údaje.
+- Token odvolá nástrojem `tools/Remove-PlatformGitHubToken.ps1` a ověří, že odvolaný token vrátí HTTP 401.
+- Smaže klíč App A a otevře stránku pro smazání App A.
 
-   function New-ProbeToken {
-       param(
-           [Parameter(Mandatory)][string] $AppId,
-           [Parameter(Mandatory)][string] $InstallationId,
-           [Parameter(Mandatory)][string] $KeyPath,
-           [Parameter(Mandatory)][hashtable] $Permissions
-       )
-       $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-       $header = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes('{"alg":"RS256","typ":"JWT"}'))
-       $payload = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes((@{ iat = $now - 60; exp = $now + 540; iss = $AppId } | ConvertTo-Json -Compress)))
-       $rsa = [Security.Cryptography.RSA]::Create()
-       try {
-           $rsa.ImportFromPem((Get-Content -Raw -LiteralPath $KeyPath))
-           $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes("$header.$payload"),
-               [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)
-       }
-       finally { $rsa.Dispose() }
-       $jwt = ConvertTo-SecureString "$header.$payload.$(ConvertTo-Base64Url $signature)" -AsPlainText -Force
-       $response = Invoke-RestMethod -Method Post -Uri "$api/app/installations/$InstallationId/access_tokens" -Headers $headers `
-           -Authentication Bearer -Token $jwt -ContentType 'application/json' -Body (@{ permissions = $Permissions } | ConvertTo-Json -Compress)
-       ConvertTo-SecureString $response.token -AsPlainText -Force
-   }
+**Průvodce: App B (organizační API)**
 
-   function Invoke-ProbeApi {
-       param(
-           [Parameter(Mandatory)][string] $Path,
-           [Parameter(Mandatory)][securestring] $Token,
-           [string] $Method = 'Get',
-           [object] $Body
-       )
-       $request = @{ Method = $Method; Uri = "$api$Path"; Headers = $headers; Authentication = 'Bearer'; Token = $Token }
-       if ($null -ne $Body) {
-           $request.Body = $Body | ConvertTo-Json -Depth 10 -Compress
-           $request.ContentType = 'application/json'
-       }
-       Invoke-RestMethod @request
-   }
-   ```
+- Otevře předvyplněný formulář registrace App `<name>-probe-admin` s oprávněními Administration: Read and write, Members: Read and write a Custom organization roles: Read-only. Klíč uloží jako `$work\keys\probe-admin.pem`. Ověří instalaci do všech repozitářů organizace.
+- Tokenem `organization_administration: read` přečte politiku akcí a code security configurations. Plan modulu `enterprise-baseline` je čte se stejným oprávněním.
+- Zaznamená výsledek seznamu rulesetů s tokenem `read` do `setup-state.json` jako `probe.adminReadRulesets`. ADR 0016 počítá s tím, že rulesety vyžadují `write`.
+- Tokenem `write` vytvoří vypnutý ruleset `instance-setup-probe` s bypass aktérem Organization admin. Ověří, že detail rulesetu vrátí bypass aktéra `OrganizationAdmin`. Ruleset potom smaže.
+- Tokeny odvolá. App ID a installation ID zapíše do `session.ps1` jako `$adminApp`.
 
-**Postup: autorizační token (App A)**
+Výsledky testů App A a App B průvodce uloží. Další běh testy neopakuje a organizaci pro test nevyžaduje. Parametr `-Reconfirm` testy zopakuje; App A pro opakování musíš zaregistrovat znovu.
 
-1. Your enterprise → Settings → GitHub Apps → New GitHub App:
-   - GitHub App name: `<name>-probe-authorization`.
-   - Webhook: vypni **Active**.
-   - Organization permissions → Members: Read-only. Ostatní oprávnění ponech No access.
-2. Generate a private key. Ulož soubor jako `$work\keys\probe-authorization.pem`.
-3. Install App → organizace `$probeOrg` → Only select repositories → `instance-probe`. Installation ID je poslední část URL instalace.
-4. Spusť tokenový nástroj stejně jako workflow `deploy.yml`. Nástroj ověří, že App vlastní enterprise, má přesně oprávnění `members: read` a instalaci jen do `instance-probe`. Workflow tímto tokenem ověřuje, že autor PR patří do platformního týmu, než předá přihlašovací údaje.
+**Tvoje akce:**
 
-   ```powershell
-   $env:GITHUB_REPOSITORY = "$probeOrg/instance-probe"
-   $env:PLATFORM_APP_ID = '<app-id>'
-   $env:PLATFORM_APP_INSTALLATION_ID = '<installation-id>'
-   $env:PLATFORM_APP_ENTERPRISE = $enterprise
-   $env:PLATFORM_APP_PRIVATE_KEY = Get-Content -Raw (Join-Path $work 'keys\probe-authorization.pem')
-   $envFile = Join-Path $work 'probe-authorization.env'
-   Remove-Item $envFile -ErrorAction SilentlyContinue
-   .\tools\New-PlatformGitHubToken.ps1 -Authorization -EnvironmentPath $envFile -ApiUrl $api 6>$null
-   $authToken = ConvertTo-SecureString (Get-Content $envFile | Where-Object { $_ -like 'GH_TOKEN=*' }).Substring(9) -AsPlainText -Force
-   (Invoke-RestMethod -Uri "$api/orgs/$probeOrg/teams/platform-probe/memberships/$login" -Headers $headers -Authentication Bearer -Token $authToken).state
-   ```
+1. V předvyplněném formuláři ponech ostatní oprávnění No access a zvol Create GitHub App.
+2. App settings → General → Private keys → Generate a private key. Prohlížeč uloží klíč do `Downloads`.
+3. Install App → organizace `probe-<yyyymmdd>`. App A instaluj jen do `instance-probe`, App B do všech repozitářů.
+4. Po testu App A smaž App A: App settings → Advanced → Delete GitHub App. Workflow instance dostanou vlastní Apps v #11.
 
-   `6>$null` potlačí výpis `::add-mask::`, který obsahuje JWT a token.
+App B a `$work\keys\probe-admin.pem` ponech pro C2 a C4. Smažeš je ve fázi D.
 
-5. Odvolej token a odstraň klíč:
-
-   ```powershell
-   $env:PLATFORM_GITHUB_TOKENS = (Get-Content $envFile | Where-Object { $_ -like 'PLATFORM_GITHUB_TOKENS=*' }).Substring(23)
-   .\tools\Remove-PlatformGitHubToken.ps1 -ApiUrl $api
-   try {
-       Invoke-RestMethod -Uri "$api/orgs/$probeOrg/teams/platform-probe/memberships/$login" -Headers $headers -Authentication Bearer -Token $authToken
-       'unexpected: token is still valid'
-   }
-   catch { $_.Exception.Response.StatusCode.value__ }
-   Remove-Item Env:GITHUB_REPOSITORY, Env:PLATFORM_APP_*, Env:PLATFORM_GITHUB_TOKENS
-   Remove-Item $envFile, (Join-Path $work 'keys\probe-authorization.pem')
-   ```
-
-6. App settings → Advanced → Delete GitHub App. App A ověřila jen tok autorizace. Workflow instance dostanou vlastní Apps v #11.
-
-**Postup: organizační API (App B)**
-
-1. New GitHub App:
-   - GitHub App name: `<name>-probe-admin`.
-   - Webhook: vypni **Active**.
-   - Organization permissions → Administration: Read and write; Members: Read and write; Custom organization roles: Read-only.
-2. Generate a private key. Ulož soubor jako `$work\keys\probe-admin.pem`.
-3. Install App → organizace `$probeOrg` → All repositories.
-4. Ověř čtení politik tokenem `read`. Plan modulu `enterprise-baseline` čte politiku akcí a code security configurations s tímto oprávněním.
-
-   ```powershell
-   $adminApp = @{ AppId = '<app-id>'; InstallationId = '<installation-id>'; KeyPath = (Join-Path $work 'keys\probe-admin.pem') }
-   $readToken = New-ProbeToken @adminApp -Permissions @{ organization_administration = 'read' }
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $readToken
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/code-security/configurations" -Token $readToken
-   try { Invoke-ProbeApi -Path "/orgs/$probeOrg/rulesets" -Token $readToken } catch { $_.Exception.Response.StatusCode.value__ }
-   ```
-
-   Výsledek seznamu rulesetů s tokenem `read` jen zaznamenej. ADR 0016 počítá s tím, že rulesety vyžadují `write`.
-
-5. Vytvoř ruleset v UI: Organization settings → Rules → Rulesets → New ruleset → New branch ruleset:
-   - Ruleset name: `probe`.
-   - Enforcement status: Disabled. Ruleset tak nic nevynucuje.
-   - Bypass list: Organization admin. Test ověří, že API vrátí úplnou bypass konfiguraci.
-   - Target repositories: All repositories.
-   - Target branches: Include default branch.
-6. Přečti ruleset tokenem `write`, smaž ho a odvolej tokeny:
-
-   ```powershell
-   $writeToken = New-ProbeToken @adminApp -Permissions @{ organization_administration = 'write' }
-   $ruleset = Invoke-ProbeApi -Path "/orgs/$probeOrg/rulesets" -Token $writeToken | Where-Object name -eq 'probe'
-   $ruleset.bypass_actors
-   (Invoke-ProbeApi -Path "/orgs/$probeOrg/rulesets/$($ruleset.id)" -Token $writeToken).bypass_actors
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/rulesets/$($ruleset.id)" -Token $writeToken -Method Delete
-   $readToken, $writeToken | ForEach-Object { Invoke-ProbeApi -Path '/installation/token' -Token $_ -Method Delete }
-   ```
-
-App B a její klíč ponech pro C2 a C4. Smažeš je ve fázi D.
-
-**Ověření:**
-
-- Tokenový nástroj skončí bez chyby. Kontrola členství vrátí `active`.
-- Volání s odvolaným tokenem vrátí `401`.
-- Politika akcí a code security configurations vrátí data bez chyby.
-- Detail rulesetu vrátí `bypass_actors` s `actor_type` `OrganizationAdmin`. Výsledek seznamu zaznamenej.
+**Ověření:** Všechny 3 dílčí kroky mají stav `Ok`. Výsledek seznamu rulesetů s tokenem `read` zapiš do #10.
 
 ## Fáze B: bootstrap a uzavření #10
 
@@ -523,82 +433,43 @@ App B a její klíč ponech pro C2 a C4. Smažeš je ve fázi D.
 
 ### B1: Konfigurace instance, preflight a negativní test
 
-Příznaky: všechny. Nastav `true` jen u příznaku, jehož krok ve fázi A prošel ověřením.
+Příznaky: všechny. Dílčí kroky: `Instance configuration`, `Bootstrap preflight`.
 
 **Proč:**
 
 - Bootstrap čte Instance configuration (konfiguraci instance). Repozitář instance vznikne až v #11, proto konfigurace leží v `$work`. Podrobnosti uvádí sekce Repozitář instance a konfigurace instance.
+- Příznak `manualPrerequisites` smí mít `true` jen po ověření jeho kroku. Průvodce proto konfiguraci generuje jen z ověřených výsledků.
 - Schéma vyžaduje v `teams.security` aspoň jeden účet. Pro ověření bootstrapu stačí tvůj účet.
-- Preflight ověří kontroly bootstrapu a dostupnost názvu storage account bez změny v cloudu.
+- Preflight ověří kontroly bootstrapu bez změny v cloudu.
 - Negativní test ověří kritérium #10: bootstrap zastaví nepotvrzený ruční předpoklad před první změnou.
 
-**Postup:**
+**Průvodce:**
 
-```powershell
-$cfg = Join-Path $work 'instance.yaml'
-$modulesPath = Join-Path $repo 'tools\tests\fixtures\runner-modules'
-@"
-instance:
-  name: $name
-regions:
-  primary: $region
-teams:
-  platform:
-    - $upn
-  security:
-    - $upn
-modules:
-  application: {}
-customPatterns: []
-manualSteps: {}
-bootstrap:
-  tenantId: '$tenantId'
-  managementSubscriptionId: '$mgmtSub'
-  subscriptionIds:
-    - '$mgmtSub'
-  enterpriseApplicationObjectId: '$spId'
-  githubHost: $githubHost
-  enterprise: $enterprise
-manualPrerequisites:
-  tenant: true
-  enterpriseOidc: true
-  enterpriseScim: true
-  enterpriseOwner: true
-  subscriptions: true
-  licenses: true
-  privateInternalForksDisabled: true
-  emuUserNamespacesRestricted: true
-  fineGrainedPatApprovalRequired: true
-  patMaxLifetime90Days: true
-  githubAppAvailabilityVerified: true
-githubApps: {}
-credentials: {}
-teardown:
-  allowed: false
-"@ | Set-Content -LiteralPath $cfg -Encoding utf8NoBOM
-.\tools\Test-InstanceConfiguration.ps1 -InstancePath $cfg -ModulesPath $modulesPath
-.\tools\Test-BootstrapPrerequisites.ps1 -InstancePath $cfg -ModulesPath $modulesPath | Format-Table -Wrap
-```
+- Sestaví konfiguraci ze vstupů a výsledků dílčích kroků. Z existujícího `instance.yaml` zachová položky, které podle tabulky níže nepřepisuje.
+- Před zápisem ověří konfiguraci schématem a manifesty modulů z `$modulesPath`.
+- Vypíše rozdíly proti existujícímu souboru a příznaky, které zůstanou `false`. Po potvrzení zapíše `$work\instance.yaml` a `$work\session.ps1`.
+- Spustí preflight. Dílčí krok `Bootstrap preflight` projde, když žádný řádek nemá `Fail` ani `Skip` a všechny příznaky mají `Confirmed`.
 
-Skript zapíše do konfigurace tyto hodnoty:
+Průvodce zapíše do konfigurace tyto hodnoty:
 
 | Položka | Hodnota | Důvod |
 |---|---|---|
-| `instance.name` | `$name` z A1 | Bootstrap z něj odvodí názvy resource group, storage account a identit. |
-| `regions.primary` | `$region` z A1 | Bootstrap v tomto regionu vytvoří state backend a identity. |
-| `teams.platform`, `teams.security` | `$upn` z A2 | Bootstrap vyžaduje přihlášeného uživatele Azure v `teams.platform`. Schéma vyžaduje aspoň jeden účet v `teams.security`. |
-| `modules` | `application: {}` | Fixture modul z `$modulesPath`. Výběr přidá předpoklad `foundation`. Moduly platformy zatím nemají `module.yaml`. |
-| `customPatterns`, `manualSteps` | prázdné | Bootstrap je nečte. `manualSteps` potvrzuje ruční kroky modulů po nasazení. `customPatterns` patří modulu `enterprise-baseline`. |
-| `bootstrap.tenantId` | `$tenantId` z A1 | Bootstrap odmítne token z jiného tenantu. |
-| `bootstrap.managementSubscriptionId` | `$mgmtSub` z A1 | Subscription pro state backend a identity. |
-| `bootstrap.subscriptionIds` | `$mgmtSub` z A1 | Seznam musí obsahovat všechny subscriptions instance včetně management subscription. Fixture moduly jiné subscriptions nepoužívají. |
-| `bootstrap.enterpriseApplicationObjectId` | `$spId` z A4 | Object ID service principal aplikace EMU, ne `appId`. Bootstrap podle něj čte přiřazení Enterprise Owner a SCIM job. |
-| `bootstrap.githubHost`, `bootstrap.enterprise` | `$githubHost`, `$enterprise` z A1 | Bootstrap podle nich ověří roli enterprise owner. |
-| `manualPrerequisites` | `true` jen u ověřených kroků fáze A | Každý krok fáze A uvádí příznak, který potvrzuje. |
-| `githubApps`, `credentials` | prázdné | Apps a environmenty vytvoří #11. |
-| `teardown.allowed` | `false` | Runner odmítne teardown. |
+| `instance.name` | Název instance z A1 | Bootstrap z něj odvodí názvy resource group, storage account a identit. |
+| `regions.primary` | Region z A1 | Bootstrap v tomto regionu vytvoří state backend a identity. |
+| `teams.platform` | Členové z existující konfigurace a tvůj UPN z A2 | Bootstrap vyžaduje přihlášeného uživatele Azure v `teams.platform`. Průvodce vynechá zástupné účty `@example.test` ze šablony. |
+| `teams.security` | Členové z existující konfigurace, nebo tvůj UPN z A2 | Schéma vyžaduje aspoň jeden účet. |
+| `modules` | `application: {}`, pokud existující konfigurace nevybírá jiné moduly | Fixture modul z `$modulesPath`. Výběr přidá předpoklad `foundation`. Moduly platformy zatím nemají `module.yaml`. |
+| `customPatterns`, `manualSteps` | Prázdné, nebo hodnoty z existující konfigurace | Bootstrap je nečte. `manualSteps` potvrzuje ruční kroky modulů po nasazení. `customPatterns` patří modulu `enterprise-baseline`. |
+| `bootstrap.tenantId` | ID tenantu z A1 | Bootstrap odmítne token z jiného tenantu. |
+| `bootstrap.managementSubscriptionId` | ID management subscription z A1 | Subscription pro state backend a identity. |
+| `bootstrap.subscriptionIds` | Management subscription a další subscriptions z A1 | Seznam musí obsahovat všechny subscriptions instance včetně management subscription. Fixture moduly jiné subscriptions nepoužívají. |
+| `bootstrap.enterpriseApplicationObjectId` | Object ID service principal z A4 | Object ID service principal aplikace EMU, ne `appId`. Bootstrap podle něj čte přiřazení Enterprise Owner a SCIM job. |
+| `bootstrap.githubHost`, `bootstrap.enterprise` | `<enterprise>.ghe.com` a slug enterprise z A1 | Bootstrap podle nich ověří roli enterprise owner. |
+| `manualPrerequisites` | `true` jen u příznaků, jejichž dílčí kroky mají stav `Ok` | Vazbu příznaku na dílčí kroky uvádí každý krok fáze A. |
+| `githubApps`, `credentials` | Prázdné, nebo hodnoty z existující konfigurace | Apps a environmenty vytvoří #11. |
+| `teardown.allowed` | `false`, nebo hodnota z existující konfigurace | Runner odmítne teardown. |
 
-Negativní test:
+**Postup:** Načti proměnné relace podle sekce Konvence relace. Potom spusť negativní test:
 
 ```powershell
 $negative = Join-Path $work 'instance-negative.yaml'
@@ -614,8 +485,7 @@ Remove-Item $negative
 
 **Ověření:**
 
-- Validace konfigurace skončí bez chyby.
-- Preflight splní podmínky ze sekce Preflight. Pokud řádek `State backend names` hlásí obsazený název storage account, zvol jiný `$name` a konfiguraci vytvoř znovu.
+- Dílčí kroky `Instance configuration` a `Bootstrap preflight` mají v souhrnu průvodce stav `Ok`.
 - Negativní test vypíše `Bootstrap requires manual prerequisite confirmations: $.manualPrerequisites.patMaxLifetime90Days.`
 - `az group exists` vrátí `false`.
 
@@ -860,7 +730,7 @@ Ponech:
 - `$cfg`: hodnoty z ní převezmeš do `instance.yaml` v repozitáři instance (#11).
 - Roli Management Group Reader: bootstrap ji potřebuje při každém běhu.
 
-Ověř, že elevace z kroku A3 je vypnutá.
+Ověř, že elevace je vypnutá: Microsoft Entra admin center → Identity → Overview → Properties → **Access management for Azure resources** má hodnotu No. Průvodce elevaci odebírá hned po přiřazení role.
 
 **Ověření:** `az group exists -n $rg` a `az group exists -n $probeRg` vrátí `false`.
 
@@ -923,13 +793,61 @@ Ověř, že elevace z kroku A3 je vypnutá.
 
 Ověření C1–C4 mohou běžet souběžně s fází B. Každé ověření rozhoduje o návrhu jednoho modulu. Výsledek zapiš do komentáře příslušného issue bez ID a názvu enterprise. Potom issue zavři přes `gh issue close <number> --repo msucharda/devsecops-platform --reason completed`.
 
+C2 a C4 volají API instalačními tokeny App B z kroku A9. Na začátku relace načti proměnné relace podle sekce Konvence relace a definuj pomocné funkce. Funkce vydají instalační token se zvolenými oprávněními. Tokeny drží jako `SecureString`, aby se nevypsaly do konzole.
+
+```powershell
+$headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
+
+function ConvertTo-Base64Url([byte[]] $Bytes) {
+    [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+}
+
+function New-ProbeToken {
+    param(
+        [Parameter(Mandatory)][string] $AppId,
+        [Parameter(Mandatory)][string] $InstallationId,
+        [Parameter(Mandatory)][string] $KeyPath,
+        [Parameter(Mandatory)][hashtable] $Permissions
+    )
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $header = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes('{"alg":"RS256","typ":"JWT"}'))
+    $payload = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes((@{ iat = $now - 60; exp = $now + 540; iss = $AppId } | ConvertTo-Json -Compress)))
+    $rsa = [Security.Cryptography.RSA]::Create()
+    try {
+        $rsa.ImportFromPem((Get-Content -Raw -LiteralPath $KeyPath))
+        $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes("$header.$payload"),
+            [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    }
+    finally { $rsa.Dispose() }
+    $jwt = ConvertTo-SecureString "$header.$payload.$(ConvertTo-Base64Url $signature)" -AsPlainText -Force
+    $response = Invoke-RestMethod -Method Post -Uri "$api/app/installations/$InstallationId/access_tokens" -Headers $headers `
+        -Authentication Bearer -Token $jwt -ContentType 'application/json' -Body (@{ permissions = $Permissions } | ConvertTo-Json -Compress)
+    ConvertTo-SecureString $response.token -AsPlainText -Force
+}
+
+function Invoke-ProbeApi {
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][securestring] $Token,
+        [string] $Method = 'Get',
+        [object] $Body
+    )
+    $request = @{ Method = $Method; Uri = "$api$Path"; Headers = $headers; Authentication = 'Bearer'; Token = $Token }
+    if ($null -ne $Body) {
+        $request.Body = $Body | ConvertTo-Json -Depth 10 -Compress
+        $request.ContentType = 'application/json'
+    }
+    Invoke-RestMethod @request
+}
+```
+
 ### C1: Vlastní role Entra pro app-only token (#3)
 
 **Co ověřuješ:** Microsoft Graph uzná vlastní roli Entra s akcí `microsoft.directory/servicePrincipals/appRoleAssignedTo/update` i pro app-only token. Role omezená na aplikaci GHE dovolí přiřadit app roli jen v této aplikaci.
 
 **Proč:** Modul `emu-identity` přiřazuje skupiny Entra k app rolím v aplikaci GHE. Alternativní oprávnění `AppRoleAssignment.ReadWrite.All` platí pro všechny aplikace v tenantu, včetně Microsoft Graph. Identita s ním by si mohla přidělit libovolné application permission. ADR 0015 proto volí vlastní roli omezenou na jednu aplikaci. Věta v ADR 0015 zatím zní: „Přírůstek 1 ověří, že Microsoft Graph uzná vlastní roli i pro app-only token.“
 
-**Potřebuješ:** A2 (licence P1), A4 (`$spId`), A5 (`$userRole`) a roli Privileged Role Administrator.
+**Potřebuješ:** A2 (licence P1), A4 (`$spId` a `$userRole`) a roli Privileged Role Administrator.
 
 **Postup:**
 
@@ -1029,7 +947,7 @@ Remove-Item (Join-Path $work 'probe3-*.json')
 
 **Proč:** Modul `organizations` dává Security team (security tým) roli security manager ve všech organizacích instance. Enterprise tým ze skupiny Entra drží členství na jednom místě. Není ověřené, že REST API organizačních rolí přijme enterprise tým a instalační token App podle ADR 0016. Pokud nepřijme, modul `organizations` přiřadí roli týmu organizace propojenému se skupinou Entra ID.
 
-**Potřebuješ:** A5 (`$userRole`), A9 (`$probeOrg`, App B a pomocné funkce) a role User Administrator a Application Administrator.
+**Potřebuješ:** A4 (`$userRole`), A9 (`$probeOrg` a `$adminApp`), pomocné funkce z úvodu fáze C a role User Administrator a Application Administrator.
 
 **Postup:**
 
@@ -1124,7 +1042,7 @@ Remove-Item $group4Body
 
 Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhají vždy.
 
-**Potřebuješ:** A9 (`$probeOrg`, App B a pomocné funkce). Enterprise politika akcí musí organizacím dovolit vlastní volbu.
+**Potřebuješ:** A9 (`$probeOrg` a `$adminApp`) a pomocné funkce z úvodu fáze C. Enterprise politika akcí musí organizacím dovolit vlastní volbu.
 
 **Postup:**
 
@@ -1215,7 +1133,7 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
 1. Agent implementuje #11 a další issues podle blokací. Ty kontroluješ PR a provádíš Manual steps (ruční kroky), které issues a manifesty modulů uvedou.
 2. Před akceptací ukliď enterprise:
    - Smaž organizace `probe-<yyyymmdd>` a `probe5-<yyyymmdd>`, pokud existuje.
-   - Smaž App `<name>-probe-admin`: App settings → Advanced → Delete GitHub App.
+   - Smaž App `<name>-probe-admin` a App `<name>-probe-authorization`, pokud existuje: App settings → Advanced → Delete GitHub App.
    - Smaž `$work\keys\probe-admin.pem`.
    - Ověř, že v Entra ID nezůstaly žádné testovací Apps, service principals, skupiny, uživatelé ani vlastní role ani přiřazení role:
 
