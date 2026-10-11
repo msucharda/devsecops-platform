@@ -68,6 +68,21 @@ Describe 'Instance setup wizard' {
     }
 
     Context 'API access' {
+        It 'reports GitHub organization SSO authorization without suggesting Azure PIM' {
+            $failure = InModuleScope InstanceSetup {
+                $response = @{
+                    Status = 'Forbidden'; Area = 'github'
+                    Message = 'Resource protected by organization SAML enforcement. You must grant your OAuth token access to this organization.'
+                }
+                try { $null = Assert-SetupResponse -Response $response -Action 'Creating the probe repository' }
+                catch { Get-SetupFailure -ErrorRecord $_ }
+            }
+
+            $failure.Area | Should -Be 'github'
+            ($failure.Guidance -join ' ') | Should -BeLike '*SSO*OAuth*'
+            ($failure.Guidance -join ' ') | Should -Not -BeLike '*PIM*'
+        }
+
         It 'classifies HTTP status codes' {
             Mock Invoke-WebRequest -ModuleName InstanceSetup {
                 switch -Wildcard ($Uri) {
@@ -252,6 +267,95 @@ Describe 'Instance setup wizard' {
             }
             $flags['emuUserNamespacesRestricted'] | Should -BeFalse
             $flags['subscriptions'] | Should -BeFalse
+        }
+    }
+
+    Context 'Probe organization sign-in' {
+        It 'signs in before creating resources for a <Case> organization' -ForEach @(
+            @{ Case = 'new'; Existing = $false; Pending = $false; NeedsSignIn = $true }
+            @{ Case = 'resumed'; Existing = $true; Pending = $true; NeedsSignIn = $true }
+            @{ Case = 'previously authorized'; Existing = $true; Pending = $false; NeedsSignIn = $false }
+        ) {
+            $setup = Get-TestSetup
+            if ($Existing) { $setup.State.probe['organization'] = 'probe-test' }
+            if ($Pending) { $setup.State.probe['organizationSignInPending'] = $true }
+            $setup.GitHubToken = 'cached-test-token'
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup; NeedsSignIn = $NeedsSignIn; Existing = $Existing } {
+                param($Setup, $NeedsSignIn, $Existing)
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Wait-SetupCondition { $true }
+                Mock Invoke-SetupGraphQL {}
+                Mock Invoke-SetupGitHubLogin {
+                    $Setup.State.probe['organizationSignInPending'] | Should -BeTrue
+                    $saved = ConvertFrom-Json (Get-Content -LiteralPath $Setup.StatePath -Raw) -AsHashtable
+                    $saved['probe']['organizationSignInPending'] | Should -BeTrue
+                    $Setup.Settings['testSignedIn'] = $true
+                    $Setup.GitHubToken = $null
+                }
+                Mock Invoke-SetupApi {
+                    param($Setup, $Uri, $Method)
+                    if ($Uri -like '*/user') {
+                        return @{ Status = 'Ok'; Data = @{ login = 'owner' } }
+                    }
+                    if ($Method -eq 'POST') {
+                        if ($NeedsSignIn -and -not $Setup.Settings['testSignedIn']) {
+                            throw 'Resource protected by organization SAML enforcement. Sign-in must precede organization writes.'
+                        }
+                        return @{ Status = 'Ok'; Data = @{} }
+                    }
+                    if ($Method -eq 'PUT') { return @{ Status = 'Ok'; Data = @{ state = 'active' } } }
+                    if ($Uri -match '/orgs/[^/]+$' -and $Setup.State.probe['organization']) {
+                        return @{ Status = 'Ok'; Data = @{} }
+                    }
+                    return @{ Status = 'Missing'; Data = $null }
+                }
+
+                $null = Invoke-StepProbeOrg -Setup $Setup
+                Should -Invoke Invoke-SetupGitHubLogin -Times ([int] $NeedsSignIn) -Exactly
+                Should -Invoke Invoke-SetupGraphQL -Times ([int] (-not $Existing)) -Exactly
+                Should -Invoke Add-SetupGitHubScope -Times (1 + [int] $NeedsSignIn) -Exactly
+            }
+            $setup.State.probe['organizationSignInPending'] | Should -Not -BeTrue
+        }
+
+        It 'keeps sign-in pending and writes no resources after <Failure>' -ForEach @(
+            @{ Failure = 'a declined sign-in'; Accept = $false; FailLogin = $false; User = 'owner' }
+            @{ Failure = 'a failed sign-in'; Accept = $true; FailLogin = $true; User = 'owner' }
+            @{ Failure = 'sign-in with a different account'; Accept = $true; FailLogin = $false; User = 'another-user' }
+        ) {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['organizationSignInPending'] = $true
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Accept = $Accept; FailLogin = $FailLogin; User = $User } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                $Accept = $Scenario.Accept
+                $FailLogin = $Scenario.FailLogin
+                $User = $Scenario.User
+                Mock Confirm-SetupAction {
+                    param($Prompt)
+                    if ($Prompt -like 'Sign in again*') { return $Accept }
+                    return $true
+                }
+                Mock Add-SetupGitHubScope {}
+                Mock Invoke-SetupGitHubLogin {
+                    if ($FailLogin) { throw 'gh auth login failed.' }
+                }
+                Mock Invoke-SetupApi {
+                    param($Uri, $Method)
+                    if ($Uri -like '*/user') { return @{ Status = 'Ok'; Data = @{ login = $User } } }
+                    if ($Uri -match '/orgs/[^/]+$') { return @{ Status = 'Ok'; Data = @{} } }
+                    if ($Method -in @('POST', 'PUT')) { throw 'No resources may be written before sign-in succeeds.' }
+                    return @{ Status = 'Missing'; Data = $null }
+                }
+
+                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw
+                Should -Invoke Invoke-SetupApi -Times 0 -Exactly -ParameterFilter { $Method -in @('POST', 'PUT') }
+            }
+            $saved = ConvertFrom-Json (Get-Content -LiteralPath $setup.StatePath -Raw) -AsHashtable
+            $saved['probe']['organizationSignInPending'] | Should -BeTrue
+            $saved['probe']['organization'] | Should -Be 'probe-test'
         }
     }
 
