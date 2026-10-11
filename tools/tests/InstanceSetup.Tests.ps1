@@ -245,7 +245,7 @@ Describe 'Instance setup wizard' {
             }
 
             Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
-                $Object -like '*AUTOMATIC: Verified DISABLED through the API:*'
+                $Object -like '*AUTOMATIC: Verified DISABLED through the API:*member repository deletion and transfer.*'
             }
             Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
                 $Object -like '*next three settings are separate USER ACTIONS*Do not change other policies*'

@@ -1753,7 +1753,7 @@ function Invoke-StepEnterprisePolicy {
             Exit-SetupStage -Status Error -Area github -Message "The policies did not change: $($pending -join ', ')." -Guidance $policyGuidance
         }
     }
-    Show-SetupMessage -Kind Ok -Message 'AUTOMATIC: Verified DISABLED through the API: private/internal repository forking, member repository creation, member visibility changes and member repository deletion.'
+    Show-SetupMessage -Kind Ok -Message 'AUTOMATIC: Verified DISABLED through the API: private/internal repository forking, member repository creation, member visibility changes and member repository deletion and transfer.'
     Show-SetupMessage -Message 'The next three settings are separate USER ACTIONS: user namespace restrictions, fine-grained PAT approval and PAT maximum lifetimes. Do not change other policies.'
     $Setup.Facts.ForksDisabled = $true
     $unconfirmed = @(foreach ($name in $script:ConfirmedPolicies.Keys) {
