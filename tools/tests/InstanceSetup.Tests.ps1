@@ -300,6 +300,64 @@ Describe 'Instance setup wizard' {
     }
 
     Context 'GitHub App helpers' {
+        It 'runs the organization-only admin probe without requiring repository selection' {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['adminAppId'] = '101'
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Mock Find-SetupAppKey {
+                    @{
+                        KeyPath = 'synthetic-key.pem'
+                        App = @{
+                            id = 101; slug = 'probe-admin'
+                            owner = @{ slug = 'example' }
+                            permissions = @{
+                                organization_administration = 'write'; members = 'write'; organization_custom_org_roles = 'read'
+                            }
+                        }
+                    }
+                }
+                Mock ConvertTo-SetupAppJwt { 'synthetic-jwt' }
+                Mock Get-SetupInstallationToken { 'synthetic-token' }
+                Mock Revoke-SetupInstallationToken {}
+                Mock Invoke-SetupApi {
+                    param($Uri, $Method)
+                    if ($Uri -like '*/app/installations?per_page=100') {
+                        return @{
+                            Status = 'Ok'; Code = 200
+                            Data = @(@{
+                                id = 201; account = @{ login = 'probe-test' }; target_type = 'Organization'
+                                suspended_at = $null; repository_selection = 'selected'
+                                permissions = @{
+                                    organization_administration = 'write'; members = 'write'; organization_custom_org_roles = 'read'
+                                }
+                            })
+                        }
+                    }
+                    if ($Method -eq 'POST') { return @{ Status = 'Ok'; Code = 201; Data = @{ id = 301 } } }
+                    if ($Uri -like '*/rulesets/301' -and $Method -ne 'DELETE') {
+                        return @{ Status = 'Ok'; Code = 200; Data = @{ bypass_actors = @(@{ actor_type = 'OrganizationAdmin'; actor_id = 1 }) } }
+                    }
+                    if ($Uri -like '*/rulesets') { return @{ Status = 'Ok'; Code = 200; Data = @() } }
+                    return @{ Status = 'Ok'; Code = 200; Data = @{} }
+                }
+                $null = Invoke-StepProbeAdmin -Setup $Setup
+                Should -Invoke Find-SetupAppKey -Times 1 -Exactly -ParameterFilter { $Role -eq 'admin' }
+                Should -Invoke Invoke-SetupApi -Times 1 -Exactly -ParameterFilter {
+                    $Uri -like '*/app/installations?per_page=100'
+                }
+                Should -Invoke Invoke-SetupApi -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'POST' -and $Body.bypass_actors[0].actor_id -eq 1
+                }
+                Should -Invoke Invoke-SetupApi -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'DELETE' -and $Uri -like '*/rulesets/301'
+                }
+                Should -Invoke Revoke-SetupInstallationToken -Times 1 -Exactly
+            }
+            $setup.State.probe['adminPassed'] | Should -Not -BeNullOrEmpty
+        }
+
         It 'accepts an enterprise-owned Members-only App with no repository access' {
             $setup = Get-TestSetup
             $setup.State.probe['organization'] = 'probe-test'

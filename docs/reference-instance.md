@@ -410,7 +410,7 @@ Příznak: `githubAppAvailabilityVerified`. Dílčí kroky: `Probe organization`
 
 **Průvodce: App B (organizační API)**
 
-- Otevře předvyplněný formulář registrace App `<name>-probe-admin` s oprávněními Administration: Read and write, Members: Read and write a Custom organization roles: Read-only. Klíč uloží jako `$work\keys\probe-admin.pem`. Ověří instalaci do všech repozitářů organizace.
+- Otevře předvyplněný formulář registrace App `<name>-probe-admin` s oprávněními Administration: Read and write, Members: Read and write a Custom organization roles: Read-only. Klíč uloží jako `$work\keys\probe-admin.pem`. Ověří aktivní instalaci v probe organizaci a přesná oprávnění. Jde o organizační oprávnění; instalační UI ukazuje **No repositories** a neumožňuje výběr repozitářů. Průvodce proto nevyžaduje hodnotu `all` ani `selected` z API.
 - Tokenem `organization_administration: read` přečte politiku akcí a code security configurations. Plan modulu `enterprise-baseline` je čte se stejným oprávněním.
 - Zaznamená výsledek seznamu rulesetů s tokenem `read` do `setup-state.json` jako `probe.adminReadRulesets`. ADR 0016 počítá s tím, že rulesety vyžadují `write`.
 - Tokenem `write` vytvoří vypnutý ruleset `instance-setup-probe` s bypass aktérem Organization admin. Ověří, že detail rulesetu vrátí bypass aktéra `OrganizationAdmin`. Ruleset potom smaže.
@@ -422,7 +422,7 @@ Výsledky testů App A a App B průvodce uloží. Další běh testy neopakuje a
 
 1. V předvyplněném formuláři ponech ostatní oprávnění No access a zvol Create GitHub App.
 2. App settings → General → Private keys → Generate a private key. Prohlížeč uloží klíč do `Downloads`.
-3. Install App → organizace `probe-<yyyymmdd>`. App A instaluj bez přístupu k repozitářům (**No repositories**), App B do všech repozitářů.
+3. Install App → organizace `probe-<yyyymmdd>`. App A instaluj bez přístupu k repozitářům (**No repositories**); App B používá organizační oprávnění a **Repository access** ukazuje **No repositories**.
 4. Po testu App A smaž App A: App settings → Advanced → Delete GitHub App. Workflow instance dostanou vlastní Apps v #11.
 
 App B a `$work\keys\probe-admin.pem` ponech pro C2 a C4. Smažeš je ve fázi D.
