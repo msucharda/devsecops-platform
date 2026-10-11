@@ -4,6 +4,7 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 
 - [Glosář](CONTEXT.md)
 - [Rozhodnutí (ADR)](docs/adr/)
+- [Příprava a akceptace referenční instance](docs/reference-instance.md)
 
 ## Struktura repozitáře
 
@@ -341,3 +342,4 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - Každý release candidate se nasadí celý na referenční instanci.
 - Akceptace ověří skutečný rozsah oprávnění každého jobu, úplné čtení bypass konfigurace, odmítnutí credentials pro neautorizované PR a zachování ručních enterprise předpokladů při teardownu.
 - Před každým minor release proběhne teardown referenční instance a její nové nasazení.
+- Kroky platformního týmu na referenční instanci popisuje [Příprava a akceptace referenční instance](docs/reference-instance.md).
