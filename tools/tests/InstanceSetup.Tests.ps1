@@ -298,6 +298,9 @@ Describe 'Instance setup wizard' {
                     if ($Uri -like '*/user') {
                         return @{ Status = 'Ok'; Data = @{ login = 'owner' } }
                     }
+                    if ($Existing -and $NeedsSignIn -and -not $Setup.Settings['testSignedIn']) {
+                        return @{ Status = 'Forbidden'; Area = 'github'; Message = 'Resource protected by organization SAML enforcement.' }
+                    }
                     if ($Method -eq 'POST') {
                         if ($NeedsSignIn -and -not $Setup.Settings['testSignedIn']) {
                             throw 'Resource protected by organization SAML enforcement. Sign-in must precede organization writes.'
@@ -356,6 +359,38 @@ Describe 'Instance setup wizard' {
             $saved = ConvertFrom-Json (Get-Content -LiteralPath $setup.StatePath -Raw) -AsHashtable
             $saved['probe']['organizationSignInPending'] | Should -BeTrue
             $saved['probe']['organization'] | Should -Be 'probe-test'
+        }
+
+        It 'keeps sign-in pending when organization access still fails after sign-in' -ForEach @(
+            @{ FailurePath = '/orgs/probe-test' }
+            @{ FailurePath = '/repos/probe-test/instance-probe' }
+            @{ FailurePath = '/orgs/probe-test/teams/platform-probe' }
+        ) {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['organizationSignInPending'] = $true
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; FailurePath = $FailurePath } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                $FailurePath = $Scenario.FailurePath
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Invoke-SetupGitHubLogin {}
+                Mock Invoke-SetupApi {
+                    param($Uri)
+                    if ($Uri -like '*/user') { return @{ Status = 'Ok'; Data = @{ login = 'owner' } } }
+                    if ($Uri.EndsWith($FailurePath)) {
+                        return @{ Status = 'Forbidden'; Area = 'github'; Message = 'Resource protected by organization SAML enforcement.' }
+                    }
+                    return @{ Status = 'Ok'; Data = @{} }
+                }
+
+                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw
+                Should -Invoke Invoke-SetupGitHubLogin -Times 1 -Exactly
+                Should -Invoke Invoke-SetupApi -Times 0 -Exactly -ParameterFilter { $Method -in @('POST', 'PUT') }
+            }
+            $saved = ConvertFrom-Json (Get-Content -LiteralPath $setup.StatePath -Raw) -AsHashtable
+            $saved['probe']['organizationSignInPending'] | Should -BeTrue
         }
     }
 
