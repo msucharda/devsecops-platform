@@ -45,12 +45,13 @@ $script:FlagOrder = @(
 )
 $script:ConfirmedPolicies = [ordered]@{
     emuUserNamespacesRestricted = @(
-        'Your enterprise > Policies > Repositories > Repository creation:',
+        'Your enterprise > Policies > Member privileges > Repository creation (not Repositories > Policies > New policy):',
         'turn on "Block the creation of user namespace repositories", then Save.'
     )
     fineGrainedPatApprovalRequired = @(
         'Your enterprise > Policies > Personal access tokens > Fine-grained tokens:',
-        'turn on "Require approval of fine-grained personal access tokens", then Save.'
+        'turn on "Require organizations to use the approval flow", then Save.',
+        'Organization members must get approval for fine-grained PATs accessing enterprise organizations; organization administrators cannot disable the approval flow.'
     )
     patMaxLifetime90Days = @(
         'Your enterprise > Policies > Personal access tokens, on both tabs Fine-grained tokens and Tokens (classic):',
@@ -738,6 +739,7 @@ function Confirm-SetupPrerequisite {
             return $true
         }
     }
+    Show-SetupMessage -Kind Action -Message "USER ACTION: $Name. Check the setting in the UI; the wizard cannot set or verify it through an API."
     Show-SetupGuidance -Line $Guidance
     if (-not (Confirm-SetupAction -Prompt $Prompt)) {
         if ($confirmations.Contains($Name)) {
@@ -1727,9 +1729,10 @@ function Invoke-StepEnterprisePolicy {
     param([Parameter(Mandatory)][hashtable] $Setup)
 
     $policyGuidance = @(
-        'Your enterprise > Policies > Repositories: Repository forking = disabled for private and internal repositories,',
+        'Your enterprise > Policies > Member privileges: Repository forking = disabled for private and internal repositories,',
         'Repository creation, Repository visibility change and Repository deletion and transfer = members cannot. Then choose [r].'
     )
+    Show-SetupMessage -Message 'AUTOMATIC: The wizard checks four repository policies through the API and changes them only after your confirmation.'
     $policies = Get-SetupEnterprisePolicy -Setup $Setup
     $pending = @($script:PolicySettings.Keys | Where-Object { $policies[$_] -ne 'DISABLED' })
     if ($pending.Count -gt 0) {
@@ -1750,6 +1753,8 @@ function Invoke-StepEnterprisePolicy {
             Exit-SetupStage -Status Error -Area github -Message "The policies did not change: $($pending -join ', ')." -Guidance $policyGuidance
         }
     }
+    Show-SetupMessage -Kind Ok -Message 'AUTOMATIC: Verified DISABLED through the API: private/internal repository forking, member repository creation, member visibility changes and member repository deletion and transfer.'
+    Show-SetupMessage -Message 'The next three settings are separate USER ACTIONS: user namespace restrictions, fine-grained PAT approval and PAT maximum lifetimes. Do not change other policies.'
     $Setup.Facts.ForksDisabled = $true
     $unconfirmed = @(foreach ($name in $script:ConfirmedPolicies.Keys) {
         if (-not (Confirm-SetupPrerequisite -Setup $Setup -Name $name -Guidance $script:ConfirmedPolicies[$name] -Prompt "GitHub has no API for $name. Is it set?")) { $name }

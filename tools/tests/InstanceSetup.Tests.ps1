@@ -192,6 +192,66 @@ Describe 'Instance setup wizard' {
     }
 
     Context 'Confirmations and flags' {
+        It 'uses the observed enterprise PAT approval flow label' {
+            $setup = Get-TestSetup
+            $answers.Enqueue('y')
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Confirm-SetupPrerequisite -Setup $Setup -Name 'fineGrainedPatApprovalRequired' `
+                    -Guidance $script:ConfirmedPolicies['fineGrainedPatApprovalRequired'] -Prompt 'Done?'
+            }
+
+            $result | Should -BeTrue
+            Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
+                $Object -like '*Require organizations to use the approval flow*'
+            }
+        }
+
+        It 'labels a manual prerequisite as a user action before asking for confirmation' {
+            $setup = Get-TestSetup
+            $answers.Enqueue('y')
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Confirm-SetupPrerequisite -Setup $Setup -Name 'emuUserNamespacesRestricted' `
+                    -Guidance $script:ConfirmedPolicies['emuUserNamespacesRestricted'] -Prompt 'Done?'
+            }
+
+            $result | Should -BeTrue
+            Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
+                $Object -like '*USER ACTION: emuUserNamespacesRestricted*cannot set or verify*'
+            }
+            Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
+                $Object -like '*Policies > Member privileges > Repository creation*not Repositories > Policies > New policy*'
+            }
+        }
+
+        It 'distinguishes verified automatic repository policies from manual settings' {
+            $setup = Get-TestSetup
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Mock Get-SetupEnterprisePolicy {
+                    @{
+                        allowPrivateRepositoryForkingSetting = 'DISABLED'
+                        membersCanCreateRepositoriesSetting = 'DISABLED'
+                        membersCanChangeRepositoryVisibilitySetting = 'DISABLED'
+                        membersCanDeleteRepositoriesSetting = 'DISABLED'
+                    }
+                }
+                Mock Confirm-SetupPrerequisite { $true }
+                Mock Invoke-SetupGraphQL { throw 'Already enforced policies must not be changed.' }
+                $null = Invoke-StepEnterprisePolicy -Setup $Setup
+                Should -Invoke Confirm-SetupPrerequisite -Times 3 -Exactly
+                Should -Invoke Invoke-SetupGraphQL -Times 0 -Exactly
+            }
+
+            Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
+                $Object -like '*AUTOMATIC: Verified DISABLED through the API:*member repository deletion and transfer.*'
+            }
+            Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
+                $Object -like '*next three settings are separate USER ACTIONS*Do not change other policies*'
+            }
+        }
+
         It 'reuses a stored confirmation without a prompt' {
             $setup = Get-TestSetup
             $setup.State.confirmations['licenses'] = '2026-01-01T00:00:00Z'

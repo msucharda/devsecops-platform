@@ -338,16 +338,16 @@ Požadované politiky:
 
 | Příznak | Cesta v UI | Nastavení | Proč |
 |---|---|---|---|
-| `privateInternalForksDisabled` | Your enterprise → Policies → Repositories → Repository forking | Zakaž forky private a internal repozitářů. | Fork přenese kód mimo kontroly původní organizace. |
-| `emuUserNamespacesRestricted` | Your enterprise → Policies → Repositories → Repository creation | Zapni **Block the creation of user namespace repositories**. | Repozitář v user namespace leží mimo organizace platformy a jejich rulesety. |
-| `fineGrainedPatApprovalRequired` | Your enterprise → Policies → Personal access tokens → Fine-grained tokens | Zapni **Require approval of fine-grained personal access tokens**. | Organization owner schválí každý fine-grained PAT dřív, než získá přístup k organizaci. |
+| `privateInternalForksDisabled` | Your enterprise → Policies → Member privileges → Repository forking | Zakaž forky private a internal repozitářů. | Fork přenese kód mimo kontroly původní organizace. |
+| `emuUserNamespacesRestricted` | Your enterprise → Policies → Member privileges → Repository creation | Zapni **Block the creation of user namespace repositories**. | Repozitář v user namespace leží mimo organizace platformy a jejich rulesety. |
+| `fineGrainedPatApprovalRequired` | Your enterprise → Policies → Personal access tokens → Fine-grained tokens | Zapni **Require organizations to use the approval flow**. | Členové organizací musí získat schválení fine-grained PAT pro přístup k organizacím enterprise. Administrátoři organizací nesmí schvalování vypnout. |
 | `patMaxLifetime90Days` | Your enterprise → Policies → Personal access tokens → záložky Fine-grained tokens a Tokens (classic) | Na obou záložkách zapni **Set maximum lifetimes for personal access tokens** s hodnotou 90 dní. | Krátká platnost zkrátí dobu, po kterou lze zneužít odcizený PAT. |
 
 U maximální platnosti PAT zapni **Exempt administrators**. Dokumentace GitHubu tuto výjimku doporučuje, pokud enterprise používá SCIM provisioning. Token SCIM z kroku A5 je classic PAT setup usera bez expirace.
 
 Omezení classic PAT nenastavuj. O něm zatím není rozhodnuto.
 
-README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat. Bootstrap pro ni nemá příznak. Politiky jsou ve stejné sekci Repositories:
+README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat. Bootstrap pro ni nemá příznak. Politiky jsou ve stejné sekci Member privileges:
 
 - Repository creation: členové nesmí zakládat repozitáře.
 - Repository visibility change: členové nesmí měnit viditelnost.
@@ -358,6 +358,8 @@ README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členo
 - Přes GraphQL přečte politiky forků, zakládání, změny viditelnosti a mazání repozitářů. Politiku, která nemá hodnotu `DISABLED`, po potvrzení nastaví na `DISABLED`. Pro čtení a změnu dočasně přidá scope `admin:enterprise`.
 - Příznak `privateInternalForksDisabled` nastaví, když všechny 4 politiky mají hodnotu `DISABLED`.
 - Politiky PAT a omezení user namespace nemají API. Průvodce pro každý příznak ukáže cestu v UI a vyžádá potvrzení.
+
+Výstup `AUTOMATIC` označuje kontrolu nebo změnu přes API. Po ověření průvodce vypíše všechny 4 politiky jako `DISABLED`; v UI je nemusíš nastavovat znovu. Výstup `USER ACTION` označuje ruční kontrolu, kterou musíš provést před potvrzením. Zákaz repozitářů v user namespace je samostatný checkbox, nikoli jedna ze 4 politik nastavených přes API. Najdeš ho v **Member privileges**, ne v editoru **Repositories → Policies → New policy**. Ostatní nastavení neměň.
 
 **Tvoje akce:** Nastav v UI politiky příznaků `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired` a `patMaxLifetime90Days` podle tabulky. Výsledek politik zakládání, viditelnosti a mazání repozitářů zapiš do komentáře v #10.
 
