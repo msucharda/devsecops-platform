@@ -1083,7 +1083,7 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
    $policyToken = New-ProbeToken @adminApp -Permissions @{ organization_administration = 'write' }
    ```
 
-3. Proveď variantu A. Po kontrole jejího výsledku pokračuj variantou B:
+3. Proveď variantu A. Nejdřív nastav politiku a až potom vytvoř nový repozitář. Potom variantu vyhodnoť postupem „Vyhodnocení varianty“ pod tímto seznamem:
 
    ```powershell
    Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'local_only' }
@@ -1092,7 +1092,7 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
    New-DependabotProbeRepository $Repository
    ```
 
-4. Proveď variantu B. Nejdřív nastav obě části politiky a až potom vytvoř nový repozitář:
+4. Proveď variantu B a vyhodnoť ji. Nejdřív nastav obě části politiky a až potom vytvoř nový repozitář:
 
    ```powershell
    Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'selected' }
@@ -1102,9 +1102,9 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
    New-DependabotProbeRepository $Repository
    ```
 
-   Ve variantě B otevři Actions → `dynamic/dependabot/dependabot-updates` → job → Set up job. Zapiš všechny akce z řádků `Download action repository`. Seznam použij ve variantě C.
+   Po vyhodnocení varianty B otevři v repozitáři `dependabot-probe-b` Actions → `dynamic/dependabot/dependabot-updates` → job → Set up job. Zapiš všechny akce z řádků `Download action repository`. Seznam použij ve variantě C.
 
-5. Proveď variantu C. Nahraď `<owner>/<action>@*` vzory akcí z výstupu varianty B:
+5. Proveď variantu C a vyhodnoť ji. Nahraď `<owner>/<action>@*` vzory akcí z varianty B:
 
    ```powershell
    Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $false; verified_allowed = $false; patterns_allowed = @('<owner>/<action>@*') }
@@ -1113,20 +1113,21 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
    New-DependabotProbeRepository $Repository
    ```
 
-Bloky A, B a C nespouštěj všechny najednou. Po každém bloku, ještě před změnou politiky pro další variantu, proveď tento postup:
+6. Po vyhodnocení varianty C odvolej token: `Invoke-ProbeApi -Path '/installation/token' -Token $policyToken -Method Delete`.
+
+**Vyhodnocení varianty:** Proveď ho po každé variantě, ještě před změnou politiky pro další variantu. Bloky A, B a C proto nespouštěj najednou.
 
 1. Spusť version update: Insights → Dependency graph → Dependabot → `requirements.txt` → Check for updates.
-2. Ověř security update: Security → Dependabot alerts → alert pro `requests`. Automated security fixes jsou zapnuté při vytvoření repozitáře; vyhodnoť pouze PR vytvořený po změně politiky.
-3. Zkontroluj běhy:
+2. Ověř security update: Security → Dependabot alerts → alert pro `requests`. Automated security fixes jsou zapnuté při vytvoření repozitáře. Vyhodnoť jen PR vytvořený po změně politiky.
+3. Zkontroluj běhy. Filtr vrátí jen běhy Dependabotu zahájené po změně politiky:
 
    ```powershell
-   gh api --hostname $githubHost "repos/$probeOrg/$Repository/actions/runs?per_page=100" --jq '.workflow_runs[] | select(.path == "dynamic/dependabot/dependabot-updates") | [.path, .event, .status, .conclusion, .created_at] | @tsv'
+   $since = $policyChangedAt.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+   gh api --hostname $githubHost "repos/$probeOrg/$Repository/actions/runs?per_page=100" --jq ('.workflow_runs[] | select(.path == "dynamic/dependabot/dependabot-updates" and .created_at >= "' + $since + '") | [.event, .status, .conclusion, .created_at] | @tsv')
    ```
 
-   Výstup musí obsahovat pouze běhy zahájené po `$policyChangedAt`. Pokud se běh nespustí, zaznamenej tuto skutečnost jako výsledek varianty; nikdy nepoužívej běh ani PR jiné varianty jako důkaz. Před vyhodnocením ověř, že Dependabot on Actions runners zůstává zapnutý.
-4. Zaznamenej výsledek běhů a zda vznikl nový PR. Existující PR ani běh před změnou politiky se nepočítá.
-
-6. Odvolej token: `Invoke-ProbeApi -Path '/installation/token' -Token $policyToken -Method Delete`.
+   Pokud filtr nevrátí žádný běh, zaznamenej to jako výsledek varianty. Běh ani PR jiné varianty nesmíš použít jako důkaz. Před vyhodnocením ověř, že Dependabot on Actions runners zůstává zapnutý.
+4. Zaznamenej výsledek běhů a to, zda vznikl nový PR.
 
 **Ověření:** Pro každou variantu zaznamenej výsledek pouze z jejího nového repozitáře a z běhů zahájených po změně politiky, včetně toho, zda `dynamic/dependabot/dependabot-updates` skončil `success` a zda vznikl nový PR. Varianta C musí projít, aby seznam akcí stačil pro `enterprise-baseline`.
 
@@ -1134,7 +1135,7 @@ Bloky A, B a C nespouštěj všechny najednou. Po každém bloku, ještě před 
 
 **Odblokuje:** #18.
 
-**Úklid:** Repozitář `dependabot-probe` zanikne se smazáním organizace ve fázi D.
+**Úklid:** Repozitáře `dependabot-probe-a`, `dependabot-probe-b` a `dependabot-probe-c` zaniknou se smazáním organizace ve fázi D.
 
 ## Fáze D: akceptace přírůstku 1
 
