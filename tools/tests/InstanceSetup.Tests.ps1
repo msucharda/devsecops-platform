@@ -526,7 +526,7 @@ Describe 'Instance setup wizard' {
                     if ($Uri -like '*/app') {
                         return @{
                             Status = 'Ok'
-                            Data = @{ id = 101; slug = $resolvedSlug; owner = @{ slug = 'example' }; permissions = @{ members = 'write' } }
+                            Data = @{ id = 101; slug = $resolvedSlug; owner = @{ login = 'example'; type = 'enterprise' }; permissions = @{ members = 'write' } }
                         }
                     }
                     if ($Uri -like '*/app/installations?*') {
@@ -569,7 +569,7 @@ Describe 'Instance setup wizard' {
             }
         }
 
-        It 'accepts an enterprise-owned Members-only App with no repository access' {
+        It 'accepts the observed enterprise owner login and type for a Members-only App with no repository access' {
             $setup = Get-TestSetup
             $setup.State.probe['organization'] = 'probe-test'
             $setup.State.probe['authorizationAppId'] = '101'
@@ -580,7 +580,7 @@ Describe 'Instance setup wizard' {
                         KeyPath = 'synthetic-key.pem'
                         App = @{
                             id = 101; slug = 'ref-probe-authorization'
-                            owner = @{ slug = 'example' }
+                            owner = @{ login = 'example'; type = 'enterprise' }
                             permissions = @{ members = 'read' }
                         }
                     }

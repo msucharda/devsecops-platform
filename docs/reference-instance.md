@@ -416,6 +416,8 @@ Pokud API vrátí HTTP 403 s textem `Resource protected by organization SAML enf
 - Token odvolá nástrojem `tools/Remove-PlatformGitHubToken.ps1` a ověří, že odvolaný token vrátí HTTP 401.
 - Smaže klíč App A a otevře stránku pro smazání App A.
 
+Enterprise-owned znamená vlastnictví registrace, nikoli zapnutí oprávnění v sekci Enterprise permissions. Registraci otevři přes **Your enterprise → Settings → GitHub Apps → New GitHub App**. Průvodce i vydávání tokenů ověřují ve výsledku `GET /app` vlastníka s `owner.type` rovnou `enterprise` a `owner.login` odpovídající enterprise. Stejný `login` u vlastníka typu `User` nebo `Organization` nestačí.
+
 Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tokenem může vrátit HTTP 404 i pro existující App. Průvodce proto nejdřív vyžádá kontrolu registrace v enterprise UI. Pokud App existuje, zadej její App ID a nevytvářej další. Průvodce identitu, očekávaný slug, vlastníka a oprávnění ověří privátním klíčem přes `GET /app`. Pokud slug neodpovídá očekávané App, průvodce odstraní uložené App ID a vyžádá opravu.
 
 **Průvodce: App B (organizační API)**
