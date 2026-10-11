@@ -300,26 +300,106 @@ Describe 'Instance setup wizard' {
     }
 
     Context 'GitHub App helpers' {
-        It 'reuses a registered private App when OAuth slug lookup returns 404' {
+        It 'validates the resolved slug after OAuth 404 (matching: <Matching>)' -TestCases @(
+            @{ Matching = $true }
+            @{ Matching = $false }
+        ) {
+            param($Matching)
             $setup = Get-TestSetup
             $setup.State.probe['organization'] = 'probe-test'
-            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+            $keyPath = Join-Path $setup.WorkPath 'keys/probe-admin.pem'
+            $null = New-Item -ItemType Directory -Path (Split-Path $keyPath) -Force
+            $rsa = [System.Security.Cryptography.RSA]::Create(2048)
+            try {
+                Set-Content -LiteralPath $keyPath -Value $rsa.ExportRSAPrivateKeyPem()
+            }
+            finally {
+                $rsa.Dispose()
+            }
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Matching = $Matching } } {
                 param($Scenario)
                 $Setup = $Scenario.Setup
-                Mock Invoke-SetupApi { @{ Status = 'Missing'; Code = 404; Data = $null; Message = 'HTTP 404: Not Found' } }
+                $resolvedSlug = if ($Scenario.Matching) { 'ref-probe-admin' } else { 'another-app' }
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/apps/*') {
+                        return @{ Status = 'Missing'; Code = 404; Data = $null; Message = 'HTTP 404: Not Found' }
+                    }
+                    if ($Uri -like '*/app') {
+                        return @{
+                            Status = 'Ok'
+                            Data = @{ id = 101; slug = $resolvedSlug; owner = @{ slug = 'example' }; permissions = @{ members = 'write' } }
+                        }
+                    }
+                    if ($Uri -like '*/app/installations?*') {
+                        return @{
+                            Status = 'Ok'
+                            Data = @(@{
+                                id = 201; account = @{ login = 'probe-test' }; target_type = 'Organization'
+                                suspended_at = $null; repository_selection = 'all'; permissions = @{ members = 'write' }
+                            })
+                        }
+                    }
+                    throw "Unexpected API call: $Uri"
+                }
                 Mock Confirm-SetupAction { $true }
                 Mock Request-SetupManualStep {}
                 Mock Read-SetupValue { '101' }
-                Mock Find-SetupAppKey { throw 'Reached JWT key verification.' }
 
-                { Get-SetupProbeApp -Setup $Setup -Role admin -Permission @{ members = 'write' } -Selection all } |
-                    Should -Throw '*Reached JWT key verification*'
+                if ($Scenario.Matching) {
+                    $app = Get-SetupProbeApp -Setup $Setup -Role admin -Permission @{ members = 'write' } -Selection all
+                    $app.AppId | Should -Be '101'
+                    $app.Slug | Should -Be 'ref-probe-admin'
+                    $app.InstallationId | Should -Be '201'
+                    $Setup.State.probe['adminAppId'] | Should -Be '101'
+                }
+                else {
+                    { Get-SetupProbeApp -Setup $Setup -Role admin -Permission @{ members = 'write' } -Selection all } |
+                        Should -Throw "*has slug 'another-app'*Required: ref-probe-admin*"
+                    $Setup.State.probe.ContainsKey('adminAppId') | Should -BeFalse
+                    $saved = Get-Content -LiteralPath (Join-Path $Setup.WorkPath 'setup-state.json') -Raw | ConvertFrom-Json -AsHashtable
+                    $saved.probe.ContainsKey('adminAppId') | Should -BeFalse
+                    Should -Invoke Invoke-SetupApi -Times 0 -Exactly -ParameterFilter { $Uri -like '*/app/installations?*' }
+                }
+                Should -Invoke Invoke-SetupApi -Times 1 -Exactly -ParameterFilter {
+                    $Uri -like '*/app' -and $Token -match '^[^.]+\.[^.]+\.[^.]+$'
+                }
                 Should -Invoke Request-SetupManualStep -Times 0 -Exactly
                 Should -Invoke Confirm-SetupAction -Times 1 -Exactly -ParameterFilter {
                     $Prompt -like '*already registered*'
                 }
             }
-            $setup.State.probe['adminAppId'] | Should -Be '101'
+        }
+
+        It 'accepts an enterprise-owned Members-only App with no repository access' {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['authorizationAppId'] = '101'
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Mock Find-SetupAppKey {
+                    @{
+                        KeyPath = 'synthetic-key.pem'
+                        App = @{
+                            id = 101; slug = 'ref-probe-authorization'
+                            owner = @{ slug = 'example' }
+                            permissions = @{ members = 'read' }
+                        }
+                    }
+                }
+                Mock ConvertTo-SetupAppJwt { 'synthetic-jwt' }
+                Mock Invoke-SetupApi {
+                    @{
+                        Status = 'Ok'
+                        Data = @(@{
+                            id = 201; account = @{ login = 'probe-test' }; target_type = 'Organization'
+                            suspended_at = $null; repository_selection = 'all'; permissions = @{ members = 'read' }
+                        })
+                    }
+                }
+                $app = Get-SetupProbeApp -Setup $Setup -Role authorization -Permission @{ members = 'read' } -Selection none
+                $app.AppId | Should -Be '101'
+                $app.InstallationId | Should -Be '201'
+            }
         }
 
         It 'compares App permissions exactly and ignores implicit metadata read' {

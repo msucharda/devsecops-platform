@@ -400,13 +400,15 @@ Příznak: `githubAppAvailabilityVerified`. Dílčí kroky: `Probe organization`
 
 - Otevře předvyplněný formulář registrace enterprise-owned App: název `<name>-probe-authorization`, neaktivní webhook a oprávnění Members: Read-only. Registrace App nemá API.
 - Najde privátní klíč v `$work\keys` nebo mezi soubory `*.private-key.pem` staženými do `Downloads` za posledních 24 hodin. Klíč přesune do `$work\keys\probe-authorization.pem`.
-- Ověří, že App vlastní enterprise a má přesně požadovaná oprávnění. Otevře stránku instalace a ověří instalaci jen do `instance-probe`.
+- Ověří, že App vlastní enterprise a má přesně požadovaná oprávnění. Otevře stránku instalace do probe organizace. App A má jen Members: Read-only; instalační UI proto ukazuje **No repositories — This App does not require access to your repositories**. Repozitáře nevybírej a oprávnění nerozšiřuj.
 - Spustí `tools/New-PlatformGitHubToken.ps1 -Authorization` stejně jako workflow `deploy.yml`.
+- Nástroj ověří instalaci jen v probe organizaci, přesná oprávnění a prázdný seznam repozitářů dostupných autorizačnímu tokenu.
+
 - Tokenem přečte tvoje členství v `platform-probe`. Workflow tak ověřuje, že autor PR patří do platformního týmu, než předá přihlašovací údaje.
 - Token odvolá nástrojem `tools/Remove-PlatformGitHubToken.ps1` a ověří, že odvolaný token vrátí HTTP 401.
 - Smaže klíč App A a otevře stránku pro smazání App A.
 
-Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tokenem může vrátit HTTP 404 i pro existující App. Průvodce proto nejdřív vyžádá kontrolu registrace v enterprise UI. Pokud App existuje, zadej její App ID a nevytvářej další. Průvodce identitu, vlastníka a oprávnění ověří privátním klíčem přes `GET /app`.
+Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tokenem může vrátit HTTP 404 i pro existující App. Průvodce proto nejdřív vyžádá kontrolu registrace v enterprise UI. Pokud App existuje, zadej její App ID a nevytvářej další. Průvodce identitu, očekávaný slug, vlastníka a oprávnění ověří privátním klíčem přes `GET /app`. Pokud slug neodpovídá očekávané App, průvodce odstraní uložené App ID a vyžádá opravu.
 
 **Průvodce: App B (organizační API)**
 
@@ -422,7 +424,7 @@ Výsledky testů App A a App B průvodce uloží. Další běh testy neopakuje a
 
 1. V předvyplněném formuláři ponech ostatní oprávnění No access a zvol Create GitHub App.
 2. App settings → General → Private keys → Generate a private key. Prohlížeč uloží klíč do `Downloads`.
-3. Install App → organizace `probe-<yyyymmdd>`. App A instaluj jen do `instance-probe`, App B do všech repozitářů.
+3. Install App → organizace `probe-<yyyymmdd>`. App A instaluj bez přístupu k repozitářům (**No repositories**), App B do všech repozitářů.
 4. Po testu App A smaž App A: App settings → Advanced → Delete GitHub App. Workflow instance dostanou vlastní Apps v #11.
 
 App B a `$work\keys\probe-admin.pem` ponech pro C2 a C4. Smažeš je ve fázi D.

@@ -1906,7 +1906,7 @@ function Get-SetupProbeApp {
         [Parameter(Mandatory)][hashtable] $Setup,
         [Parameter(Mandatory)][ValidateSet('authorization', 'admin')][string] $Role,
         [Parameter(Mandatory)][System.Collections.IDictionary] $Permission,
-        [Parameter(Mandatory)][ValidateSet('selected', 'all')][string] $Selection
+        [Parameter(Mandatory)][ValidateSet('selected', 'all', 'none')][string] $Selection
     )
 
     $probe = $Setup.State.probe
@@ -1948,6 +1948,13 @@ function Get-SetupProbeApp {
     $appId = [string] $probe[$appIdKey]
     $key = Find-SetupAppKey -Setup $Setup -Role $Role -AppId $appId
     $app = $key.App
+    if ($app['slug'] -ne $appName) {
+        $probe.Remove($appIdKey)
+        Save-SetupState -Setup $Setup
+        Exit-SetupStage -Status Error -Message "App $appId has slug '$($app['slug'])'. Required: $appName." -Guidance @(
+            "Check $appsUrl and enter the App ID of $appName, then choose [r]."
+        )
+    }
     $appSettings = "$appsUrl/$($app['slug'])"
     $owner = $app['owner']
     if ($owner -isnot [System.Collections.IDictionary] -or $owner['slug'] -ne $enterprise -or $owner.Contains('login')) {
@@ -1964,7 +1971,9 @@ function Get-SetupProbeApp {
         )
     }
     $jwt = ConvertTo-SetupAppJwt -AppId $appId -KeyPath $key.KeyPath
-    $repositoryText = if ($Selection -eq 'selected') { 'Only select repositories: instance-probe' } else { 'All repositories' }
+    $repositoryText = if ($Selection -eq 'none') { 'No repositories: this organization-only App does not require repository access' }
+    elseif ($Selection -eq 'selected') { 'Only select repositories: instance-probe' }
+    else { 'All repositories' }
     $installGuidance = @("App settings > Install App > $org > Install, $repositoryText.")
     $findInstallation = {
         $listed = Assert-SetupResponse -Response (Invoke-SetupApi -Setup $Setup -Uri "$api/app/installations?per_page=100" -Token $jwt) -Action 'Listing the App installations'
@@ -1981,7 +1990,7 @@ function Get-SetupProbeApp {
     if ($installation['target_type'] -ne 'Organization' -or $installation['suspended_at']) {
         Exit-SetupStage -Status Error -Message "The installation in $org is suspended or not an organization installation." -Guidance @("${installationUrl}: unsuspend the installation, then choose [r].")
     }
-    if ($installation['repository_selection'] -ne $Selection) {
+    if ($Selection -ne 'none' -and $installation['repository_selection'] -ne $Selection) {
         Exit-SetupStage -Status Error -Message "The installation in $org has repository access '$($installation['repository_selection'])'. Required: $repositoryText." -Guidance @(
             "$installationUrl > Repository access: $repositoryText, then Save. Then choose [r]."
         )
@@ -2107,7 +2116,7 @@ function Invoke-StepProbeAuthorization {
     $login = $Setup.Facts.Login
     $findingGuidance = @('Record the finding in issue #10. Do not switch to a PAT and do not extend the App permissions.')
     Show-SetupMessage -Message 'App A checks the token that deploy.yml uses to verify that the PR author belongs to the platform team.'
-    $app = Get-SetupProbeApp -Setup $Setup -Role authorization -Permission ([ordered]@{ members = 'read' }) -Selection selected
+    $app = Get-SetupProbeApp -Setup $Setup -Role authorization -Permission ([ordered]@{ members = 'read' }) -Selection none
     $envFile = Join-Path $Setup.WorkPath 'probe-authorization.env'
     $saved = @{}
     foreach ($variable in $script:AppVariables) { $saved[$variable] = [Environment]::GetEnvironmentVariable($variable, 'Process') }

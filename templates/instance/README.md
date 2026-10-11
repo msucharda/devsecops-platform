@@ -10,7 +10,7 @@ Změnu App oprávnění musí navíc schválit security tým podle ADR 0016. Boo
 
 | Environment | Schválení a přihlašovací údaje |
 |---|---|
-| `pr-authorization` | Bez schválení. Pouze samostatná enterprise-owned App s `members: read`, instalovaná jen v organizaci platformy a jen pro repozitář instance. Nikdy App klíč modulu ani Azure identita. |
+| `pr-authorization` | Bez schválení. Pouze samostatná enterprise-owned App s `members: read`, instalovaná jen v organizaci platformy, bez přístupu k repozitářům. Nikdy App klíč modulu ani Azure identita. |
 | `<module>-plan` | Bez schválení. Vlastní read-only Azure/Microsoft Graph identita a případně read-only enterprise-owned App. |
 | `<module>-ruleset-plan` | Bez schválení. Vlastní App s právě `organization_administration: write` pro cílové organizace a identita pro čtení state modulu. Žádný běžný plan tento klíč nedostane. |
 | `approve-apply` | Jedno schválení platformním týmem pro celý běh. Žádné secrets. |
