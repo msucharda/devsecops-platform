@@ -57,6 +57,35 @@ O omezení classic PAT zatím není rozhodnuto. Bootstrap žádnou takovou polit
 
 Bootstrap navíc přes API ověří tenant tokenů, členství uživatele v `teams.platform`, přímé přiřazení Enterprise Owner, aktivní SCIM job bez quarantine, aktivní licenci Entra ID P1/P2, tenant a stav všech subscriptions a roli ownera pro účet OAuth v GitHubu. Pokud Graph vrátí OIDC launch mode, bootstrap odmítne jiný režim než `oidc`. Graph může u platné OIDC aplikace vrátit `null`; v tom případě bootstrap výslovně varuje a používá povinné ruční potvrzení `enterpriseOidc`. Výsledek `OidcModeVerified: false` přizná, že API režim neověřilo. Enterprise politiky, správnost cíle a mapování SCIM a ostatní licence ověří člověk. Potvrzení není automatická detekce Drift (driftu).
 
+## Preflight (předběžná kontrola)
+
+`tools/Test-BootstrapPrerequisites.ps1` spustí stejné kontroly jako bootstrap a nic nezmění. Nezastaví se na první chybě. Pro každou kontrolu vrátí objekt s vlastnostmi `Area`, `Check`, `Status` a `Detail`:
+
+```powershell
+.\tools\Test-BootstrapPrerequisites.ps1 -InstancePath '<path>\instance.yaml' | Format-Table -Wrap
+```
+
+Preflight nevyžaduje potvrzené příznaky `manualPrerequisites`. Každý příznak vypíše jako řádek se stavem `Confirmed` nebo `Manual`. Chybná konfigurace nebo schéma ukončí preflight chybou stejně jako bootstrap.
+
+| `Status` | Význam |
+|---|---|
+| `Pass` | API potvrdilo podmínku. |
+| `Fail` | Bootstrap by se na této kontrole zastavil. `Detail` uvádí příčinu. |
+| `Skip` | Kontrola neproběhla, protože selhala kontrola, na které závisí. |
+| `Manual` | API podmínku neověří, nebo příznak `manualPrerequisites` není `true`. |
+| `Confirmed` | Příznak `manualPrerequisites` je `true`. |
+
+Kromě kontrol bootstrapu preflight ověří:
+
+- Resource providers `Microsoft.Storage` a `Microsoft.ManagedIdentity` jsou v management subscription registrované.
+- Efektivní akce uživatele v management subscription umožní všechny zápisy bootstrapu včetně locku a role assignments.
+- Existující resource group a storage account state backendu mají ownership tags této instance. Pokud storage account neexistuje, jeho název je dostupný.
+- Uživatel smí zapsat role assignments na všech scope oprávnění modulů. Scope management group vrátí `Manual`, protože Azure pro ni efektivní oprávnění nevrací.
+
+Kontrola efektivních akcí nevyhodnocuje ABAC podmínky ani deny assignments. `Pass` proto neznamená, že zápis určitě projde. `Detail` může obsahovat ID subscriptions a scope. Výstup patří do issue jen bez těchto údajů (ADR 0012).
+
+Bootstrap spusť, až žádný řádek nemá `Fail` ani `Skip`, všechny příznaky mají `Confirmed` a každý jiný řádek `Manual` člověk ověřil.
+
 ## Spuštění a výstup
 
 Z repozitáře instance spusť:

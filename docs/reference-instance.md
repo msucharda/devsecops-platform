@@ -69,9 +69,35 @@ Role může mít jeden člověk, nebo kroky provede několik administrátorů. B
 - `az` je na Windows dávka `az.cmd`. cmd rozdělí argument bez mezery, který obsahuje `&` nebo `|`. Neměň proto mezery kolem `|` a `&&` v `--query`. Parametry URL předávej přes `--url-parameters`.
 - Cesty v UI GitHubu vycházejí z dokumentace GitHub Enterprise Cloud. Na GHE.com nejsou ověřené. Pokud se cesta liší, zapiš skutečnou cestu do komentáře issue.
 
+## Preflight (předběžná kontrola)
+
+`tools/Test-BootstrapPrerequisites.ps1` spustí kontroly bootstrapu a nic nezmění. Na rozdíl od bootstrapu se nezastaví na první chybě. Pro každou kontrolu vrátí řádek se sloupci `Area`, `Check`, `Status` a `Detail`. Preflight nahrazuje ruční ověření přes API v krocích A2–A6 a kontrolu názvu storage account. Kroky v UI ani příznaky `manualPrerequisites` nenahrazuje.
+
+Preflight čte konfiguraci instance z kroku B1. Konfigurace potřebuje `$upn` z kroku A2 a `$spId` z kroku A4. Po kroku A4 proto můžeš konfiguraci vytvořit podle B1 a preflight spouštět po každém dalším kroku. Příznak, jehož krok ještě neprošel ověřením, nastav na `false`.
+
+```powershell
+.\tools\Test-BootstrapPrerequisites.ps1 -InstancePath $cfg -ModulesPath $modulesPath | Format-Table -Wrap
+```
+
+| `Status` | Význam |
+|---|---|
+| `Pass` | API potvrdilo podmínku. |
+| `Fail` | Bootstrap by se zastavil. `Detail` uvádí příčinu. |
+| `Skip` | Kontrola neproběhla, protože selhala kontrola, na které závisí. |
+| `Manual` | API podmínku neověří. U příznaku `manualPrerequisites` znamená, že příznak není `true`. |
+| `Confirmed` | Příznak `manualPrerequisites` je `true`. |
+
+Bootstrap spusť, až platí všechny podmínky:
+
+- Žádný řádek nemá `Status` `Fail` ani `Skip`.
+- Všechny příznaky mají `Confirmed`.
+- Každý jiný řádek `Manual` jsi ověřil ručně. Například `EMU OIDC enterprise application` má `Manual`, když Graph nevrátí režim SSO. OIDC potom ověř podle kroku A5.
+
+Preflight nekontroluje ABAC podmínky, deny assignments ani provider `Microsoft.ContainerInstance` pro krok B8. `Detail` může obsahovat ID subscriptions a scope. Výstup proto nevkládej do issue bez úpravy (ADR 0012). Ruční příkazy v sekcích **Ověření** slouží k diagnostice řádku `Fail`.
+
 ## Fáze A: ruční předpoklady
 
-Kroky A1–A9 připraví vše, co bootstrap kontroluje. Každý krok uvádí příznak `manualPrerequisites`, který potvrzuje. Příznaky zapíšeš do konfigurace až v kroku B1.
+Kroky A1–A9 připraví vše, co bootstrap kontroluje. Každý krok uvádí příznak `manualPrerequisites`, který potvrzuje. Příznaky zapíšeš do konfigurace v kroku B1.
 
 ### A1: Pracovní adresář, nástroje a proměnné
 
@@ -94,7 +120,7 @@ $githubHost = "$enterprise.ghe.com"
 $api = "https://api.$githubHost"
 ```
 
-`$name` se stane hodnotou `instance.name`. Bootstrap z ní odvodí názvy `rg-<name>-bootstrap`, `st<name>tfstate` a `id-<name>-<module>-plan|apply`. Název storage account musí být globálně jedinečný. Dostupnost ověříš v kroku B1.
+`$name` se stane hodnotou `instance.name`. Bootstrap z ní odvodí názvy `rg-<name>-bootstrap`, `st<name>tfstate` a `id-<name>-<module>-plan|apply`. Název storage account musí být globálně jedinečný. Dostupnost ověří preflight v řádku `State backend names`.
 
 **Ověření:** `$PSVersionTable.PSVersion` vrátí 7.4 nebo vyšší. `az version` a `gh --version` vypíšou verzi bez chyby.
 
@@ -121,6 +147,7 @@ az rest --url https://graph.microsoft.com/v1.0/subscribedSkus --query "value[].{
 
 - `tenant` se rovná `$tenantId`.
 - Aspoň jeden řádek má `status` `Enabled`, `units` větší než 0 a ve sloupci `entra` hodnotu `Success`.
+- Preflight: řádky `Azure CLI login` a `Entra ID P1 or P2 license` mají `Pass`.
 
 ### A3: Subscriptions, resource providers a oprávnění Azure
 
@@ -178,6 +205,7 @@ Příznak: `subscriptions`.
 - Krok 2 vypíše `Owner`.
 - Krok 4 vypíše neprázdné pole. První prvek se rovná `$tenantId`. Prázdný výstup znamená chybějící oprávnění; bootstrap by se zastavil před první změnou.
 - Pokud instance používá další subscriptions, zopakuj kroky 1, 2 a 4 pro každou z nich.
+- Preflight: řádky `Subscriptions in the bootstrap tenant`, `Resource providers in the management subscription`, `Bootstrap user permissions in the management subscription`, `Management-group ancestry` a `Role assignment audit` mají `Pass`. Provider `Microsoft.ContainerInstance` preflight nekontroluje.
 
 ### A4: OIDC SSO a enterprise aplikace
 
@@ -206,6 +234,7 @@ Příznak: `enterpriseOidc`.
 
 - Seznam obsahuje jeden řádek. Do `$spId` zapiš `objectId`, ne `appId`.
 - Poslední příkaz vypíše `"oidc"`, nebo nevypíše nic. Jinou hodnotu bootstrap odmítne.
+- Preflight: řádek `EMU OIDC enterprise application` má `Pass`, nebo `Manual`, když Graph nevrátí režim SSO. Při `Manual` ověř OIDC přihlášením přes Entra ID v kroku A5.
 
 ### A5: SCIM a přímé přiřazení Enterprise Owner
 
@@ -242,6 +271,7 @@ az rest --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/synchron
 - Sync job má `schedule` i `status` `Active`. Stav `Quarantine` znamená chybný token nebo URL. Oprav je v kroku 2.
 - Provision on demand skončí úspěchem. Přihlášení do `https://<enterprise>.ghe.com` přes Entra ID funguje.
 - Pokud Graph vrátí HTTP 403, aktivuj roli Application Administrator nebo Cloud Application Administrator a přihlas se znovu. Pokud 403 trvá, token Azure CLI pravděpodobně nemá potřebný scope. Bootstrap by selhal stejně. Zapiš zjištění do #10 a nepokračuj.
+- Preflight: řádky `Direct Enterprise Owner assignment` a `SCIM provisioning job` mají `Pass`. Přiřazení `$ownerRole` a `$userRole` spusť i při ověření přes preflight. Fáze C potřebuje `$userRole`.
 
 ### A6: Přihlášení GitHub CLI
 
@@ -271,7 +301,7 @@ V prohlížeči se přihlas přes Entra ID.
 gh api --hostname $githubHost graphql -f query='query($e:String!){viewer{login} enterprise(slug:$e){viewerIsAdmin}}' -f e=$enterprise --jq .data.enterprise.viewerIsAdmin
 ```
 
-První příkaz vrátí `True`, druhý `true`.
+První příkaz vrátí `True`, druhý `true`. Preflight: řádky `gh OAuth login` a `Enterprise owner in GitHub` mají `Pass`.
 
 ### A7: Politiky enterprise
 
@@ -472,7 +502,7 @@ App B a její klíč ponech pro C2 a C4. Smažeš je ve fázi D.
 
 **Proč:** #10 uzavřeš až po ověření na referenční instanci. Na #10 čeká #11, které vytvoří organizaci platformy, Instance repository (repozitář instance) a environmenty. Moduly platformy zatím nemají `module.yaml`. Bootstrap proto použije fixture moduly z `tools\tests\fixtures\runner-modules`. Modul `application` má Prerequisite (předpoklad) `foundation`. Výběr `application` vytvoří 2 kontejnery a 4 identity. To stačí k ověření výběru předpokladů i izolace state mezi moduly.
 
-### B1: Konfigurace instance a negativní test
+### B1: Konfigurace instance, preflight a negativní test
 
 Příznaky: všechny. Nastav `true` jen u příznaku, jehož krok ve fázi A prošel ověřením.
 
@@ -480,6 +510,7 @@ Příznaky: všechny. Nastav `true` jen u příznaku, jehož krok ve fázi A pro
 
 - Bootstrap čte Instance configuration (konfiguraci instance). Repozitář instance vznikne až v #11, proto konfigurace leží v `$work`.
 - Schéma vyžaduje v `teams.security` aspoň jeden účet. Pro ověření bootstrapu stačí tvůj účet.
+- Preflight ověří kontroly bootstrapu a dostupnost názvu storage account bez změny v cloudu.
 - Negativní test ověří kritérium #10: bootstrap zastaví nepotvrzený ruční předpoklad před první změnou.
 
 **Postup:**
@@ -527,7 +558,7 @@ teardown:
   allowed: false
 "@ | Set-Content -LiteralPath $cfg -Encoding utf8NoBOM
 .\tools\Test-InstanceConfiguration.ps1 -InstancePath $cfg -ModulesPath $modulesPath
-az storage account check-name --name "st${name}tfstate" --query "{available:nameAvailable, reason:reason}" -o table
+.\tools\Test-BootstrapPrerequisites.ps1 -InstancePath $cfg -ModulesPath $modulesPath | Format-Table -Wrap
 ```
 
 Negativní test:
@@ -547,7 +578,7 @@ Remove-Item $negative
 **Ověření:**
 
 - Validace konfigurace skončí bez chyby.
-- `available` je `True`. Jinak zvol jiný `$name` a konfiguraci vytvoř znovu.
+- Preflight splní podmínky ze sekce Preflight. Pokud řádek `State backend names` hlásí obsazený název storage account, zvol jiný `$name` a konfiguraci vytvoř znovu.
 - Negativní test vypíše `Bootstrap requires manual prerequisite confirmations: $.manualPrerequisites.patMaxLifetime90Days.`
 - `az group exists` vrátí `false`.
 
@@ -564,9 +595,10 @@ az account set --subscription $mgmtSub
 az account show --query "{tenant:tenantId, user:user.name}" -o table
 Get-ChildItem Env:GH_TOKEN, Env:GITHUB_TOKEN, Env:GH_ENTERPRISE_TOKEN, Env:GITHUB_ENTERPRISE_TOKEN -ErrorAction SilentlyContinue
 (gh auth token --hostname $githubHost).StartsWith('gho_')
+.\tools\Test-BootstrapPrerequisites.ps1 -InstancePath $cfg -ModulesPath $modulesPath | Format-Table -Wrap
 ```
 
-**Ověření:** `tenant` se rovná `$tenantId`. `Get-ChildItem` nic nevypíše. Poslední příkaz vrátí `True`.
+**Ověření:** `tenant` se rovná `$tenantId`. `Get-ChildItem` nic nevypíše. Příkaz `gh auth token` vrátí `True`. Preflight s novými tokeny splní podmínky ze sekce Preflight.
 
 ### B3: Přerušený běh
 
