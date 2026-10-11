@@ -4,7 +4,9 @@
 
 ## Konfigurace a přihlášení
 
-Platform team (platformní tým) nahradí nulové identifikátory v `templates/instance/instance.yaml` skutečnými hodnotami:
+Platform team (platformní tým) zapíše skutečné identifikátory do `instance.yaml` v repozitáři instance. Dokud repozitář instance neexistuje, zkopíruje šablonu `templates/instance/instance.yaml` mimo checkout zdrojového repozitáře a vyplní kopii. Zdrojový repozitář nesmí obsahovat data instance, například ID tenantu, ID subscriptions nebo název enterprise (ADR 0012). Šablona proto zůstává s nulovými identifikátory.
+
+Kopie konfigurace obsahuje tyto položky:
 
 | Položka `bootstrap` | Hodnota |
 |---|---|
@@ -64,7 +66,7 @@ $bootstrap = .\platform\tools\Invoke-Bootstrap.ps1 -InstancePath .\instance.yaml
 $bootstrap | ConvertTo-Json -Depth 10
 ```
 
-Při práci ve zdrojovém repozitáři použij `.\tools\Invoke-Bootstrap.ps1`. Parametr `-ModulesPath` může určit jiný adresář manifestů.
+Při práci ve zdrojovém repozitáři použij `.\tools\Invoke-Bootstrap.ps1` a v `-InstancePath` cestu ke kopii konfigurace mimo checkout. Parametr `-ModulesPath` může určit jiný adresář manifestů.
 
 Výsledek obsahuje `TenantId`, `SubscriptionId`, `ResourceGroupName`, `StorageAccountName`, `OidcModeVerified`, `Modules` a `HasChanges`. Každý modul má `Name`, `ContainerName` a záznamy `Plan` a `Apply` s `ResourceId`, `PrincipalId` a `ClientId`. Výstup neobsahuje tokeny. Navazující bootstrap GitHubu z #11 použije tyto identity pro federated credentials environmentů.
 
@@ -109,7 +111,9 @@ Nástroj neimplementuje odstranění. Workflow teardown a lokální odstranění
 
 Offline testy Pester ověřují veřejný skript proti náhradám cloudových API. Neprokazují přístup ani dostupnost API na skutečné instanci.
 
-Platform team (platformní tým) musí před uzavřením #10 spustit bootstrap na určené Reference instance (referenční instanci), zkontrolovat ochrany backendu, dvě identity každého vybraného modulu a jejich scope. Musí ověřit, že identita přečte a zamkne vlastní state a dostane HTTP 403 pro state jiného modulu. Druhý běh musí vrátit `HasChanges: false`. Přerušený běh musí další spuštění dokončit bez výměny identit. Výsledek včetně data a necitlivých identifikátorů patří do #10. Ověření není součástí dosud provedených offline testů.
+Platform team (platformní tým) musí před uzavřením #10 spustit bootstrap na určené Reference instance (referenční instanci), zkontrolovat ochrany backendu, dvě identity každého vybraného modulu a jejich scope. Musí ověřit, že identita přečte a zamkne vlastní state a dostane HTTP 403 pro state jiného modulu. Druhý běh musí vrátit `HasChanges: false`. Přerušený běh musí další spuštění dokončit bez výměny identit. Výsledek včetně data patří do #10. Komentář nesmí obsahovat ID tenantu, subscriptions ani objektů a název enterprise (ADR 0012). Ověření není součástí dosud provedených offline testů.
+
+Postup krok za krokem včetně důvodů popisuje [Příprava a akceptace referenční instance](reference-instance.md).
 
 ## Zdroje
 
