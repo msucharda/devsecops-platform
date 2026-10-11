@@ -4,7 +4,9 @@
 
 ## Konfigurace a přihlášení
 
-Platform team (platformní tým) zapíše skutečné identifikátory do `instance.yaml` v repozitáři instance. Dokud repozitář instance neexistuje, zkopíruje šablonu `templates/instance/instance.yaml` mimo checkout zdrojového repozitáře a vyplní kopii. Zdrojový repozitář nesmí obsahovat data instance, například ID tenantu, ID subscriptions nebo název enterprise (ADR 0012). Šablona proto zůstává s nulovými identifikátory.
+Instance repository (repozitář instance) je repozitář v organizaci platformy s vendorovaným release v `platform/`, souborem `instance.yaml` a workflow nasazení. Vytvoří ho GitHub část bootstrapu v #11. Lokální bootstrap Azure proto poprvé běží dřív, než repozitář instance existuje.
+
+Platform team (platformní tým) zapíše skutečné identifikátory do `instance.yaml` v repozitáři instance. Dokud repozitář instance neexistuje, zkopíruje šablonu `templates/instance/instance.yaml` mimo checkout zdrojového repozitáře a vyplní kopii. Zdrojový repozitář nesmí obsahovat data instance, například ID tenantu, ID subscriptions nebo název enterprise (ADR 0012). Šablona proto zůstává s nulovými identifikátory. Formát všech položek popisuje [README](../README.md#instance-configuration-konfigurace-instance). Hodnoty pro referenční instanci a jejich původ uvádí krok B1 v [runbooku referenční instance](reference-instance.md).
 
 Kopie konfigurace obsahuje tyto položky:
 
@@ -88,14 +90,14 @@ Bootstrap spusť, až žádný řádek nemá `Fail` ani `Skip`, všechny přízn
 
 ## Spuštění a výstup
 
-Z repozitáře instance spusť:
+Po vzniku repozitáře instance (#11) spusť z jeho kořene:
 
 ```powershell
 $bootstrap = .\platform\tools\Invoke-Bootstrap.ps1 -InstancePath .\instance.yaml
 $bootstrap | ConvertTo-Json -Depth 10
 ```
 
-Při práci ve zdrojovém repozitáři použij `.\tools\Invoke-Bootstrap.ps1` a v `-InstancePath` cestu ke kopii konfigurace mimo checkout. Parametr `-ModulesPath` může určit jiný adresář manifestů.
+Dokud repozitář instance neexistuje, spusť ze zdrojového repozitáře `.\tools\Invoke-Bootstrap.ps1` a v `-InstancePath` uveď cestu ke kopii konfigurace mimo checkout. Parametr `-ModulesPath` může určit jiný adresář manifestů.
 
 Výsledek obsahuje `TenantId`, `SubscriptionId`, `ResourceGroupName`, `StorageAccountName`, `OidcModeVerified`, `Modules` a `HasChanges`. Každý modul má `Name`, `ContainerName` a záznamy `Plan` a `Apply` s `ResourceId`, `PrincipalId` a `ClientId`. Výstup neobsahuje tokeny. Navazující bootstrap GitHubu z #11 použije tyto identity pro federated credentials environmentů.
 

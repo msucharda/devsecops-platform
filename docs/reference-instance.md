@@ -61,6 +61,25 @@ Role může mít jeden člověk, nebo kroky provede několik administrátorů. B
 | Enterprise owner | Enterprise na GHE.com | Enterprise politiky, organizace a enterprise-owned Apps. Bootstrap tuto roli ověřuje. | A6–A9, C |
 | Setup user `<shortcode>_admin` | Enterprise na GHE.com | Konfigurace OIDC a SCIM. Před zapnutím OIDC jiný účet neexistuje. | A4, A5 |
 
+## Repozitář instance a konfigurace instance
+
+Instance repository (repozitář instance) je repozitář v organizaci platformy `<name>-platform` na GHE.com. Obsahuje:
+
+- `platform/`: vendorovaný release zdrojového repozitáře,
+- `instance.yaml`: Instance configuration (konfiguraci instance),
+- workflow nasazení a `CODEOWNERS`.
+
+Šablona repozitáře instance je v `templates/instance/`. Po vzniku repozitáře instance mění platformní tým instanci jen přes PR.
+
+Repozitář instance vytvoří GitHub část bootstrapu v #11. #11 čeká na #10, které uzavře fáze B. Během fází A a B proto repozitář instance neexistuje a konfigurace instance leží v `$work`:
+
+| Období | Umístění `instance.yaml` | Původ obsahu |
+|---|---|---|
+| Fáze A a B (#10) | `$work\instance.yaml` | Krok B1 soubor vygeneruje z proměnných relace. Hodnoty a jejich důvody uvádí tabulka v kroku B1. |
+| Po #11 | Kořen repozitáře instance | Hodnoty převezmeš z `$work\instance.yaml`. |
+
+Zdrojový repozitář nesmí obsahovat konfiguraci s daty instance (ADR 0012). `templates/instance/instance.yaml` je jen šablona s nulovými identifikátory. Formát všech položek popisuje [README](../README.md#instance-configuration-konfigurace-instance).
+
 ## Konvence relace
 
 - Příkazy spouštěj v jedné relaci PowerShell 7.4+ v kořeni checkoutu zdrojového repozitáře. Kroky používají proměnné a funkce z předchozích kroků. Po restartu relace spusť znovu jejich přiřazení a definice.
@@ -508,7 +527,7 @@ Příznaky: všechny. Nastav `true` jen u příznaku, jehož krok ve fázi A pro
 
 **Proč:**
 
-- Bootstrap čte Instance configuration (konfiguraci instance). Repozitář instance vznikne až v #11, proto konfigurace leží v `$work`.
+- Bootstrap čte Instance configuration (konfiguraci instance). Repozitář instance vznikne až v #11, proto konfigurace leží v `$work`. Podrobnosti uvádí sekce Repozitář instance a konfigurace instance.
 - Schéma vyžaduje v `teams.security` aspoň jeden účet. Pro ověření bootstrapu stačí tvůj účet.
 - Preflight ověří kontroly bootstrapu a dostupnost názvu storage account bez změny v cloudu.
 - Negativní test ověří kritérium #10: bootstrap zastaví nepotvrzený ruční předpoklad před první změnou.
@@ -560,6 +579,24 @@ teardown:
 .\tools\Test-InstanceConfiguration.ps1 -InstancePath $cfg -ModulesPath $modulesPath
 .\tools\Test-BootstrapPrerequisites.ps1 -InstancePath $cfg -ModulesPath $modulesPath | Format-Table -Wrap
 ```
+
+Skript zapíše do konfigurace tyto hodnoty:
+
+| Položka | Hodnota | Důvod |
+|---|---|---|
+| `instance.name` | `$name` z A1 | Bootstrap z něj odvodí názvy resource group, storage account a identit. |
+| `regions.primary` | `$region` z A1 | Bootstrap v tomto regionu vytvoří state backend a identity. |
+| `teams.platform`, `teams.security` | `$upn` z A2 | Bootstrap vyžaduje přihlášeného uživatele Azure v `teams.platform`. Schéma vyžaduje aspoň jeden účet v `teams.security`. |
+| `modules` | `application: {}` | Fixture modul z `$modulesPath`. Výběr přidá předpoklad `foundation`. Moduly platformy zatím nemají `module.yaml`. |
+| `customPatterns`, `manualSteps` | prázdné | Bootstrap je nečte. `manualSteps` potvrzuje ruční kroky modulů po nasazení. `customPatterns` patří modulu `enterprise-baseline`. |
+| `bootstrap.tenantId` | `$tenantId` z A1 | Bootstrap odmítne token z jiného tenantu. |
+| `bootstrap.managementSubscriptionId` | `$mgmtSub` z A1 | Subscription pro state backend a identity. |
+| `bootstrap.subscriptionIds` | `$mgmtSub` z A1 | Seznam musí obsahovat všechny subscriptions instance včetně management subscription. Fixture moduly jiné subscriptions nepoužívají. |
+| `bootstrap.enterpriseApplicationObjectId` | `$spId` z A4 | Object ID service principal aplikace EMU, ne `appId`. Bootstrap podle něj čte přiřazení Enterprise Owner a SCIM job. |
+| `bootstrap.githubHost`, `bootstrap.enterprise` | `$githubHost`, `$enterprise` z A1 | Bootstrap podle nich ověří roli enterprise owner. |
+| `manualPrerequisites` | `true` jen u ověřených kroků fáze A | Každý krok fáze A uvádí příznak, který potvrzuje. |
+| `githubApps`, `credentials` | prázdné | Apps a environmenty vytvoří #11. |
+| `teardown.allowed` | `false` | Runner odmítne teardown. |
 
 Negativní test:
 
