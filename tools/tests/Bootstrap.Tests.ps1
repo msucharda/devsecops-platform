@@ -854,4 +854,183 @@ Describe 'Local Azure bootstrap' {
         $current = @($cloud.resources.Values | Where-Object { $_.id -match '/storageAccounts/[^/]+$' })[0]
         $current.properties[$Property] | Should -BeFalse
     }
+
+    Context 'Preflight' {
+        BeforeEach {
+            $preflight = Join-Path (Split-Path $PSScriptRoot -Parent) 'Test-BootstrapPrerequisites.ps1'
+            $cloud.providers = @{ 'Microsoft.Storage' = 'Registered'; 'Microsoft.ManagedIdentity' = 'Registered' }
+            $cloud.permissions = @{}
+            $cloud.nameAvailable = $true
+            $cloud.nameChecks = [System.Collections.Generic.List[string]]::new()
+            Mock Invoke-WebRequest -ParameterFilter { $Uri.AbsolutePath -match '^/subscriptions/[^/]+/providers/Microsoft\.[A-Za-z]+$' } {
+                $namespace = $Uri.AbsolutePath.Split('/')[-1]
+                Get-TestResponse -Data @{ namespace = $namespace; registrationState = $cloud.providers[$namespace] }
+            }
+            Mock Invoke-WebRequest -ParameterFilter { $Uri.AbsolutePath -like '*/providers/Microsoft.Authorization/permissions' } {
+                $scope = $Uri.AbsolutePath.Split('/providers/Microsoft.Authorization/permissions')[0]
+                $sets = if ($cloud.permissions.ContainsKey($scope)) { $cloud.permissions[$scope] } else { @(@{ actions = @('*'); notActions = @() }) }
+                Get-TestResponse -Data @{ value = @($sets) }
+            }
+            Mock Invoke-WebRequest -ParameterFilter { $Uri.AbsolutePath -like '*/providers/Microsoft.Storage/checkNameAvailability' } {
+                if ($Method -ne 'POST') { throw 'Storage name availability requires POST.' }
+                $cloud.nameChecks.Add((ConvertFrom-Json -InputObject $Body -AsHashtable).name)
+                Get-TestResponse -Data @{ nameAvailable = $cloud.nameAvailable; reason = if ($cloud.nameAvailable) { $null } else { 'AlreadyExists' } }
+            }
+        }
+
+        BeforeAll {
+            function Get-TestRow {
+                param([object[]] $Rows, [string] $Check)
+                @($Rows | Where-Object Check -EQ $Check)[0]
+            }
+        }
+
+        It 'reports every check without changing either cloud' {
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            $rows.Count | Should -Be 28
+            @($rows | Where-Object Status -EQ 'Pass').Count | Should -Be 17
+            @($rows | Where-Object Status -NotIn @('Pass', 'Confirmed')) | Should -BeNullOrEmpty
+            $rows.Check | Should -Contain 'State backend names'
+            $rows.Check | Should -Contain 'Role assignment rights at module scopes'
+            $rows.Check | Should -Contain 'Existing module identities'
+            $rows.Check | Should -Contain '$.manualPrerequisites.enterpriseOidc'
+            (Get-TestRow -Rows $rows -Check 'Bootstrap user permissions in the management subscription').Detail |
+                Should -BeLike '*ABAC conditions and deny assignments are not evaluated*'
+            $cloud.nameChecks.Count | Should -Be 1
+            $cloud.nameChecks[0] | Should -Be 'stdemotfstate'
+            $cloud.writes.Count | Should -Be 0
+            Should -Invoke Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'collects independent failures and skips dependent checks' {
+            Mock gh { $global:LASTEXITCODE = 1; 'not logged in' }
+            $cloud.directOwner = $false
+            $cloud.licensed = $false
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            (Get-TestRow -Rows $rows -Check 'gh OAuth login').Status | Should -Be 'Fail'
+            (Get-TestRow -Rows $rows -Check 'Enterprise owner in GitHub').Status | Should -Be 'Skip'
+            (Get-TestRow -Rows $rows -Check 'Direct Enterprise Owner assignment').Detail | Should -BeLike '*direct*Enterprise Owner*'
+            (Get-TestRow -Rows $rows -Check 'Entra ID P1 or P2 license').Status | Should -Be 'Fail'
+            (Get-TestRow -Rows $rows -Check 'SCIM provisioning job').Status | Should -Be 'Pass'
+            (Get-TestRow -Rows $rows -Check 'State backend names').Status | Should -Be 'Pass'
+            $cloud.writes.Count | Should -Be 0
+        }
+
+        It 'skips every Azure and Entra ID check when Azure login fails' {
+            Mock az { $global:LASTEXITCODE = 1; 'Please run az login.' }
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            (Get-TestRow -Rows $rows -Check 'Azure CLI login').Detail | Should -BeLike '*az login*'
+            @($rows | Where-Object { $_.Area -in @('Azure', 'Entra ID', 'Modules') -and $_.Check -ne 'Azure CLI login' -and $_.Status -ne 'Skip' }) |
+                Should -BeNullOrEmpty
+            (Get-TestRow -Rows $rows -Check 'Enterprise owner in GitHub').Status | Should -Be 'Pass'
+        }
+
+        It 'marks the OIDC check manual when Graph returns a null launch mode' {
+            $cloud.oidc = $null
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath 3>&1)
+
+            @($rows | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }) | Should -BeNullOrEmpty
+            $row = Get-TestRow -Rows $rows -Check 'EMU OIDC enterprise application'
+            $row.Status | Should -Be 'Manual'
+            $row.Detail | Should -BeLike '*enterpriseOidc*not automatically verified*'
+            (Get-TestRow -Rows $rows -Check 'Direct Enterprise Owner assignment').Status | Should -Be 'Pass'
+        }
+
+        It 'lists unconfirmed manual prerequisites and still checks both clouds' {
+            $instance.manualPrerequisites.privateInternalForksDisabled = $false
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            (Get-TestRow -Rows $rows -Check '$.manualPrerequisites.privateInternalForksDisabled').Status | Should -Be 'Manual'
+            (Get-TestRow -Rows $rows -Check '$.manualPrerequisites.enterpriseOidc').Status | Should -Be 'Confirmed'
+            (Get-TestRow -Rows $rows -Check 'Enterprise owner in GitHub').Status | Should -Be 'Pass'
+            (Get-TestRow -Rows $rows -Check 'Subscriptions in the bootstrap tenant').Status | Should -Be 'Pass'
+        }
+
+        It 'fails an unregistered resource provider and skips the state backend check' {
+            $cloud.providers['Microsoft.ManagedIdentity'] = 'NotRegistered'
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            $row = Get-TestRow -Rows $rows -Check 'Resource providers in the management subscription'
+            $row.Status | Should -Be 'Fail'
+            $row.Detail | Should -BeLike '*Microsoft.ManagedIdentity (NotRegistered)*'
+            (Get-TestRow -Rows $rows -Check 'State backend names').Status | Should -Be 'Skip'
+        }
+
+        It 'fails a Contributor that cannot write role assignments or locks' {
+            $cloud.permissions['/subscriptions/22222222-2222-2222-2222-222222222222'] = @(@{
+                actions = @('*')
+                notActions = @('Microsoft.Authorization/*/Delete', 'Microsoft.Authorization/*/Write', 'Microsoft.Authorization/elevateAccess/Action')
+            })
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            $row = Get-TestRow -Rows $rows -Check 'Bootstrap user permissions in the management subscription'
+            $row.Status | Should -Be 'Fail'
+            $row.Detail | Should -BeLike '*Microsoft.Authorization/locks/write*Microsoft.Authorization/roleAssignments/write*Owner*'
+            $row.Detail | Should -Not -BeLike '*roleAssignments/read*'
+            (Get-TestRow -Rows $rows -Check 'Role assignment rights at module scopes').Status | Should -Be 'Fail'
+        }
+
+        It 'marks a management-group module scope for manual verification' {
+            $manifestPath = Join-Path $modulesPath 'application/module.yaml'
+            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+            $manifest.permissions.azure = @(@{ role = 'Reader'; scope = '/providers/Microsoft.Management/managementGroups/workloads'; phase = 'plan' })
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            $row = Get-TestRow -Rows $rows -Check 'Role assignment rights at module scopes'
+            $row.Status | Should -Be 'Manual'
+            $row.Detail | Should -BeLike '*managementGroups/workloads*manually*'
+        }
+
+        It 'fails a storage account name that another owner holds' {
+            $cloud.nameAvailable = $false
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            $row = Get-TestRow -Rows $rows -Check 'State backend names'
+            $row.Status | Should -Be 'Fail'
+            $row.Detail | Should -BeLike "*'stdemotfstate'*AlreadyExists*another `$.instance.name*"
+        }
+
+        It 'accepts the state backend of the same instance and rejects foreign ownership tags' {
+            $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+            $writes = $cloud.writes.Count
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            @($rows | Where-Object Status -NotIn @('Pass', 'Confirmed')) | Should -BeNullOrEmpty
+            $cloud.nameChecks.Count | Should -Be 0
+            $account = @($cloud.resources.Values | Where-Object { $_.id -match '/storageAccounts/[^/]+$' })[0]
+            $account.tags.platformInstance = 'foreign'
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            (Get-TestRow -Rows $rows -Check 'State backend names').Detail | Should -BeLike '*ownership tags*refuse to adopt*'
+            $cloud.writes.Count | Should -Be $writes
+        }
+
+        It 'reports an invalid module identity grant without stopping' {
+            $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+            $identity = @($cloud.resources.Values | Where-Object { $_.id -like '*/userAssignedIdentities/id-demo-application-plan' })[0]
+            $cloud.graphAssignments[$identity.properties.principalId] = @(@{ resourceId = 'graph-sp'; appRoleId = 'unexpected-role' })
+
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
+
+            $row = Get-TestRow -Rows $rows -Check 'Existing module identities'
+            $row.Status | Should -Be 'Fail'
+            $row.Detail | Should -BeLike '*unexpected application permission*'
+            (Get-TestRow -Rows $rows -Check '$.manualPrerequisites.enterpriseOidc').Status | Should -Be 'Confirmed'
+        }
+    }
 }

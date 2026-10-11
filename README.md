@@ -13,7 +13,7 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 | `modules/<name>/` | Manifest `module.yaml`, Terraform root a README se specifikací modulu. |
 | `schemas/module.schema.json` | JSON Schema Module manifest (manifest modulu). |
 | `schemas/instance.schema.json` | JSON Schema konfigurace instance. |
-| `tools/` | Lokální bootstrap Azure, runner modulu a generátor workflow v PowerShell 7, testy Pester. |
+| `tools/` | Lokální bootstrap Azure, průvodce přípravou referenční instance, runner modulu a generátor workflow v PowerShell 7, testy Pester. |
 | `.github/workflows/` | CI zdrojového repozitáře. |
 | `templates/instance/` | Šablona repozitáře instance: vygenerovaný workflow nasazení, příklad `instance.yaml`, CODEOWNERS a kontrakt bootstrapu. |
 
@@ -92,7 +92,7 @@ Validátor porovná oprávnění aliasu s manifestem a rozsah prostředků s par
 
 **Manual prerequisites (ruční předpoklady):** lokální bootstrap vyžaduje `true` pro všechna potvrzení: `tenant`, `enterpriseOidc`, `enterpriseScim`, `enterpriseOwner`, `subscriptions`, `licenses`, `privateInternalForksDisabled`, `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired`, `patMaxLifetime90Days` a `githubAppAvailabilityVerified`. Runner vyžaduje stejná potvrzení při volání modulu `bootstrap` s akcí `plan` nebo `apply`; chybějící nebo nepravdivá hodnota ho zastaví před Terraformem. Potvrzení dostupnosti Apps musí vycházet z ručního ověření na konkrétní instanci GHE.com, ne pouze z veřejné dokumentace.
 
-Ruční potvrzení není automaticky ověřený stav. Runner nevolá API k ověření enterprise politik ani ručních kroků. Lokální `Invoke-Bootstrap.ps1` navíc ověří tenant, subscriptions, aktivní SCIM job, přímé přiřazení Enterprise Owner, vlastnictví enterprise uživatelem OAuth a licenci Entra ID P1 nebo P2. OIDC launch mode ověří, pokud ho Graph vrátí; při `null` výslovně varuje a používá povinné ruční potvrzení `enterpriseOidc`, nikoli tvrzení o automatickém ověření. Enterprise politiky a ostatní licence zůstávají ručně potvrzené. Ostatní moduly nepotvrzený ruční krok nezastaví; job summary uvádí varování, vlastníka a omezení planu, driftu a teardownu. Potvrzený krok zůstává označený jako ruční deklarace. Runner při teardownu nemění konfiguraci ani ruční předpoklady.
+Ruční potvrzení není automaticky ověřený stav. Runner nevolá API k ověření enterprise politik ani ručních kroků. Lokální `Invoke-Bootstrap.ps1` navíc ověří tenant, subscriptions, aktivní SCIM job, přímé přiřazení Enterprise Owner, vlastnictví enterprise uživatelem OAuth a licenci Entra ID P1 nebo P2. `Test-BootstrapPrerequisites.ps1` spustí tyto kontroly bez změny a vypíše výsledek každé z nich ([preflight](docs/bootstrap.md#preflight-předběžná-kontrola)). OIDC launch mode ověří, pokud ho Graph vrátí; při `null` výslovně varuje a používá povinné ruční potvrzení `enterpriseOidc`, nikoli tvrzení o automatickém ověření. Enterprise politiky a ostatní licence zůstávají ručně potvrzené. Ostatní moduly nepotvrzený ruční krok nezastaví; job summary uvádí varování, vlastníka a omezení planu, driftu a teardownu. Potvrzený krok zůstává označený jako ruční deklarace. Runner při teardownu nemění konfiguraci ani ruční předpoklady.
 
 ### Module manifest (manifest modulu)
 
@@ -228,7 +228,7 @@ $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
 
 ### Testy a CI
 
-Testy Pester volají veřejné skripty bootstrapu, generátoru, výběru, validátorů, token issueru, reportování a runneru. Kontrolují výsledné YAML, JSON, summary, environmenty, pořadí jobů, PR původ, členství autora a oddělení skutečných App oprávnění. GitHub API testy nahrazují jen HTTP hranici; nevolají cloud. Testy bootstrapu nahrazují jen GitHub CLI, Azure CLI a HTTP API; ověřují potvrzení před změnou, ochrany backendu, scope identit, oddělení fází, opakovaný běh a dokončení přerušeného běhu. Testy runneru vyžadují Terraform; CI ho instaluje před Pesterem. Používají skutečný lokální backend a vestavěný provider `terraform_data`, včetně úplných pravidel a bypass driftu izolovaného ruleset rootu. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
+Testy Pester volají veřejné skripty bootstrapu, generátoru, výběru, validátorů, token issueru, reportování a runneru. Kontrolují výsledné YAML, JSON, summary, environmenty, pořadí jobů, PR původ, členství autora a oddělení skutečných App oprávnění. GitHub API testy nahrazují jen HTTP hranici; nevolají cloud. Testy bootstrapu nahrazují jen GitHub CLI, Azure CLI a HTTP API; ověřují potvrzení před změnou, preflight bez zápisu, ochrany backendu, scope identit, oddělení fází, opakovaný běh a dokončení přerušeného běhu. Testy runneru vyžadují Terraform; CI ho instaluje před Pesterem. Používají skutečný lokální backend a vestavěný provider `terraform_data`, včetně úplných pravidel a bypass driftu izolovaného ruleset rootu. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
 
 ```powershell
 Import-Module Pester -RequiredVersion 5.7.1
@@ -342,4 +342,4 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - Každý release candidate se nasadí celý na referenční instanci.
 - Akceptace ověří skutečný rozsah oprávnění každého jobu, úplné čtení bypass konfigurace, odmítnutí credentials pro neautorizované PR a zachování ručních enterprise předpokladů při teardownu.
 - Před každým minor release proběhne teardown referenční instance a její nové nasazení.
-- Kroky platformního týmu na referenční instanci popisuje [Příprava a akceptace referenční instance](docs/reference-instance.md).
+- Kroky platformního týmu na referenční instanci popisuje [Příprava a akceptace referenční instance](docs/reference-instance.md). Ruční předpoklady připraví a ověří průvodce `tools/Start-InstanceSetup.ps1`.
