@@ -1943,7 +1943,7 @@ function Get-SetupProbeApp {
     $app = $key.App
     $appSettings = "$appsUrl/$($app['slug'])"
     $owner = $app['owner']
-    if ($owner -isnot [System.Collections.IDictionary] -or $owner['slug'] -ne $enterprise -or $owner.Contains('login')) {
+    if (-not (Test-PlatformGitHubAppOwner -Owner $owner -Enterprise $enterprise)) {
         $probe.Remove($appIdKey)
         Save-SetupState -Setup $Setup
         Exit-SetupStage -Status Error -Message "App $appId is not owned by the enterprise $enterprise." -Guidance @(

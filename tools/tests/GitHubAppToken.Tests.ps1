@@ -20,7 +20,7 @@ Describe 'Enterprise App key and installation token isolation' {
         $actualPermissions = @{ members = 'read'; metadata = 'read' }
         $actualOrganizations = @('platform')
         $fakeRepositoryNames = @('instance')
-        $actualOwner = @{ slug = 'example' }
+        $actualOwner = @{ login = 'example'; type = 'enterprise' }
         $repositorySelection = 'selected'
         Mock Invoke-RestMethod {
             param($Uri, $Method)
@@ -124,6 +124,20 @@ Describe 'Enterprise App key and installation token isolation' {
         { & $issuer -Authorization -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
             Should -Throw '*not owned by the declared enterprise*'
         Test-Path -LiteralPath $environmentPath | Should -BeFalse
+    }
+
+    It 'rejects an invalid enterprise owner: <Case>' -ForEach @(
+        @{ Case = 'another enterprise'; Owner = @{ login = 'another'; type = 'enterprise' } }
+        @{ Case = 'a user with the same login'; Owner = @{ login = 'example'; type = 'User' } }
+        @{ Case = 'a missing owner type'; Owner = @{ login = 'example' } }
+        @{ Case = 'a slug without a login'; Owner = @{ slug = 'example'; type = 'enterprise' } }
+        @{ Case = 'no owner'; Owner = $null }
+    ) {
+        $actualOwner = $Owner
+        { & $issuer -Authorization -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+            Should -Throw '*not owned by the declared enterprise*'
+        Test-Path -LiteralPath $environmentPath | Should -BeFalse
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
     It 'reports unavailable App APIs explicitly without PAT or permission fallback' {

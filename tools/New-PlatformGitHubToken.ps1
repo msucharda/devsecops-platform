@@ -130,7 +130,7 @@ Write-Information "::add-mask::$jwt" -InformationAction Continue
 $tokens = @{}
 try {
     $app = Invoke-GitHubAppRequest -Path '/app' -Token $jwt
-    if ([string] $app['id'] -cne $expected['appId'] -or $app['owner']['slug'] -cne $expected['enterprise'] -or $app['owner'].Contains('login')) {
+    if ([string] $app['id'] -cne $expected['appId'] -or -not (Test-PlatformGitHubAppOwner -Owner $app['owner'] -Enterprise $expected['enterprise'])) {
         throw 'GitHub App is not owned by the declared enterprise.'
     }
     Assert-AppPermission -Actual $app['permissions']

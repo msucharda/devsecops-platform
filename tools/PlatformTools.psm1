@@ -2,6 +2,18 @@
 Set-StrictMode -Version Latest
 Import-Module powershell-yaml -RequiredVersion 0.4.12
 
+function Test-PlatformGitHubAppOwner {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [AllowNull()][object] $Owner,
+        [Parameter(Mandatory)][string] $Enterprise
+    )
+
+    return $Owner -is [System.Collections.IDictionary] -and
+        $Owner['type'] -ieq 'enterprise' -and $Owner['login'] -ieq $Enterprise
+}
+
 function Get-PlatformYaml {
     [CmdletBinding()]
     [OutputType([System.Collections.IDictionary])]
@@ -411,4 +423,4 @@ function Assert-PlatformManualPrerequisite {
     }
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner
