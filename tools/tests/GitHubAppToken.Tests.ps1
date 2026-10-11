@@ -19,7 +19,7 @@ Describe 'Enterprise App key and installation token isolation' {
         $environmentPath = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $actualPermissions = @{ members = 'read'; metadata = 'read' }
         $actualOrganizations = @('platform')
-        $fakeRepositoryNames = @('instance')
+        $fakeRepositoryNames = @()
         $actualOwner = @{ slug = 'example' }
         $repositorySelection = 'selected'
         Mock Invoke-RestMethod {
@@ -57,17 +57,36 @@ Describe 'Enterprise App key and installation token isolation' {
         }
     }
 
-    It 'issues a read-only token map for all declared module organizations without arbitrarily choosing a single token' {
+    It 'issues a read-only module token map with <Selection> repository selection' -ForEach @(
+        @{ Selection = 'all' }
+        @{ Selection = 'selected' }
+    ) {
         Import-Module powershell-yaml -RequiredVersion 0.4.12
         $actualOrganizations = @('actions', 'workloads')
         $actualPermissions = @{ organization_administration = 'read'; metadata = 'read' }
-        $repositorySelection = 'all'
+        $repositorySelection = $Selection
+        $fakeRepositoryNames = @('instance')
         $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
         $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @('actions', 'workloads') } } }
         $instance.githubApps = @{
             reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{ organization_administration = 'read' }; resources = @{ organizations = @('actions', 'workloads') } }
             writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
             rulesets = @{ appId = '103'; installationId = '203'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
+        }
+        $modulesPath = Join-Path $PSScriptRoot 'fixtures/modules'
+        if ($Selection -eq 'selected') {
+            $modulesPath = Join-Path $TestDrive 'selected-modules'
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination $modulesPath -Recurse
+            $manifestPath = Join-Path $modulesPath 'enterprise-baseline/module.yaml'
+            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+            foreach ($phase in @('plan', 'apply')) {
+                $manifest.permissions.githubApp[$phase].resources.repositories = 'target_repositories'
+            }
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+            $instance.modules['enterprise-baseline'].parameters.target_repositories = @{ actions = @('instance'); workloads = @('instance') }
+            foreach ($alias in @('reader', 'writer')) {
+                $instance.githubApps[$alias].resources.repositories = @{ actions = @('instance'); workloads = @('instance') }
+            }
         }
         $instance.credentials = @{
             'enterprise-baseline' = @{
@@ -79,7 +98,7 @@ Describe 'Enterprise App key and installation token isolation' {
         $path = Join-Path $TestDrive 'module.yaml'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
 
-        & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath (Join-Path $PSScriptRoot 'fixtures/modules') `
+        & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
             -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
 
         $line = Get-Content -LiteralPath $environmentPath | Where-Object { $_ -like 'PLATFORM_GITHUB_TOKENS=*' }
@@ -111,10 +130,20 @@ Describe 'Enterprise App key and installation token isolation' {
         $fakeRepositoryNames = @('instance', 'unrelated')
 
         { & $issuer -Authorization -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
-            Should -Throw '*repository access*differs*'
+            Should -Throw '*Authorization App*repository access*'
         Test-Path -LiteralPath $environmentPath | Should -BeFalse
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
             $Method -eq 'DELETE' -and $Uri -eq 'https://api.example.test/installation/token'
+        }
+    }
+
+    It 'accepts a members-only installation without repository selection for authorization' {
+        $repositorySelection = 'all'
+        & $issuer -Authorization -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
+
+        Test-Path -LiteralPath $environmentPath | Should -BeTrue
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -like '*/installation/repositories`?*'
         }
     }
 
