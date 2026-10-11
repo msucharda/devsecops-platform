@@ -560,7 +560,16 @@ function Assert-SetupResponse {
     if ($Response.Status -eq 'Missing' -and $AllowMissing) { return $null }
     $lines = @($Guidance)
     if ($Response.Status -eq 'Forbidden' -and $lines.Count -eq 0) {
-        $lines = @('The signed-in account lacks the required role or token scope. Activate the role in PIM if needed, then choose [l].')
+        if ($Response.Area -eq 'github' -and $Response.Message -match 'organization SAML enforcement') {
+            $lines = @(
+                'The organization requires SSO authorization for the GitHub CLI OAuth token.',
+                'Open the organization in the browser and complete its SSO sign-in, then choose [l] to sign in to GitHub again.',
+                'Authorize the OAuth token for this organization. Do not replace it with a PAT or change Azure roles.'
+            )
+        }
+        else {
+            $lines = @('The signed-in account lacks the required role or token scope. Activate the role in PIM if needed, then choose [l].')
+        }
     }
     Exit-SetupStage -Status $Response.Status -Area $Response.Area -Message "$Action failed. $($Response.Message)" -Guidance $lines
 }
@@ -2027,6 +2036,32 @@ function Revoke-SetupInstallationToken {
 
 #region Stage A9
 
+function Invoke-SetupProbeOrganizationSignIn {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable] $Setup)
+
+    $org = $Setup.State.probe['organization']
+    $login = $Setup.Facts.Login
+    $api = "https://api.$($Setup.Settings['githubHost'])"
+    Save-SetupState -Setup $Setup
+    Show-SetupMessage -Kind Action -Message "USER ACTION: Sign in to GitHub again after creating $org so the OAuth token can access the new organization through SSO."
+    Show-SetupGuidance -Line @(
+        "Open https://$($Setup.Settings['githubHost'])/$org in the browser and complete any Entra ID sign-in.",
+        "Use the same managed user $login for the GitHub CLI sign-in and authorize access to the new organization."
+    )
+    if (-not (Confirm-SetupAction -Prompt 'Sign in again now before creating the probe repository and team?' -DefaultYes)) {
+        Exit-SetupStage -Status Missing -Area github -Message 'The new probe organization needs a fresh GitHub sign-in.' `
+            -Guidance @('Choose [r] to complete the sign-in. The wizard keeps the existing organization.')
+    }
+    Invoke-SetupGitHubLogin -Setup $Setup
+    $user = Assert-SetupResponse -Response (Invoke-SetupApi -Setup $Setup -Uri "$api/user") -Action 'Checking the account after the probe organization sign-in'
+    if ($user['login'] -ne $login) {
+        Exit-SetupStage -Status Forbidden -Area github -Message "Sign in as $login, the owner used to create the probe organization." `
+            -Guidance @('Choose [r] and sign in with the same managed user.')
+    }
+    Add-SetupGitHubScope -Setup $Setup -Scope @('admin:enterprise', 'admin:org', 'repo') -Purpose 'creating the probe repository and team after sign-in'
+}
+
 function Invoke-StepProbeOrg {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable] $Setup)
@@ -2038,6 +2073,9 @@ function Invoke-StepProbeOrg {
     $api = "https://api.$($Setup.Settings['githubHost'])"
     $login = $Setup.Facts.Login
     $org = if ($probe['organization']) { [string] $probe['organization'] } else { "probe-$((Get-Date).ToString('yyyyMMdd'))" }
+    if ($probe['organizationSignInPending']) {
+        Invoke-SetupProbeOrganizationSignIn -Setup $Setup
+    }
     $orgResponse = Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org"
     $null = Assert-SetupResponse -Response $orgResponse -Action "Reading the organization $org" -AllowMissing
     $orgMissing = $orgResponse.Status -eq 'Missing'
@@ -2068,6 +2106,10 @@ function Invoke-StepProbeOrg {
             $null = Invoke-SetupGraphQL -Setup $Setup -Query $mutation -Action "Creating the organization $org" -Variables @{
                 input = @{ enterpriseId = $Setup.Facts.EnterpriseId; login = $org; profileName = $org; billingEmail = $billingEmail; adminLogins = @($login) }
             }
+            $probe['organization'] = $org
+            $probe['organizationSignInPending'] = $true
+            Save-SetupState -Setup $Setup
+            Invoke-SetupProbeOrganizationSignIn -Setup $Setup
             $created = Wait-SetupCondition -TimeoutSeconds 120 -IntervalSeconds 5 -Activity "Waiting for the organization $org" -Condition {
                 (Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org").Status -eq 'Ok'
             }
@@ -2091,6 +2133,7 @@ function Invoke-StepProbeOrg {
         }
     }
     $probe['organization'] = $org
+    $probe['organizationSignInPending'] = $false
     Save-SetupState -Setup $Setup
     return "The probe organization $org has the private repository instance-probe and the team platform-probe with your active membership."
 }

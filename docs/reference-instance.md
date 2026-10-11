@@ -398,6 +398,12 @@ Příznak: `githubAppAvailabilityVerified`. Dílčí kroky: `Probe organization`
 - Po potvrzení vytvoří organizaci `probe-<yyyymmdd>` s tebou jako owner, private repozitář `instance-probe`, tým `platform-probe` a tvoje členství v týmu. Dočasně přidá scopes `admin:enterprise`, `admin:org` a `repo`.
 - Název organizace uloží do `setup-state.json`. Další běh použije stejnou organizaci.
 
+- Po vytvoření organizace vyžádá nové přihlášení GitHub CLI, ještě před vytvořením repozitáře a týmu. Otevři organizaci v prohlížeči, dokonči případné SSO a přihlas CLI jako stejný spravovaný uživatel. OAuth token musí získat přístup k nové organizaci. Průvodce po přihlášení znovu ověří účet a potřebné scopes.
+
+- Pokud nové přihlášení nedokončíš nebo následný přístup k organizaci selže, průvodce ponechá požadavek v `setup-state.json`. Při opakování kroku vyžádá přihlášení před čtením organizace, repozitáře a týmu. Organizaci nevytvoří znovu. Po úspěšném dokončení tohoto kroku už další běh nové přihlášení kvůli vytvoření organizace nevyžaduje.
+
+Pokud API vrátí HTTP 403 s textem `Resource protected by organization SAML enforcement`, OAuth token nemá SSO autorizaci pro organizaci. Otevři organizaci v prohlížeči, dokonči SSO a zvol `[l]`. Samotné `[r]` zopakuje požadavek se stejným tokenem. Tato chyba nevyžaduje změnu rolí Azure ani přechod na PAT.
+
 **Průvodce: App A (autorizační token)**
 
 - Otevře předvyplněný formulář registrace enterprise-owned App: název `<name>-probe-authorization`, neaktivní webhook a oprávnění Members: Read-only. Registrace App nemá API.
