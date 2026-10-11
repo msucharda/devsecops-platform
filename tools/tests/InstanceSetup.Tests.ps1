@@ -300,6 +300,38 @@ Describe 'Instance setup wizard' {
     }
 
     Context 'GitHub App helpers' {
+        It 'accepts an enterprise-owned Members-only App with no repository access' {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['authorizationAppId'] = '101'
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Mock Find-SetupAppKey {
+                    @{
+                        KeyPath = 'synthetic-key.pem'
+                        App = @{
+                            id = 101; slug = 'probe-authorization'
+                            owner = @{ slug = 'example' }
+                            permissions = @{ members = 'read' }
+                        }
+                    }
+                }
+                Mock ConvertTo-SetupAppJwt { 'synthetic-jwt' }
+                Mock Invoke-SetupApi {
+                    @{
+                        Status = 'Ok'
+                        Data = @(@{
+                            id = 201; account = @{ login = 'probe-test' }; target_type = 'Organization'
+                            suspended_at = $null; repository_selection = 'all'; permissions = @{ members = 'read' }
+                        })
+                    }
+                }
+                $app = Get-SetupProbeApp -Setup $Setup -Role authorization -Permission @{ members = 'read' } -Selection none
+                $app.AppId | Should -Be '101'
+                $app.InstallationId | Should -Be '201'
+            }
+        }
+
         It 'compares App permissions exactly and ignores implicit metadata read' {
             $results = InModuleScope InstanceSetup {
                 $expected = @{ members = 'read' }
