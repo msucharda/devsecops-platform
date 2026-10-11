@@ -1059,50 +1059,76 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
 
 **Postup:**
 
-1. Vytvoř repozitář se zranitelnou knihovnou a konfigurací Dependabotu. Zapni Dependabot alerts a security updates. Alerts zapnou i dependency graph.
+1. Nejdřív ověř nastavení **Dependabot on Actions runners** v Organization settings → Code security → Global settings → Dependabot. Pokud je vypnuté, zapni ho a ověř, že je zapnuté ještě před testem. Pokud ho nemůžeš zapnout nebo ověřit, C4 zastav: výsledky politiky by nebyly průkazné.
 
    ```powershell
-   gh api --hostname $githubHost -X POST "orgs/$probeOrg/repos" -f name=dependabot-probe -f visibility=private -F auto_init=true --silent
-   function Set-ProbeFile([string] $Path, [string] $Content) {
+   function Set-ProbeFile([string] $Repository, [string] $Path, [string] $Content) {
        $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Content))
-       gh api --hostname $githubHost -X PUT "repos/$probeOrg/dependabot-probe/contents/$Path" -f message="Add $Path" -f content=$encoded --silent
+       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/contents/$Path" -f message="Add $Path" -f content=$encoded --silent
    }
-   Set-ProbeFile 'requirements.txt' "requests==2.25.0`n"
-   Set-ProbeFile '.github/dependabot.yml' "version: 2`nupdates:`n  - package-ecosystem: pip`n    directory: /`n    schedule:`n      interval: daily`n"
-   gh api --hostname $githubHost -X PUT "repos/$probeOrg/dependabot-probe/vulnerability-alerts" --silent
-   gh api --hostname $githubHost -X PUT "repos/$probeOrg/dependabot-probe/automated-security-fixes" --silent
+   function New-DependabotProbeRepository([string] $Repository) {
+       gh api --hostname $githubHost -X POST "orgs/$probeOrg/repos" -f name=$Repository -f visibility=private -F auto_init=true --silent
+       Set-ProbeFile $Repository 'requirements.txt' "requests==2.25.0`n"
+       Set-ProbeFile $Repository '.github/dependabot.yml' "version: 2`nupdates:`n  - package-ecosystem: pip`n    directory: /`n    schedule:`n      interval: daily`n"
+       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/vulnerability-alerts" --silent
+       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/automated-security-fixes" --silent
+   }
    ```
 
-2. Zaznamenej nastavení Organization settings → Code security → Global settings → Dependabot → **Dependabot on Actions runners**.
-3. Otestuj tři varianty politiky akcí. Před každou variantou nastav politiku tokenem App B:
+   Každou variantu testuj v novém repozitáři. Repozitář založ až po nastavení její politiky; automatické security updates tak nemohou vytvořit PR před začátkem varianty. Použij názvy `dependabot-probe-a`, `dependabot-probe-b` a `dependabot-probe-c`.
+
+2. Připrav token:
 
    ```powershell
    $policyToken = New-ProbeToken @adminApp -Permissions @{ organization_administration = 'write' }
-
-   # Variant A: only actions from the organization
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'local_only' }
-
-   # Variant B: actions created by GitHub
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'selected' }
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $true; verified_allowed = $false; patterns_allowed = @() }
-
-   # Variant C: only the actions found in variant B logs
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $false; verified_allowed = $false; patterns_allowed = @('<owner>/<action>@*') }
    ```
 
-   Pro každou variantu:
-   1. Spusť version update: Insights → Dependency graph → Dependabot → `requirements.txt` → Check for updates.
-   2. Spusť security update: Security → Dependabot alerts → alert pro `requests` → Create Dependabot security update. Pokud PR už existuje, stačí výsledek běhu.
-   3. Zkontroluj běhy:
+3. Proveď variantu A. Po kontrole jejího výsledku pokračuj variantou B:
 
-      ```powershell
-      gh api --hostname $githubHost "repos/$probeOrg/dependabot-probe/actions/runs?per_page=10" --jq '.workflow_runs[] | [.path, .event, .status, .conclusion, .created_at] | @tsv'
-      ```
+   ```powershell
+   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'local_only' }
+   $policyChangedAt = [DateTimeOffset]::UtcNow
+   $Repository = 'dependabot-probe-a'
+   New-DependabotProbeRepository $Repository
+   ```
 
-   4. Ve variantě B otevři Actions → `dynamic/dependabot/dependabot-updates` → job → Set up job. Zapiš všechny akce z řádků `Download action repository`. Seznam použij ve variantě C.
-4. Odvolej token: `Invoke-ProbeApi -Path '/installation/token' -Token $policyToken -Method Delete`.
+4. Proveď variantu B. Nejdřív nastav obě části politiky a až potom vytvoř nový repozitář:
 
-**Ověření:** Pro každou variantu zaznamenej, zda běhy `dynamic/dependabot/dependabot-updates` skončily `success` a zda Dependabot otevřel nebo aktualizoval PR. Varianta C musí projít, aby seznam akcí stačil pro `enterprise-baseline`.
+   ```powershell
+   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'selected' }
+   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $true; verified_allowed = $false; patterns_allowed = @() }
+   $policyChangedAt = [DateTimeOffset]::UtcNow
+   $Repository = 'dependabot-probe-b'
+   New-DependabotProbeRepository $Repository
+   ```
+
+   Ve variantě B otevři Actions → `dynamic/dependabot/dependabot-updates` → job → Set up job. Zapiš všechny akce z řádků `Download action repository`. Seznam použij ve variantě C.
+
+5. Proveď variantu C. Nahraď `<owner>/<action>@*` vzory akcí z výstupu varianty B:
+
+   ```powershell
+   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $false; verified_allowed = $false; patterns_allowed = @('<owner>/<action>@*') }
+   $policyChangedAt = [DateTimeOffset]::UtcNow
+   $Repository = 'dependabot-probe-c'
+   New-DependabotProbeRepository $Repository
+   ```
+
+Bloky A, B a C nespouštěj všechny najednou. Po každém bloku, ještě před změnou politiky pro další variantu, proveď tento postup:
+
+1. Spusť version update: Insights → Dependency graph → Dependabot → `requirements.txt` → Check for updates.
+2. Ověř security update: Security → Dependabot alerts → alert pro `requests`. Automated security fixes jsou zapnuté při vytvoření repozitáře; vyhodnoť pouze PR vytvořený po změně politiky.
+3. Zkontroluj běhy:
+
+   ```powershell
+   gh api --hostname $githubHost "repos/$probeOrg/$Repository/actions/runs?per_page=100" --jq '.workflow_runs[] | select(.path == "dynamic/dependabot/dependabot-updates") | [.path, .event, .status, .conclusion, .created_at] | @tsv'
+   ```
+
+   Výstup musí obsahovat pouze běhy zahájené po `$policyChangedAt`. Pokud se běh nespustí, zaznamenej tuto skutečnost jako výsledek varianty; nikdy nepoužívej běh ani PR jiné varianty jako důkaz. Před vyhodnocením ověř, že Dependabot on Actions runners zůstává zapnutý.
+4. Zaznamenej výsledek běhů a zda vznikl nový PR. Existující PR ani běh před změnou politiky se nepočítá.
+
+6. Odvolej token: `Invoke-ProbeApi -Path '/installation/token' -Token $policyToken -Method Delete`.
+
+**Ověření:** Pro každou variantu zaznamenej výsledek pouze z jejího nového repozitáře a z běhů zahájených po změně politiky, včetně toho, zda `dynamic/dependabot/dependabot-updates` skončil `success` a zda vznikl nový PR. Varianta C musí projít, aby seznam akcí stačil pro `enterprise-baseline`.
 
 **Kam patří výsledek:** komentář v #6 s výsledkem všech tří variant a seznamem akcí. Seznam akcí s odkazem na dokumentaci potom doplní PR do README `enterprise-baseline`. Pokud Dependabot běží i ve variantě A, PR upraví také větu „Dependabot na Actions jinak nepoběží.“
 
@@ -1121,7 +1147,46 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
    - Smaž organizace `probe-<yyyymmdd>` a `probe5-<yyyymmdd>`, pokud existuje.
    - Smaž App `<name>-probe-admin`: App settings → Advanced → Delete GitHub App.
    - Smaž `$work\keys\probe-admin.pem`.
-   - Ověř, že v Entra ID nezůstaly objekty `probe3-*` a `probe4-*`: `az ad app list --display-name "probe3-$name"`, `az ad group list --display-name "probe4-$name"`.
+   - Ověř, že v Entra ID nezůstaly žádné testovací Apps, service principals, skupiny, uživatelé ani vlastní role ani přiřazení role:
+
+     ```powershell
+     $probe3Apps = @(az ad app list --filter "startsWith(displayName,'probe3-')" --query '[].displayName' -o tsv)
+     $probe3ServicePrincipals = @(az ad sp list --filter "startsWith(displayName,'probe3-')" --query '[].displayName' -o tsv)
+     $probe3Groups = @(az ad group list --filter "startsWith(displayName,'probe3-')" --query '[].displayName' -o tsv)
+     $probe4Groups = @(az ad group list --filter "startsWith(displayName,'probe4-')" --query '[].displayName' -o tsv)
+     $probe4Users = @(az ad user list --filter "startsWith(displayName,'probe4-')" --query '[].displayName' -o tsv)
+     $probe3Roles = @()
+     $nextRoleDefinitions = 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleDefinitions?$select=id,displayName'
+     do {
+         $roleDefinitionPage = az rest --url $nextRoleDefinitions -o json | ConvertFrom-Json
+         $probe3Roles += @($roleDefinitionPage.value | Where-Object displayName -like 'probe3-*')
+         $nextRoleDefinitions = $roleDefinitionPage.'@odata.nextLink'
+     } while ($nextRoleDefinitions)
+     $probe3RoleIds = @($probe3Roles | ForEach-Object id)
+     $probe3RoleAssignments = @()
+     if ($probe3RoleIds.Count -gt 0) {
+         $allRoleAssignments = @()
+         $nextRoleAssignments = 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments?$select=id,roleDefinitionId'
+         do {
+             $roleAssignmentPage = az rest --url $nextRoleAssignments -o json | ConvertFrom-Json
+             $allRoleAssignments += @($roleAssignmentPage.value)
+             $nextRoleAssignments = $roleAssignmentPage.'@odata.nextLink'
+         } while ($nextRoleAssignments)
+         $probe3RoleAssignments = @($allRoleAssignments | Where-Object roleDefinitionId -in $probe3RoleIds)
+     }
+     'probe3 Apps:'; $probe3Apps
+     'probe3 service principals:'; $probe3ServicePrincipals
+     'probe3 groups:'; $probe3Groups
+     'probe4 groups:'; $probe4Groups
+     'probe4 users:'; $probe4Users
+     'probe3 custom roles:'; $probe3Roles
+     'probe3 role assignments:'; $probe3RoleAssignments
+     if (($probe3Apps.Count + $probe3ServicePrincipals.Count + $probe3Groups.Count + $probe4Groups.Count + $probe4Users.Count + $probe3Roles.Count + $probe3RoleAssignments.Count) -gt 0) {
+         throw 'Test objects remain in Entra ID; do not begin acceptance.'
+     }
+     ```
+
+     Každá kategorie musí mít prázdný výstup. Pokud dotaz nebo úklid selže, akceptaci nezačínej.
 3. Ponech roli Management Group Reader, OIDC, SCIM, enterprise politiky a licence. Teardown je také zachová.
 4. Kritéria akceptace uvádí #23. Příkazy pro fázi D zatím neexistují, protože workflow instance vzniknou až v #11–#22.
 
