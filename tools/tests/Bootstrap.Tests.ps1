@@ -49,6 +49,7 @@ Describe 'Local Azure bootstrap' {
             subscriptionState = 'Enabled'
             githubOwner = $true
             omitDisabledStorageFeatures = $false
+            disableStoragePublicNetwork = $false
             roleDefinitions = @{}
             transientResponses = [System.Collections.Generic.Queue[object]]::new()
             managementGroupAncestors = @{
@@ -231,6 +232,7 @@ Describe 'Local Azure bootstrap' {
                     $data.id = ([uri] $key).AbsolutePath
                     if ($key -match '/storageAccounts/[^/]+$') {
                         $data.properties.provisioningState = 'Succeeded'
+                        if ($cloud.disableStoragePublicNetwork) { $data.properties.publicNetworkAccess = 'Disabled' }
                     }
                     if ($key -match '/userAssignedIdentities/[^/]+$') {
                         $data.properties = @{
@@ -283,6 +285,7 @@ Describe 'Local Azure bootstrap' {
         $account = @($cloud.writes | Where-Object { $_.uri -match '/storageAccounts/[^/]+$' })[0].data
         $account.properties.allowSharedKeyAccess | Should -BeFalse
         $account.properties.allowBlobPublicAccess | Should -BeFalse
+        $account.properties.publicNetworkAccess | Should -Be 'Enabled'
         $account.properties.defaultToOAuthAuthentication | Should -BeTrue
         $account.properties.minimumTlsVersion | Should -Be 'TLS1_2'
         $service = @($cloud.writes | Where-Object { $_.uri -like '*/blobServices/default' })[0].data
@@ -293,6 +296,31 @@ Describe 'Local Azure bootstrap' {
         $service.properties.containerDeleteRetentionPolicy.days | Should -Be 30
         @($cloud.writes | Where-Object { $_.uri -like '*/locks/*' })[0].data.properties.level | Should -Be 'CanNotDelete'
         $result.HasChanges | Should -BeTrue
+    }
+
+    It 'repairs disabled public network access and then performs no further writes' {
+        $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $account = @($cloud.resources.Values | Where-Object { $_.id -match '/storageAccounts/[^/]+$' })[0]
+        $account.properties.publicNetworkAccess = 'Disabled'
+        $cloud.writes.Clear()
+
+        $repair = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+        $repair.HasChanges | Should -BeTrue
+        @($cloud.writes).Count | Should -Be 1
+        $cloud.writes[0].data.properties.publicNetworkAccess | Should -Be 'Enabled'
+        $cloud.writes[0].data.properties.allowSharedKeyAccess | Should -BeFalse
+        $cloud.writes[0].data.properties.allowBlobPublicAccess | Should -BeFalse
+        $cloud.writes.Clear()
+        (& $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath).HasChanges | Should -BeFalse
+        @($cloud.writes).Count | Should -Be 0
+    }
+
+    It 'fails explicitly when the provisioned backend still blocks public network access' {
+        $cloud.disableStoragePublicNetwork = $true
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*publicNetworkAccess*Enabled*Azure Policy*'
     }
 
     It 'isolates module state and separates manifest permissions for plan and apply' {

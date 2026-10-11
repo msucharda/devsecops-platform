@@ -597,7 +597,8 @@ Compare-Object $before $after -Property name, principalId -IncludeEqual
 
 **Proč:**
 
-- Terraform state může obsahovat citlivé hodnoty. Přístup k němu musí řídit jen Entra ID a role na kontejneru. Vypnutý shared key a public access proto nesmí nabídnout jinou cestu.
+- Terraform state může obsahovat citlivé hodnoty. Přístup k němu musí řídit jen Entra ID a role na kontejneru. Vypnutý shared key a anonymní přístup k blobům proto nesmí nabídnout jinou cestu.
+- GitHub-hosted runnery potřebují veřejný endpoint state backendu podle ADR 0011. Storage account proto musí mít `publicNetworkAccess: Enabled`; anonymní přístup k blobům zůstává vypnutý.
 - Versioning a soft delete po 30 dní umožní obnovit state po chybném zápisu nebo smazání.
 - Lock `CanNotDelete` brání smazání storage account.
 
@@ -606,7 +607,7 @@ Compare-Object $before $after -Property name, principalId -IncludeEqual
 ```powershell
 $rg = $bootstrap.ResourceGroupName
 $sa = $bootstrap.StorageAccountName
-az storage account show -g $rg -n $sa --query "{kind:kind, sku:sku.name, https:enableHttpsTrafficOnly, tls:minimumTlsVersion, sharedKey:allowSharedKeyAccess, publicBlob:allowBlobPublicAccess, oauthDefault:defaultToOAuthAuthentication, hns:isHnsEnabled, sftp:isSftpEnabled, localUsers:isLocalUserEnabled, nfs:enableNfsV3}" -o json
+az storage account show -g $rg -n $sa --query "{kind:kind, sku:sku.name, https:enableHttpsTrafficOnly, tls:minimumTlsVersion, sharedKey:allowSharedKeyAccess, publicBlob:allowBlobPublicAccess, publicNetworkAccess:publicNetworkAccess, oauthDefault:defaultToOAuthAuthentication, hns:isHnsEnabled, sftp:isSftpEnabled, localUsers:isLocalUserEnabled, nfs:enableNfsV3}" -o json
 az storage account blob-service-properties show -g $rg -n $sa --query "{versioning:isVersioningEnabled, blobRetention:deleteRetentionPolicy, containerRetention:containerDeleteRetentionPolicy}" -o json
 az lock list -g $rg --query "[].{name:name, level:level}" -o table
 az storage container-rm list --storage-account $sa -g $rg --query "[].name" -o tsv
@@ -621,11 +622,14 @@ az storage container-rm list --storage-account $sa -g $rg --query "[].name" -o t
 | `https`, `oauthDefault` | `true` |
 | `tls` | `TLS1_2` |
 | `sharedKey`, `publicBlob` | `false` |
+| `publicNetworkAccess` | `Enabled` podle ADR 0011 |
 | `hns`, `sftp`, `localUsers`, `nfs` | `false` nebo `null` |
 | `versioning` | `true` |
 | `blobRetention`, `containerRetention` | `enabled: true`, `days: 30` |
 | Lock | `lock-state`, `CanNotDelete` |
 | Kontejnery | `application` a `foundation` |
+
+Bootstrap po dokončení provisioningu ověří skutečnou hodnotu `publicNetworkAccess`. Pokud Azure Policy vynucuje `Disabled`, bootstrap skončí chybou. Správce musí konflikt vyřešit schválenou výjimkou z policy nebo schválenou změnou architektury; bootstrap policy neobchází. Do vyřešení zůstává B8 **BLOKOVANÉ policy**. Síťové odmítnutí vlastních i cizích blob operací neprokazuje izolaci oprávnění mezi moduly.
 
 ### B7: Identity a jejich oprávnění
 
