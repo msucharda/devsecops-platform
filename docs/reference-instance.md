@@ -338,16 +338,16 @@ Požadované politiky:
 
 | Příznak | Cesta v UI | Nastavení | Proč |
 |---|---|---|---|
-| `privateInternalForksDisabled` | Your enterprise → Policies → Repositories → Repository forking | Zakaž forky private a internal repozitářů. | Fork přenese kód mimo kontroly původní organizace. |
-| `emuUserNamespacesRestricted` | Your enterprise → Policies → Repositories → Repository creation | Zapni **Block the creation of user namespace repositories**. | Repozitář v user namespace leží mimo organizace platformy a jejich rulesety. |
-| `fineGrainedPatApprovalRequired` | Your enterprise → Policies → Personal access tokens → Fine-grained tokens | Zapni **Require approval of fine-grained personal access tokens**. | Organization owner schválí každý fine-grained PAT dřív, než získá přístup k organizaci. |
+| `privateInternalForksDisabled` | Your enterprise → Policies → Member privileges → Repository forking | Zakaž forky private a internal repozitářů. | Fork přenese kód mimo kontroly původní organizace. |
+| `emuUserNamespacesRestricted` | Your enterprise → Policies → Member privileges → Repository creation | Zapni **Block the creation of user namespace repositories**. | Repozitář v user namespace leží mimo organizace platformy a jejich rulesety. |
+| `fineGrainedPatApprovalRequired` | Your enterprise → Policies → Personal access tokens → Fine-grained tokens | Zapni **Require organizations to use the approval flow**. | Členové organizací musí získat schválení fine-grained PAT pro přístup k organizacím enterprise. Administrátoři organizací nesmí schvalování vypnout. |
 | `patMaxLifetime90Days` | Your enterprise → Policies → Personal access tokens → záložky Fine-grained tokens a Tokens (classic) | Na obou záložkách zapni **Set maximum lifetimes for personal access tokens** s hodnotou 90 dní. | Krátká platnost zkrátí dobu, po kterou lze zneužít odcizený PAT. |
 
 U maximální platnosti PAT zapni **Exempt administrators**. Dokumentace GitHubu tuto výjimku doporučuje, pokud enterprise používá SCIM provisioning. Token SCIM z kroku A5 je classic PAT setup usera bez expirace.
 
 Omezení classic PAT nenastavuj. O něm zatím není rozhodnuto.
 
-README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat. Bootstrap pro ni nemá příznak. Politiky jsou ve stejné sekci Repositories:
+README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat. Bootstrap pro ni nemá příznak. Politiky jsou ve stejné sekci Member privileges:
 
 - Repository creation: členové nesmí zakládat repozitáře.
 - Repository visibility change: členové nesmí měnit viditelnost.
@@ -358,6 +358,8 @@ README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členo
 - Přes GraphQL přečte politiky forků, zakládání, změny viditelnosti a mazání repozitářů. Politiku, která nemá hodnotu `DISABLED`, po potvrzení nastaví na `DISABLED`. Pro čtení a změnu dočasně přidá scope `admin:enterprise`.
 - Příznak `privateInternalForksDisabled` nastaví, když všechny 4 politiky mají hodnotu `DISABLED`.
 - Politiky PAT a omezení user namespace nemají API. Průvodce pro každý příznak ukáže cestu v UI a vyžádá potvrzení.
+
+Výstup `AUTOMATIC` označuje kontrolu nebo změnu přes API. Po ověření průvodce vypíše všechny 4 politiky jako `DISABLED`; v UI je nemusíš nastavovat znovu. Výstup `USER ACTION` označuje ruční kontrolu, kterou musíš provést před potvrzením. Zákaz repozitářů v user namespace je samostatný checkbox, nikoli jedna ze 4 politik nastavených přes API. Najdeš ho v **Member privileges**, ne v editoru **Repositories → Policies → New policy**. Ostatní nastavení neměň.
 
 **Tvoje akce:** Nastav v UI politiky příznaků `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired` a `patMaxLifetime90Days` podle tabulky. Výsledek politik zakládání, viditelnosti a mazání repozitářů zapiš do komentáře v #10.
 
@@ -396,6 +398,12 @@ Příznak: `githubAppAvailabilityVerified`. Dílčí kroky: `Probe organization`
 - Po potvrzení vytvoří organizaci `probe-<yyyymmdd>` s tebou jako owner, private repozitář `instance-probe`, tým `platform-probe` a tvoje členství v týmu. Dočasně přidá scopes `admin:enterprise`, `admin:org` a `repo`.
 - Název organizace uloží do `setup-state.json`. Další běh použije stejnou organizaci.
 
+- Po vytvoření organizace vyžádá nové přihlášení GitHub CLI, ještě před vytvořením repozitáře a týmu. Otevři organizaci v prohlížeči, dokonči případné SSO a přihlas CLI jako stejný spravovaný uživatel. OAuth token musí získat přístup k nové organizaci. Průvodce po přihlášení znovu ověří účet a potřebné scopes.
+
+- Pokud nové přihlášení nedokončíš nebo následný přístup k organizaci selže, průvodce ponechá požadavek v `setup-state.json`. Při opakování kroku vyžádá přihlášení před čtením organizace, repozitáře a týmu. Organizaci nevytvoří znovu. Po úspěšném dokončení tohoto kroku už další běh nové přihlášení kvůli vytvoření organizace nevyžaduje.
+
+Pokud API vrátí HTTP 403 s textem `Resource protected by organization SAML enforcement`, OAuth token nemá SSO autorizaci pro organizaci. Otevři organizaci v prohlížeči, dokonči SSO a zvol `[l]`. Samotné `[r]` zopakuje požadavek se stejným tokenem. Tato chyba nevyžaduje změnu rolí Azure ani přechod na PAT.
+
 **Průvodce: App A (autorizační token)**
 
 - Otevře předvyplněný formulář registrace enterprise-owned App: název `<name>-probe-authorization`, neaktivní webhook a oprávnění Members: Read-only. Registrace App nemá API.
@@ -409,6 +417,8 @@ Příznak: `githubAppAvailabilityVerified`. Dílčí kroky: `Probe organization`
 - Smaže klíč App A a otevře stránku pro smazání App A.
 
 Enterprise-owned znamená vlastnictví registrace, nikoli zapnutí oprávnění v sekci Enterprise permissions. Registraci otevři přes **Your enterprise → Settings → GitHub Apps → New GitHub App**. Průvodce i vydávání tokenů ověřují ve výsledku `GET /app` vlastníka s `owner.type` rovnou `enterprise` a `owner.login` odpovídající enterprise. Stejný `login` u vlastníka typu `User` nebo `Organization` nestačí.
+
+Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tokenem může vrátit HTTP 404 i pro existující App. Průvodce proto nejdřív vyžádá kontrolu registrace v enterprise UI. Pokud App existuje, zadej její App ID a nevytvářej další. Průvodce identitu, očekávaný slug, vlastníka a oprávnění ověří privátním klíčem přes `GET /app`. Pokud slug neodpovídá očekávané App, průvodce odstraní uložené App ID a vyžádá opravu.
 
 **Průvodce: App B (organizační API)**
 

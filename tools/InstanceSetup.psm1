@@ -45,12 +45,13 @@ $script:FlagOrder = @(
 )
 $script:ConfirmedPolicies = [ordered]@{
     emuUserNamespacesRestricted = @(
-        'Your enterprise > Policies > Repositories > Repository creation:',
+        'Your enterprise > Policies > Member privileges > Repository creation (not Repositories > Policies > New policy):',
         'turn on "Block the creation of user namespace repositories", then Save.'
     )
     fineGrainedPatApprovalRequired = @(
         'Your enterprise > Policies > Personal access tokens > Fine-grained tokens:',
-        'turn on "Require approval of fine-grained personal access tokens", then Save.'
+        'turn on "Require organizations to use the approval flow", then Save.',
+        'Organization members must get approval for fine-grained PATs accessing enterprise organizations; organization administrators cannot disable the approval flow.'
     )
     patMaxLifetime90Days = @(
         'Your enterprise > Policies > Personal access tokens, on both tabs Fine-grained tokens and Tokens (classic):',
@@ -559,7 +560,16 @@ function Assert-SetupResponse {
     if ($Response.Status -eq 'Missing' -and $AllowMissing) { return $null }
     $lines = @($Guidance)
     if ($Response.Status -eq 'Forbidden' -and $lines.Count -eq 0) {
-        $lines = @('The signed-in account lacks the required role or token scope. Activate the role in PIM if needed, then choose [l].')
+        if ($Response.Area -eq 'github' -and $Response.Message -match 'organization SAML enforcement') {
+            $lines = @(
+                'The organization requires SSO authorization for the GitHub CLI OAuth token.',
+                'Open the organization in the browser and complete its SSO sign-in, then choose [l] to sign in to GitHub again.',
+                'Authorize the OAuth token for this organization. Do not replace it with a PAT or change Azure roles.'
+            )
+        }
+        else {
+            $lines = @('The signed-in account lacks the required role or token scope. Activate the role in PIM if needed, then choose [l].')
+        }
     }
     Exit-SetupStage -Status $Response.Status -Area $Response.Area -Message "$Action failed. $($Response.Message)" -Guidance $lines
 }
@@ -738,6 +748,7 @@ function Confirm-SetupPrerequisite {
             return $true
         }
     }
+    Show-SetupMessage -Kind Action -Message "USER ACTION: $Name. Check the setting in the UI; the wizard cannot set or verify it through an API."
     Show-SetupGuidance -Line $Guidance
     if (-not (Confirm-SetupAction -Prompt $Prompt)) {
         if ($confirmations.Contains($Name)) {
@@ -1727,9 +1738,10 @@ function Invoke-StepEnterprisePolicy {
     param([Parameter(Mandatory)][hashtable] $Setup)
 
     $policyGuidance = @(
-        'Your enterprise > Policies > Repositories: Repository forking = disabled for private and internal repositories,',
+        'Your enterprise > Policies > Member privileges: Repository forking = disabled for private and internal repositories,',
         'Repository creation, Repository visibility change and Repository deletion and transfer = members cannot. Then choose [r].'
     )
+    Show-SetupMessage -Message 'AUTOMATIC: The wizard checks four repository policies through the API and changes them only after your confirmation.'
     $policies = Get-SetupEnterprisePolicy -Setup $Setup
     $pending = @($script:PolicySettings.Keys | Where-Object { $policies[$_] -ne 'DISABLED' })
     if ($pending.Count -gt 0) {
@@ -1750,6 +1762,8 @@ function Invoke-StepEnterprisePolicy {
             Exit-SetupStage -Status Error -Area github -Message "The policies did not change: $($pending -join ', ')." -Guidance $policyGuidance
         }
     }
+    Show-SetupMessage -Kind Ok -Message 'AUTOMATIC: Verified DISABLED through the API: private/internal repository forking, member repository creation, member visibility changes and member repository deletion and transfer.'
+    Show-SetupMessage -Message 'The next three settings are separate USER ACTIONS: user namespace restrictions, fine-grained PAT approval and PAT maximum lifetimes. Do not change other policies.'
     $Setup.Facts.ForksDisabled = $true
     $unconfirmed = @(foreach ($name in $script:ConfirmedPolicies.Keys) {
         if (-not (Confirm-SetupPrerequisite -Setup $Setup -Name $name -Guidance $script:ConfirmedPolicies[$name] -Prompt "GitHub has no API for $name. Is it set?")) { $name }
@@ -1920,13 +1934,20 @@ function Get-SetupProbeApp {
     if (-not $probe[$appIdKey]) {
         $lookup = Invoke-SetupApi -Setup $Setup -Uri "$api/apps/$appName"
         if ($lookup.Status -ne 'Ok') {
-            $query = @("name=$appName", "url=$([uri]::EscapeDataString("https://$githubHost/enterprises/$enterprise"))", 'webhook_active=false') +
-                @($Permission.Keys | ForEach-Object { "$_=$($Permission[$_])" })
-            Request-SetupManualStep -Message "Register the enterprise-owned GitHub App $appName. GitHub has no API for this step." -Url "$appsUrl/new?$($query -join '&')" -Guidance @(
-                "The link pre-fills: name $appName, webhook inactive, permissions $(Format-SetupPermission -Permission $Permission).",
-                'Keep every other permission at No access, then choose Create GitHub App.'
+            Show-SetupMessage -Kind Warning -Message "OAuth lookup of $appName did not succeed. $($lookup.Message)"
+            Show-SetupGuidance -Line @(
+                "Private enterprise Apps can return HTTP 404 even when registered. Check $appsUrl before creating another App.",
+                'An App ID entered below is verified with its private key through GET /app; it is not accepted on trust.'
             )
-            $lookup = Invoke-SetupApi -Setup $Setup -Uri "$api/apps/$appName"
+            if (-not (Confirm-SetupAction -Prompt "Is $appName already registered under this enterprise?")) {
+                $query = @("name=$appName", "url=$([uri]::EscapeDataString("https://$githubHost/enterprises/$enterprise"))", 'webhook_active=false') +
+                    @($Permission.Keys | ForEach-Object { "$_=$($Permission[$_])" })
+                Request-SetupManualStep -Message "Register the enterprise-owned GitHub App $appName. GitHub has no API for this step." -Url "$appsUrl/new?$($query -join '&')" -Guidance @(
+                    "The link pre-fills: name $appName, webhook inactive, permissions $(Format-SetupPermission -Permission $Permission).",
+                    'Keep every other permission at No access, then choose Create GitHub App.'
+                )
+                $lookup = Invoke-SetupApi -Setup $Setup -Uri "$api/apps/$appName"
+            }
         }
         $appId = if ($lookup.Status -eq 'Ok' -and $lookup.Data -is [System.Collections.IDictionary]) { [string] $lookup.Data['id'] } else { '' }
         if (-not $appId) {
@@ -1941,6 +1962,13 @@ function Get-SetupProbeApp {
     $appId = [string] $probe[$appIdKey]
     $key = Find-SetupAppKey -Setup $Setup -Role $Role -AppId $appId
     $app = $key.App
+    if ($app['slug'] -ne $appName) {
+        $probe.Remove($appIdKey)
+        Save-SetupState -Setup $Setup
+        Exit-SetupStage -Status Error -Message "App $appId has slug '$($app['slug'])'. Required: $appName." -Guidance @(
+            "Check $appsUrl and enter the App ID of $appName, then choose [r]."
+        )
+    }
     $appSettings = "$appsUrl/$($app['slug'])"
     $owner = $app['owner']
     if (-not (Test-PlatformGitHubAppOwner -Owner $owner -Enterprise $enterprise)) {
@@ -2022,6 +2050,32 @@ function Revoke-SetupInstallationToken {
 
 #region Stage A9
 
+function Invoke-SetupProbeOrganizationSignIn {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable] $Setup)
+
+    $org = $Setup.State.probe['organization']
+    $login = $Setup.Facts.Login
+    $api = "https://api.$($Setup.Settings['githubHost'])"
+    Save-SetupState -Setup $Setup
+    Show-SetupMessage -Kind Action -Message "USER ACTION: Sign in to GitHub again after creating $org so the OAuth token can access the new organization through SSO."
+    Show-SetupGuidance -Line @(
+        "Open https://$($Setup.Settings['githubHost'])/$org in the browser and complete any Entra ID sign-in.",
+        "Use the same managed user $login for the GitHub CLI sign-in and authorize access to the new organization."
+    )
+    if (-not (Confirm-SetupAction -Prompt 'Sign in again now before creating the probe repository and team?' -DefaultYes)) {
+        Exit-SetupStage -Status Missing -Area github -Message 'The new probe organization needs a fresh GitHub sign-in.' `
+            -Guidance @('Choose [r] to complete the sign-in. The wizard keeps the existing organization.')
+    }
+    Invoke-SetupGitHubLogin -Setup $Setup
+    $user = Assert-SetupResponse -Response (Invoke-SetupApi -Setup $Setup -Uri "$api/user") -Action 'Checking the account after the probe organization sign-in'
+    if ($user['login'] -ne $login) {
+        Exit-SetupStage -Status Forbidden -Area github -Message "Sign in as $login, the owner used to create the probe organization." `
+            -Guidance @('Choose [r] and sign in with the same managed user.')
+    }
+    Add-SetupGitHubScope -Setup $Setup -Scope @('admin:enterprise', 'admin:org', 'repo') -Purpose 'creating the probe repository and team after sign-in'
+}
+
 function Invoke-StepProbeOrg {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable] $Setup)
@@ -2033,6 +2087,9 @@ function Invoke-StepProbeOrg {
     $api = "https://api.$($Setup.Settings['githubHost'])"
     $login = $Setup.Facts.Login
     $org = if ($probe['organization']) { [string] $probe['organization'] } else { "probe-$((Get-Date).ToString('yyyyMMdd'))" }
+    if ($probe['organizationSignInPending']) {
+        Invoke-SetupProbeOrganizationSignIn -Setup $Setup
+    }
     $orgResponse = Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org"
     $null = Assert-SetupResponse -Response $orgResponse -Action "Reading the organization $org" -AllowMissing
     $orgMissing = $orgResponse.Status -eq 'Missing'
@@ -2063,6 +2120,10 @@ function Invoke-StepProbeOrg {
             $null = Invoke-SetupGraphQL -Setup $Setup -Query $mutation -Action "Creating the organization $org" -Variables @{
                 input = @{ enterpriseId = $Setup.Facts.EnterpriseId; login = $org; profileName = $org; billingEmail = $billingEmail; adminLogins = @($login) }
             }
+            $probe['organization'] = $org
+            $probe['organizationSignInPending'] = $true
+            Save-SetupState -Setup $Setup
+            Invoke-SetupProbeOrganizationSignIn -Setup $Setup
             $created = Wait-SetupCondition -TimeoutSeconds 120 -IntervalSeconds 5 -Activity "Waiting for the organization $org" -Condition {
                 (Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org").Status -eq 'Ok'
             }
@@ -2086,6 +2147,7 @@ function Invoke-StepProbeOrg {
         }
     }
     $probe['organization'] = $org
+    $probe['organizationSignInPending'] = $false
     Save-SetupState -Setup $Setup
     return "The probe organization $org has the private repository instance-probe and the team platform-probe with your active membership."
 }
