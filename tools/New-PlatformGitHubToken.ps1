@@ -78,7 +78,7 @@ if ($Authorization) {
         permissions = @{ members = 'read' }
         resources = @{
             organizations = @($repository[0])
-            repositories = @{ $repository[0] = @($repository[1]) }
+            repositories = @{}
         }
     }
 }
@@ -156,7 +156,7 @@ try {
         $repositories = $expected['resources']['repositories']
         $selected = $repositories -and $repositories.Contains($organization)
         $selection = if ($selected) { 'selected' } else { 'all' }
-        if ($installation['repository_selection'] -cne $selection) {
+        if (-not $Authorization -and $installation['repository_selection'] -cne $selection) {
             throw "Actual App repository scope for '$organization' differs from the declared scope."
         }
         $issued = Invoke-GitHubAppRequest -Path "/app/installations/$($installation['id'])/access_tokens" -Method POST `
@@ -165,7 +165,7 @@ try {
         $tokens[$organization] = $issued['token']
         Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue
         Assert-AppPermission -Actual $issued['permissions']
-        if ($selected) {
+        if ($selected -or $Authorization) {
             $actualRepositories = [Collections.Generic.List[string]]::new()
             $page = 1
             do {
@@ -173,7 +173,10 @@ try {
                 foreach ($repository in $result['repositories']) { $actualRepositories.Add($repository['name']) }
                 $page++
             } while ($result['repositories'].Count -eq 100)
-            if ((ConvertTo-PlatformCanonicalJson @($actualRepositories | Sort-Object -CaseSensitive)) -cne
+            if ($Authorization -and $actualRepositories.Count -gt 0) {
+                throw "Authorization App for '$organization' must not have repository access."
+            }
+            if ($selected -and (ConvertTo-PlatformCanonicalJson @($actualRepositories | Sort-Object -CaseSensitive)) -cne
                 (ConvertTo-PlatformCanonicalJson @($repositories[$organization] | Sort-Object -CaseSensitive))) {
                 throw "Actual App repository access for '$organization' differs from the declared resources."
             }

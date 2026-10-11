@@ -300,7 +300,7 @@ Describe 'Instance setup wizard' {
     }
 
     Context 'GitHub App helpers' {
-        It 'accepts the observed enterprise owner login and type' {
+        It 'accepts the observed enterprise owner login and type for a Members-only App with no repository access' {
             $setup = Get-TestSetup
             $setup.State.probe['organization'] = 'probe-test'
             $setup.State.probe['authorizationAppId'] = '101'
@@ -322,11 +322,11 @@ Describe 'Instance setup wizard' {
                         Status = 'Ok'
                         Data = @(@{
                             id = 201; account = @{ login = 'probe-test' }; target_type = 'Organization'
-                            suspended_at = $null; repository_selection = 'selected'; permissions = @{ members = 'read' }
+                            suspended_at = $null; repository_selection = 'all'; permissions = @{ members = 'read' }
                         })
                     }
                 }
-                $app = Get-SetupProbeApp -Setup $Setup -Role authorization -Permission @{ members = 'read' } -Selection selected
+                $app = Get-SetupProbeApp -Setup $Setup -Role authorization -Permission @{ members = 'read' } -Selection none
                 $app.AppId | Should -Be '101'
                 $app.InstallationId | Should -Be '201'
             }
