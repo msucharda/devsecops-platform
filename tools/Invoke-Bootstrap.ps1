@@ -242,7 +242,12 @@ function Initialize-BootstrapResource {
         for ($attempt = 0; $attempt -lt 120; $attempt++) {
             $current = Invoke-BootstrapRequest -Uri $Uri
             $state = $current['properties']['provisioningState']
-            if ($state -eq 'Succeeded') { return $current }
+            if ($state -eq 'Succeeded') {
+                if ($current['properties']['publicNetworkAccess'] -ne 'Enabled') {
+                    throw "State backend requires publicNetworkAccess 'Enabled' for GitHub-hosted runners (ADR 0011). Check Azure Policy and storage network settings before rerunning bootstrap."
+                }
+                return $current
+            }
             if ($state -in @('Failed', 'Canceled')) { throw "Provisioning '$Uri' ended with '$state'." }
             Start-Sleep -Seconds 5
         }
@@ -687,6 +692,7 @@ $null = Initialize-BootstrapResource -Uri "$arm$storageAccountId`?api-version=20
     properties = @{
         allowSharedKeyAccess = $false
         allowBlobPublicAccess = $false
+        publicNetworkAccess = 'Enabled'
         isHnsEnabled = $false
         isSftpEnabled = $false
         isLocalUserEnabled = $false
