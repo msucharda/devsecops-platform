@@ -39,6 +39,9 @@ Describe 'Enterprise App key and installation token isolation' {
                 return @{ repositories = @($fakeRepositoryNames | ForEach-Object { @{ name = $_ } }) }
             }
             if ($Uri -like '*/installation/token' -and $Method -eq 'DELETE') { return }
+            if ($Uri -like '*/orgs/platform/teams`?*') { return ,@(@{ id = 30; slug = 'platform' }) }
+            if ($Uri -like '*/orgs/platform/actions/permissions') { return @{ enabled_repositories = 'all' } }
+            if ($Uri -like '*/orgs/platform/code-security/configurations*') { return ,@() }
             throw "Unexpected GitHub API request: $Method $Uri"
         }
     }
@@ -174,6 +177,42 @@ Describe 'Enterprise App key and installation token isolation' {
 
         { & $issuer -Authorization -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
             Should -Throw '*GitHub App API GET /app failed*GHE.com API availability*'
+        Test-Path -LiteralPath $environmentPath | Should -BeFalse
+    }
+
+    It 'checks the authorization team API with its trial installation token and revokes it on failure' {
+        Mock Invoke-RestMethod { throw 'Team API unavailable' } -ParameterFilter { $Uri -like '*/orgs/platform/teams`?*' }
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ members = 'read' }; resources = @{ organizations = @('platform'); repositories = @{} }
+        }
+
+        { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath } |
+            Should -Throw '*Team API unavailable*'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        Test-Path -LiteralPath $environmentPath | Should -BeFalse
+    }
+
+    It 'checks required organization <Endpoint> API before validating an administration App' -ForEach @(
+        @{ Endpoint = 'actions/permissions' }
+        @{ Endpoint = 'code-security/configurations' }
+        @{ Endpoint = 'code-security/configurations/defaults' }
+    ) {
+        $actualPermissions = @{ organization_administration = 'read'; metadata = 'read' }
+        $repositorySelection = 'all'
+        Mock Invoke-RestMethod { throw 'Organization API unavailable' } -ParameterFilter {
+            $Uri -eq "https://api.example.test/orgs/platform/$Endpoint"
+        }
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ organization_administration = 'read' }; resources = @{ organizations = @('platform') }
+        }
+
+        { & $issuer -BootstrapApp $app -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath } |
+            Should -Throw '*Organization API unavailable*'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
         Test-Path -LiteralPath $environmentPath | Should -BeFalse
     }
 }

@@ -47,10 +47,21 @@ if (-not $ResourcesOnly -and (-not $AppKeysPath -or -not $AuthorizationApp)) {
 if ($connection['githubHost'] -cne "$($connection['enterprise']).ghe.com") {
     throw '$.bootstrap.githubHost must match $.bootstrap.enterprise on GHE.com.'
 }
-$inventoryFile = [IO.Path]::GetFullPath($InventoryPath)
-if ($inventoryFile.StartsWith("$ReleasePath$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Bootstrap inventory must be outside the source release; it contains instance data.'
+function Assert-GitHubBootstrapExternalPath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string] $Path)
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    foreach ($root in @($ReleasePath, (Split-Path $PSScriptRoot -Parent))) {
+        $prefix = $root.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($fullPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Bootstrap inventory, key manifests and private keys must be outside the source checkout and release.'
+        }
+    }
+    return $fullPath
 }
+$inventoryFile = Assert-GitHubBootstrapExternalPath -Path $InventoryPath
 foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
     if ([Environment]::GetEnvironmentVariable($name)) { throw "Bootstrap refuses $name. Use gh auth login." }
 }
@@ -72,10 +83,22 @@ if (Test-Path -LiteralPath $inventoryFile) {
     if ($inventory['repository'] -cne $repository -or $inventory['enterprise'] -cne $connection['enterprise']) {
         throw 'The bootstrap inventory belongs to another instance.'
     }
+    if ($inventory['releaseVersion'] -cne $ReleaseVersion) {
+        throw 'The bootstrap inventory belongs to another release. Resume with the recorded approved release.'
+    }
 }
-$inventory['declaredApps'] = @{}
+if (-not $inventory.Contains('declaredApps')) { $inventory['declaredApps'] = @{} }
 foreach ($alias in $instance['githubApps'].PSBase.Keys) {
-    $inventory['declaredApps'][$alias] = @{ appId = $instance['githubApps'][$alias]['appId']; removalRequired = $true }
+    $appId = $instance['githubApps'][$alias]['appId']
+    $previous = $inventory['declaredApps'][$alias]
+    $previousIds = @()
+    if ($previous) {
+        if ($previous.Contains('previousAppIds')) { $previousIds = @($previous['previousAppIds']) }
+        if ($previous['appId'] -cne $appId) { $previousIds += $previous['appId'] }
+    }
+    $inventory['declaredApps'][$alias] = @{
+        appId = $appId; removalRequired = $true; previousAppIds = @($previousIds | Sort-Object -Unique)
+    }
 }
 
 function Save-GitHubBootstrapInventory {
@@ -88,6 +111,18 @@ function Save-GitHubBootstrapInventory {
         $temporary = "$inventoryFile.tmp"
         [IO.File]::WriteAllText($temporary, $content, [Text.UTF8Encoding]::new($false))
         [IO.File]::Move($temporary, $inventoryFile, $true)
+    }
+}
+
+Save-GitHubBootstrapInventory
+
+function Register-GitHubBootstrapResource {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Path)
+
+    if ($Path -cnotin $inventory['resources']) {
+        $inventory['resources'] += $Path
+        Save-GitHubBootstrapInventory
     }
 }
 
@@ -111,18 +146,18 @@ function Invoke-GitHubBootstrapApi {
     if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
         throw "GitHub bootstrap $Method $Path failed (HTTP $($response.StatusCode)). Verify GHE.com API availability, OAuth scopes and SSO, then rerun. $($response.Content)"
     }
-    if ($Method -ne 'GET' -and ($Path -ne '/graphql' -or $Body['query'] -like 'mutation*')) {
-        $changed.Add($Path)
-        if ($Path -cnotin $inventory['resources']) { $inventory['resources'] += $Path }
-        Save-GitHubBootstrapInventory
-    }
+    $data = $null
     if (-not [string]::IsNullOrWhiteSpace($response.Content)) {
         $data = ConvertFrom-Json -InputObject $response.Content -AsHashtable -NoEnumerate
         if ($data -is [System.Collections.IDictionary] -and $data.Contains('errors')) {
             throw "GitHub GraphQL failed: $(ConvertTo-Json -InputObject $data['errors'] -Compress)"
         }
-        return ,$data
     }
+    if ($Method -ne 'GET' -and ($Path -ne '/graphql' -or $Body['query'] -like 'mutation*')) {
+        $changed.Add($Path)
+        Save-GitHubBootstrapInventory
+    }
+    return ,$data
 }
 
 function Get-GitHubBootstrapCollection {
@@ -186,6 +221,16 @@ function Initialize-GitHubBootstrapVariable {
     }
 }
 
+function Get-GitHubBootstrapReviewer {
+    [CmdletBinding()]
+    param([System.Collections.IDictionary] $Environment)
+
+    if ($Environment) {
+        $Environment['protection_rules'] | Where-Object { $_['type'] -ceq 'required_reviewers' } |
+            ForEach-Object { $_['reviewers'] } | ForEach-Object { @{ type = $_['type']; id = $_['reviewer']['id'] } }
+    }
+}
+
 function Initialize-GitHubBootstrapEnvironment {
     [CmdletBinding()]
     param(
@@ -203,24 +248,20 @@ function Initialize-GitHubBootstrapEnvironment {
         can_admins_bypass = $false
         deployment_branch_policy = @{ protected_branches = $false; custom_branch_policies = $true }
     }
-    $actualReviewers = @()
-    if ($current) {
-        $actualReviewers = @($current['protection_rules'] | Where-Object { $_['type'] -ceq 'required_reviewers' } |
-            ForEach-Object { $_['reviewers'] } | ForEach-Object { @{ type = $_['type']; id = $_['reviewer']['id'] } })
-    }
+    $actualReviewers = @(Get-GitHubBootstrapReviewer -Environment $current)
     if (-not $current -or $current['can_admins_bypass'] -ne $false -or
         -not (Test-GitHubBootstrapValue -Actual $current['deployment_branch_policy'] -Desired $body['deployment_branch_policy']) -or
         -not (Test-GitHubBootstrapValue -Actual $actualReviewers -Desired $reviewers) -or
         @($current['protection_rules'] | Where-Object { $_['type'] -cnotin @('required_reviewers', 'branch_policy') }).Count -gt 0) {
         $current = Invoke-GitHubBootstrapApi -Path $path -Method PUT -Body $body
-        $confirmed = @($current['protection_rules'] | Where-Object { $_['type'] -ceq 'required_reviewers' } |
-            ForEach-Object { $_['reviewers'] } | ForEach-Object { @{ type = $_['type']; id = $_['reviewer']['id'] } })
+        $confirmed = @(Get-GitHubBootstrapReviewer -Environment $current)
         if (-not (Test-GitHubBootstrapValue -Actual $confirmed -Desired $reviewers) -or
             $current['can_admins_bypass'] -ne $false -or
             -not (Test-GitHubBootstrapValue -Actual $current['deployment_branch_policy'] -Desired $body['deployment_branch_policy'])) {
             throw "GHE.com did not enforce environment '$Name' protection. Do not deploy modules."
         }
     }
+    Register-GitHubBootstrapResource -Path $path
     $branches = @(Get-GitHubBootstrapCollection -Path "$path/deployment-branch-policies" -Property 'branch_policies')
     if ($branches.Count -gt 0 -and ($branches.Count -ne 1 -or $branches[0]['name'] -cne 'main' -or $branches[0]['type'] -cne 'branch')) {
         throw "Environment '$Name' permits refs other than main. Remove them through an approved access change."
@@ -258,7 +299,7 @@ function Invoke-GitHubBootstrapAzure {
     }
     if ($Method -ne 'GET') {
         $changed.Add($Path)
-        if ($Path -cnotin $inventory['resources']) { $inventory['resources'] += $Path }
+        Register-GitHubBootstrapResource -Path $Path.Split('?')[0]
         Save-GitHubBootstrapInventory
     }
     return ConvertFrom-Json -InputObject $response.Content -AsHashtable
@@ -306,25 +347,35 @@ do {
 $org = Invoke-GitHubBootstrapApi -Path "/orgs/$organization" -AllowNotFound
 if ($org -and -not $belongs) { throw "Organization '$organization' belongs to another enterprise; refusing to adopt it." }
 if (-not $org) {
-    $null = Invoke-GitHubBootstrapApi -Path '/graphql' -Method POST -Body @{
+    $created = Invoke-GitHubBootstrapApi -Path '/graphql' -Method POST -Body @{
         query = 'mutation($input:CreateEnterpriseOrganizationInput!){createEnterpriseOrganization(input:$input){organization{login}}}'
         variables = @{ input = @{
             enterpriseId = $enterprise['id']; login = $organization; profileName = $organization
             billingEmail = $instance['teams']['platform'][0]; adminLogins = @($login)
         } }
     }
+    if ($created['data']['createEnterpriseOrganization']['organization']['login'] -cne $organization) {
+        throw 'GitHub did not confirm creation of the requested platform organization.'
+    }
     Write-Warning "If SSO denies the next operation, sign in to https://$($connection['githubHost'])/$organization and refresh gh auth login. Rerun with the same inventory."
 }
+Register-GitHubBootstrapResource -Path "/orgs/$organization"
 $repo = Invoke-GitHubBootstrapApi -Path "/repos/$repository" -AllowNotFound
 if (-not $repo) {
     $inventory['initializationPending'] = $true
     $repo = Invoke-GitHubBootstrapApi -Path "/orgs/$organization/repos" -Method POST -Body @{
         name = 'instance'; private = $true; auto_init = $true; description = $ownership
     }
-    $null = Invoke-GitHubBootstrapApi -Path "/repos/$repository/actions/permissions" -Method PUT -Body @{ enabled = $false }
 }
 if ($repo['private'] -ne $true -or $repo['description'] -cne $ownership) {
     throw 'The instance repository is not a private bootstrap-owned repository; refusing to adopt it.'
+}
+Register-GitHubBootstrapResource -Path "/repos/$repository"
+if ($inventory['initializationPending']) {
+    $permissions = Invoke-GitHubBootstrapApi -Path "/repos/$repository/actions/permissions"
+    if ($permissions['enabled'] -ne $false) {
+        $null = Invoke-GitHubBootstrapApi -Path "/repos/$repository/actions/permissions" -Method PUT -Body @{ enabled = $false }
+    }
 }
 if ($inventory['initializationPending'] -and -not $inventory['seedCommit']) {
     $seed = Invoke-GitHubBootstrapApi -Path "/repos/$repository/git/ref/heads/$($repo['default_branch'])"
@@ -342,11 +393,14 @@ foreach ($name in @('platform', 'security')) {
         }
     }
     if ($team['description'] -cne $ownership) { throw "Team '$name' is not bootstrap-owned; refusing to adopt it." }
+    Register-GitHubBootstrapResource -Path $teamPath
     $teams[$name] = $team
-    $membership = Invoke-GitHubBootstrapApi -Path "$teamPath/memberships/$login" -AllowNotFound
-    if (-not $membership -or $membership['state'] -cne 'active') {
-        $membership = Invoke-GitHubBootstrapApi -Path "$teamPath/memberships/$login" -Method PUT -Body @{ role = 'maintainer' }
-        if ($membership['state'] -cne 'active') { throw "Bootstrap user membership in '$name' is not active." }
+    if ($inventory['initializationPending']) {
+        $membership = Invoke-GitHubBootstrapApi -Path "$teamPath/memberships/$login" -AllowNotFound
+        if (-not $membership -or $membership['state'] -cne 'active') {
+            $membership = Invoke-GitHubBootstrapApi -Path "$teamPath/memberships/$login" -Method PUT -Body @{ role = 'maintainer' }
+            if ($membership['state'] -cne 'active') { throw "Bootstrap user membership in '$name' is not active." }
+        }
     }
     $accessPath = "$teamPath/repos/$repository"
     $access = Invoke-GitHubBootstrapApi -Path $accessPath -AllowNotFound
@@ -456,10 +510,12 @@ function Initialize-GitHubBootstrapMainProtection {
         $rulePath = if ($rule) { "/repos/$repository/rulesets/$($rule['id'])" } else { "/repos/$repository/rulesets" }
         $method = if ($rule) { 'PUT' } else { 'POST' }
         $rule = Invoke-GitHubBootstrapApi -Path $rulePath -Method $method -Body $ruleset
+        Register-GitHubBootstrapResource -Path "/repos/$repository/rulesets/$($rule['id'])"
         if (-not (Test-GitHubBootstrapValue -Actual $rule -Desired $ruleset)) {
             throw 'GHE.com did not enforce the required security-team PR reviews. Do not deploy modules.'
         }
     }
+    Register-GitHubBootstrapResource -Path "/repos/$repository/rulesets/$($rule['id'])"
 }
 $environmentNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($name in @('pr-authorization', 'approve-apply', 'approve-teardown-platform', 'teardown')) {
@@ -564,7 +620,7 @@ if (-not $ResourcesOnly) {
     if (@($inherited | Where-Object { $_['name'] -ceq 'PLATFORM_APP_PRIVATE_KEY' }).Count) {
         throw 'PLATFORM_APP_PRIVATE_KEY must not exist as a repository or organization secret.'
     }
-    $keys = Get-Content -LiteralPath $AppKeysPath -Raw | ConvertFrom-Json -AsHashtable
+    $keys = Get-Content -LiteralPath (Assert-GitHubBootstrapExternalPath -Path $AppKeysPath) -Raw | ConvertFrom-Json -AsHashtable
     if ($keys -isnot [Collections.IDictionary] -or -not $instance['githubApps'].Contains($AuthorizationApp)) {
         throw 'App key manifest or authorization App alias is invalid.'
     }
@@ -606,10 +662,7 @@ if (-not $ResourcesOnly) {
             $deadline -gt $created.AddDays(90) -or $deadline -le $created) {
             throw "App '$alias' key rotation must be due within 90 days of creation and must not be overdue."
         }
-        $keyPath = [IO.Path]::GetFullPath($key['privateKeyPath'])
-        if ($keyPath.StartsWith("$ReleasePath$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Private keys must be outside the source release.'
-        }
+        $keyPath = Assert-GitHubBootstrapExternalPath -Path $key['privateKeyPath']
         $privateKey = Get-Content -LiteralPath $keyPath -Raw
         $result = & (Join-Path $PSScriptRoot 'New-PlatformGitHubToken.ps1') -BootstrapApp $app `
             -PrivateKey $privateKey -Phase $(if ($binding['phase'] -eq 'authorization') { 'plan' } else { $binding['phase'] }) `

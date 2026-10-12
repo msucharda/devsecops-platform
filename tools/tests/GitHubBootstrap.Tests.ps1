@@ -58,6 +58,7 @@ Describe 'GitHub bootstrap public interface' {
             })
         }
         $inventory = Join-Path $casePath 'bootstrap-resources.json'
+        $sourceInventory = Join-Path $PSScriptRoot "bootstrap-$([guid]::NewGuid()).json"
         $arguments = @{
             InstancePath = $instancePath; AzureBootstrap = $azure
             ReleasePath = $release; ReleaseVersion = '1.0.0'; InventoryPath = $inventory
@@ -115,6 +116,7 @@ Describe 'GitHub bootstrap public interface' {
             }
             elseif ($path -eq '/orgs/demo-platform/repos' -and $Method -eq 'POST') {
                 $cloud.resources['/repos/demo-platform/instance'] = @{ id = 20; name = 'instance'; private = $true; default_branch = $cloud.defaultBranch; description = $data.description }
+                $cloud.resources['/repos/demo-platform/instance/actions/permissions'] = @{ enabled = $true }
                 $reply = $cloud.resources['/repos/demo-platform/instance']
                 if ($data.auto_init) {
                     $cloud.resources["/repos/demo-platform/instance/git/ref/heads/$($cloud.defaultBranch)"] = @{ object = @{ sha = 'seed-sha' } }
@@ -211,6 +213,9 @@ Describe 'GitHub bootstrap public interface' {
         Mock Invoke-RestMethod {
             if ($Uri -like '*/installation/token' -and $Method -eq 'DELETE') { return }
             if ($Uri -like '*/installation/repositories`?*') { return @{ repositories = @() } }
+            if ($Uri -like '*/orgs/demo-platform/teams`?*') { return ,@(@{ id = 30; slug = 'platform' }) }
+            if ($Uri -like '*/orgs/demo-platform/actions/permissions') { return @{ enabled_repositories = 'all' } }
+            if ($Uri -like '*/orgs/demo-platform/code-security/configurations*') { return ,@() }
             if ($Uri -like '*/orgs/demo-platform/rulesets`?*') { return ,@(@{ id = 7 }) }
             if ($Uri -like '*/orgs/demo-platform/rulesets/7') { return @{ id = 7; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 123; bypass_mode = 'pull_request' }) } }
             $segment = $Headers.Authorization.Split(' ')[1].Split('.')[1].Replace('-', '+').Replace('_', '/')
@@ -237,6 +242,7 @@ Describe 'GitHub bootstrap public interface' {
 
     AfterEach {
         foreach ($name in $savedTokens.Keys) { [Environment]::SetEnvironmentVariable($name, $savedTokens[$name]) }
+        if (Test-Path -LiteralPath $sourceInventory) { Remove-Item -LiteralPath $sourceInventory }
     }
 
     It 'creates the instance repository with the exact release and both organization teams' {
@@ -454,5 +460,87 @@ Describe 'GitHub bootstrap public interface' {
         $arguments.AzureBootstrap = [pscustomobject] $azure
 
         (& $bootstrap @arguments).Repository | Should -Be 'demo-platform/instance'
+    }
+
+    It 'rejects inventory inside the running source checkout even when the release is elsewhere' {
+        $arguments.InventoryPath = $sourceInventory
+
+        { & $bootstrap @arguments } | Should -Throw '*outside*source*'
+        $cloud.writes.Count | Should -Be 0
+        Test-Path -LiteralPath $sourceInventory | Should -BeFalse
+    }
+
+    It 'rejects changing the release version of an existing preparation before any cloud write' {
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $arguments.ReleaseVersion = '2.0.0'
+
+        { & $bootstrap @arguments } | Should -Throw '*inventory*release*'
+        $cloud.writes.Count | Should -Be 0
+        (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -Be '1.0.0'
+    }
+
+    It 'records confirmed resource identities rather than mutation and upload endpoints' {
+        $arguments.ResourcesOnly = $false
+        & $bootstrap @arguments | Out-Null
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+
+        $record.resources | Should -Contain '/orgs/demo-platform'
+        $record.resources | Should -Contain '/repos/demo-platform/instance'
+        $record.resources | Should -Contain '/orgs/demo-platform/teams/platform'
+        $record.resources | Should -Contain '/repos/demo-platform/instance/environments/application-plan'
+        $record.resources | Should -Contain '/repos/demo-platform/instance/rulesets/60'
+        @($record.resources | Where-Object { $_ -eq '/graphql' -or $_ -like '*/git/*' -or $_.Contains('?') }).Count | Should -Be 0
+    }
+
+    It 'does not record a failed GraphQL mutation as a created organization' {
+        Mock Invoke-WebRequest {
+            [pscustomobject]@{ StatusCode = 200; Content = '{"errors":[{"message":"Organization creation denied."}]}' }
+        } -ParameterFilter { $Uri.AbsolutePath -eq '/graphql' -and $Body -like '*mutation*' }
+
+        { & $bootstrap @arguments } | Should -Throw '*GraphQL failed*'
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.resources.Count | Should -Be 0
+    }
+
+    It 'retains manually declared Apps even when verification fails without another resource write' {
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $instance.githubApps.authorization.appId = '999'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $arguments.ResourcesOnly = $false
+        $cloud.appOwner = @{ login = 'demo-platform'; type = 'Organization' }
+
+        { & $bootstrap @arguments } | Should -Throw '*not owned by the declared enterprise*'
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.declaredApps.authorization.appId | Should -Be '999'
+        $record.declaredApps.authorization.previousAppIds | Should -Contain '101'
+        $record.declaredApps.authorization.removalRequired | Should -BeTrue
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'disables Actions on retry when repository creation succeeded but disabling was interrupted' {
+        $cloud.failPath = '/repos/demo-platform/instance/actions/permissions'
+
+        { & $bootstrap @arguments } | Should -Throw '*HTTP 503*'
+        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $result = & $bootstrap @arguments
+
+        $result.CredentialsConfigured | Should -BeFalse
+        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.commit | Should -BeNullOrEmpty
+    }
+
+    It 'does not restore bootstrap memberships after initialized teams have been synchronized' {
+        $arguments.ResourcesOnly = $false
+        & $bootstrap @arguments | Out-Null
+        $cloud.resources.Remove('/orgs/demo-platform/teams/platform/memberships/owner_example')
+        $cloud.resources.Remove('/orgs/demo-platform/teams/security/memberships/owner_example')
+        $cloud.writes.Clear()
+
+        (& $bootstrap @arguments).HasChanges | Should -BeFalse
+        $cloud.writes.Count | Should -Be 0
+        $cloud.resources.ContainsKey('/orgs/demo-platform/teams/platform/memberships/owner_example') | Should -BeFalse
+        $cloud.resources.ContainsKey('/orgs/demo-platform/teams/security/memberships/owner_example') | Should -BeFalse
     }
 }

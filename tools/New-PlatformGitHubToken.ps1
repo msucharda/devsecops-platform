@@ -190,6 +190,14 @@ try {
                 throw "Actual App repository access for '$organization' differs from the declared resources."
             }
         }
+        if ($ValidateOnly -and $Authorization) {
+            $null = Invoke-GitHubAppRequest -Path "/orgs/$organization/teams?per_page=1" -Token $issued['token']
+        }
+        if ($ValidateOnly -and $expected['permissions'].Contains('organization_administration')) {
+            foreach ($path in @('actions/permissions', 'code-security/configurations', 'code-security/configurations/defaults')) {
+                $null = Invoke-GitHubAppRequest -Path "/orgs/$organization/$path" -Token $issued['token']
+            }
+        }
         if ($ValidateOnly -and $Phase -eq 'rulesetPlan') {
             $page = 1
             do {
