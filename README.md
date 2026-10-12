@@ -13,7 +13,7 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 | `modules/<name>/` | Manifest `module.yaml`, Terraform root a README se specifikací modulu. |
 | `schemas/module.schema.json` | JSON Schema Module manifest (manifest modulu). |
 | `schemas/instance.schema.json` | JSON Schema konfigurace instance. |
-| `tools/` | Lokální bootstrap Azure, průvodce přípravou referenční instance, runner modulu a generátor workflow v PowerShell 7, testy Pester. |
+| `tools/` | Lokální bootstrap Azure a GitHubu, průvodce přípravou referenční instance, runner modulu a generátor workflow v PowerShell 7, testy Pester. |
 | `.github/workflows/` | CI zdrojového repozitáře. |
 | `templates/instance/` | Šablona repozitáře instance: vygenerovaný workflow nasazení, příklad `instance.yaml`, CODEOWNERS a kontrakt bootstrapu. |
 
@@ -86,7 +86,7 @@ credentials:
       githubApp: governance-writer
 ```
 
-Alias musí existovat v `githubApps`. Validátor doplní výchozí environmenty `<module>-plan`, `<module>-apply` a pro deklarovanou výjimku `<module>-ruleset-plan`. Vybraný modul s deklarací App fáze musí mít její alias. Každý environment smí patřit jen jednomu modulu a jedné fázi; názvy `pr-authorization` a `approve-apply` jsou rezervované pro společné gate joby.
+Alias musí existovat v `githubApps`. Validátor doplní výchozí environmenty `<module>-plan`, `<module>-apply` a pro deklarovanou výjimku `<module>-ruleset-plan`. Vybraný modul s deklarací App fáze musí mít její alias. Každý environment včetně odvozených variant `<environment>-drift` smí patřit jen jednomu modulu a jedné fázi. Názvy `pr-authorization`, `approve-apply`, `approve-teardown-platform` a `teardown` jsou rezervované pro společné gate joby.
 
 Validátor porovná oprávnění aliasu s manifestem a rozsah prostředků s parametry modulu. Stejné `appId` lze sdílet jen při shodné fázi, enterprise, oprávněních a prostředcích, i když má App více aliasů či klíčů. Běžný plan odmítne App s libovolným write oprávněním, nikoli pouze široký token. `resources.organizations` uvádí přesné slugy všech instalací App. Volitelná mapa `resources.repositories` omezí danou organizaci na přesný seznam repozitářů; bez její položky musí instalace pokrývat všechny repozitáře organizace. `installationId` identifikuje jednu z deklarovaných instalací; job ověří i ostatní a vydá token pro každou cílovou organizaci.
 
@@ -175,7 +175,7 @@ modules:
 .\tools\Select-InstanceModules.ps1 -ModulesPath .\tools\tests\fixtures\modules -InstancePath .\instance.yaml
 ```
 
-Workflow reaguje na `pull_request_target` proti `main`, push do `main` a ruční spuštění z `main`. Job `authorize` načte jen nástroje z neměnného base commitu. Nejprve odmítne forky, App autory a draft PR bez načtení App klíče. Pro ostatní PR ověří aktivní členství autora v platformním týmu přes samostatnou App s `members: read`. Tento job nikdy nenačte kód z PR a nedostane credential modulu.
+Workflow reaguje na `pull_request_target` proti `main`, push do `main`, ruční spuštění z `main` a schedule denně v 02:17 UTC. Schedule používá environmenty `<plan-environment>-drift` a `<ruleset-plan-environment>-drift` a nikdy neodemkne apply. Job `authorize` načte jen nástroje z neměnného base commitu. Nejprve odmítne forky, App autory a draft PR bez načtení App klíče. Pro ostatní PR ověří aktivní členství autora v platformním týmu přes samostatnou App s `members: read`. Tento job nikdy nenačte kód z PR a nedostane credential modulu.
 
 Job `validate` bez environmentu, OIDC a cloudových secrets ověří `instance.yaml` schématem vendorovaného release. Autorizovaný job `select` používá trusted nástroje a před zveřejněním environmentů porovná App metadata i credential vazby PR s base konfigurací. Jejich změna vyžaduje review a merge; cloudový plan pak poběží z chráněné `main`.
 
@@ -187,7 +187,7 @@ Proměnná Terraformu `github_tokens` musí mít `type = map(string)` a `sensiti
 
 Job stáhne výstupy každého přímého předpokladu ze stejné fáze. Publikuje jen `<module>.json` jako `plan-outputs-<module>` nebo `apply-outputs-<module>`, s retencí jeden den. Ruleset plan publikuje oddělený `<module>.rulesets.json`. Plan, proměnné a state se nenahrávají. Chybějící artifact nebo selhání runneru zastaví větev.
 
-Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFORMED`. Pro autorizovaný běh vyžaduje úspěch všech vybraných planů včetně rulesetů; chybějící job zastaví stale workflow. Teprve na `main` následuje jediné schválení platformním týmem v `approve-apply`. Apply joby poté běží ve svých environmentech; `enterprise-baseline-apply` navíc vyžaduje security tým. Pravidla environmentů nastaví bootstrap v [#11](https://github.com/msucharda/devsecops-platform/issues/11); jejich kontrakt popisuje [šablona](templates/instance/README.md).
+Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFORMED`. Pro autorizovaný běh vyžaduje úspěch všech vybraných planů včetně rulesetů; chybějící job zastaví stale workflow. Teprve na `main`, mimo schedule, následuje jediné schválení platformním týmem v `approve-apply`. Apply joby poté běží ve svých environmentech; `enterprise-baseline-apply` navíc vyžaduje security tým. Pravidla environmentů nastaví `tools/Invoke-GitHubBootstrap.ps1`; [runbook](docs/bootstrap.md#github-část-bootstrapu) popisuje přípravu, ověření Apps, OIDC vazby a rotaci klíčů. Kontrakt environmentů popisuje [šablona](templates/instance/README.md).
 
 **Současný rozsah:** produkční adresáře obsahují jen specifikace, bez manifestů. Produkční šablona proto obsahuje autorizaci, validaci, výběr a reportování prázdného grafu. Úplný plan/apply graf včetně `enterprise-baseline` ověřuje fixture workflow. Šablona očekává release v `platform/`; CODEOWNERS určuje platformní tým a bootstrap nahradí jeho ukázkový slug. První cloudový běh a dostupnost API na GHE.com ověří [#12](https://github.com/msucharda/devsecops-platform/issues/12).
 

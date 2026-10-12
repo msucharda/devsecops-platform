@@ -1,10 +1,12 @@
-# Lokální bootstrap Azure
+# Lokální bootstrap Azure a GitHubu
 
 `tools/Invoke-Bootstrap.ps1` vytvoří state backend a identity vybraných modulů včetně jejich předpokladů. Spouští ho člen týmu Platform team (platformní tým) z vendorovaného release. Nástroj nevyžaduje PAT, nemění konfiguraci instance a nevytváří prostředky GitHubu.
 
+Navazující `tools/Invoke-GitHubBootstrap.ps1` vytvoří organizaci platformy, repozitář instance, týmy, environmenty a federated credentials. Ověří enterprise-owned Apps a vloží jejich klíče do environment secrets. Oba skripty běží lokálně; běžná workflow pak používají jen installation tokeny Apps a Azure OIDC.
+
 ## Konfigurace a přihlášení
 
-Instance repository (repozitář instance) je repozitář v organizaci platformy s vendorovaným release v `platform/`, souborem `instance.yaml` a workflow nasazení. Vytvoří ho GitHub část bootstrapu v #11. Lokální bootstrap Azure proto poprvé běží dřív, než repozitář instance existuje.
+Instance repository (repozitář instance) je repozitář v organizaci platformy s vendorovaným release v `platform/`, souborem `instance.yaml` a workflow nasazení. Vytvoří ho GitHub část bootstrapu. Lokální bootstrap Azure proto poprvé běží dřív, než repozitář instance existuje.
 
 Platform team (platformní tým) zapíše skutečné identifikátory do `instance.yaml` v repozitáři instance. Dokud repozitář instance neexistuje, leží konfigurace mimo checkout zdrojového repozitáře. Pro referenční instanci ji vygeneruje průvodce `tools/Start-InstanceSetup.ps1` v kroku B1 [runbooku referenční instance](reference-instance.md). Hodnoty a jejich původ uvádí stejný krok. Pro jinou instanci platformní tým zkopíruje šablonu `templates/instance/instance.yaml` mimo checkout a vyplní kopii. Zdrojový repozitář nesmí obsahovat data instance, například ID tenantu, ID subscriptions nebo název enterprise (ADR 0012). Šablona proto zůstává s nulovými identifikátory. Formát všech položek popisuje [README](../README.md#instance-configuration-konfigurace-instance).
 
@@ -99,7 +101,7 @@ $bootstrap | ConvertTo-Json -Depth 10
 
 Dokud repozitář instance neexistuje, spusť ze zdrojového repozitáře `.\tools\Invoke-Bootstrap.ps1` a v `-InstancePath` uveď cestu ke kopii konfigurace mimo checkout. Parametr `-ModulesPath` může určit jiný adresář manifestů.
 
-Výsledek obsahuje `TenantId`, `SubscriptionId`, `ResourceGroupName`, `StorageAccountName`, `OidcModeVerified`, `Modules` a `HasChanges`. Každý modul má `Name`, `ContainerName` a záznamy `Plan` a `Apply` s `ResourceId`, `PrincipalId` a `ClientId`. Výstup neobsahuje tokeny. Navazující bootstrap GitHubu z #11 použije tyto identity pro federated credentials environmentů.
+Výsledek obsahuje `TenantId`, `SubscriptionId`, `ResourceGroupName`, `StorageAccountName`, `OidcModeVerified`, `Modules` a `HasChanges`. Každý modul má `Name`, `ContainerName` a záznamy `Plan` a `Apply` s `ResourceId`, `PrincipalId` a `ClientId`. Výstup neobsahuje tokeny. Navazující bootstrap GitHubu použije tyto identity pro federated credentials environmentů.
 
 Runner modulu používá stejný název kontejneru a key `terraform.tfstate`. Název backendu mu můžeš předat přímo:
 
@@ -108,7 +110,89 @@ $env:PLATFORM_STATE_STORAGE_ACCOUNT = $bootstrap.StorageAccountName
 $env:PLATFORM_STATE_RESOURCE_GROUP = $bootstrap.ResourceGroupName
 ```
 
-Přihlášení runneru přes OIDC a chráněné environmenty dodá #11. Lokální bootstrap nevytváří federated credentials ani workflow a sám moduly nenasazuje.
+Azure část bootstrapu nevytváří federated credentials ani workflow. GitHub část je vytvoří podle následujícího postupu; sama moduly nenasazuje.
+
+## GitHub část bootstrapu
+
+Platform team (platformní tým) musí použít schválený Release (release). `-ReleasePath` určuje jeho rozbalený adresář a `-ReleaseVersion` verzi SemVer bez prefixu `v`. Skript musí pocházet ze stejného release. Pro Git checkout musí `HEAD` odpovídat tagu `v<verze>` a checkout nesmí mít změněné ani nesledované soubory. U rozbaleného archivu člověk předem ověří původ a attestaci podle procesu release; samotný parametr verze není důkaz původu. Skript ověří shodu vygenerovaného workflow s manifesty a zapíše SHA-256 každého vendorovaného souboru do `.platform-bootstrap.json`.
+
+OAuth login potřebuje scopes `admin:enterprise`, `admin:org`, `repo` a `workflow`. Člověk je schválí při přihlášení; skript je sám nerozšiřuje. Azure login musí umožnit číst identity a vytvářet federated credentials na identitách z výstupu Azure bootstrapu.
+
+```powershell
+gh auth login --hostname example.ghe.com --web --scopes admin:enterprise,admin:org,repo,workflow
+$azure = .\tools\Invoke-Bootstrap.ps1 -InstancePath $cfg
+$arguments = @{
+    InstancePath = $cfg
+    AzureBootstrap = $azure
+    ReleasePath = (Get-Location).Path
+    ReleaseVersion = '<schvalena-verze>'
+    InventoryPath = '<pracovni-adresar>\bootstrap-resources.json'
+}
+.\tools\Invoke-GitHubBootstrap.ps1 @arguments -ResourcesOnly
+```
+
+`-AzureBootstrap` přijme objekt skriptu nebo JSON načtený přes `ConvertFrom-Json -AsHashtable`. Skript porovná tenant, subscription, názvy prostředků, resource IDs, client IDs a skutečné ownership tags identit.
+
+### Příprava registrace Apps
+
+`-ResourcesOnly` vytvoří `{name}-platform`, soukromý repozitář `instance`, týmy `platform` a `security`, environmenty a OIDC vazby. Spouštějící managed user musí být enterprise owner; bootstrap ho přidá do obou týmů. Toto členství nahradí propojení se skupinami Entra ID v `emu-identity`.
+
+Repozitář zatím obsahuje jen inicializační commit GitHubu, bez workflow instance, a má vypnuté Actions. Výsledek má `CredentialsConfigured: false`; příprava není dokončený bootstrap. V této fázi může chybět alias App u vybraného modulu. Plná validace a dokončení ho vyžadují. Po vzniku organizace může GitHub vyžadovat nové SSO přihlášení a obnovení `gh auth login`; skript vrátí chybu a další běh pokračuje se stejným inventory.
+
+Platformní tým potom v **Enterprise settings → GitHub Apps** ručně registruje Apps a nainstaluje je do přesně deklarovaných organizací:
+
+| App | Oprávnění a rozsah |
+|---|---|
+| Autorizační App | Jen `members: read`, pouze organizace platformy, žádné repozitáře. Samostatná identita; nesmí ji sdílet modul. |
+| App fáze modulu | Přesně `permissions` a `resources` manifestu a aliasu v `instance.yaml`. Plan a apply používají odlišné identity. |
+| App ruleset planu | Jen `organization_administration: write`, přesně cílové organizace. Oddělená od běžného planu i apply. |
+
+Vlož metadata do `githubApps` a vazby do `credentials` v pracovní kopii konfigurace. Autorizační alias, například `authorization`, patří také do `githubApps`; skriptu ho předáš přes `-AuthorizationApp`. Privátní klíče a jejich lokální manifest **nesmějí** ležet v release ani ve zdrojovém repozitáři.
+
+Lokální `keys.json` obsahuje položku pro každý používaný alias. `createdAt` musí odpovídat skutečnému vytvoření klíče, nikoli dni spuštění bootstrapu:
+
+```json
+{
+  "authorization": {
+    "privateKeyPath": "C:\\instance-work\\keys\\authorization.pem",
+    "owner": "platform",
+    "createdAt": "2026-10-12T08:00:00Z",
+    "rotateBy": "2027-01-10T08:00:00Z"
+  }
+}
+```
+
+### Ověření credentials a dokončení
+
+```powershell
+.\tools\Invoke-GitHubBootstrap.ps1 @arguments `
+    -AuthorizationApp authorization `
+    -AppKeysPath '<pracovni-adresar>\keys.json'
+```
+
+Před vložením prvního klíče skript pomocí stejného token issueru jako workflow ověří enterprise vlastníka, skutečná oprávnění celé App, všechny instalace, jejich aktivní stav a přesný rozsah repozitářů. Pro každou instalaci vydá zkušební installation token a odvolá ho. Ruleset credential navíc ověří seznam organizačních rulesetů a úplné bypass konfigurace existujících rulesetů. Neexistující ruleset nenahradí důkazem o dostupnosti detailového API; tento případ musí pokrýt referenční test s vytvořeným rulesetem.
+
+Po ověření všech Apps skript vytvoří jeden commit se šablonou, konečnou konfigurací a přesnou kopií release v `platform/`. Vlastníkem v CODEOWNERS je `@{name}-platform/platform`. Ruleset chrání `main` před přímými změnami, force push a smazáním, bez bypass aktérů. Vyžaduje platformní CODEOWNER review. Pro `instance.yaml`, `platform/**` a `.github/**` navíc vyžaduje review security týmu. Pole API `required_reviewers` je beta; pokud ho GHE.com nepodporuje nebo nepotvrdí požadovaný stav, bootstrap skončí chybou a Actions nezapne. CODEOWNERS ani schválení apply tento požadavek nenahrazují.
+
+`gh secret set --no-store` zašifruje klíč pomocí libsodium; plaintext dostane jen přes stdin. Bootstrap uloží šifrovanou hodnotu jako environment secret `PLATFORM_APP_PRIVATE_KEY`. Odmítne stejnojmenný repository nebo organization secret, aby environment bez klíče nemohl zdědit širší credential. Environment variables obsahují App metadata, veřejný fingerprint klíče, identitu Azure a adresu backendu podle [kontraktu šablony](../templates/instance/README.md).
+
+Teprve po dokončení skript zapne Actions a vrátí `CredentialsConfigured: true`. `Repository`, `ReleaseVersion`, `InventoryPath` a `HasChanges` neobsahují credentials. První plan spusť ručně z chráněné `main`; zapnutí Actions zpětně nespustí push workflow inicializačního commitu.
+
+### Environmenty, noční plan a teardown
+
+Bootstrap omezí každý environment na větev `main`. `pull_request_target` používá base ref `main`; kontrola autora PR zůstává v trusted autorizačním jobu. Běžný plan, ruleset plan a jejich varianty `<environment>-drift` nemají reviewery. Schedule spouští plan denně v **02:17 UTC**, s oddělenými environmenty běžného a ruleset planu; nikdy neotevře apply gate. Reportování drift issues patří do #21.
+
+Plan identita má federated credentials jen pro plan environmenty daného modulu včetně ruleset planu a nočních variant. Apply identita má právě vazbu na apply environment modulu. Issuer pro GHE.com je `https://token.actions.<githubHost>`, audience `api://AzureADTokenExchange` a subject `repo:<organizace>/instance:environment:<environment>`. Neočekávaná existující federated credential zastaví skript; bootstrap ji automaticky neodstraní.
+
+`approve-apply` vyžaduje platformní tým. Apply modulu `enterprise-baseline` navíc vyžaduje security tým. GitHub v jednom environmentu vyžaduje schválení pouze jednoho z uvedených reviewerů. Teardown proto používá dva navazující gate environmenty: `approve-teardown-platform` vyžaduje platformní tým a `teardown` security tým. Oba nemají secrets, variables ani federated credentials. Workflow odstranění z #22 musí druhý gate spustit až po úspěchu prvního a credentials odstranitelských jobů čerpat mimo oba gate environmenty.
+
+### Opakování, evidence a rotace
+
+Bootstrap zachová `bootstrap-resources.json` mimo source release. Inventory eviduje prostředky, deklarované a ověřené Apps, instalace, veřejné fingerprinty, vlastníka, termíny rotace a povinnost odstranění. Neobsahuje tokeny ani privátní klíče. Soubor musíš zachovat i při přerušení a předat procesu lokálního odstranění z #22. Ručně registrované Apps jsou prostředky bootstrapu, nikoli zachovávané enterprise předpoklady.
+
+Opakovaný běh se stejným release, konfigurací a klíči neprovádí zápisy prostředků a vrátí `HasChanges: false`. Zkušební installation tokeny znovu vydá a odvolá; nejde o změnu nasazených prostředků. Chybějící cloudové oprávnění, nepodporované API nebo jiné oprávnění App skončí explicitní chybou. Skript nemá PAT fallback, rozšíření oprávnění ani automatický rollback. Po chybě oprav příčinu a spusť stejný příkaz se stejným inventory. Po inicializaci nesmí bootstrap přepsat konfiguraci nebo release na `main`; další obsahové změny vyžadují PR.
+
+**Vlastník rotace je platformní tým.** `rotateBy` musí ležet nejpozději 90 dní po `createdAt` a nesmí být v minulosti. Nezměněnému klíči nesmíš posunout evidované datum vytvoření ani termín rotace. Při podezření na kompromitaci tým rotuje klíč okamžitě. Nejdřív vytvoří nový klíč stejné App, upraví lokální manifest a znovu spustí bootstrap. Pak v každém dotčeném environmentu ověří skutečné vydání tokenu workflow a teprve potom starý klíč odvolá v enterprise App settings. Inventory uchová starý fingerprint s `revocationRequired: true`; po ručním odvolání tým eviduje datum a nastaví příznak na `false`. Běžná workflow vydávají hodinové installation tokeny bez člověka.
 
 ## Prostředky a oprávnění
 
@@ -152,3 +236,4 @@ Postup krok za krokem včetně důvodů popisuje [Příprava a akceptace referen
 - [EMU OIDC provisioning](https://learn.microsoft.com/en-us/entra/identity/saas-apps/github-enterprise-managed-user-oidc-provisioning-tutorial) a [synchronization API](https://learn.microsoft.com/en-us/graph/api/resources/synchronization-overview).
 - [Storage account REST API](https://learn.microsoft.com/en-us/rest/api/storagerp/storage-accounts/create?view=rest-storagerp-2023-05-01) a [role assignments](https://learn.microsoft.com/en-us/rest/api/authorization/role-assignments/list-for-subscription?view=rest-authorization-2022-04-01).
 - [Management groups: Entities List](https://learn.microsoft.com/en-us/rest/api/managementgroups/entities/list?view=rest-managementgroups-2020-05-01).
+- [Environment secrets](https://docs.github.com/en/rest/actions/secrets), [environment variables](https://docs.github.com/en/rest/actions/variables), [repository rulesets](https://docs.github.com/en/rest/repos/rules) a [odlišnosti GHE.com včetně OIDC issueru](https://docs.github.com/en/enterprise-cloud@latest/admin/data-residency/feature-overview-for-github-enterprise-cloud-with-data-residency).

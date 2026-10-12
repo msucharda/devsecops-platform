@@ -197,7 +197,8 @@ function Get-PlatformInstance {
     [OutputType([System.Collections.IDictionary])]
     param(
         [Parameter(Mandatory)][string] $Path,
-        [Parameter(Mandatory)][System.Collections.IDictionary] $Modules
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Modules,
+        [switch] $AllowUnboundApps
     )
 
     $instance = Get-PlatformYaml -Path $Path
@@ -309,21 +310,28 @@ function Get-PlatformInstance {
             $binding = $instance['credentials'][$name][$phase]
             $bindingPath = "$.credentials.$name.$phase"
             $environment = $binding['environment']
-            if ($environment -in @('approve-apply', 'pr-authorization')) {
+            if ($environment -in @('approve-apply', 'pr-authorization', 'approve-teardown-platform', 'teardown')) {
                 throw "Invalid instance configuration '$Path': $bindingPath.environment is reserved for a workflow gate."
             }
             $explicit = $name -cin $configuredModules
-            if ($environmentBindings.ContainsKey($environment)) {
-                $previous = $environmentBindings[$environment]
-                $invalidPath = if ($explicit -or -not $previous['explicit']) { $bindingPath } else { $previous['path'] }
-                throw "Invalid instance configuration '$Path': $invalidPath.environment shares an environment with another module or phase."
+            $environmentNames = @($environment)
+            if ($phase -ne 'apply') { $environmentNames += "$environment-drift" }
+            foreach ($environmentName in $environmentNames) {
+                if ($environmentName.Length -gt 255) {
+                    throw "Invalid instance configuration '$Path': $bindingPath.environment exceeds 255 characters including the drift suffix."
+                }
+                if ($environmentBindings.ContainsKey($environmentName)) {
+                    $previous = $environmentBindings[$environmentName]
+                    $invalidPath = if ($explicit -or -not $previous['explicit']) { $bindingPath } else { $previous['path'] }
+                    throw "Invalid instance configuration '$Path': $invalidPath.environment shares an environment with another module or phase."
+                }
+                $environmentBindings[$environmentName] = @{ path = $bindingPath; explicit = $explicit }
             }
-            $environmentBindings[$environment] = @{ path = $bindingPath; explicit = $explicit }
             $declaration = $Modules[$name].permissions.githubApp[$phase]
             if ($phase -eq 'rulesetPlan' -and -not $declaration) {
                 throw "Invalid instance configuration '$Path': $bindingPath requires a declared ruleset exception."
             }
-            if ($declaration -and $name -cin $selected -and -not $binding.Contains('githubApp')) {
+            if ($declaration -and $name -cin $selected -and -not $binding.Contains('githubApp') -and -not $AllowUnboundApps) {
                 throw "Invalid instance configuration '$Path': $bindingPath.githubApp is required by the module manifest."
             }
             if ($binding.Contains('githubApp')) {

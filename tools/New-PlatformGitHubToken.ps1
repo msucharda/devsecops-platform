@@ -6,6 +6,9 @@ param(
     [string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
     [switch] $Authorization,
+    [System.Collections.IDictionary] $BootstrapApp,
+    [string] $PrivateKey = $env:PLATFORM_APP_PRIVATE_KEY,
+    [switch] $ValidateOnly,
     [string] $EnvironmentPath = $env:GITHUB_ENV,
     [string] $ApiUrl = $env:GITHUB_API_URL
 )
@@ -31,6 +34,8 @@ function Invoke-GitHubAppRequest {
             Accept = 'application/vnd.github+json'
             'X-GitHub-Api-Version' = '2026-03-10'
         }
+        MaximumRedirection = 0
+        TimeoutSec = 60
     }
     if ($Body) {
         $arguments.Body = ConvertTo-Json -InputObject $Body -Depth 100 -Compress
@@ -68,7 +73,11 @@ function Assert-AppPermission {
     }
 }
 
-if ($Authorization) {
+if ($BootstrapApp) {
+    if (-not $ValidateOnly) { throw '-BootstrapApp is only supported with -ValidateOnly.' }
+    $expected = $BootstrapApp
+}
+elseif ($Authorization) {
     $repository = $env:GITHUB_REPOSITORY.Split('/')
     if ($repository.Count -ne 2) { throw 'Authorization requires the instance repository owner/name.' }
     $expected = @{
@@ -103,9 +112,9 @@ else {
         throw 'Protected environment App identity differs from the instance credential binding.'
     }
 }
-if (-not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https' -or -not $EnvironmentPath -or
+if (-not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https' -or (-not $ValidateOnly -and -not $EnvironmentPath) -or
     $expected['appId'] -cnotmatch '^[1-9][0-9]*$' -or $expected['installationId'] -cnotmatch '^[1-9][0-9]*$' -or
-    -not $expected['enterprise'] -or -not $env:PLATFORM_APP_PRIVATE_KEY) {
+    -not $expected['enterprise'] -or -not $PrivateKey) {
     throw 'GitHub App token issuance requires HTTPS API URL, environment output, enterprise ownership, App/installation IDs and the phase private key. PAT fallback is not supported.'
 }
 if (($Authorization -or $Phase -eq 'plan') -and 'write' -cin @($expected['permissions'].PSBase.Values)) {
@@ -118,7 +127,7 @@ $payload = ConvertTo-JwtSegment ([Text.Encoding]::UTF8.GetBytes(
 $unsigned = "$header.$payload"
 $rsa = [Security.Cryptography.RSA]::Create()
 try {
-    $rsa.ImportFromPem($env:PLATFORM_APP_PRIVATE_KEY)
+    $rsa.ImportFromPem($PrivateKey)
     $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($unsigned),
         [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)
 }
@@ -126,7 +135,7 @@ finally {
     $rsa.Dispose()
 }
 $jwt = "$unsigned.$(ConvertTo-JwtSegment $signature)"
-Write-Information "::add-mask::$jwt" -InformationAction Continue
+if (-not $ValidateOnly) { Write-Information "::add-mask::$jwt" -InformationAction Continue }
 $tokens = @{}
 try {
     $app = Invoke-GitHubAppRequest -Path '/app' -Token $jwt
@@ -163,7 +172,7 @@ try {
             -Token $jwt -Body @{ permissions = $expected['permissions'] }
         if (-not $issued['token']) { throw "GitHub did not issue an installation token for '$organization'." }
         $tokens[$organization] = $issued['token']
-        Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue
+        if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }
         Assert-AppPermission -Actual $issued['permissions']
         if ($selected -or $Authorization) {
             $actualRepositories = [Collections.Generic.List[string]]::new()
@@ -181,6 +190,26 @@ try {
                 throw "Actual App repository access for '$organization' differs from the declared resources."
             }
         }
+        if ($ValidateOnly -and $Phase -eq 'rulesetPlan') {
+            $page = 1
+            do {
+                $rules = @(Invoke-GitHubAppRequest -Path "/orgs/$organization/rulesets?includes_parents=true&per_page=100&page=$page" -Token $issued['token'])
+                foreach ($rule in $rules) {
+                    $detail = Invoke-GitHubAppRequest -Path "/orgs/$organization/rulesets/$($rule['id'])" -Token $issued['token']
+                    if (-not $detail.Contains('bypass_actors') -or $detail['bypass_actors'] -isnot [Collections.IList]) {
+                        throw "Ruleset API for '$organization' did not expose the complete bypass configuration."
+                    }
+                }
+                $page++
+            } while ($rules.Count -eq 100)
+        }
+    }
+    if ($ValidateOnly) {
+        foreach ($token in $tokens.PSBase.Values) {
+            $null = Invoke-GitHubAppRequest -Path '/installation/token' -Method DELETE -Token $token
+        }
+        $tokens.Clear()
+        return [pscustomobject]@{ AppId = $expected['appId']; Installations = @($installations | ForEach-Object { [string] $_['id'] }); Verified = $true }
     }
     $json = ConvertTo-Json -InputObject $tokens -Depth 100 -Compress
     $content = "PLATFORM_GITHUB_TOKENS=$json`nTF_VAR_github_tokens=$json`n"

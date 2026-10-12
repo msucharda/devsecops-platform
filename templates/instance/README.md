@@ -13,8 +13,10 @@ Změnu App oprávnění musí navíc schválit security tým podle ADR 0016. Boo
 | `pr-authorization` | Bez schválení. Pouze samostatná enterprise-owned App s `members: read`, instalovaná jen v organizaci platformy, bez přístupu k repozitářům. Nikdy App klíč modulu ani Azure identita. |
 | `<module>-plan` | Bez schválení. Vlastní read-only Azure/Microsoft Graph identita a případně read-only enterprise-owned App. |
 | `<module>-ruleset-plan` | Bez schválení. Vlastní App s právě `organization_administration: write` pro cílové organizace a identita pro čtení state modulu. Žádný běžný plan tento klíč nedostane. |
+| `<plan-environment>-drift`, `<ruleset-plan-environment>-drift` | Noční varianty bez schválení, jen z `main`. Zachovají oddělené App klíče; používají plan identitu stejného modulu. |
 | `approve-apply` | Jedno schválení platformním týmem pro celý běh. Žádné secrets. |
 | `<module>-apply` | Vlastní apply identity a App. Po společném gate bez dalšího schválení, kromě `enterprise-baseline-apply`, který vyžaduje security tým. |
+| `approve-teardown-platform`, `teardown` | Navazující schválení platformním a potom security týmem. Žádné secrets, variables ani OIDC vazby. Workflow odstranění dodá #22. |
 
 Explicitní názvy z `credentials` nahrazují výchozí názvy environmentů. Každý environment patří jen jednomu modulu a fázi. Bootstrap musí všechny environmenty omezit na deployment ref `main`, protože `pull_request_target` používá base ref. Nesmí přidat další schválení k PR planu ani ruleset planu. Doporučené pravidlo zabrání obejití schválení administrátorem.
 
@@ -24,6 +26,7 @@ Bootstrap nastaví tyto environment variables:
 |---|---|
 | `PLATFORM_TEAM_SLUG` | `pr-authorization`; GitHub team slug, nikoli UPN z konfigurace. |
 | `PLATFORM_APP_ID`, `PLATFORM_APP_INSTALLATION_ID`, `PLATFORM_APP_ENTERPRISE` | Autorizační environment a každá fáze s App. Hodnoty modulů musí odpovídat aliasu v `instance.yaml`. |
+| `PLATFORM_APP_KEY_FINGERPRINT` | Environment s App; veřejný fingerprint umožní idempotentní vložení a rotaci klíče. |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | Každá fáze modulu; federated credential odpovídá jeho environmentu. |
 | `PLATFORM_STATE_STORAGE_ACCOUNT`, `PLATFORM_STATE_RESOURCE_GROUP` | Každá fáze modulu. |
 
@@ -41,4 +44,4 @@ Joby předávají jen necitlivé výstupy přímých předpokladů přes artifac
 
 Workflow používá SHA-pinované upstream akce, dokud import release nepřepíše `uses:` na schválené kopie z organizace akcí. Běží na GitHub-hosted runnerech. Dostupnost enterprise-owned Apps, API a oprávnění na konkrétní instanci GHE.com musí být potvrzená před nasazením. Selhání skončí chybou, nikdy PAT fallbackem nebo širšími plan oprávněními.
 
-Pravidla environmentů implementuje bootstrap v [msucharda/devsecops-platform#11](https://github.com/msucharda/devsecops-platform/issues/11). První cloudový běh a skutečné čtení ruleset bypassu ověří [msucharda/devsecops-platform#12](https://github.com/msucharda/devsecops-platform/issues/12); offline fixture toto ověření nenahrazuje.
+Pravidla environmentů implementuje `tools/Invoke-GitHubBootstrap.ps1`; postup a rotaci klíčů popisuje [runbook bootstrapu](../../docs/bootstrap.md#github-část-bootstrapu). Schedule spouští oddělené plan joby denně v 02:17 UTC, bez apply. První cloudový běh a skutečné čtení ruleset bypassu ověří [msucharda/devsecops-platform#12](https://github.com/msucharda/devsecops-platform/issues/12); offline fixture toto ověření nenahrazuje.

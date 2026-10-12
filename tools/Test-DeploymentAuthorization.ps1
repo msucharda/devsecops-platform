@@ -20,7 +20,7 @@ $allowed = $false
 $eligible = $false
 $revision = $Sha
 $reason = 'Only protected main or an authorized platform-team pull request can receive credentials.'
-if ($EventName -in @('push', 'workflow_dispatch')) {
+if ($EventName -in @('push', 'workflow_dispatch', 'schedule')) {
     if ($Ref -cne 'refs/heads/main' -or $Sha -cnotmatch '^[a-f0-9]{40}$') {
         throw 'Deployment must run from the protected main branch at an immutable commit.'
     }

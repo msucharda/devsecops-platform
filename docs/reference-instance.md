@@ -1142,6 +1142,25 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
 
 **Úklid:** Repozitáře `dependabot-probe-a`, `dependabot-probe-b` a `dependabot-probe-c` zaniknou se smazáním organizace ve fázi D.
 
+## Akceptace GitHub části bootstrapu (#11)
+
+Platform team (platformní tým) provede [GitHub část bootstrapu](bootstrap.md#github-část-bootstrapu) ze schváleného release, po úklidu testovacích organizací a Apps z fáze C. Výstup Azure části musí odpovídat skutečným manifestům release, nikoli identitám fixture modulů z fáze B. Dokud release nebo manifesty potřebných modulů neexistují, tuto akceptaci nelze označit za dokončenou.
+
+Před uzavřením #11 ověř na skutečné GHE.com instanci:
+
+| Kontrola | Požadovaný výsledek |
+|---|---|
+| Příprava a opakování | `-ResourcesOnly` připraví organizaci, repozitář a týmy s vypnutými Actions. Přerušení další běh dokončí se stejným inventory. Druhý dokončený běh vrátí `HasChanges: false`. |
+| Vendoring a review | Repozitář obsahuje přesný release a konečnou konfiguraci. Přímý push do `main` neprojde. PR měnící App oprávnění neprojde bez platformního CODEOWNER a security review. GHE.com skutečně vynucuje beta `required_reviewers`, ne jen vrací přijatý request. |
+| Enterprise-owned Apps | Autorizační App nemá přístup k repozitářům. Klíče běžného planu nemohou vydat write token. Běžný plan, apply a ruleset plan používají oddělené App identity a deklarované instalace. Zkušební tokeny po ověření již neplatí. |
+| API rulesetů | Ruleset credential načte existující organizační ruleset včetně neprázdné bypass konfigurace. Nedostupný endpoint zastaví bootstrap bez PAT nebo rozšíření oprávnění. |
+| Environmenty | PR plan platformního autora nečeká na review. `approve-apply` vyžaduje platformní tým a apply `enterprise-baseline` ještě security tým. Noční běžný a ruleset plan používají odlišné environmenty bez reviewerů, jen z `main`. |
+| Azure OIDC | Plan se přihlásí jen ze svých plan a drift environmentů. Apply se přihlásí jen ze svého apply environmentu. Jiný modul, fáze nebo gate environment nemá odpovídající subject. |
+| Teardown | `approve-teardown-platform` a `teardown` nemají secrets, variables ani federated credentials. V #22 musí druhý gate záviset na prvním; uvedení dvou reviewerů v jediném environmentu by obě schválení nevynutilo. |
+| Rotace | Platformní tým eviduje termín nejvýše 90 dní po vytvoření klíče. Nový klíč funguje ve všech dotčených environment jobech před odvoláním starého. Inventory eviduje odvolání a odstranění ručně založených Apps. |
+
+Výsledek včetně data a konkrétních neprovedených kontrol zapiš do #11. Neuváděj enterprise slug, identifikátory tenantu, subscriptions, Apps, instalací ani obsah credentials. Offline testy ani odkazy na veřejnou dokumentaci nenahrazují toto ověření.
+
 ## Fáze D: akceptace přírůstku 1
 
 **Proč:** #23 ověří celý přírůstek 1 na referenční instanci: nasazení release candidate, noční plan bez driftu, teardown a nové nasazení. Kritérium #23 vyžaduje před nasazením enterprise bez organizací a Apps z ověřování.

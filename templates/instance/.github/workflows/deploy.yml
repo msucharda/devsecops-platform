@@ -7,6 +7,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * *'
 permissions:
   contents: read
 concurrency:
@@ -131,7 +133,7 @@ jobs:
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && github.event_name != 'schedule' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:
