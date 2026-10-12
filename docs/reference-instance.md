@@ -1171,7 +1171,7 @@ Klíče ponecháš v externím pracovním adresáři. U každého klíče zadá�
 | G10 | Úspěšný skutečný `schedule` běh stejné revize v 02:17 UTC. Musí běžet plan a ruleset probe, nikoli apply. Ruční dispatch nestačí. |
 | G11 | Tvoje důkazy o review, PR původu, odmítnuté jiné větvi, obnovení po přerušení a rotaci klíče. |
 
-GitHub může scheduled run spustit později než v uvedený čas. Pokud G10 chybí, další kroky mohou získat důkazy, ale `AcceptancePassed` zůstane `false`. Průvodce stažené důkazy porovná s run ID, attempt, revizí a fingerprinty aktuálních klíčů. Samotný zelený job nestačí.
+GitHub může scheduled run spustit později než v uvedený čas. Pokud G10 chybí, další kroky mohou získat důkazy, ale `AcceptancePassed` zůstane `false`. Průvodce stažené důkazy porovná s run ID, attempt, revizí a fingerprinty aktuálních klíčů. Každé stažení ukládá zvlášť; validované výsledky nahradí až po ověření všech požadovaných artefaktů. Chyba stažení ani vypršení sedmidenní retence nesmaže předchozí lokální důkazy, ale nedokončí nové ověření. Samotný zelený job nestačí.
 
 Pro test rotace nejdřív vytvoř nový klíč jedné acceptance App. Zachovej starý klíč a nahraď její PEM v `$work\github-acceptance\keys\probe-<alias>.pem`. Spusť stejný příkaz; průvodce vyžádá skutečné datum, nahraje nový klíč a ověří nový běh. **Teprve potom** odvolej starý klíč v enterprise App settings. G11 se ptá na odvolání každého konkrétního App ID a fingerprintu. Nezaznamená hromadné odvolání na základě obecného potvrzení.
 

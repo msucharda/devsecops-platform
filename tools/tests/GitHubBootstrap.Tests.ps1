@@ -140,6 +140,11 @@ Describe 'GitHub bootstrap public interface' {
                     head_sha = 'commit-sha'; head_branch = 'main'; run_attempt = 1
                     status = 'completed'; conclusion = 'success'; event = 'workflow_dispatch'
                 }
+                if ($cloud.loseDispatchResponse) {
+                    $cloud.loseDispatchResponse = $false
+                    $cloud.dispatchRecovery = $true
+                    return [pscustomobject]@{ StatusCode = 503; Content = '{"message":"Dispatch accepted, response interrupted."}' }
+                }
             }
             elseif ($path -like '*/actions/workflows/bootstrap-acceptance.yml/runs' -and $Uri.Query -like '*event=schedule*') {
                 $reply = @{ workflow_runs = @($cloud.scheduledRuns) }
@@ -617,7 +622,7 @@ Describe 'GitHub bootstrap public interface' {
         ConvertTo-Json (@{} + $azure + @{ HasChanges = $false }) -Depth 30 | Set-Content $azureResult
         # Substitute the Azure provisioning command; the GitHub bootstrap and wizard run unchanged.
         Set-Content (Join-Path $release 'tools/Invoke-Bootstrap.ps1') @"
-param([string] `$InstancePath, [string] `$ModulesPath)
+param([string] `$InstancePath, [string] `$ModulesPath, [switch] `$AllowUnboundApps)
 Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHashtable
 "@
         $registration = @{}
@@ -643,6 +648,10 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         }
         $cloud.resources['/repos/demo-platform/instance/actions/workflows/bootstrap-acceptance.yml/runs'] = @{ workflow_runs = @() }
         $cloud.scheduledRuns = @()
+        $cloud.loseDispatchResponse = $true
+        $cloud.dispatchRecovery = $false
+        $cloud.retryUsed = $false
+        $cloud.failDownload = $false
         Import-Module (Join-Path $sourceRoot 'tools/InstanceSetup.psm1') -Force
         Mock Invoke-WebRequest -ModuleName InstanceSetup $cloudTransport
         Mock Invoke-RestMethod -ModuleName InstanceSetup $appTransport
@@ -653,7 +662,10 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         Mock Write-Host -ModuleName InstanceSetup {}
         Mock Read-Host -ModuleName InstanceSetup {
             if ($Prompt -like 'Actual creation*') { return [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString('o') }
-            if ($Prompt -like 'What next*') { return 's' }
+            if ($Prompt -like 'What next*') {
+                if ($cloud.dispatchRecovery -and -not $cloud.retryUsed) { $cloud.retryUsed = $true; return 'r' }
+                return 's'
+            }
             if ($Prompt -like 'Local evidence*') { return 'https://example.ghe.com/demo-platform/instance/pull/9 observed the specified check' }
             return 'y'
         }
@@ -661,6 +673,7 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
             $global:LASTEXITCODE = 0
             if ($args[0] -eq 'secret') { return 'encrypted-key' }
             if ($args[0] -eq 'run') {
+                if ($cloud.failDownload) { $global:LASTEXITCODE = 1; return }
                 $target = $args[[Array]::IndexOf($args, '--dir') + 1]
                 $runId = [string] $args[2]
                 $manifest = Get-Content (Join-Path $casePath 'github-acceptance/keys.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -721,5 +734,15 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         $record = Get-Content (Join-Path $casePath 'github-acceptance/bootstrap-resources.json') -Raw | ConvertFrom-Json -AsHashtable
         $record.apps.reader.previousKeys[0].revocationRequired | Should -BeFalse
         $record.apps.reader.previousKeys[0].revokedAt | Should -Not -BeNullOrEmpty
+
+        $proofPath = Join-Path $casePath 'github-acceptance/evidence/90-1/bootstrap-acceptance-plan/result.json'
+        $retainedProof = Get-Content $proofPath -Raw
+        $cloud.failDownload = $true
+        $unavailable = & (Join-Path $sourceRoot 'tools/Start-InstanceSetup.ps1') -WorkPath $casePath -GitHubAcceptance `
+            -ReleasePath $release -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
+        ($unavailable.Stages | Where-Object Id -eq 'acceptance-workflow').Status | Should -Be 'Error'
+        $unavailable.AcceptancePassed | Should -BeFalse
+        Test-Path $proofPath | Should -BeTrue
+        (Get-Content $proofPath -Raw) | Should -Be $retainedProof
     }
 }

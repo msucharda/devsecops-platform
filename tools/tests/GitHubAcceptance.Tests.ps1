@@ -6,10 +6,18 @@ BeforeAll {
 
 Describe 'GitHub acceptance through the public setup wizard' {
     BeforeEach {
+        $savedTokens = @{}
+        foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
+            $savedTokens[$name] = [Environment]::GetEnvironmentVariable($name)
+            [Environment]::SetEnvironmentVariable($name, $null)
+        }
         $work = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         Mock Write-Host -ModuleName InstanceSetup {}
         Mock Read-Host -ModuleName InstanceSetup { 's' }
         Mock Invoke-WebRequest -ModuleName InstanceSetup { throw 'No cloud request is authorized.' }
+    }
+    AfterEach {
+        foreach ($name in $savedTokens.Keys) { [Environment]::SetEnvironmentVariable($name, $savedTokens[$name]) }
     }
 
     It 'does not accept or provision an instance without the verified issue ten inputs' {
@@ -42,9 +50,19 @@ Describe 'GitHub acceptance through the public setup wizard' {
         }
         Mock Read-Host -ModuleName InstanceSetup {
             if ($Prompt -like 'Approve*acceptance*') { return 'y' }
-            if ($Prompt -like 'Create or reconcile Azure*') { return 'n' }
+            if ($Prompt -like 'Create or reconcile Azure*') { return $(if ($runAzurePreparation) { 'y' } else { 'n' }) }
             return 's'
         }
+        $runAzurePreparation = $false
+
+        $staging = Join-Path $work 'github-acceptance/release-preparing'
+        $null = New-Item -ItemType Directory -Path $staging -Force
+        $unapproved = Join-Path $staging 'unapproved.txt'
+        Set-Content $unapproved 'not part of the approved source'
+        $blocked = & $wizard -WorkPath $work -GitHubAcceptance -ReleasePath $source -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
+        ($blocked.Stages | Where-Object Id -eq 'acceptance-release').Status | Should -Be 'Error'
+        ($blocked.Stages | Where-Object Id -eq 'acceptance-azure').Status | Should -Be 'Skipped'
+        Remove-Item -LiteralPath $unapproved
 
         $result = & $wizard -WorkPath $work -GitHubAcceptance -ReleasePath $source -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
 
@@ -61,10 +79,23 @@ Describe 'GitHub acceptance through the public setup wizard' {
         Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 0 -Exactly
         Test-Path (Join-Path $work 'github-acceptance/keys.json') | Should -BeFalse
 
+        $runAzurePreparation = $true
+        Mock gh -ModuleName InstanceSetup { $global:LASTEXITCODE = 0; 'gho_test' }
+        Mock az -ModuleName InstanceSetup {
+            $global:LASTEXITCODE = 0
+            '{"tenant":"11111111-1111-1111-1111-111111111111","accessToken":"test-azure"}'
+        }
+        Mock Start-Sleep -ModuleName InstanceSetup {}
+        Mock Invoke-WebRequest -ModuleName InstanceSetup { throw 'Injected API stop after provisional configuration validation' }
+        $prepared = & $wizard -WorkPath $work -GitHubAcceptance -ReleasePath $source -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
+        ($prepared.Stages | Where-Object Id -eq 'acceptance-azure').Detail |
+            Should -Match 'Injected API stop after provisional configuration validation'
+        Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 1 -Exactly
+
         Add-Content (Join-Path $work 'github-acceptance/release/tools/Invoke-Bootstrap.ps1') '# changed after approval'
         $resumed = & $wizard -WorkPath $work -GitHubAcceptance -ReleasePath $source -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
         ($resumed.Stages | Where-Object Id -eq 'acceptance-release').Status | Should -Be 'Error'
         ($resumed.Stages | Where-Object Id -eq 'acceptance-azure').Status | Should -Be 'Skipped'
-        Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 0 -Exactly
+        Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 1 -Exactly
     }
 }

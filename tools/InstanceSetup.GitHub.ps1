@@ -24,7 +24,7 @@ function Invoke-StepAcceptanceAzure {
         Exit-SetupStage -Status Missing -Message 'Azure provisioning was declined. No Azure resources were changed.'
     }
     $Setup.Acceptance['azure'] = & (Join-Path $Setup.Acceptance['releasePath'] 'tools/Invoke-Bootstrap.ps1') `
-        -InstancePath $Setup.InstancePath -ModulesPath $Setup.ModulesPath
+        -InstancePath $Setup.InstancePath -ModulesPath $Setup.ModulesPath -AllowUnboundApps
     Write-SetupAcceptanceJson -Path (Join-Path $Setup.Acceptance['directory'] 'azure-bootstrap.json') -Value $Setup.Acceptance['azure']
     return 'Azure bootstrap completed for the acceptance manifests.'
 }
@@ -241,16 +241,14 @@ function Test-SetupAcceptanceRunEvidence {
 
     $directory = Join-Path $Setup.Acceptance['directory'] "evidence/$($Run['id'])-$($Run['run_attempt'])"
     $keys = Get-Content (Join-Path $Setup.Acceptance['directory'] 'keys.json') -Raw | ConvertFrom-Json -AsHashtable
-    $null = [IO.Directory]::CreateDirectory($directory)
-    foreach ($phase in $Phases) {
-        $path = Join-Path $directory "bootstrap-acceptance-$phase/result.json"
-        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
-    }
+    $download = Join-Path $directory "downloads/$([guid]::NewGuid().ToString('N'))"
+    $null = [IO.Directory]::CreateDirectory($download)
     & gh run download $Run['id'] --repo "https://$($Setup.Settings['githubHost'])/$($Setup.Acceptance['repository'])" `
-        --pattern 'bootstrap-acceptance-*' --dir $directory
+        --pattern 'bootstrap-acceptance-*' --dir $download
     if ($LASTEXITCODE -ne 0) { throw 'Downloading acceptance evidence failed; successful job status alone is not proof.' }
+    $records = @{}
     foreach ($phase in $Phases) {
-        $path = Join-Path $directory "bootstrap-acceptance-$phase/result.json"
+        $path = Join-Path $download "bootstrap-acceptance-$phase/result.json"
         if (-not (Test-Path $path)) { throw "The run has no evidence for $phase." }
         $record = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable
         if ($record['version'] -ne 1 -or $record['passed'] -isnot [bool] -or -not $record['passed'] -or $record['phase'] -cne $phase -or
@@ -271,6 +269,12 @@ function Test-SetupAcceptanceRunEvidence {
         foreach ($check in $required) {
             if ($record['checks'][$check] -isnot [bool] -or -not $record['checks'][$check]) { throw "The $phase evidence did not verify $check." }
         }
+        $records[$phase] = $record
+    }
+    foreach ($phase in $Phases) {
+        $folder = Join-Path $directory "bootstrap-acceptance-$phase"
+        $null = [IO.Directory]::CreateDirectory($folder)
+        Write-SetupAcceptanceJson -Path (Join-Path $folder 'result.json') -Value $records[$phase]
     }
 }
 
@@ -497,6 +501,17 @@ function Invoke-StepAcceptanceRelease {
         & (Join-Path $preparing 'tools/Generate-DeploymentWorkflow.ps1') -ModulesPath (Join-Path $preparing 'modules') `
             -OutputPath (Join-Path $preparing 'templates/instance/.github/workflows/deploy.yml')
         $files = Get-SetupAcceptanceFileHash -Path $preparing
+        $expectedFiles = @{} + $hashes
+        foreach ($file in Get-ChildItem -LiteralPath (Join-Path $source 'tools/acceptance/github/modules') -Recurse -File) {
+            $relative = Join-Path 'modules' ([IO.Path]::GetRelativePath((Join-Path $source 'tools/acceptance/github/modules'), $file.FullName))
+            $expectedFiles[$relative] = (Get-FileHash -LiteralPath $file.FullName).Hash
+        }
+        $expectedFiles[(Join-Path 'templates' 'instance/.github/workflows/bootstrap-acceptance.yml')] = (Get-FileHash $workflow).Hash
+        $deploymentPath = Join-Path 'templates' 'instance/.github/workflows/deploy.yml'
+        $expectedFiles[$deploymentPath] = $files[$deploymentPath]
+        if ((ConvertTo-PlatformCanonicalJson $files) -cne (ConvertTo-PlatformCanonicalJson $expectedFiles)) {
+            throw 'Preparation contains files outside the approved source and probe contracts. Inspect release-preparing before retrying.'
+        }
         $state['candidateFiles'] = $files
         Write-SetupAcceptanceJson -Path (Join-Path $preparing 'bootstrap-acceptance.json') -Value @{
             kind = 'github-bootstrap-acceptance'; version = $version; sourceHash = $digest; files = $files
@@ -506,7 +521,11 @@ function Invoke-StepAcceptanceRelease {
     }
     else {
         $marker = Get-Content (Join-Path $destination 'bootstrap-acceptance.json') -Raw | ConvertFrom-Json -AsHashtable
-        if ($marker['sourceHash'] -cne $digest -or $marker['version'] -cne $version) { throw 'The prepared acceptance release differs from the approved candidate.' }
+        if ($marker['kind'] -cne 'github-bootstrap-acceptance' -or $marker['sourceHash'] -cne $digest -or
+            $marker['version'] -cne $version -or
+            (ConvertTo-PlatformCanonicalJson $marker['files']) -cne (ConvertTo-PlatformCanonicalJson $state['candidateFiles'])) {
+            throw 'The prepared acceptance release differs from the approved candidate.'
+        }
     }
     $actualFiles = ConvertTo-PlatformCanonicalJson (Get-SetupAcceptanceFileHash -Path $destination)
     if (-not $state['candidateFiles'] -or $actualFiles -cne (ConvertTo-PlatformCanonicalJson $state['candidateFiles'])) {

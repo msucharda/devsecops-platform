@@ -4,6 +4,7 @@
 param(
     [Parameter(Mandatory)][string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
+    [Parameter(DontShow)][switch] $AllowUnboundApps,
     # Read-only report used by Test-BootstrapPrerequisites.ps1; stops before the first change.
     [Parameter(DontShow)][switch] $Preflight
 )
@@ -326,7 +327,7 @@ function Get-BootstrapIdentityGrant {
 }
 
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
-$instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
+$instance = Get-PlatformInstance -Path $InstancePath -Modules $modules -AllowUnboundApps:$AllowUnboundApps
 if (-not $Preflight) {
     Assert-PlatformManualPrerequisite -Instance $instance
 }
