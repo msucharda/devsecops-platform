@@ -1,6 +1,6 @@
 # Příprava a akceptace referenční instance
 
-Začni průvodcem `tools/Start-InstanceSetup.ps1`. Průvodce provede fázi A a krok B1. Ověří tenant Entra ID, Azure a enterprise na GHE.com. Změny, které mají API, provede po tvém potvrzení. Kroky bez API popíše cestou v UI. Na výsledku fáze A stojí bootstrap ve fázi B i ověření chování API ve fázi C. Fáze D je akceptace přírůstku 1 po implementaci zbylých issues.
+Začni průvodcem `tools/Start-InstanceSetup.ps1`. Bez přepínačů provede fázi A a krok B1. Ověří tenant Entra ID, Azure a enterprise na GHE.com. Změny, které mají API, provede po tvém potvrzení. Kroky bez API popíše cestou v UI. Přepínač `-GitHubAcceptance` naváže na ověřené vstupy z #10 a provede [akceptaci GitHub části bootstrapu](#akceptace-github-části-bootstrapu-11). Fáze D je akceptace přírůstku 1 po implementaci zbylých issues.
 
 Postup provádí člen Platform team (platformní tým) na Reference instance (referenční instanci). Kroky mají tyto části:
 
@@ -1144,16 +1144,57 @@ Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhaj
 
 ## Akceptace GitHub části bootstrapu (#11)
 
-Platform team (platformní tým) provede [GitHub část bootstrapu](bootstrap.md#github-část-bootstrapu) ze schváleného release, po úklidu testovacích organizací a Apps z fáze C. Výstup Azure části musí odpovídat skutečným manifestům release, nikoli identitám fixture modulů z fáze B. Dokud release nebo manifesty potřebných modulů neexistují, tuto akceptaci nelze označit za dokončenou.
+Akceptaci #11 proveď odděleně od nasazení produkčních modulů. Na #11 čeká #12, proto dokončený produkční `enterprise-baseline` nesmí být předpokladem akceptace bootstrapu. Průvodce použije schválený zdrojový kód a manifesty z `tools\acceptance\github\modules`: `bootstrap-probe` ověřuje izolaci state, `enterprise-baseline` deklaruje oddělené App credentials. Tyto manifesty neimplementují produkční moduly.
+
+Před spuštěním dokonči #10 a ukliď fixture prostředky podle fáze B a testovací organizace a Apps podle fáze C. Zachovej ověřený `$work\instance.yaml`. Přihlas se svým enterprise owner účtem přes `gh` a do správného tenantu přes `az`; PIM, MFA a rozšíření scopes potvrzuje člověk.
+
+```powershell
+.\tools\Start-InstanceSetup.ps1 -GitHubAcceptance `
+    -WorkPath $work `
+    -ReleasePath '<schvaleny-cisty-checkout-nebo-export>' `
+    -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
+```
+
+Průvodce musí běžet ze stejné verze zdrojového kódu jako `-ReleasePath`. Git checkout musí být čistý. U exportu předem ověř původ; verze ani SHA-256 samy původ nedokazují. Schvaluješ verzi kandidáta i SHA-256 zdroje. Kandidát není produkční Release (release). Průvodce jeho obsah zafixuje, při obnovení zkontroluje každý soubor a změnu kandidáta odmítne před provisioningem.
+
+Průvodce nemění původní konfiguraci z #10. Samostatně vygeneruje `$work\github-acceptance\instance.yaml`, spustí Azure bootstrap pro oba probe moduly a připraví GitHub prostředky s vypnutými Actions. Čtyři enterprise-owned Apps založíš v UI: `authorization` s `members: read` bez přístupu k repozitářům, `reader` s `organization_administration: read`, `writer` a `rulesets` s `organization_administration: write`. Poslední tři mají oddělené identity a instalace jen v organizaci platformy. Průvodce ověří vlastnictví, skutečná oprávnění a instalace.
+
+Klíče ponecháš v externím pracovním adresáři. U každého klíče zadáš skutečné datum vytvoření včetně časové zóny; průvodce nastaví rotaci nejpozději za 90 dní. Po souhlasu zveřejní kandidáta a konfiguraci, zapojí environment credentials a ověří opakovaný bootstrap s `HasChanges: false`. Produkční `deploy.yml` vypne **před** zapnutím Actions. Spouštět lze jen vyhrazené `bootstrap-acceptance.yml`.
+
+| Krok | Průvodce ověří nebo vyžádá |
+|---|---|
+| G1–G2 | Ověřené předpoklady #10, schválení a izolovanou kopii kandidáta. |
+| G3–G4 | Souhlas s Azure a GitHub provisioningem; výstup odpovídá probe manifestům, nikoli fixture identitám z #10. |
+| G5–G6 | Ruční registraci čtyř Apps a klíčů, ověření credentials, publikaci a ochranu `main`. |
+| G7–G8 | Opakování obou bootstrapů beze změn a čtení skutečné bypass konfigurace vypnutého organizačního rulesetu. |
+| G9 | Běh z konkrétní `main`: API čtení, OIDC identity a state izolaci, nesprávný subject odmítnutý jako `AADSTS700213`. Apply identita pouze čte; nejdřív schvaluje platformní tým, pak security tým. |
+| G10 | Úspěšný skutečný `schedule` běh stejné revize v 02:17 UTC. Musí běžet plan a ruleset probe, nikoli apply. Ruční dispatch nestačí. |
+| G11 | Tvoje důkazy o review, PR původu, odmítnuté jiné větvi, obnovení po přerušení a rotaci klíče. |
+
+GitHub může scheduled run spustit později než v uvedený čas. Pokud G10 chybí, další kroky mohou získat důkazy, ale `AcceptancePassed` zůstane `false`. Průvodce stažené důkazy porovná s run ID, attempt, revizí a fingerprinty aktuálních klíčů. Samotný zelený job nestačí.
+
+Pro test rotace nejdřív vytvoř nový klíč jedné acceptance App. Zachovej starý klíč a nahraď její PEM v `$work\github-acceptance\keys\probe-<alias>.pem`. Spusť stejný příkaz; průvodce vyžádá skutečné datum, nahraje nový klíč a ověří nový běh. **Teprve potom** odvolej starý klíč v enterprise App settings. G11 se ptá na odvolání každého konkrétního App ID a fingerprintu. Nezaznamená hromadné odvolání na základě obecného potvrzení.
+
+Po přerušení spusť stejný příkaz se stejným `$work`, zdrojem a verzí. Průvodce znovu ověří prostředky a zachová rozpracovaný workflow run i pod `-Reconfirm`. Po nejasném výsledku dispatch requestu nejdřív hledá jeho unikátní identifikátor. Další dispatch vyžaduje potvrzení, že předchozí běh neexistuje. Neúspěšný běh oprav a znovu spusť v GitHubu jako další attempt. Po běhu průvodce nabídne odebrání scopes, které sám dočasně přidal.
+
+| Soubor v `$work\github-acceptance` | Účel |
+|---|---|
+| `release\`, `instance.yaml`, `setup-state.json` | Zafixovaný kandidát, samostatná konfigurace a stav obnovení. Případné `release-preparing\` dokončí další běh. |
+| `keys\`, `keys.json` | Privátní klíče, skutečná data vytvoření a termíny rotace. Nesmějí do zdrojového repozitáře ani do issue. |
+| `azure-bootstrap.json`, `bootstrap-resources.json` | Výstupy a inventory včetně prostředků, Apps a historie klíčů pro pozdější odstranění. |
+| `evidence\<runId>-<attempt>\`, `acceptance.json` | Stažené důkazy a lokální výsledek včetně ručních potvrzení; obsahují data instance. |
+| `issue-11-summary.md` | Redigovaný návrh komentáře bez cloudových identifikátorů a credentials. Před zveřejněním ho zkontroluj. |
+
+Průvodce nic nemaže, neposílá komentář a neuzavírá #11. Ponechá i vypnutý probe ruleset v inventory. `AcceptancePassed: true` vyžaduje `Ok` všech 11 kroků; přeskočení, odmítnutí, chyba nebo chybějící noční běh akceptaci nedokončí. Před produkčním nasazením musíš probe konfiguraci nahradit schváleným release přes PR a ověřit skutečné API operace, drift a nasazení produkčních modulů.
 
 Před uzavřením #11 ověř na skutečné GHE.com instanci:
 
 | Kontrola | Požadovaný výsledek |
 |---|---|
 | Příprava a opakování | `-ResourcesOnly` připraví organizaci, repozitář a týmy s vypnutými Actions. Přerušení další běh dokončí se stejným inventory. Druhý dokončený běh vrátí `HasChanges: false`. |
-| Vendoring a review | Repozitář obsahuje přesný release a konečnou konfiguraci. Přímý push do `main` neprojde. PR měnící App oprávnění neprojde bez platformního CODEOWNER a security review. GHE.com skutečně vynucuje beta `required_reviewers`, ne jen vrací přijatý request. |
+| Vendoring a review | Repozitář obsahuje zafixovaný schválený acceptance kandidát a jeho konfiguraci. Přímý push do `main` neprojde. PR měnící App oprávnění neprojde bez platformního CODEOWNER a security review. GHE.com skutečně vynucuje beta `required_reviewers`, ne jen vrací přijatý request. |
 | Enterprise-owned Apps | Autorizační App nemá přístup k repozitářům. Klíče běžného planu nemohou vydat write token. Běžný plan, apply a ruleset plan používají oddělené App identity a deklarované instalace. Zkušební tokeny po ověření již neplatí. |
-| API modulů | Potvrzení `githubAppAvailabilityVerified` vychází z výsledků skutečných operací vybraných modulů a token issueru. Úspěšné čtení týmů, Actions permissions a code security configurations v bootstrapu nenahrazuje test custom patterns ani operací vytváření a změny prostředků. |
+| Rozsah API | #11 ověřuje credential kontrakty, token issuer a read-only probe API. Potvrzení produkčního `githubAppAvailabilityVerified` musí později vycházet ze skutečných operací produkčních modulů. Probe čtení nenahrazuje custom patterns ani vytváření a změny prostředků. |
 | API rulesetů | Ruleset credential načte existující organizační ruleset včetně neprázdné bypass konfigurace. Nedostupný endpoint zastaví bootstrap bez PAT nebo rozšíření oprávnění. |
 | Environmenty | PR plan platformního autora nečeká na review. `approve-apply` vyžaduje platformní tým a apply `enterprise-baseline` ještě security tým. Noční běžný a ruleset plan používají odlišné environmenty bez reviewerů, jen z `main`. |
 | Azure OIDC | Plan se přihlásí jen ze svých plan a drift environmentů. Apply se přihlásí jen ze svého apply environmentu. Jiný modul, fáze nebo gate environment nemá odpovídající subject. |

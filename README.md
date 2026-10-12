@@ -189,7 +189,7 @@ Job stáhne výstupy každého přímého předpokladu ze stejné fáze. Publiku
 
 Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFORMED`. Pro autorizovaný běh vyžaduje úspěch všech vybraných planů včetně rulesetů; chybějící job zastaví stale workflow. Teprve na `main`, mimo schedule, následuje jediné schválení platformním týmem v `approve-apply`. Apply joby poté běží ve svých environmentech; `enterprise-baseline-apply` navíc vyžaduje security tým. Pravidla environmentů nastaví `tools/Invoke-GitHubBootstrap.ps1`; [runbook](docs/bootstrap.md#github-část-bootstrapu) popisuje přípravu, ověření Apps, OIDC vazby a rotaci klíčů. Kontrakt environmentů popisuje [šablona](templates/instance/README.md).
 
-**Současný rozsah:** produkční adresáře obsahují jen specifikace, bez manifestů. Produkční šablona proto obsahuje autorizaci, validaci, výběr a reportování prázdného grafu. Úplný plan/apply graf včetně `enterprise-baseline` ověřuje fixture workflow. Šablona očekává release v `platform/`; CODEOWNERS určuje platformní tým a bootstrap nahradí jeho ukázkový slug. První cloudový běh a dostupnost API na GHE.com ověří [#12](https://github.com/msucharda/devsecops-platform/issues/12).
+**Současný rozsah:** produkční adresáře obsahují jen specifikace, bez manifestů. Produkční šablona proto obsahuje autorizaci, validaci, výběr a reportování prázdného grafu. Úplný plan/apply graf včetně `enterprise-baseline` ověřuje fixture workflow. Šablona očekává release v `platform/`; CODEOWNERS určuje platformní tým a bootstrap nahradí jeho ukázkový slug. Průvodce `tools\Start-InstanceSetup.ps1 -GitHubAcceptance` ověří bootstrap, read-only API a OIDC na izolovaném kandidátovi pro [#11](https://github.com/msucharda/devsecops-platform/issues/11). Produkční API operace a nasazení `enterprise-baseline` ověří [#12](https://github.com/msucharda/devsecops-platform/issues/12); probe manifesty je nenahrazují.
 
 ### Runner modulu
 
@@ -342,4 +342,4 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - Každý release candidate se nasadí celý na referenční instanci.
 - Akceptace ověří skutečný rozsah oprávnění každého jobu, úplné čtení bypass konfigurace, odmítnutí credentials pro neautorizované PR a zachování ručních enterprise předpokladů při teardownu.
 - Před každým minor release proběhne teardown referenční instance a její nové nasazení.
-- Kroky platformního týmu na referenční instanci popisuje [Příprava a akceptace referenční instance](docs/reference-instance.md). Ruční předpoklady připraví a ověří průvodce `tools/Start-InstanceSetup.ps1`.
+- Kroky platformního týmu na referenční instanci popisuje [Příprava a akceptace referenční instance](docs/reference-instance.md). Ruční předpoklady připraví a ověří průvodce `tools/Start-InstanceSetup.ps1`; přepínač `-GitHubAcceptance` přidá akceptaci bootstrapu #11 s potvrzovanými cloudovými změnami a lokálními důkazy.

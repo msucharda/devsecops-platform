@@ -9,6 +9,7 @@ param(
     [Parameter(Mandatory)][string] $InventoryPath,
     [string] $AuthorizationApp,
     [string] $AppKeysPath,
+    [switch] $AcceptanceOnly,
     [switch] $ResourcesOnly
 )
 
@@ -21,6 +22,13 @@ if ($AzureBootstrap -is [pscustomobject]) {
 }
 if ($AzureBootstrap -isnot [Collections.IDictionary]) { throw '-AzureBootstrap requires the Azure bootstrap result object.' }
 $ReleasePath = (Resolve-Path -LiteralPath $ReleasePath).Path
+$acceptanceMarker = Join-Path $ReleasePath 'bootstrap-acceptance.json'
+if ((Test-Path -LiteralPath $acceptanceMarker) -ne [bool] $AcceptanceOnly) {
+    throw 'Acceptance candidates require -AcceptanceOnly; production releases must not use it.'
+}
+if ($AcceptanceOnly -and (Get-Content $acceptanceMarker -Raw | ConvertFrom-Json -AsHashtable)['kind'] -cne 'github-bootstrap-acceptance') {
+    throw 'The acceptance candidate marker is invalid.'
+}
 $modules = Get-PlatformModuleGraph -ModulesPath (Join-Path $ReleasePath 'modules')
 $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules -AllowUnboundApps:$ResourcesOnly
 Assert-PlatformManualPrerequisite -Instance $instance
@@ -732,6 +740,15 @@ if (-not $ResourcesOnly) {
         Initialize-GitHubBootstrapVariable -Environment $environment -Variables @{
             PLATFORM_APP_ID = $app['appId']; PLATFORM_APP_INSTALLATION_ID = $app['installationId']
             PLATFORM_APP_ENTERPRISE = $app['enterprise']; PLATFORM_APP_KEY_FINGERPRINT = $verified['fingerprint']
+        }
+    }
+    if ($AcceptanceOnly) {
+        $workflowPath = "/repos/$repository/actions/workflows/deploy.yml"
+        $workflow = Invoke-GitHubBootstrapApi -Path $workflowPath
+        if ($workflow['state'] -cne 'disabled_manually') {
+            $null = Invoke-GitHubBootstrapApi -Path "$workflowPath/disable" -Method PUT
+            $workflow = Invoke-GitHubBootstrapApi -Path $workflowPath
+            if ($workflow['state'] -cne 'disabled_manually') { throw 'The acceptance candidate must not run production deployment.' }
         }
     }
     $permissions = Invoke-GitHubBootstrapApi -Path "/repos/$repository/actions/permissions"

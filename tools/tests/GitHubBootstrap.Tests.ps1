@@ -90,7 +90,8 @@ Describe 'GitHub bootstrap public interface' {
             $global:LASTEXITCODE = 0
             '{"tenant":"11111111-1111-1111-1111-111111111111","accessToken":"azure-test"}'
         }
-        Mock Invoke-WebRequest {
+        $cloudTransport = {
+            param([uri] $Uri, [string] $Body, [string] $Method = 'GET', [hashtable] $Headers)
             $path = $Uri.AbsolutePath
             $data = if ($Body) { ConvertFrom-Json -InputObject $Body -AsHashtable } else { @{} }
             $status = 200
@@ -113,6 +114,35 @@ Describe 'GitHub bootstrap public interface' {
                         organizations = @{ nodes = @(@{ login = 'demo-platform' }); pageInfo = @{ hasNextPage = $false } }
                     } } }
                 }
+            }
+            elseif ($path -eq '/user') { $reply = @{ login = 'owner_example' } }
+            elseif ($path -eq '/app' -or $path -eq '/app/installations') {
+                $segment = $Headers.Authorization.Split(' ')[1].Split('.')[1].Replace('-', '+').Replace('_', '/')
+                $segment = $segment.PadRight($segment.Length + (4 - $segment.Length % 4) % 4, '=')
+                $appId = [string] ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($segment)) | ConvertFrom-Json -AsHashtable).iss
+                $appRecord = $cloud.apps[$appId]
+                if ($path -eq '/app') {
+                    $reply = @{ id = [int] $appId; slug = $appRecord.slug; owner = $cloud.appOwner; permissions = $appRecord.permissions }
+                }
+                else {
+                    $reply = @(@{ id = [int] $appRecord.installationId; account = @{ login = 'demo-platform' }; target_type = 'Organization'
+                        suspended_at = $null; permissions = $appRecord.permissions; repository_selection = $appRecord.selection })
+                }
+            }
+            elseif ($path -like '*/actions/workflows/bootstrap-acceptance.yml/dispatches') {
+                $runId = if ($cloud.ContainsKey('nextRun')) { $cloud.nextRun } else { 80 }
+                $cloud.nextRun = $runId + 10
+                $cloud.resources['/repos/demo-platform/instance/actions/workflows/bootstrap-acceptance.yml/runs'] = @{
+                    workflow_runs = @(@{ id = $runId; display_title = "Bootstrap acceptance $($data.inputs.evidence_id)" })
+                }
+                $cloud.resources["/repos/demo-platform/instance/actions/runs/$runId"] = @{
+                    id = $runId; display_title = "Bootstrap acceptance $($data.inputs.evidence_id)"
+                    head_sha = 'commit-sha'; head_branch = 'main'; run_attempt = 1
+                    status = 'completed'; conclusion = 'success'; event = 'workflow_dispatch'
+                }
+            }
+            elseif ($path -like '*/actions/workflows/bootstrap-acceptance.yml/runs' -and $Uri.Query -like '*event=schedule*') {
+                $reply = @{ workflow_runs = @($cloud.scheduledRuns) }
             }
             elseif ($path -eq '/orgs/demo-platform/repos' -and $Method -eq 'POST') {
                 $cloud.resources['/repos/demo-platform/instance'] = @{ id = 20; name = 'instance'; private = $true; default_branch = $cloud.defaultBranch; description = $data.description }
@@ -174,6 +204,10 @@ Describe 'GitHub bootstrap public interface' {
             }
             elseif ($path -like '*/secrets/PLATFORM_APP_PRIVATE_KEY' -and $Method -eq 'PUT') { $cloud.secrets[$path] = $data }
             elseif ($path -like '*/secrets/public-key') { $reply = @{ key_id = 'public-key-id'; key = 'public-key' } }
+            elseif ($path -like '*/actions/workflows/deploy.yml/disable' -and $Method -eq 'PUT') {
+                if (-not $cloud.commit) { throw 'The workflow cannot exist before repository contents are published.' }
+                $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'].state = 'disabled_manually'
+            }
             elseif ($path -like '*/rulesets' -and $Method -eq 'GET') {
                 $reply = @($cloud.resources.Keys | Where-Object { $_ -like "$path/*" } | ForEach-Object { $cloud.resources[$_] })
             }
@@ -208,9 +242,12 @@ Describe 'GitHub bootstrap public interface' {
                 else { $status = 404 }
             }
             else { $status = 404 }
-            [pscustomobject]@{ StatusCode = $status; Content = (ConvertTo-Json -InputObject $reply -Depth 100 -Compress) }
+            [pscustomobject]@{ StatusCode = $status; Content = (ConvertTo-Json -InputObject $reply -Depth 100 -Compress)
+                Headers = @{ 'X-OAuth-Scopes' = 'admin:enterprise,admin:org,repo,workflow' } }
         }
-        Mock Invoke-RestMethod {
+        Mock Invoke-WebRequest $cloudTransport
+        $appTransport = {
+            param([string] $Uri, [string] $Method = 'GET', [hashtable] $Headers)
             if ($Uri -like '*/installation/token' -and $Method -eq 'DELETE') { return }
             if ($Uri -like '*/installation/repositories`?*') { return @{ repositories = @() } }
             if ($Uri -like '*/orgs/demo-platform/teams`?*') { return ,@(@{ id = 30; slug = 'platform' }) }
@@ -228,7 +265,8 @@ Describe 'GitHub bootstrap public interface' {
             if ($cloud.apps.ContainsKey($appId)) {
                 $permissions = $cloud.apps[$appId].permissions
                 $installationId = [int] $cloud.apps[$appId].installationId
-                $selection = 'all'
+                $selection = $cloud.apps[$appId]['selection']
+                if (-not $selection) { $selection = 'all' }
             }
             if ($Uri -like '*/app') { return @{ id = [int] $appId; owner = $cloud.appOwner; permissions = $permissions } }
             if ($Uri -like '*/app/installations`?*') {
@@ -238,6 +276,7 @@ Describe 'GitHub bootstrap public interface' {
             if ($Uri -like '*/access_tokens') { return @{ token = 'installation-test'; permissions = $permissions } }
             throw "Unexpected App request: $Method $Uri"
         }
+        Mock Invoke-RestMethod $appTransport
     }
 
     AfterEach {
@@ -542,5 +581,145 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Count | Should -Be 0
         $cloud.resources.ContainsKey('/orgs/demo-platform/teams/platform/memberships/owner_example') | Should -BeFalse
         $cloud.resources.ContainsKey('/orgs/demo-platform/teams/security/memberships/owner_example') | Should -BeFalse
+    }
+
+    It 'disables production deployment before enabling an acceptance-only repository' {
+        @{ kind = 'github-bootstrap-acceptance' } | ConvertTo-Json | Set-Content (Join-Path $release 'bootstrap-acceptance.json')
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'] = @{ state = 'active' }
+        $arguments.ResourcesOnly = $false
+        $arguments.AcceptanceOnly = $true
+
+        $result = & $bootstrap @arguments
+
+        $result.CredentialsConfigured | Should -BeTrue
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'].state | Should -Be 'disabled_manually'
+        $paths = @($cloud.writes.path)
+        $disabled = [Array]::IndexOf($paths, '/repos/demo-platform/instance/actions/workflows/deploy.yml/disable')
+        $enabled = @($cloud.writes | Where-Object { $_.path -like '*/actions/permissions' -and $_.body.enabled })[0]
+        $disabled | Should -BeGreaterOrEqual 0
+        [Array]::IndexOf(@($cloud.writes), $enabled) | Should -BeGreaterThan $disabled
+    }
+
+    It 'drives the public acceptance wizard through publication and real-run evidence without accepting missing nightly or rotation checks' {
+        $sourceRoot = Split-Path $tools -Parent
+        Copy-Item (Join-Path $tools 'acceptance') -Destination (Join-Path $release 'tools') -Recurse
+        foreach ($name in @('bootstrap-probe', 'enterprise-baseline')) {
+            $module = @{ Name = $name }
+            foreach ($phase in @('plan', 'apply')) {
+                $module[$phase] = @{ ResourceId = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-bootstrap/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-demo-$name-$phase"
+                    ClientId = [guid]::NewGuid().ToString() }
+                $cloud.resources[$module[$phase].ResourceId] = @{ properties = @{ clientId = $module[$phase].ClientId }
+                    tags = @{ platformInstance = 'demo'; platformComponent = 'bootstrap'; platformModule = $name; platformPhase = $phase } }
+            }
+            $azure.Modules += $module
+        }
+        $azureResult = Join-Path $casePath 'azure-result.json'
+        ConvertTo-Json (@{} + $azure + @{ HasChanges = $false }) -Depth 30 | Set-Content $azureResult
+        # Substitute the Azure provisioning command; the GitHub bootstrap and wizard run unchanged.
+        Set-Content (Join-Path $release 'tools/Invoke-Bootstrap.ps1') @"
+param([string] `$InstancePath, [string] `$ModulesPath)
+Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHashtable
+"@
+        $registration = @{}
+        $keyFolder = Join-Path $casePath 'github-acceptance/keys'
+        $null = New-Item -ItemType Directory -Path $keyFolder -Force
+        $index = 101
+        foreach ($alias in @('authorization', 'reader', 'writer', 'rulesets')) {
+            $permission = if ($alias -eq 'authorization') { @{ members = 'read' } }
+            else { @{ organization_administration = $(if ($alias -eq 'reader') { 'read' } else { 'write' }) } }
+            $cloud.apps[[string] $index] = @{ installationId = [string] ($index + 100); permissions = $permission
+                slug = "demo-bootstrap-$alias"; selection = $(if ($alias -eq 'authorization') { 'selected' } else { 'all' }) }
+            $registration[$alias] = @{ "$($alias)AppId" = [string] $index }
+            $key = [Security.Cryptography.RSA]::Create(2048)
+            $key.ExportRSAPrivateKeyPem() | Set-Content (Join-Path $keyFolder "probe-$alias.pem")
+            $key.Dispose()
+            $index++
+        }
+        @{ acceptance = @{ apps = $registration }; confirmations = @{}; probe = @{} } |
+            ConvertTo-Json -Depth 20 | Set-Content (Join-Path $casePath 'github-acceptance/setup-state.json')
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'] = @{ state = 'active' }
+        $cloud.resources['/repos/demo-platform/instance/actions/runs/80'] = @{
+            id = 80; head_sha = 'commit-sha'; run_attempt = 1; status = 'completed'; conclusion = 'success'; event = 'workflow_dispatch'
+        }
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/bootstrap-acceptance.yml/runs'] = @{ workflow_runs = @() }
+        $cloud.scheduledRuns = @()
+        Import-Module (Join-Path $sourceRoot 'tools/InstanceSetup.psm1') -Force
+        Mock Invoke-WebRequest -ModuleName InstanceSetup $cloudTransport
+        Mock Invoke-RestMethod -ModuleName InstanceSetup $appTransport
+        Mock az -ModuleName InstanceSetup {
+            $global:LASTEXITCODE = 0
+            '{"tenant":"11111111-1111-1111-1111-111111111111","accessToken":"azure-test"}'
+        }
+        Mock Write-Host -ModuleName InstanceSetup {}
+        Mock Read-Host -ModuleName InstanceSetup {
+            if ($Prompt -like 'Actual creation*') { return [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString('o') }
+            if ($Prompt -like 'What next*') { return 's' }
+            if ($Prompt -like 'Local evidence*') { return 'https://example.ghe.com/demo-platform/instance/pull/9 observed the specified check' }
+            return 'y'
+        }
+        $ghTransport = {
+            $global:LASTEXITCODE = 0
+            if ($args[0] -eq 'secret') { return 'encrypted-key' }
+            if ($args[0] -eq 'run') {
+                $target = $args[[Array]::IndexOf($args, '--dir') + 1]
+                $runId = [string] $args[2]
+                $manifest = Get-Content (Join-Path $casePath 'github-acceptance/keys.json') -Raw | ConvertFrom-Json -AsHashtable
+                foreach ($phase in @('plan', 'rulesetPlan', 'wrongSubject', 'apply')) {
+                    $folder = Join-Path $target "bootstrap-acceptance-$phase"
+                    $null = New-Item -ItemType Directory -Path $folder -Force
+                    $checks = @{ organizationApisRead = $true; phaseIdentityVerified = $true; otherModuleStateDenied = $true
+                        rulesetBypassRead = $true; wrongSubjectRejected = $true }
+                    $alias = switch ($phase) { plan { 'reader' }; apply { 'writer' }; rulesetPlan { 'rulesets' }; default { 'authorization' } }
+                    @{ version = 1; phase = $phase; passed = $true; checks = $checks; revision = 'commit-sha'; runId = $runId
+                        runAttempt = '1'; keyFingerprint = $manifest[$alias].fingerprint
+                        authorizationFingerprint = $manifest.authorization.fingerprint } |
+                        ConvertTo-Json -Depth 10 | Set-Content (Join-Path $folder 'result.json')
+                }
+                return
+            }
+            'gho_test'
+        }
+        Mock gh $ghTransport
+        Mock gh -ModuleName InstanceSetup $ghTransport
+
+        $result = & (Join-Path $sourceRoot 'tools/Start-InstanceSetup.ps1') -WorkPath $casePath -GitHubAcceptance `
+            -ReleasePath $release -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
+
+        if (($result.Stages | Where-Object Id -eq 'acceptance-workflow').Status -ne 'Ok') {
+            Write-Information ($result.Stages | Format-Table Id, Status, Detail -Wrap | Out-String -Width 200) -InformationAction Continue
+        }
+        ($result.Stages | Where-Object Id -eq 'acceptance-workflow').Status | Should -Be 'Ok'
+        ($result.Stages | Where-Object Id -eq 'acceptance-repeat').Status | Should -Be 'Ok'
+        ($result.Stages | Where-Object Id -eq 'acceptance-nightly').Status | Should -Be 'Missing'
+        ($result.Stages | Where-Object Id -eq 'acceptance-witnesses').Status | Should -Not -Be 'Ok'
+        $result.AcceptancePassed | Should -BeFalse
+        (Get-Content $result.SummaryPath -Raw) | Should -Not -Match 'example.ghe.com|11111111|installation-test|demo-platform'
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'].state | Should -Be 'disabled_manually'
+
+        $resumed = & (Join-Path $sourceRoot 'tools/Start-InstanceSetup.ps1') -WorkPath $casePath -GitHubAcceptance `
+            -ReleasePath $release -ReleaseVersion '0.0.0-bootstrap.11' -Reconfirm -PassThru
+        ($resumed.Stages | Where-Object Id -eq 'acceptance-workflow').Status | Should -Be 'Ok'
+        @($cloud.writes | Where-Object path -like '*/dispatches').Count | Should -Be 1
+
+        $replacement = [Security.Cryptography.RSA]::Create(2048)
+        $replacement.ExportRSAPrivateKeyPem() | Set-Content (Join-Path $keyFolder 'probe-reader.pem')
+        $replacement.Dispose()
+        $cloud.scheduledRuns = @(@{ id = 85; head_sha = 'commit-sha'; head_branch = 'main'; run_attempt = 1
+            status = 'completed'; conclusion = 'success'; event = 'schedule'; created_at = [DateTimeOffset]::UtcNow.ToString('o') })
+        $cloud.resources['/repos/demo-platform/instance/actions/runs/85/attempts/1/jobs'] = @{ jobs = @(
+            @{ name = 'authorize'; conclusion = 'success' }, @{ name = 'probe-plan'; conclusion = 'success' }
+            @{ name = 'probe-rulesetPlan'; conclusion = 'success' }, @{ name = 'wrong_subject'; conclusion = 'success' }
+            @{ name = 'approve_apply'; conclusion = 'skipped' }, @{ name = 'apply-probe'; conclusion = 'skipped' }
+        ) }
+        $completed = & (Join-Path $sourceRoot 'tools/Start-InstanceSetup.ps1') -WorkPath $casePath -GitHubAcceptance `
+            -ReleasePath $release -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
+        if (-not $completed.AcceptancePassed) {
+            Write-Information ($completed.Stages | Format-Table Id, Status, Detail -Wrap | Out-String -Width 200) -InformationAction Continue
+        }
+        $completed.AcceptancePassed | Should -BeTrue
+        @($cloud.writes | Where-Object path -like '*/dispatches').Count | Should -Be 2
+        $record = Get-Content (Join-Path $casePath 'github-acceptance/bootstrap-resources.json') -Raw | ConvertFrom-Json -AsHashtable
+        $record.apps.reader.previousKeys[0].revocationRequired | Should -BeFalse
+        $record.apps.reader.previousKeys[0].revokedAt | Should -Not -BeNullOrEmpty
     }
 }

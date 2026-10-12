@@ -1,0 +1,25 @@
+name: enterprise-baseline
+description: Acceptance-only credential contract; not the production enterprise-baseline implementation.
+prerequisites: [bootstrap-probe]
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp:
+    plan:
+      permissions:
+        organization_administration: read
+      resources:
+        organizations: target_organizations
+    apply:
+      permissions:
+        organization_administration: write
+      resources:
+        organizations: target_organizations
+    rulesetPlan:
+      permissions:
+        organization_administration: write
+      resources:
+        organizations: target_organizations
+      purpose: organization-rulesets-full-read
+  adminPat: []

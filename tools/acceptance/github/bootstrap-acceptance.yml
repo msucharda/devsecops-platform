@@ -1,0 +1,204 @@
+name: Bootstrap acceptance
+run-name: Bootstrap acceptance ${{ inputs.evidence_id || github.event_name }}
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [plan, apply]
+        default: plan
+        required: true
+      evidence_id:
+        type: string
+        required: true
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  schedule:
+    - cron: '17 2 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: bootstrap-acceptance
+  cancel-in-progress: false
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    environment: pr-authorization
+    outputs:
+      allowed: ${{ steps.authorize.outputs.allowed }}
+      fingerprint: ${{ steps.app.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - name: Check origin before accessing any App key
+        id: preflight
+        shell: pwsh
+        run: ./platform/tools/Test-DeploymentAuthorization.ps1 -Preflight -GitHubOutputPath $env:GITHUB_OUTPUT
+      - if: steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true'
+        shell: pwsh
+        run: ./platform/tools/Install-ToolDependencies.ps1
+      - if: steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true'
+        id: app
+        shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+        run: |
+          ./platform/tools/New-PlatformGitHubToken.ps1 -Authorization
+          $key = [Security.Cryptography.RSA]::Create()
+          try {
+            $key.ImportFromPem($env:PLATFORM_APP_PRIVATE_KEY)
+            $fingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($key.ExportSubjectPublicKeyInfo())).ToLowerInvariant()
+            "fingerprint=$fingerprint" >> $env:GITHUB_OUTPUT
+          }
+          finally { $key.Dispose() }
+      - if: steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true'
+        id: authorize
+        shell: pwsh
+        env:
+          PLATFORM_TEAM_SLUG: ${{ vars.PLATFORM_TEAM_SLUG }}
+        run: ./platform/tools/Test-DeploymentAuthorization.ps1 -GitHubOutputPath $env:GITHUB_OUTPUT
+      - if: always() && env.PLATFORM_GITHUB_TOKENS != ''
+        shell: pwsh
+        run: ./platform/tools/Remove-PlatformGitHubToken.ps1
+  probe:
+    name: probe-${{ matrix.phase }}
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - phase: plan
+            environment: enterprise-baseline-plan
+          - phase: rulesetPlan
+            environment: enterprise-baseline-ruleset-plan
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'schedule' && format('{0}-drift', matrix.environment) || matrix.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      client: ${{ steps.identity.outputs.client }}
+      tenant: ${{ steps.identity.outputs.tenant }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - shell: pwsh
+        run: ./platform/tools/Install-ToolDependencies.ps1
+      - uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          ACCEPTANCE_PHASE: ${{ matrix.phase }}
+        run: ./platform/tools/New-PlatformGitHubToken.ps1 -Module enterprise-baseline -Phase $env:ACCEPTANCE_PHASE -InstancePath ./instance.yaml
+      - shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
+          ACCEPTANCE_PHASE: ${{ matrix.phase }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          AUTHORIZATION_KEY_FINGERPRINT: ${{ needs.authorize.outputs.fingerprint }}
+        run: ./platform/tools/Test-GitHubBootstrapAcceptance.ps1 -InstancePath ./instance.yaml -Phase $env:ACCEPTANCE_PHASE -ResultPath ./evidence/result.json
+      - id: identity
+        shell: pwsh
+        env:
+          CLIENT: ${{ vars.AZURE_CLIENT_ID }}
+          TENANT: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          "client=$env:CLIENT" >> $env:GITHUB_OUTPUT
+          "tenant=$env:TENANT" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bootstrap-acceptance-${{ matrix.phase }}
+          path: evidence/result.json
+          retention-days: 7
+      - if: always() && env.PLATFORM_GITHUB_TOKENS != ''
+        shell: pwsh
+        run: ./platform/tools/Remove-PlatformGitHubToken.ps1
+  wrong_subject:
+    needs: probe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - shell: pwsh
+        run: ./platform/tools/Install-ToolDependencies.ps1
+      - shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ needs.probe.outputs.client }}
+          AZURE_TENANT_ID: ${{ needs.probe.outputs.tenant }}
+        run: ./platform/tools/Test-GitHubBootstrapAcceptance.ps1 -InstancePath ./instance.yaml -Phase wrongSubject -ResultPath ./evidence/result.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bootstrap-acceptance-wrongSubject
+          path: evidence/result.json
+          retention-days: 7
+  approve_apply:
+    needs: [probe, wrong_subject]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'apply'
+    runs-on: ubuntu-latest
+    environment: approve-apply
+    steps:
+      - run: echo "Platform approval granted for read-only testing of the apply identity."
+  apply_probe:
+    name: apply-probe
+    needs: [authorize, approve_apply]
+    runs-on: ubuntu-latest
+    environment: enterprise-baseline-apply
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - shell: pwsh
+        run: ./platform/tools/Install-ToolDependencies.ps1
+      - uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+        run: ./platform/tools/New-PlatformGitHubToken.ps1 -Module enterprise-baseline -Phase apply -InstancePath ./instance.yaml
+      - shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          AUTHORIZATION_KEY_FINGERPRINT: ${{ needs.authorize.outputs.fingerprint }}
+        run: ./platform/tools/Test-GitHubBootstrapAcceptance.ps1 -InstancePath ./instance.yaml -Phase apply -ResultPath ./evidence/result.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bootstrap-acceptance-apply
+          path: evidence/result.json
+          retention-days: 7
+      - if: always() && env.PLATFORM_GITHUB_TOKENS != ''
+        shell: pwsh
+        run: ./platform/tools/Remove-PlatformGitHubToken.ps1

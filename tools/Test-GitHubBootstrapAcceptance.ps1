@@ -1,0 +1,113 @@
+#Requires -Version 7.4
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string] $InstancePath,
+    [Parameter(Mandatory)][ValidateSet('plan', 'apply', 'rulesetPlan', 'wrongSubject')][string] $Phase,
+    [string] $ApiUrl = $env:GITHUB_API_URL,
+    [Parameter(Mandatory)][string] $ResultPath
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
+$instance = Get-PlatformYaml -Path $InstancePath
+if (Test-Path -LiteralPath $ResultPath) { Remove-Item -LiteralPath $ResultPath }
+$organization = "$($instance['instance']['name'])-platform"
+$checks = [ordered]@{}
+$keyFingerprint = ''
+
+function Invoke-AcceptanceGitHubRequest {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Path)
+
+    try {
+        Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))$Path" -Headers @{
+            Authorization = "Bearer $token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10'
+        } -MaximumRedirection 0 -TimeoutSec 60
+    }
+    catch { throw "Acceptance API GET $Path failed. $($_.Exception.Message)" }
+}
+
+if ($Phase -eq 'wrongSubject') {
+    if (-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN -or
+        $env:AZURE_CLIENT_ID -notmatch '^[a-fA-F0-9-]{36}$' -or $env:AZURE_TENANT_ID -notmatch '^[a-fA-F0-9-]{36}$') {
+        throw 'The negative federation probe requires a GitHub OIDC request and the plan identity metadata.'
+    }
+    $address = [uri] $env:ACTIONS_ID_TOKEN_REQUEST_URL
+    if ($address.Scheme -cne 'https' -or -not $address.IsDefaultPort -or $address.UserInfo) { throw 'Untrusted GitHub OIDC request URL.' }
+    $separator = if ($address.Query) { '&' } else { '?' }
+    $oidc = Invoke-RestMethod -Uri "$address${separator}audience=api%3A%2F%2FAzureADTokenExchange" `
+        -Headers @{ Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" } -MaximumRedirection 0 -TimeoutSec 60
+    if (-not $oidc.value) { throw 'GitHub did not return an OIDC assertion.' }
+    Write-Information "::add-mask::$($oidc.value)" -InformationAction Continue
+    $response = Invoke-WebRequest -Uri "https://login.microsoftonline.com/$env:AZURE_TENANT_ID/oauth2/v2.0/token" `
+        -Method POST -ContentType 'application/x-www-form-urlencoded' -Body @{
+            client_id = $env:AZURE_CLIENT_ID; grant_type = 'client_credentials'; scope = 'https://management.azure.com/.default'
+            client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'; client_assertion = $oidc.value
+        } -SkipHttpErrorCheck -MaximumRedirection 0 -TimeoutSec 60
+    $errorBody = ConvertFrom-Json -InputObject $response.Content -AsHashtable
+    if ($response.StatusCode -ne 400 -or 700213 -notin $errorBody['error_codes']) {
+        throw 'The wrong-subject probe did not fail specifically with AADSTS700213. Do not treat a generic login failure as isolation proof.'
+    }
+    $checks['wrongSubjectRejected'] = $true
+}
+else {
+    if (-not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https') { throw 'Acceptance requires the HTTPS GHE.com API URL.' }
+    $tokens = ConvertFrom-Json -InputObject $env:PLATFORM_GITHUB_TOKENS -AsHashtable
+    $token = $tokens[$organization]
+    if (-not $token -or $tokens.Count -ne 1) { throw 'The acceptance token must be scoped only to the platform organization.' }
+    if ($Phase -eq 'rulesetPlan') {
+        $rules = @(Invoke-AcceptanceGitHubRequest -Path "/orgs/$organization/rulesets?includes_parents=false&per_page=100")
+        $probeRule = @($rules | Where-Object { $_.name -ceq 'bootstrap-acceptance-probe' })
+        if ($probeRule.Count -ne 1) { throw 'Create the disabled bootstrap-acceptance-probe organization ruleset before the ruleset test.' }
+        $detail = Invoke-AcceptanceGitHubRequest -Path "/orgs/$organization/rulesets/$($probeRule[0].id)"
+        if ($detail.enforcement -cne 'disabled' -or @($detail.bypass_actors | Where-Object { $_.actor_type -ceq 'OrganizationAdmin' }).Count -ne 1) {
+            throw 'The ruleset detail did not expose the expected nonempty probe bypass configuration.'
+        }
+        $checks['rulesetBypassRead'] = $true
+    }
+    else {
+        $policy = Invoke-AcceptanceGitHubRequest -Path "/orgs/$organization/actions/permissions"
+        if (-not $policy.enabled_repositories) { throw 'The Actions permissions API returned no organization policy.' }
+        $null = Invoke-AcceptanceGitHubRequest -Path "/orgs/$organization/code-security/configurations"
+        $null = Invoke-AcceptanceGitHubRequest -Path "/orgs/$organization/code-security/configurations/defaults"
+        $checks['organizationApisRead'] = $true
+    }
+    if (-not $env:AZURE_CLIENT_ID -or -not $env:PLATFORM_STATE_STORAGE_ACCOUNT) { throw 'The environment has no Azure phase identity or state backend metadata.' }
+    $text = & az account get-access-token --resource 'https://storage.azure.com/' --output json --only-show-errors 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw 'The environment identity could not issue an Azure Storage token.' }
+    $access = ConvertFrom-Json -InputObject $text -AsHashtable
+    $segment = $access['accessToken'].Split('.')[1].Replace('-', '+').Replace('_', '/')
+    $segment = $segment.PadRight($segment.Length + (4 - $segment.Length % 4) % 4, '=')
+    $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($segment)) | ConvertFrom-Json -AsHashtable
+    if ($claims['appid'] -cne $env:AZURE_CLIENT_ID -or $claims['tid'] -cne $instance['bootstrap']['tenantId']) {
+        throw 'Azure authenticated another client or tenant, not this protected phase identity.'
+    }
+    $null = & az storage blob list --account-name $env:PLATFORM_STATE_STORAGE_ACCOUNT --container-name enterprise-baseline `
+        --auth-mode login --output json --only-show-errors 2>&1
+    if ($LASTEXITCODE -ne 0) { throw 'The phase identity cannot read its own enterprise-baseline state container.' }
+    $denied = & az storage blob list --account-name $env:PLATFORM_STATE_STORAGE_ACCOUNT --container-name bootstrap-probe `
+        --auth-mode login --output json --only-show-errors 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $denied -notmatch 'AuthorizationPermissionMismatch|AuthorizationFailure') {
+        throw 'Another module state container was accessible or failed for a reason other than authorization.'
+    }
+    $checks['phaseIdentityVerified'] = $true
+    $checks['otherModuleStateDenied'] = $true
+    $key = [Security.Cryptography.RSA]::Create()
+    try {
+        $key.ImportFromPem($env:PLATFORM_APP_PRIVATE_KEY)
+        $keyFingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($key.ExportSubjectPublicKeyInfo())).ToLowerInvariant()
+    }
+    finally { $key.Dispose() }
+}
+$result = [ordered]@{
+    version = 1; phase = $Phase; passed = $true; checks = $checks
+    revision = $env:GITHUB_SHA; runId = $env:GITHUB_RUN_ID
+    runAttempt = $env:GITHUB_RUN_ATTEMPT; keyFingerprint = $keyFingerprint
+    authorizationFingerprint = $env:AUTHORIZATION_KEY_FINGERPRINT
+}
+$directory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($ResultPath))
+$null = [IO.Directory]::CreateDirectory($directory)
+[IO.File]::WriteAllText([IO.Path]::GetFullPath($ResultPath), (ConvertTo-Json $result -Depth 10) + "`n", [Text.UTF8Encoding]::new($false))
+[pscustomobject] $result

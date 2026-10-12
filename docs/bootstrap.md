@@ -114,6 +114,8 @@ Azure část bootstrapu nevytváří federated credentials ani workflow. GitHub 
 
 ## GitHub část bootstrapu
 
+Pro samostatnou akceptaci #11 použij `tools\Start-InstanceSetup.ps1 -GitHubAcceptance` podle [runbooku](reference-instance.md#akceptace-github-části-bootstrapu-11). Průvodce naváže na ověřené vstupy #10, připraví schválený izolovaný kandidát s probe manifesty a ponechá produkční `deploy.yml` vypnuté. Příznak `-AcceptanceOnly` smí `Invoke-GitHubBootstrap.ps1` použít jen s takto označeným kandidátem; běžný release ho odmítne. Bootstrap-only akceptace nesmí čekat na implementaci modulů blokovaných #11 a nenahrazuje jejich produkční API a deployment akceptaci.
+
 Platform team (platformní tým) musí použít schválený Release (release). `-ReleasePath` určuje jeho rozbalený adresář a `-ReleaseVersion` verzi SemVer bez prefixu `v`. Skript musí pocházet ze stejného release. Pro Git checkout musí `HEAD` odpovídat tagu `v<verze>` a checkout nesmí mít změněné ani nesledované soubory. U rozbaleného archivu člověk předem ověří původ a attestaci podle procesu release; samotný parametr verze není důkaz původu. Skript ověří shodu vygenerovaného workflow s manifesty a zapíše SHA-256 každého vendorovaného souboru do `.platform-bootstrap.json`.
 
 OAuth login potřebuje scopes `admin:enterprise`, `admin:org`, `repo` a `workflow`. Člověk je schválí při přihlášení; skript je sám nerozšiřuje. Azure login musí umožnit číst identity a vytvářet federated credentials na identitách z výstupu Azure bootstrapu.
