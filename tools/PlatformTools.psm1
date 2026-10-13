@@ -349,6 +349,10 @@ function Get-PlatformInstance {
                 }
                 if ($declaration -and $name -cin $selected) {
                     $resources = Get-PlatformAppScope -Instance $instance -Module $name -Declaration $declaration
+                    if (-not $resources.Contains('repositories') -and $identity['resources'].Contains('repositories') -and
+                        $identity['resources']['repositories'].Count -eq 0) {
+                        $resources['repositories'] = @{}
+                    }
                     if ((ConvertTo-PlatformCanonicalJson $resources) -cne (ConvertTo-PlatformCanonicalJson $identity['resources'])) {
                         throw "Invalid instance configuration '$Path': $bindingPath.githubApp resources differ from the module's target resources."
                     }

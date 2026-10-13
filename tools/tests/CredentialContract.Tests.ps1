@@ -46,6 +46,15 @@ Describe 'Phase-specific App credential contracts' {
         { & $validator -InstancePath $path -ModulesPath $fixtures } | Should -Throw '*resources differ*target resources*'
     }
 
+    It 'accepts an explicit empty repository scope for an organization-only App' {
+        foreach ($alias in @('reader', 'writer', 'rulesets')) {
+            $instance.githubApps[$alias].resources.repositories = @{}
+        }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+
+        { & $validator -InstancePath $path -ModulesPath $fixtures } | Should -Not -Throw
+    }
+
     It 'rejects write permission sharing between apply and the isolated ruleset plan even under different aliases' {
         $instance.githubApps.rulesets.appId = '102'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $path

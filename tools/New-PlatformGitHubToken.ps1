@@ -162,10 +162,12 @@ try {
             throw "App installation for '$organization' is not an active organization installation."
         }
         Assert-AppPermission -Actual $installation['permissions']
+        $repositoryResourcesDeclared = $expected['resources'].Contains('repositories')
         $repositories = $expected['resources']['repositories']
         $selected = $repositories -and $repositories.Contains($organization)
+        $noRepositoryAccess = $repositoryResourcesDeclared -and $repositories.Count -eq 0
         $selection = if ($selected) { 'selected' } else { 'all' }
-        if (-not $Authorization -and $installation['repository_selection'] -cne $selection) {
+        if (-not $Authorization -and -not $noRepositoryAccess -and $installation['repository_selection'] -cne $selection) {
             throw "Actual App repository scope for '$organization' differs from the declared scope."
         }
         $issued = Invoke-GitHubAppRequest -Path "/app/installations/$($installation['id'])/access_tokens" -Method POST `
@@ -174,7 +176,7 @@ try {
         $tokens[$organization] = $issued['token']
         if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }
         Assert-AppPermission -Actual $issued['permissions']
-        if ($selected -or $Authorization) {
+        if ($selected -or $Authorization -or $noRepositoryAccess) {
             $actualRepositories = [Collections.Generic.List[string]]::new()
             $page = 1
             do {
@@ -182,8 +184,9 @@ try {
                 foreach ($repository in $result['repositories']) { $actualRepositories.Add($repository['name']) }
                 $page++
             } while ($result['repositories'].Count -eq 100)
-            if ($Authorization -and $actualRepositories.Count -gt 0) {
-                throw "Authorization App for '$organization' must not have repository access."
+            if (($Authorization -or $noRepositoryAccess) -and $actualRepositories.Count -gt 0) {
+                $kind = if ($Authorization) { 'Authorization App' } else { 'Organization-only App' }
+                throw "$kind for '$organization' must not have repository access."
             }
             if ($selected -and (ConvertTo-PlatformCanonicalJson @($actualRepositories | Sort-Object -CaseSensitive)) -cne
                 (ConvertTo-PlatformCanonicalJson @($repositories[$organization] | Sort-Object -CaseSensitive))) {

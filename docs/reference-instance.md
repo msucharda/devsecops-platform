@@ -408,7 +408,7 @@ Pokud API vrátí HTTP 403 s textem `Resource protected by organization SAML enf
 
 - Otevře předvyplněný formulář registrace enterprise-owned App: název `<name>-probe-authorization`, neaktivní webhook a oprávnění Members: Read-only. Registrace App nemá API.
 - Najde privátní klíč v `$work\keys` nebo mezi soubory `*.private-key.pem` staženými do `Downloads` za posledních 24 hodin. Klíč přesune do `$work\keys\probe-authorization.pem`.
-- Ověří, že App vlastní enterprise a má přesně požadovaná oprávnění. Otevře stránku instalace do probe organizace. App A má jen Members: Read-only; instalační UI proto ukazuje **No repositories — This App does not require access to your repositories**. Repozitáře nevybírej a oprávnění nerozšiřuj.
+- Ověří, že App vlastní enterprise a má přesně požadovaná oprávnění. Otevře stránku instalace do probe organizace. Obě Apps mají jen organizační oprávnění; instalační UI proto ukazuje **No repositories — This App does not require access to your repositories**. Repozitáře nevybírej a oprávnění nerozšiřuj.
 - Spustí `tools/New-PlatformGitHubToken.ps1 -Authorization` stejně jako workflow `deploy.yml`.
 - Nástroj ověří instalaci jen v probe organizaci, přesná oprávnění a prázdný seznam repozitářů dostupných autorizačnímu tokenu.
 
@@ -422,7 +422,7 @@ Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tok
 
 **Průvodce: App B (organizační API)**
 
-- Otevře předvyplněný formulář registrace App `<name>-probe-admin` s oprávněními Administration: Read and write, Members: Read and write a Custom organization roles: Read-only. Klíč uloží jako `$work\keys\probe-admin.pem`. Ověří instalaci do všech repozitářů organizace.
+- Otevře předvyplněný formulář registrace App `<name>-probe-admin` s oprávněními Administration: Read and write, Members: Read and write a Custom organization roles: Read-only. Klíč uloží jako `$work\keys\probe-admin.pem`. Ověří instalaci bez přístupu k repozitářům.
 - Tokenem `organization_administration: read` přečte politiku akcí a code security configurations. Plan modulu `enterprise-baseline` je čte se stejným oprávněním.
 - Zaznamená výsledek seznamu rulesetů s tokenem `read` do `setup-state.json` jako `probe.adminReadRulesets`. ADR 0016 počítá s tím, že rulesety vyžadují `write`.
 - Tokenem `write` vytvoří vypnutý ruleset `instance-setup-probe` s bypass aktérem Organization admin. Ověří, že detail rulesetu vrátí bypass aktéra `OrganizationAdmin`. Ruleset potom smaže.
@@ -434,7 +434,7 @@ Výsledky testů App A a App B průvodce uloží. Další běh testy neopakuje a
 
 1. V předvyplněném formuláři ponech ostatní oprávnění No access a zvol Create GitHub App.
 2. App settings → General → Private keys → Generate a private key. Prohlížeč uloží klíč do `Downloads`.
-3. Install App → organizace `probe-<yyyymmdd>`. App A instaluj bez přístupu k repozitářům (**No repositories**), App B do všech repozitářů.
+3. Install App → organizace `probe-<yyyymmdd>`. Obě Apps instaluj bez přístupu k repozitářům (**No repositories**).
 4. Po testu App A smaž App A: App settings → Advanced → Delete GitHub App. Workflow instance dostanou vlastní Apps v #11.
 
 App B a `$work\keys\probe-admin.pem` ponech pro C2 a C4. Smažeš je ve fázi D.
@@ -1215,7 +1215,7 @@ Před spuštěním dokonči #10 a ukliď fixture prostředky podle fáze B a tes
 
 Průvodce musí běžet ze stejné verze zdrojového kódu jako `-ReleasePath`. Git checkout musí být čistý. U exportu předem ověř původ; verze ani SHA-256 samy původ nedokazují. Schvaluješ verzi kandidáta i SHA-256 zdroje. Kandidát není produkční Release (release). Průvodce jeho obsah zafixuje, při obnovení zkontroluje každý soubor a změnu kandidáta odmítne před provisioningem.
 
-Průvodce nemění původní konfiguraci z #10. Samostatně vygeneruje `$work\github-acceptance\instance.yaml`, spustí Azure bootstrap pro oba probe moduly a připraví GitHub prostředky s vypnutými Actions. Čtyři enterprise-owned Apps založíš v UI: `authorization` s `members: read` bez přístupu k repozitářům, `reader` s `organization_administration: read`, `writer` a `rulesets` s `organization_administration: write`. Poslední tři mají oddělené identity a instalace jen v organizaci platformy. Průvodce ověří vlastnictví, skutečná oprávnění a instalace.
+Průvodce nemění původní konfiguraci z #10. Samostatně vygeneruje `$work\github-acceptance\instance.yaml`, spustí Azure bootstrap pro oba probe moduly a připraví GitHub prostředky s vypnutými Actions. Čtyři enterprise-owned Apps založíš v UI: `authorization` s `members: read`, `reader` s `organization_administration: read`, `writer` a `rulesets` s `organization_administration: write`. Všechny mají jen organizační oprávnění, oddělené identity, instalaci bez přístupu k repozitářům a instalaci pouze v organizaci platformy. Průvodce ověří vlastnictví, skutečná oprávnění a instalace.
 
 Klíče ponecháš v externím pracovním adresáři. U každého klíče zadáš skutečné datum vytvoření včetně časové zóny; průvodce nastaví rotaci nejpozději za 90 dní. Po souhlasu zveřejní kandidáta a konfiguraci, zapojí environment credentials a ověří opakovaný bootstrap s `HasChanges: false`. Produkční `deploy.yml` vypne **před** zapnutím Actions. Spouštět lze jen vyhrazené `bootstrap-acceptance.yml`.
 
@@ -1251,7 +1251,7 @@ Před uzavřením #11 ověř na skutečné GHE.com instanci:
 |---|---|
 | Příprava a opakování | `-ResourcesOnly` připraví organizaci, repozitář a týmy s vypnutými Actions. Přerušení další běh dokončí se stejným inventory. Druhý dokončený běh vrátí `HasChanges: false`. |
 | Vendoring a review | Repozitář obsahuje zafixovaný schválený acceptance kandidát a jeho konfiguraci. Přímý push do `main` neprojde. PR měnící App oprávnění neprojde bez platformního CODEOWNER a security review. GHE.com skutečně vynucuje beta `required_reviewers`, ne jen vrací přijatý request. |
-| Enterprise-owned Apps | Autorizační App nemá přístup k repozitářům. Klíče běžného planu nemohou vydat write token. Běžný plan, apply a ruleset plan používají oddělené App identity a deklarované instalace. Zkušební tokeny po ověření již neplatí. |
+| Enterprise-owned Apps | Žádná ze čtyř Apps nemá přístup k repozitářům. Klíče běžného planu nemohou vydat write token. Běžný plan, apply a ruleset plan používají oddělené App identity a deklarované instalace. Zkušební tokeny po ověření již neplatí. |
 | Rozsah API | #11 ověřuje credential kontrakty, token issuer a read-only probe API. Potvrzení produkčního `githubAppAvailabilityVerified` musí později vycházet ze skutečných operací produkčních modulů. Probe čtení nenahrazuje custom patterns ani vytváření a změny prostředků. |
 | API rulesetů | Ruleset credential načte existující organizační ruleset včetně neprázdné bypass konfigurace. Nedostupný endpoint zastaví bootstrap bez PAT nebo rozšíření oprávnění. |
 | Environmenty | PR plan platformního autora nečeká na review. `approve-apply` vyžaduje platformní tým a apply `enterprise-baseline` ještě security tým. Noční běžný a ruleset plan používají odlišné environmenty bez reviewerů, jen z `main`. |

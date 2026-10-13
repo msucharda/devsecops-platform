@@ -633,7 +633,7 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
             $permission = if ($alias -eq 'authorization') { @{ members = 'read' } }
             else { @{ organization_administration = $(if ($alias -eq 'reader') { 'read' } else { 'write' }) } }
             $cloud.apps[[string] $index] = @{ installationId = [string] ($index + 100); permissions = $permission
-                slug = "demo-bootstrap-$alias"; selection = $(if ($alias -eq 'authorization') { 'selected' } else { 'all' }) }
+                slug = "demo-bootstrap-$alias"; selection = 'selected' }
             $registration[$alias] = @{ "$($alias)AppId" = [string] $index }
             $key = [Security.Cryptography.RSA]::Create(2048)
             $key.ExportRSAPrivateKeyPem() | Set-Content (Join-Path $keyFolder "probe-$alias.pem")
@@ -706,6 +706,10 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         ($result.Stages | Where-Object Id -eq 'acceptance-nightly').Status | Should -Be 'Missing'
         ($result.Stages | Where-Object Id -eq 'acceptance-witnesses').Status | Should -Not -Be 'Ok'
         $result.AcceptancePassed | Should -BeFalse
+        $acceptanceInstance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $casePath 'github-acceptance/instance.yaml') -Raw)
+        foreach ($alias in @('authorization', 'reader', 'writer', 'rulesets')) {
+            $acceptanceInstance.githubApps[$alias].resources.repositories.Count | Should -Be 0
+        }
         (Get-Content $result.SummaryPath -Raw) | Should -Not -Match 'example.ghe.com|11111111|installation-test|demo-platform'
         $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'].state | Should -Be 'disabled_manually'
 

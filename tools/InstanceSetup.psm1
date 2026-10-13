@@ -2236,7 +2236,7 @@ function Invoke-StepProbeAdmin {
     $rulesetName = 'instance-setup-probe'
     $findingGuidance = @('Record the finding in issue #10. Do not switch to a PAT and do not extend the App permissions.')
     Show-SetupMessage -Message 'App B checks that App tokens read organization policies and rulesets including bypass actors.'
-    $app = Get-SetupProbeApp -Setup $Setup -Role admin -Selection all -Permission ([ordered]@{
+    $app = Get-SetupProbeApp -Setup $Setup -Role admin -Selection none -Permission ([ordered]@{
         organization_administration = 'write'; members = 'write'; organization_custom_org_roles = 'read'
     })
     $issued = [System.Collections.Generic.List[string]]::new()

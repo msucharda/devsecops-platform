@@ -111,6 +111,80 @@ Describe 'Enterprise App key and installation token isolation' {
         Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
+    It 'issues an organization-only module token without repository access' {
+        Import-Module powershell-yaml -RequiredVersion 0.4.12
+        $actualOrganizations = @('actions', 'workloads')
+        $actualPermissions = @{ organization_administration = 'read'; metadata = 'read' }
+        $repositorySelection = 'selected'
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
+        $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @('actions', 'workloads') } } }
+        $instance.githubApps = @{
+            reader = @{
+                appId = '101'; installationId = '201'; enterprise = 'example'
+                permissions = @{ organization_administration = 'read' }
+                resources = @{ organizations = @('actions', 'workloads'); repositories = @{} }
+            }
+            writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
+            rulesets = @{ appId = '103'; installationId = '203'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
+        }
+        $instance.credentials = @{
+            'enterprise-baseline' = @{
+                plan = @{ environment = 'enterprise-baseline-plan'; githubApp = 'reader' }
+                apply = @{ environment = 'enterprise-baseline-apply'; githubApp = 'writer' }
+                rulesetPlan = @{ environment = 'enterprise-baseline-ruleset-plan'; githubApp = 'rulesets' }
+            }
+        }
+        $path = Join-Path $TestDrive 'organization-only.yaml'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+
+        & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path `
+            -ModulesPath (Join-Path $PSScriptRoot 'fixtures/modules') -ApiUrl https://api.example.test `
+            -EnvironmentPath $environmentPath 6>$null
+
+        Test-Path -LiteralPath $environmentPath | Should -BeTrue
+        Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter {
+            $Uri -like '*/installation/repositories`?*'
+        }
+    }
+
+    It 'rejects repository access for an organization-only module App' {
+        Import-Module powershell-yaml -RequiredVersion 0.4.12
+        $actualOrganizations = @('actions', 'workloads')
+        $actualPermissions = @{ organization_administration = 'read'; metadata = 'read' }
+        $repositorySelection = 'selected'
+        $fakeRepositoryNames = @('instance')
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
+        $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @('actions', 'workloads') } } }
+        $instance.githubApps = @{
+            reader = @{
+                appId = '101'; installationId = '201'; enterprise = 'example'
+                permissions = @{ organization_administration = 'read' }
+                resources = @{ organizations = @('actions', 'workloads'); repositories = @{} }
+            }
+            writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
+            rulesets = @{ appId = '103'; installationId = '203'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
+        }
+        $instance.credentials = @{
+            'enterprise-baseline' = @{
+                plan = @{ environment = 'enterprise-baseline-plan'; githubApp = 'reader' }
+                apply = @{ environment = 'enterprise-baseline-apply'; githubApp = 'writer' }
+                rulesetPlan = @{ environment = 'enterprise-baseline-ruleset-plan'; githubApp = 'rulesets' }
+            }
+        }
+        $path = Join-Path $TestDrive 'organization-only-with-repository.yaml'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+
+        { & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path `
+            -ModulesPath (Join-Path $PSScriptRoot 'fixtures/modules') -ApiUrl https://api.example.test `
+            -EnvironmentPath $environmentPath 6>$null } |
+            Should -Throw '*Organization-only App*must not have repository access*'
+
+        Test-Path -LiteralPath $environmentPath | Should -BeFalse
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'DELETE' -and $Uri -eq 'https://api.example.test/installation/token'
+        }
+    }
+
     It 'rejects a key that can mint write tokens before issuing any installation token' {
         $actualPermissions.members = 'write'
 

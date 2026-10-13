@@ -105,10 +105,9 @@ function Invoke-StepAcceptanceApp {
         $alias = $contract.alias
         if (-not $state['apps'].Contains($alias)) { $state['apps'][$alias] = @{} }
         $app = Get-SetupProbeApp -Setup $appSetup -Role $alias -Permission $contract.permissions `
-            -Selection $(if ($alias -eq 'authorization') { 'none' } else { 'all' }) -Organization $organization `
+            -Selection none -Organization $organization `
             -AppName "$($Setup.Settings['name'])-bootstrap-$alias" -RegistrationState $state['apps'][$alias]
-        $resources = @{ organizations = @($organization) }
-        if ($alias -eq 'authorization') { $resources['repositories'] = @{} }
+        $resources = @{ organizations = @($organization); repositories = @{} }
         $config['githubApps'][$alias] = @{
             appId = $app.AppId; installationId = $app.InstallationId; enterprise = $Setup.Settings['enterprise']
             permissions = $contract.permissions; resources = $resources
