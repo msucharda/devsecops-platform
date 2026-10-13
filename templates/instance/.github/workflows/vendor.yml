@@ -1,0 +1,171 @@
+name: Vendor source
+
+on:
+  workflow_call:
+    inputs:
+      source-repository:
+        type: string
+        required: true
+      source-tag:
+        type: string
+        required: true
+      source-api-url:
+        type: string
+        default: https://api.github.com
+      source-asset:
+        type: string
+        default: ''
+      private-source:
+        type: boolean
+        default: false
+      target-repository:
+        type: string
+        required: true
+      kind:
+        type: string
+        required: true
+      actions-organization:
+        type: string
+        required: true
+    outputs:
+      pull-request:
+        value: ${{ jobs.publish.outputs.pull-request }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vendoring-${{ inputs.target-repository }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare tagged source without write or cloud credentials
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push') }}
+    runs-on: ubuntu-latest
+    environment: vendoring-source
+    steps:
+      - name: Check out trusted main tools and catalog
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install trusted runtime dependencies
+        shell: pwsh
+        run: ./platform/tools/Install-ToolDependencies.ps1
+      - name: Reject release provenance downgrade before loading credentials
+        shell: pwsh
+        env:
+          IMPORT_KIND: ${{ inputs.kind }}
+          SOURCE_ASSET: ${{ inputs.source-asset }}
+        run: |
+          if ($env:IMPORT_KIND -cnotin @('action', 'release')) { throw 'Import kind must be action or release.' }
+          if ($env:IMPORT_KIND -ceq 'release' -and -not $env:SOURCE_ASSET) {
+            throw 'Platform release import requires a named ZIP release asset, not an automatic source archive.'
+          }
+      - name: Validate private source binding before using its key
+        if: ${{ inputs.private-source }}
+        shell: pwsh
+        env:
+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+          SOURCE_API_URL: ${{ inputs.source-api-url }}
+          DECLARED_SOURCE_REPOSITORY: ${{ vars.SOURCE_REPOSITORY }}
+          DECLARED_SOURCE_API_URL: ${{ vars.SOURCE_API_URL }}
+        run: |
+          if ($env:SOURCE_REPOSITORY -cne $env:DECLARED_SOURCE_REPOSITORY -or
+              $env:SOURCE_API_URL -cne $env:DECLARED_SOURCE_API_URL) {
+            throw 'Private source differs from the protected source App binding.'
+          }
+      - name: Issue an isolated read-only source installation token
+        if: ${{ inputs.private-source }}
+        shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          SOURCE_REPOSITORY: ${{ vars.SOURCE_REPOSITORY }}
+          SOURCE_API_URL: ${{ vars.SOURCE_API_URL }}
+        run: |
+          ./platform/tools/New-PlatformGitHubToken.ps1 -VendoringRepository $env:SOURCE_REPOSITORY -ReadOnlySource -ApiUrl $env:SOURCE_API_URL
+      - name: Download, verify and rewrite source as data
+        shell: pwsh
+        env:
+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+          SOURCE_TAG: ${{ inputs.source-tag }}
+          SOURCE_API_URL: ${{ inputs.source-api-url }}
+          SOURCE_ASSET: ${{ inputs.source-asset }}
+          IMPORT_KIND: ${{ inputs.kind }}
+          ACTIONS_ORGANIZATION: ${{ inputs.actions-organization }}
+          SOURCE_GITHUB_TOKEN: ${{ env.GH_TOKEN }}
+        run: |
+          $source = ./platform/tools/Get-VendoringSource.ps1 -Repository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -ApiUrl $env:SOURCE_API_URL -AssetName $env:SOURCE_ASSET -WorkPath ./vendor/source
+          ./platform/tools/ConvertTo-VendoredSource.ps1 -SourcePath $source.SourcePath -OutputPath ./vendor/prepared -CatalogPath ./vendoring/actions.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND
+      - name: Revoke source installation token
+        if: ${{ always() && inputs.private-source && env.PLATFORM_GITHUB_TOKENS != '' }}
+        shell: pwsh
+        env:
+          SOURCE_API_URL: ${{ vars.SOURCE_API_URL }}
+        run: ./platform/tools/Remove-PlatformGitHubToken.ps1 -ApiUrl $env:SOURCE_API_URL
+      - name: Transfer only prepared data and provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vendoring-candidate
+          path: |
+            vendor/prepared/
+            vendor/source/receipt.json
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Publish App PR without cloud credentials
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: vendoring-import
+    outputs:
+      pull-request: ${{ steps.publish.outputs.pull-request }}
+    steps:
+      - name: Check out trusted main tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Install trusted runtime dependencies
+        shell: pwsh
+        run: ./trusted/platform/tools/Install-ToolDependencies.ps1
+      - name: Receive candidate as data, never as executable tools
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: vendoring-candidate
+          path: candidate
+      - name: Issue target-only installation token
+        shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          TARGET_REPOSITORY: ${{ inputs.target-repository }}
+        run: ./trusted/platform/tools/New-PlatformGitHubToken.ps1 -VendoringRepository $env:TARGET_REPOSITORY
+      - name: Check out the target main without persisting credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ inputs.target-repository }}
+          ref: main
+          path: target
+          token: ${{ env.GH_TOKEN }}
+          persist-credentials: false
+      - name: Commit the vendored diff and open its PR
+        id: publish
+        shell: pwsh
+        env:
+          TARGET_REPOSITORY: ${{ inputs.target-repository }}
+          IMPORT_KIND: ${{ inputs.kind }}
+        run: |
+          ./trusted/platform/tools/Publish-VendoringPullRequest.ps1 -PreparedPath ./candidate/prepared -TargetPath ./target -ReceiptPath ./candidate/source/receipt.json -Kind $env:IMPORT_KIND -Repository $env:TARGET_REPOSITORY -ApiUrl $env:GITHUB_API_URL -RunIdentifier "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" -GitHubOutputPath $env:GITHUB_OUTPUT -SummaryPath $env:GITHUB_STEP_SUMMARY
+      - name: Revoke target installation token
+        if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
+        shell: pwsh
+        run: ./trusted/platform/tools/Remove-PlatformGitHubToken.ps1

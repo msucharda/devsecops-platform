@@ -39,6 +39,10 @@ PR nesmí měnit credential vazby ani App metadata a použít je už před merge
 
 Joby předávají jen necitlivé výstupy přímých předpokladů přes artifacty stejného běhu a fáze. Úspěch všech vybraných běžných i ruleset planů odemkne společný apply gate. Apply job modulu s rulesety provede běžný root i celý `rulesets/` root; příští modul čeká na úspěch obou.
 
-Workflow používá SHA-pinované upstream akce, dokud import release nepřepíše `uses:` na schválené kopie z organizace akcí. Běží na GitHub-hosted runnerech. Dostupnost enterprise-owned Apps, API a oprávnění na konkrétní instanci GHE.com musí být potvrzená před nasazením. Selhání skončí chybou, nikdy PAT fallbackem nebo širšími plan oprávněními.
+Workflow používá SHA-pinované upstream akce, dokud platformní tým v #16 ručně nepovýší importované šablony s odkazy na schválené katalogové kopie. Automatický import mění jen `platform/`; App má pouze Contents a Pull requests, ne `workflows: write`. Ruční povýšení vyžaduje PR a review security týmem a není automaticky ověřený cloudový plan.
+
+Reusable workflow `.github/workflows/vendor.yml` volá důvěryhodný workflow z chráněné `main`. Katalog `vendoring/actions.json` naplní platformní tým po schválení akcí v #15; prázdný katalog import vzdálených akcí zastaví. Import vyžaduje samostatné environmenty `vendoring-source` a `vendoring-import` bez Azure nebo Microsoft Graph identit. Jejich příprava, vstupy workflow, App permissions a ruční import nedostupného zdroje mají kontrakt v `platform/docs/vendoring.md`.
+
+Workflow běží na GitHub-hosted runnerech. Dostupnost enterprise-owned Apps, API a oprávnění na konkrétní instanci GHE.com musí být potvrzená před nasazením. Selhání skončí chybou, nikdy PAT fallbackem nebo širšími plan oprávněními.
 
 Pravidla environmentů implementuje bootstrap v [msucharda/devsecops-platform#11](https://github.com/msucharda/devsecops-platform/issues/11). První cloudový běh a skutečné čtení ruleset bypassu ověří [msucharda/devsecops-platform#12](https://github.com/msucharda/devsecops-platform/issues/12); offline fixture toto ověření nenahrazuje.
