@@ -9,6 +9,8 @@ param(
     [System.Collections.IDictionary] $BootstrapApp,
     [string] $PrivateKey = $env:PLATFORM_APP_PRIVATE_KEY,
     [switch] $ValidateOnly,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$')][string] $VendoringRepository,
+    [switch] $ReadOnlySource,
     [string] $EnvironmentPath = $env:GITHUB_ENV,
     [string] $ApiUrl = $env:GITHUB_API_URL
 )
@@ -73,9 +75,30 @@ function Assert-AppPermission {
     }
 }
 
+if ($ReadOnlySource -and -not $VendoringRepository) {
+    throw '-ReadOnlySource requires -VendoringRepository.'
+}
 if ($BootstrapApp) {
     if (-not $ValidateOnly) { throw '-BootstrapApp is only supported with -ValidateOnly.' }
+    if ($VendoringRepository -or $Module -or $InstancePath) {
+        throw 'Bootstrap App validation cannot share vendoring or deployment inputs.'
+    }
     $expected = $BootstrapApp
+}
+elseif ($VendoringRepository) {
+    if ($Authorization -or $Module -or $InstancePath) { throw 'Vendoring credentials cannot share a deployment or authorization phase.' }
+    $repository = $VendoringRepository.Split('/')
+    $permissions = if ($ReadOnlySource) { @{ contents = 'read'; attestations = 'read' } } else { @{ contents = 'write'; pull_requests = 'write' } }
+    $expected = @{
+        appId = $env:PLATFORM_APP_ID
+        installationId = $env:PLATFORM_APP_INSTALLATION_ID
+        enterprise = $env:PLATFORM_APP_ENTERPRISE
+        permissions = $permissions
+        resources = @{
+            organizations = @($repository[0])
+            repositories = @{ $repository[0] = @($repository[1]) }
+        }
+    }
 }
 elseif ($Authorization) {
     $repository = $env:GITHUB_REPOSITORY.Split('/')
@@ -117,7 +140,7 @@ if (-not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https' -or (-not $ValidateOnly
     -not $expected['enterprise'] -or -not $PrivateKey) {
     throw 'GitHub App token issuance requires HTTPS API URL, environment output, enterprise ownership, App/installation IDs and the phase private key. PAT fallback is not supported.'
 }
-if (($Authorization -or $Phase -eq 'plan') -and 'write' -cin @($expected['permissions'].PSBase.Values)) {
+if (($Authorization -or (-not $VendoringRepository -and $Phase -eq 'plan') -or $ReadOnlySource) -and 'write' -cin @($expected['permissions'].PSBase.Values)) {
     throw 'Read-only plan and authorization must not receive write-capable App keys.'
 }
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -171,8 +194,10 @@ try {
         if (-not $Authorization -and -not $noRepositoryAccess -and $installation['repository_selection'] -cne $selection) {
             throw "Actual App repository scope for '$organization' differs from the declared scope."
         }
+        $tokenRequest = @{ permissions = $expected['permissions'] }
+        if ($VendoringRepository) { $tokenRequest['repositories'] = @($repositories[$organization]) }
         $issued = Invoke-GitHubAppRequest -Path "/app/installations/$($installation['id'])/access_tokens" -Method POST `
-            -Token $jwt -Body @{ permissions = $expected['permissions'] }
+            -Token $jwt -Body $tokenRequest
         if (-not $issued['token']) { throw "GitHub did not issue an installation token for '$organization'." }
         $tokens[$organization] = $issued['token']
         if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }

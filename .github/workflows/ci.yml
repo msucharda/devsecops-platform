@@ -49,7 +49,7 @@ jobs:
           ./tools/Generate-DeploymentWorkflow.ps1 -Check
           ./tools/Generate-DeploymentWorkflow.ps1 -ModulesPath ./tools/tests/fixtures/modules -OutputPath ./tools/tests/fixtures/deploy.yml -Check
       - name: Validate deployment workflow syntax
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml templates/instance/.github/workflows/deploy.yml tools/tests/fixtures/deploy.yml tools/acceptance/github/bootstrap-acceptance.yml
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml templates/instance/.github/workflows/deploy.yml templates/instance/.github/workflows/vendor.yml tools/tests/fixtures/deploy.yml tools/acceptance/github/bootstrap-acceptance.yml
       - name: Discover Terraform roots
         id: terraform-roots
         shell: pwsh
