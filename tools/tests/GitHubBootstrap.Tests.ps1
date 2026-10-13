@@ -72,6 +72,7 @@ Describe 'GitHub bootstrap public interface' {
             appOwner = @{ login = 'example'; type = 'enterprise' }
             appPermissions = @{ members = 'read'; metadata = 'read' }
             apps = @{}
+            teamRepositoryResponses = @{}
             defaultBranch = 'main'; failPath = ''; rejectSecurityReview = $false
         }
         foreach ($module in $azure.Modules) {
@@ -248,7 +249,14 @@ Describe 'GitHub bootstrap public interface' {
                 $reply = @{ value = @($cloud.resources.Keys | Where-Object { $_ -like "$path/*" } | ForEach-Object { $cloud.resources[$_] }) }
             }
             elseif ($path -like '*/teams/*/repos/*' -and $Method -eq 'GET') {
-                if ($cloud.resources.ContainsKey($path)) { $reply = @{ permissions = @{ push = $true } } } else { $status = 404 }
+                if ($cloud.teamRepositoryResponses.ContainsKey($path)) {
+                    return [pscustomobject] $cloud.teamRepositoryResponses[$path]
+                }
+                elseif (-not $cloud.resources.ContainsKey($path)) { $status = 404 }
+                elseif ($Headers.Accept -cne 'application/vnd.github.v3.repository+json') {
+                    return [pscustomobject]@{ StatusCode = 204; Content = '' }
+                }
+                else { $reply = @{ permissions = @{ push = ($cloud.resources[$path].permission -eq 'push') } } }
             }
             elseif ($Method -in @('PUT', 'PATCH')) {
                 $reply = @{} + $data
@@ -362,6 +370,109 @@ Describe 'GitHub bootstrap public interface' {
         $result.HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
         (ConvertTo-Json -InputObject $cloud.commit -Compress) | Should -Be $seed
+    }
+
+    It 'reads existing team push permissions without writes or changing other endpoint headers' -Tag 'TeamPermissions' {
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+
+        $result = & $bootstrap @arguments
+
+        $result.HasChanges | Should -BeFalse
+        $cloud.writes.Count | Should -Be 0
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly -ParameterFilter {
+            $Uri.Host -eq 'api.example.ghe.com' -and
+            -not ($Method -eq 'GET' -and $Uri.AbsolutePath -like '*/teams/*/repos/*') -and
+            $Headers.Accept -cne 'application/vnd.github+json'
+        }
+    }
+
+    It 'rejects an unproven team permission response (<Label>) without a permission write' -Tag 'TeamPermissions' -TestCases @(
+        @{ Label = '204 without body'; Code = 204; Content = '' }
+        @{ Label = '204 with a detail'; Code = 204; Content = '{"permissions":{"push":true}}' }
+        @{ Label = '201 with a detail'; Code = 201; Content = '{"permissions":{"push":true}}' }
+        @{ Label = '200 without body'; Code = 200; Content = '' }
+        @{ Label = 'null detail'; Code = 200; Content = 'null' }
+        @{ Label = 'array detail'; Code = 200; Content = '[{"permissions":{"push":true}}]' }
+        @{ Label = 'missing permissions'; Code = 200; Content = '{}' }
+        @{ Label = 'null permissions'; Code = 200; Content = '{"permissions":null}' }
+        @{ Label = 'array permissions'; Code = 200; Content = '{"permissions":[{"push":true}]}' }
+        @{ Label = 'missing push'; Code = 200; Content = '{"permissions":{"pull":true}}' }
+        @{ Label = 'null push'; Code = 200; Content = '{"permissions":{"push":null}}' }
+        @{ Label = 'string push'; Code = 200; Content = '{"permissions":{"push":"true"}}' }
+        @{ Label = 'numeric push'; Code = 200; Content = '{"permissions":{"push":1}}' }
+        @{ Label = 'array push'; Code = 200; Content = '{"permissions":{"push":[true]}}' }
+    ) {
+        param($Code, $Content)
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $cloud.teamRepositoryResponses['/orgs/demo-platform/teams/platform/repos/demo-platform/instance'] = @{
+            StatusCode = $Code; Content = $Content
+        }
+
+        { & $bootstrap @arguments } | Should -Throw '*team repository permissions*'
+
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'reports invalid JSON in a team permission detail without a permission write' -Tag 'TeamPermissions' {
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $cloud.teamRepositoryResponses['/orgs/demo-platform/teams/platform/repos/demo-platform/instance'] = @{
+            StatusCode = 200; Content = '{"permissions":'
+        }
+
+        { & $bootstrap @arguments } | Should -Throw '*JSON*'
+
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'repairs only genuinely insufficient team access (<Access>) and then remains write-free' -Tag 'TeamPermissions' -TestCases @(
+        @{ Access = 'pull' }
+        @{ Access = 'missing' }
+    ) {
+        param($Access)
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $accessPath = '/orgs/demo-platform/teams/platform/repos/demo-platform/instance'
+        if ($Access -eq 'missing') { $cloud.resources.Remove($accessPath) }
+        else { $cloud.resources[$accessPath].permission = $Access }
+
+        $result = & $bootstrap @arguments
+
+        $result.HasChanges | Should -BeTrue
+        $cloud.writes.Count | Should -Be 1
+        $cloud.writes[0].path | Should -Be $accessPath
+        $cloud.writes[0].body.permission | Should -Be 'push'
+        $cloud.writes.Clear()
+        (& $bootstrap @arguments).HasChanges | Should -BeFalse
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'reports a failed team permission update without retrying or claiming success' -Tag 'TeamPermissions' {
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $accessPath = '/orgs/demo-platform/teams/platform/repos/demo-platform/instance'
+        $cloud.resources[$accessPath].permission = 'pull'
+        $cloud.failPath = $accessPath
+
+        { & $bootstrap @arguments } | Should -Throw '*HTTP 503*'
+
+        $cloud.resources[$accessPath].permission | Should -Be 'pull'
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'does not claim push access when a successful permission update is not confirmed' -Tag 'TeamPermissions' {
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $accessPath = '/orgs/demo-platform/teams/platform/repos/demo-platform/instance'
+        $cloud.teamRepositoryResponses[$accessPath] = @{
+            StatusCode = 200; Content = '{"permissions":{"push":false}}'
+        }
+
+        { & $bootstrap @arguments } | Should -Throw '*push access*after*update*'
+
+        @($cloud.writes | Where-Object { $_.path -eq $accessPath }).Count | Should -Be 1
     }
 
     It 'verifies the authorization App before uploading an encrypted key and records its rotation deadline' {

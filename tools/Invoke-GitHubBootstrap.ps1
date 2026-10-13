@@ -148,6 +148,8 @@ function Invoke-GitHubBootstrapApi {
         Headers = @{ Authorization = "Bearer $oauth"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
         ContentType = 'application/json'; SkipHttpErrorCheck = $true; MaximumRedirection = 0; TimeoutSec = 60
     }
+    $isTeamRepositoryPermissionRead = $Method -eq 'GET' -and $Path -match '^/orgs/[^/]+/teams/[^/]+/repos/[^/]+/[^/]+$'
+    if ($isTeamRepositoryPermissionRead) { $arguments.Headers.Accept = 'application/vnd.github.v3.repository+json' }
     if ($Body) { $arguments.Body = ConvertTo-Json -InputObject $Body -Depth 100 -Compress }
     $response = Invoke-WebRequest @arguments
     if ($AllowNotFound -and $Method -eq 'GET' -and $response.StatusCode -eq 404) { return $null }
@@ -160,6 +162,11 @@ function Invoke-GitHubBootstrapApi {
         if ($data -is [System.Collections.IDictionary] -and $data.Contains('errors')) {
             throw "GitHub GraphQL failed: $(ConvertTo-Json -InputObject $data['errors'] -Compress)"
         }
+    }
+    if ($isTeamRepositoryPermissionRead -and ($response.StatusCode -ne 200 -or
+        $data -isnot [System.Collections.IDictionary] -or $data['permissions'] -isnot [System.Collections.IDictionary] -or
+        $data['permissions']['push'] -isnot [bool])) {
+        throw "GitHub bootstrap GET $Path did not prove team repository permissions: expected HTTP 200 with a boolean permissions.push."
     }
     if ($Method -ne 'GET' -and ($Path -ne '/graphql' -or $Body['query'] -like 'mutation*')) {
         $changed.Add($Path)
@@ -424,6 +431,10 @@ foreach ($name in @('platform', 'security')) {
     $access = Invoke-GitHubBootstrapApi -Path $accessPath -AllowNotFound
     if (-not $access -or $access['permissions']['push'] -ne $true) {
         $null = Invoke-GitHubBootstrapApi -Path $accessPath -Method PUT -Body @{ permission = 'push' }
+        $access = Invoke-GitHubBootstrapApi -Path $accessPath
+        if ($access['permissions']['push'] -ne $true) {
+            throw "Team '$name' does not have push access after the repository permission update."
+        }
     }
 }
 $files = @{}
