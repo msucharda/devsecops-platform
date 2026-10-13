@@ -104,4 +104,24 @@ Describe 'Vendoring diff and pull request publication' {
         Test-Path -LiteralPath (Join-Path $target 'platform/obsolete.txt') | Should -BeFalse
         Test-Path -LiteralPath (Join-Path $target 'platform/README.md') | Should -BeTrue
     }
+
+    It 'restores executable bits from the prepared manifest after artifact transfer has flattened permissions' {
+        'entrypoint' | Set-Content -LiteralPath (Join-Path $prepared 'entrypoint.sh')
+        $modeManifest = Join-Path $TestDrive 'modes.json'
+        '{"version":1,"files":{"action.yml":false,"entrypoint.sh":true}}' | Set-Content -LiteralPath $modeManifest
+        $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com -RunIdentifier fixture -ModeManifestPath $modeManifest
+
+        & $gitExecutable -C $target ls-files --stage entrypoint.sh | Should -Match '^100755 '
+        & $gitExecutable -C $target ls-files --stage action.yml | Should -Match '^100644 '
+    }
+
+    It 'rejects an executable manifest containing paths outside the prepared inventory' {
+        $modeManifest = Join-Path $TestDrive 'invalid-modes.json'
+        '{"version":1,"files":{"../escape.sh":true}}' | Set-Content -LiteralPath $modeManifest
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com -RunIdentifier fixture -ModeManifestPath $modeManifest } |
+            Should -Throw '*Mode manifest has no boolean executable flag*'
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+    }
 }

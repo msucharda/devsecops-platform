@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string] $SourcePath,
     [Parameter(Mandatory)][string] $OutputPath,
     [Parameter(Mandatory)][string] $CatalogPath,
+    [string] $ModeManifestPath,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string] $ActionsOrganization,
     [Parameter(Mandatory)][ValidateSet('action', 'release')][string] $Kind
 )
@@ -30,6 +31,14 @@ if ($output -eq $source -or $output.StartsWith("$source$([IO.Path]::DirectorySep
     throw 'Output must not be inside the source.'
 }
 if (Test-Path -LiteralPath $output) { throw "Output '$output' already exists; use a new staging directory." }
+if ($ModeManifestPath) {
+    $modePath = [IO.Path]::GetFullPath($ModeManifestPath)
+    if ((Test-Path -LiteralPath $modePath) -or $modePath -eq $source -or $modePath -eq $output -or
+        $modePath.StartsWith("$source$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::OrdinalIgnoreCase) -or
+        $modePath.StartsWith("$output$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Mode manifest must be a new file outside the source and prepared trees.'
+    }
+}
 $items = @(Get-ChildItem -LiteralPath $source -Recurse -Force)
 if (@($items | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
     throw 'Source must not contain symbolic links.'
@@ -108,9 +117,18 @@ foreach ($file in $files) {
     $destinationPath = if ($Kind -eq 'release') { "platform/$relative" } else { $relative }
     $pending.Add(@{ Path = $destinationPath; Bytes = $bytes; Source = $file.FullName })
 }
+if (-not $pending.Count) { throw 'Source has no importable files.' }
 foreach ($item in $pending) {
     $destination = Join-Path $output $item.Path
     $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
     [IO.File]::WriteAllBytes($destination, $item.Bytes)
     if (-not $IsWindows) { [IO.File]::SetUnixFileMode($destination, [IO.File]::GetUnixFileMode($item.Source)) }
+}
+if ($ModeManifestPath) {
+    $modes = [ordered]@{}
+    foreach ($item in $pending) {
+        $modes[$item.Path] = -not $IsWindows -and (([int] [IO.File]::GetUnixFileMode($item.Source) -band 73) -ne 0)
+    }
+    @{ version = 1; files = $modes } | ConvertTo-Json -Depth 10 |
+        Set-Content -LiteralPath $ModeManifestPath -Encoding utf8NoBOM
 }

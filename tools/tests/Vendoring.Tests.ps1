@@ -68,4 +68,16 @@ runs:
             -ActionsOrganization customer-actions -Kind action } | Should -Throw '*YAML anchors*'
         Test-Path -LiteralPath $output | Should -BeFalse
     }
+
+    It 'emits an explicit executable manifest for every prepared file outside the source tree' {
+        $output = Join-Path $TestDrive 'with-modes'
+        $modeManifest = Join-Path $TestDrive 'prepared-modes.json'
+        & $prepare -SourcePath (Join-Path $fixtures 'action') -OutputPath $output `
+            -CatalogPath (Join-Path $fixtures 'catalog.json') -ActionsOrganization customer-actions -Kind action -ModeManifestPath $modeManifest
+
+        $manifest = Get-Content -LiteralPath $modeManifest -Raw | ConvertFrom-Json -AsHashtable
+        $manifest.version | Should -Be 1
+        @($manifest.files.Keys | Sort-Object) | Should -Be @('action.yml', 'local/action.yaml')
+        foreach ($flag in $manifest.files.Values) { $flag | Should -BeOfType bool }
+    }
 }

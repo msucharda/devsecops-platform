@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][string] $PreparedPath,
     [Parameter(Mandatory)][string] $TargetPath,
     [Parameter(Mandatory)][string] $ReceiptPath,
+    [string] $ModeManifestPath,
     [Parameter(Mandatory)][ValidateSet('action', 'release')][string] $Kind,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$')][string] $Repository,
     [Parameter(Mandatory)][string] $ApiUrl,
@@ -32,6 +33,15 @@ if ($scope.total_count -ne 1 -or @($scope.repositories).Count -ne 1 -or $scope.r
 }
 $target = (Resolve-Path -LiteralPath $TargetPath).Path
 $prepared = (Resolve-Path -LiteralPath $PreparedPath).Path
+foreach ($item in @(Get-ChildItem -LiteralPath $target -Recurse -Force |
+    Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })) {
+    $relative = [IO.Path]::GetRelativePath($target, $item.FullName).Replace('\', '/')
+    if (($Kind -eq 'release' -and $relative.StartsWith('platform/')) -or
+        ($Kind -eq 'release' -and $relative -ceq 'platform') -or
+        ($Kind -eq 'action' -and -not $relative.StartsWith('.github/'))) {
+        throw "Target vendoring boundary contains symbolic link '$relative'."
+    }
+}
 $receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json -AsHashtable
 if ($receipt['Commit'] -cnotmatch '^[a-f0-9]{40}$' -or $receipt['Sha256'] -cnotmatch '^[a-f0-9]{64}$' -or
     $receipt['Attestation'] -cnotin @('verified', 'not-present', 'manual-not-verified') -or
@@ -64,6 +74,20 @@ foreach ($file in @($items | Where-Object { -not $_.PSIsContainer })) {
     $newFiles.Add($relative)
 }
 if (-not $newFiles.Count) { throw 'Prepared source is empty.' }
+$modes = $null
+if ($ModeManifestPath) {
+    $manifest = Get-Content -LiteralPath $ModeManifestPath -Raw | ConvertFrom-Json -AsHashtable
+    if ($manifest['version'] -ne 1 -or $manifest['files'] -isnot [Collections.IDictionary] -or
+        $manifest['files'].Count -ne $newFiles.Count) {
+        throw 'Mode manifest must describe every prepared file exactly once.'
+    }
+    $modes = $manifest['files']
+    foreach ($relative in $newFiles) {
+        if (-not $modes.Contains($relative) -or $modes[$relative] -isnot [bool]) {
+            throw "Mode manifest has no boolean executable flag for '$relative'."
+        }
+    }
+}
 $oldFiles = @(Invoke-VendoringGit @('ls-files')) | Where-Object {
     if ($Kind -eq 'release') { $_.StartsWith('platform/') } else { -not $_.StartsWith('.github/') -and $_ -cne '.vendoring.json' }
 }
@@ -78,7 +102,10 @@ foreach ($relative in $newFiles) {
     $destination = Join-Path $target $relative
     $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
     Copy-Item -LiteralPath (Join-Path $prepared $relative) -Destination $destination -Force
-    if (-not $IsWindows) { [IO.File]::SetUnixFileMode($destination, [IO.File]::GetUnixFileMode((Join-Path $prepared $relative))) }
+    if (-not $IsWindows) {
+        $mode = if ($null -ne $modes) { if ($modes[$relative]) { 493 } else { 420 } } else { [IO.File]::GetUnixFileMode((Join-Path $prepared $relative)) }
+        [IO.File]::SetUnixFileMode($destination, [IO.UnixFileMode] $mode)
+    }
 }
 $metadataPath = if ($Kind -eq 'release') { 'platform/.vendoring.json' } else { '.vendoring.json' }
 $metadata = [ordered]@{
@@ -90,6 +117,10 @@ $metadata = [ordered]@{
 $metadata | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $target $metadataPath) -Encoding utf8NoBOM
 foreach ($relative in @($newFiles) + @($metadataPath)) {
     $null = Invoke-VendoringGit @('add', '--force', '--', $relative)
+    if ($null -ne $modes -and $relative -cne $metadataPath) {
+        $flag = if ($modes[$relative]) { '--chmod=+x' } else { '--chmod=-x' }
+        $null = Invoke-VendoringGit @('update-index', $flag, '--', $relative)
+    }
 }
 $diff = Invoke-VendoringGit @('diff', '--cached', '--stat')
 if (-not $diff) {
