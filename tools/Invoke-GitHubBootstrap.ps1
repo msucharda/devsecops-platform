@@ -185,6 +185,19 @@ function Get-GitHubBootstrapCollection {
     } while ($items.Count -eq $pageSize)
 }
 
+function Disable-GitHubBootstrapActionExecution {
+    [CmdletBinding()]
+    param()
+
+    $path = "/repos/$repository/actions/permissions"
+    $permissions = Invoke-GitHubBootstrapApi -Path $path
+    if ($permissions['enabled'] -ne $false) {
+        $null = Invoke-GitHubBootstrapApi -Path $path -Method PUT -Body @{ enabled = $false }
+        $permissions = Invoke-GitHubBootstrapApi -Path $path
+        if ($permissions['enabled'] -ne $false) { throw 'GitHub did not confirm repository Actions isolation.' }
+    }
+}
+
 function Test-GitHubBootstrapValue {
     [CmdletBinding()]
     [OutputType([bool])]
@@ -380,10 +393,7 @@ if ($repo['private'] -ne $true -or $repo['description'] -cne $ownership) {
 }
 Register-GitHubBootstrapResource -Path "/repos/$repository"
 if ($inventory['initializationPending']) {
-    $permissions = Invoke-GitHubBootstrapApi -Path "/repos/$repository/actions/permissions"
-    if ($permissions['enabled'] -ne $false) {
-        $null = Invoke-GitHubBootstrapApi -Path "/repos/$repository/actions/permissions" -Method PUT -Body @{ enabled = $false }
-    }
+    Disable-GitHubBootstrapActionExecution
 }
 if ($inventory['initializationPending'] -and -not $inventory['seedCommit']) {
     $seed = Invoke-GitHubBootstrapApi -Path "/repos/$repository/git/ref/heads/$($repo['default_branch'])"
@@ -743,33 +753,54 @@ if (-not $ResourcesOnly) {
         }
     }
     if ($AcceptanceOnly) {
-        $workflowsPath = "/repos/$repository/actions/workflows"
-        $acceptancePath = '.github/workflows/bootstrap-acceptance.yml'
-        $workflows = @(Get-GitHubBootstrapCollection -Path $workflowsPath -Property 'workflows')
-        foreach ($path in @($files.Keys | Where-Object { $_ -cmatch '^\.github/workflows/[^/]+\.ya?ml$' })) {
-            if (@($workflows | Where-Object { $_['path'] -ceq $path }).Count -ne 1) {
-                throw "The acceptance candidate workflow '$path' is not uniquely registered. Actions must remain disabled."
-            }
-        }
-        foreach ($workflow in $workflows) {
-            if ($workflow['path'] -cnotmatch '^\.github/workflows/[^/]+\.ya?ml$' -or
-                $workflow['state'] -cnotin @('active', 'disabled_manually', 'disabled_inactivity', 'disabled_fork', 'deleted')) {
-                throw 'GitHub returned an unsupported workflow path or state. Actions must remain disabled.'
-            }
-            if ($workflow['path'] -ceq $acceptancePath) { continue }
-            if ($workflow['state'] -ceq 'active') {
-                $workflowPath = "$workflowsPath/$([uri]::EscapeDataString($workflow['path'].Split('/')[-1]))"
-                $null = Invoke-GitHubBootstrapApi -Path "$workflowPath/disable" -Method PUT
-                $disabled = Invoke-GitHubBootstrapApi -Path $workflowPath
-                if ($disabled['state'] -cne 'disabled_manually') {
-                    throw "Workflow '$($workflow['path'])' was not disabled. Actions must remain disabled."
+        $isolationAttempted = $false
+        try {
+            $workflowsPath = "/repos/$repository/actions/workflows"
+            $acceptancePath = '.github/workflows/bootstrap-acceptance.yml'
+            $workflowStates = @('active', 'disabled_manually', 'disabled_inactivity', 'disabled_fork', 'deleted')
+            $workflows = @(Get-GitHubBootstrapCollection -Path $workflowsPath -Property 'workflows')
+            foreach ($path in @($files.Keys | Where-Object { $_ -cmatch '^\.github/workflows/[^/]+\.ya?ml$' })) {
+                if (@($workflows | Where-Object { $_['path'] -ceq $path }).Count -ne 1) {
+                    throw "The acceptance candidate workflow '$path' is not uniquely registered. Actions must remain disabled."
                 }
             }
+            foreach ($workflow in $workflows) {
+                if ($workflow['path'] -cnotmatch '^\.github/workflows/[^/]+\.ya?ml$' -or
+                    $workflow['state'] -cnotin $workflowStates) {
+                    throw 'GitHub returned an unsupported workflow path or state. Actions must remain disabled.'
+                }
+                if ($workflow['path'] -ceq $acceptancePath) { continue }
+                if ($workflow['state'] -ceq 'active') {
+                    if (-not $isolationAttempted) {
+                        $isolationAttempted = $true
+                        Disable-GitHubBootstrapActionExecution
+                    }
+                    $workflowPath = "$workflowsPath/$([uri]::EscapeDataString($workflow['path'].Split('/')[-1]))"
+                    $null = Invoke-GitHubBootstrapApi -Path "$workflowPath/disable" -Method PUT
+                    $disabled = Invoke-GitHubBootstrapApi -Path $workflowPath
+                    if ($disabled['state'] -cne 'disabled_manually') {
+                        throw "Workflow '$($workflow['path'])' was not disabled. Actions must remain disabled."
+                    }
+                }
+            }
+            $workflows = @(Get-GitHubBootstrapCollection -Path $workflowsPath -Property 'workflows')
+            if (@($workflows | Where-Object { $_['state'] -cnotin $workflowStates }).Count) {
+                throw 'GitHub returned an unsupported workflow state. Actions must remain disabled.'
+            }
+            $active = @($workflows | Where-Object { $_['state'] -ceq 'active' })
+            if ($active.Count -ne 1 -or $active[0]['path'] -cne $acceptancePath) {
+                throw 'Only bootstrap-acceptance.yml may be active in the acceptance candidate. Actions must remain disabled.'
+            }
         }
-        $workflows = @(Get-GitHubBootstrapCollection -Path $workflowsPath -Property 'workflows')
-        $active = @($workflows | Where-Object { $_['state'] -ceq 'active' })
-        if ($active.Count -ne 1 -or $active[0]['path'] -cne $acceptancePath) {
-            throw 'Only bootstrap-acceptance.yml may be active in the acceptance candidate. Actions must remain disabled.'
+        catch {
+            $failure = $_
+            if (-not $isolationAttempted) {
+                try { Disable-GitHubBootstrapActionExecution }
+                catch {
+                    throw "Acceptance workflow isolation failed: $failure Repository Actions isolation also failed: $_"
+                }
+            }
+            throw $failure
         }
     }
     $permissions = Invoke-GitHubBootstrapApi -Path "/repos/$repository/actions/permissions"

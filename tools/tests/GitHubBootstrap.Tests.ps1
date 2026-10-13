@@ -223,7 +223,9 @@ Describe 'GitHub bootstrap public interface' {
             elseif ($path -like '*/secrets/public-key') { $reply = @{ key_id = 'public-key-id'; key = 'public-key' } }
             elseif ($path -like '*/actions/workflows/*/disable' -and $Method -eq 'PUT') {
                 if (-not $cloud.commit) { throw 'The workflow cannot exist before repository contents are published.' }
-                $cloud.resources[$path.Substring(0, $path.Length - '/disable'.Length)].state = 'disabled_manually'
+                if (-not $cloud.ContainsKey('unconfirmedDisable') -or $path -cne $cloud.unconfirmedDisable) {
+                    $cloud.resources[$path.Substring(0, $path.Length - '/disable'.Length)].state = 'disabled_manually'
+                }
             }
             elseif ($path -like '*/actions/workflows' -and $Method -eq 'GET') {
                 $reply = @{ workflows = @($cloud.resources.Keys | Where-Object { $_ -like "$path/*" -and $_.Split('/').Count -eq 7 } |
@@ -650,9 +652,32 @@ Describe 'GitHub bootstrap public interface' {
         @($cloud.writes | Where-Object path -Like '*/actions/workflows/*/disable').Count | Should -Be 0
     }
 
+    It 'isolates an initialized acceptance repository on failure without changing a compliant rerun' {
+        @{ kind = 'github-bootstrap-acceptance' } | ConvertTo-Json | Set-Content (Join-Path $release 'bootstrap-acceptance.json')
+        Copy-Item (Join-Path $tools 'acceptance/github/bootstrap-acceptance.yml') `
+            -Destination (Join-Path $release 'templates/instance/.github/workflows/bootstrap-acceptance.yml')
+        $arguments.ResourcesOnly = $false
+        $arguments.AcceptanceOnly = $true
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+
+        (& $bootstrap @arguments).HasChanges | Should -BeFalse
+        $cloud.writes.Count | Should -Be 0
+        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state = 'active'
+        $cloud.failPath = '/repos/demo-platform/instance/actions/workflows/vendor.yml/disable'
+
+        { & $bootstrap @arguments } | Should -Throw '*HTTP 503*'
+
+        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
+        @($cloud.writes | Where-Object { $_.path -like '*/actions/permissions' -and $_.body.enabled }).Count | Should -Be 0
+    }
+
     It 'keeps Actions disabled when another acceptance-candidate workflow cannot be isolated' -TestCases @(
         @{ Failure = 'disable' }
         @{ Failure = 'registration' }
+        @{ Failure = 'unconfirmed' }
     ) {
         param($Failure)
         @{ kind = 'github-bootstrap-acceptance' } | ConvertTo-Json | Set-Content (Join-Path $release 'bootstrap-acceptance.json')
@@ -664,6 +689,10 @@ Describe 'GitHub bootstrap public interface' {
             $cloud.failPath = '/repos/demo-platform/instance/actions/workflows/vendor.yml/disable'
             $errorMessage = '*HTTP 503*'
         }
+        elseif ($Failure -ceq 'unconfirmed') {
+            $cloud.unconfirmedDisable = '/repos/demo-platform/instance/actions/workflows/vendor.yml/disable'
+            $errorMessage = '*was not disabled*'
+        }
         else {
             $cloud.unregisteredWorkflow = '.github/workflows/vendor.yml'
             $errorMessage = '*not uniquely registered*'
@@ -674,6 +703,25 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
         $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
         @($cloud.writes | Where-Object { $_.path -like '*/actions/permissions' -and $_.body.enabled }).Count | Should -Be 0
+    }
+
+    It 'reports both registration and containment errors without retrying failed containment' {
+        @{ kind = 'github-bootstrap-acceptance' } | ConvertTo-Json | Set-Content (Join-Path $release 'bootstrap-acceptance.json')
+        Copy-Item (Join-Path $tools 'acceptance/github/bootstrap-acceptance.yml') `
+            -Destination (Join-Path $release 'templates/instance/.github/workflows/bootstrap-acceptance.yml')
+        $arguments.ResourcesOnly = $false
+        $arguments.AcceptanceOnly = $true
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state = 'active'
+        $cloud.unregisteredWorkflow = '.github/workflows/vendor.yml'
+        $cloud.failPath = '/repos/demo-platform/instance/actions/permissions'
+
+        { & $bootstrap @arguments } | Should -Throw '*not uniquely registered*Repository Actions isolation also failed*HTTP 503*'
+
+        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
+        $cloud.writes.Count | Should -Be 0
     }
 
     It 'drives the public acceptance wizard through publication and real-run evidence without accepting missing nightly or rotation checks' {
