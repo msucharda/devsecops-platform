@@ -21,6 +21,6 @@ Skupiny týmů workloadů vytváří modul `workload-onboarding`.
 ## Identita
 
 - Microsoft Graph: `Group.Create`.
-- Vlastní role Entra s oprávněním `microsoft.directory/servicePrincipals/appRoleAssignedTo/update`, omezená na enterprise aplikaci GHE.
+- Vlastní role Entra se scope na service principal enterprise aplikace GHE. Obsahuje akce `microsoft.directory/servicePrincipals/appRoleAssignedTo/update`, `microsoft.directory/servicePrincipals/appRoleAssignedTo/read` a `microsoft.directory/servicePrincipals/standard/read`. Kombinaci pro app-only token ověřil test C1; samotná update akce nestačila. Podrobnosti jsou v [ADR 0015](../../docs/adr/0015-least-privilege-identity-per-module.md).
 - GitHub API používá installation tokeny podle ADR 0016. Modul propojí týmy organizace platformy se skupinami Entra ID.
 - Roli security manager přiřazuje modul `organizations`, protože organizace akcí a workloadů vzniknou až v něm. Přírůstek 1 ověří toto přiřazení přes installation token.

@@ -861,154 +861,267 @@ function Invoke-ProbeApi {
 
 ### C1: Vlastní role Entra pro app-only token (#3)
 
-**Co ověřuješ:** Microsoft Graph uzná vlastní roli Entra s akcí `microsoft.directory/servicePrincipals/appRoleAssignedTo/update` i pro app-only token. Role omezená na aplikaci GHE dovolí přiřadit app roli jen v této aplikaci.
+**Co ověřuješ:** Microsoft Graph uzná vlastní roli Entra se třemi akcemi pro app-only token: `microsoft.directory/servicePrincipals/appRoleAssignedTo/update`, `microsoft.directory/servicePrincipals/appRoleAssignedTo/read` a `microsoft.directory/servicePrincipals/standard/read`. Role se scope na service principal aplikace GHE musí dovolit přiřadit app roli jen v této aplikaci.
 
-**Proč:** Modul `emu-identity` přiřazuje skupiny Entra k app rolím v aplikaci GHE. Alternativní oprávnění `AppRoleAssignment.ReadWrite.All` platí pro všechny aplikace v tenantu, včetně Microsoft Graph. Identita s ním by si mohla přidělit libovolné application permission. ADR 0015 proto volí vlastní roli omezenou na jednu aplikaci. Věta v ADR 0015 zatím zní: „Přírůstek 1 ověří, že Microsoft Graph uzná vlastní roli i pro app-only token.“
+**Proč:** Modul `emu-identity` přiřazuje skupiny Entra k app rolím v aplikaci GHE. Alternativní oprávnění `AppRoleAssignment.ReadWrite.All` platí pro všechny aplikace v tenantu, včetně Microsoft Graph. Identita s ním by si mohla přidělit libovolné application permission. První běh C1 se samotnou update akcí selhal. Opakování s oběma read akcemi vrátilo očekávané HTTP 201 v GHE a HTTP 403 v jiné aplikaci při nulových Graph application permissions. Podrobnosti jsou v [ADR 0015](adr/0015-least-privilege-identity-per-module.md).
 
-**Potřebuješ:** A2 (licence P1), A4 (`$spId` a `$userRole`) a roli Privileged Role Administrator.
+**Potřebuješ:** A2 (licence P1), A4 (`$spId` a `$userRole`), aktivní roli Privileged Role Administrator a právo vytvořit testovací aplikace a bezpečnostní skupinu. Pokud je tenant dovoluje členům, nepotřebuješ další admin role. Token operátora získáš přes `$mgmtSub` z již přihlášeného účtu v cílovém tenantu. Všechny Graph operace níže používají explicitní token; nemění výchozí účet Azure CLI.
 
 **Postup:**
 
-1. Vytvoř skupinu, identitu pro test a druhou aplikaci pro negativní test:
+1. Vytvoř skupinu, identitu pro test a druhou aplikaci s platnou app rolí pro negativní test. Každý běh má vlastní názvy a pracovní adresář:
 
    ```powershell
-   $group3 = az ad group create --display-name "probe3-$name" --mail-nickname "probe3-$name" --query id -o tsv
-   $probeApp = az ad app create --display-name "probe3-$name-identity" --query appId -o tsv
-   $probeSp = az ad sp create --id $probeApp --query id -o tsv
-   $otherApp = az ad app create --display-name "probe3-$name-other" --query appId -o tsv
-   $otherSpId = az ad sp create --id $otherApp --query id -o tsv
+   $c1Name = "probe3-$([guid]::NewGuid().ToString('N'))"
+   $c1Work = Join-Path $work "c1\$c1Name"
+   $null = New-Item -ItemType Directory -Path $c1Work
+   $operatorAccess = az account get-access-token --subscription $mgmtSub --resource https://graph.microsoft.com/ -o json --only-show-errors | ConvertFrom-Json
+   if ($LASTEXITCODE -ne 0 -or $operatorAccess.tenant -ne $tenantId) { throw 'Cannot acquire a Graph token for the configured tenant.' }
+   $operatorToken = ConvertTo-SecureString $operatorAccess.accessToken -AsPlainText -Force
+   $operatorAccess = $null
+   $graph = 'https://graph.microsoft.com/v1.0'
+   $operatorRequest = @{ Authentication = 'Bearer'; Token = $operatorToken; ContentType = 'application/json'; MaximumRedirection = 0; TimeoutSec = 60 }
+   $group3 = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/groups" -Body (@{
+       displayName = "$c1Name-group"; mailNickname = "$c1Name-group"; mailEnabled = $false; securityEnabled = $true; groupTypes = @()
+   } | ConvertTo-Json)).id
+   $probeApplication = Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/applications" -Body (@{
+       displayName = "$c1Name-identity"; signInAudience = 'AzureADMyOrg'; requiredResourceAccess = @()
+   } | ConvertTo-Json)
+   $probeApp = $probeApplication.appId
+   $probeAppObjectId = $probeApplication.id
+   $probeSp = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/servicePrincipals" -Body (@{ appId = $probeApp } | ConvertTo-Json)).id
+   $otherRoleId = [guid]::NewGuid().ToString()
+   $otherApplication = Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/applications" -Body (@{
+       displayName = "$c1Name-other"; signInAudience = 'AzureADMyOrg'; requiredResourceAccess = @()
+       appRoles = @(@{
+           id = $otherRoleId; allowedMemberTypes = @('User'); displayName = 'Probe User'
+           description = 'Temporary C1 negative target.'; isEnabled = $true; value = 'Probe.User'
+       })
+   } | ConvertTo-Json -Depth 5)
+   $otherAppObjectId = $otherApplication.id
+   $otherSpId = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/servicePrincipals" -Body (@{ appId = $otherApplication.appId } | ConvertTo-Json)).id
    ```
 
 2. Vytvoř vlastní roli a přiřaď ji identitě se scope na aplikaci GHE:
 
    ```powershell
-   $roleBody = Join-Path $work 'probe3-role.json'
-   @{
-       displayName = "probe3-$name-app-role-assignment"
+   $roleBody = @{
+       displayName = "$c1Name-app-role-assignment"
        description = 'Verification 73: assign app roles in one enterprise application.'
        isEnabled = $true
-       rolePermissions = @(@{ allowedResourceActions = @('microsoft.directory/servicePrincipals/appRoleAssignedTo/update') })
-   } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $roleBody -Encoding utf8NoBOM
-   $roleDefinitionId = az rest --method post --url https://graph.microsoft.com/v1.0/roleManagement/directory/roleDefinitions --headers Content-Type=application/json --body "@$roleBody" --query id -o tsv
-
-   $assignmentBody = Join-Path $work 'probe3-role-assignment.json'
-   @{ principalId = $probeSp; roleDefinitionId = $roleDefinitionId; directoryScopeId = "/$spId" } | ConvertTo-Json | Set-Content -LiteralPath $assignmentBody -Encoding utf8NoBOM
-   $roleAssignmentId = az rest --method post --url https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments --headers Content-Type=application/json --body "@$assignmentBody" --query id -o tsv
+       rolePermissions = @(@{ allowedResourceActions = @(
+           'microsoft.directory/servicePrincipals/appRoleAssignedTo/update'
+           'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+           'microsoft.directory/servicePrincipals/standard/read'
+       ) })
+   }
+   $roleDefinitionId = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/roleManagement/directory/roleDefinitions" -Body ($roleBody | ConvertTo-Json -Depth 5)).id
+   $roleAssignmentId = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/roleManagement/directory/roleAssignments" -Body (@{
+       principalId = $probeSp; roleDefinitionId = $roleDefinitionId; directoryScopeId = "/$spId"
+   } | ConvertTo-Json)).id
+   @{
+       groupId = $group3; applicationId = $probeAppObjectId; principalId = $probeSp
+       otherApplicationId = $otherAppObjectId; otherPrincipalId = $otherSpId
+       roleDefinitionId = $roleDefinitionId; roleAssignmentId = $roleAssignmentId
+   } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $c1Work 'inventory.json') -Encoding utf8NoBOM
+   $permissionsBefore = Invoke-RestMethod @operatorRequest -Method Get -Uri "$graph/servicePrincipals/$probeSp/appRoleAssignments"
+   if (@($permissionsBefore.value).Count -ne 0 -or $permissionsBefore.'@odata.nextLink') { throw 'The test identity must have no application permissions.' }
    ```
 
-3. Vytvoř secret identity s platností 1 den a počkej 10 minut. Přiřazení role Entra se propaguje se zpožděním.
+3. Přidej secret identity s platností 1 den. Použij `addPassword`, ne reset všech credentials. Secret ani tokeny nevypisuj a neukládej na disk:
 
    ```powershell
-   $secret = az ad app credential reset --id $probeApp --end-date (Get-Date).AddDays(1).ToString('yyyy-MM-dd') --query password -o tsv
+   $credential = Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/applications/$probeAppObjectId/addPassword" `
+       -Body (@{ passwordCredential = @{ displayName = 'Temporary C1 credential'; endDateTime = [DateTimeOffset]::UtcNow.AddDays(1).ToString('o') } } | ConvertTo-Json -Depth 5)
+   $secret = $credential.secretText
+   $credential = $null
+   Start-Sleep -Seconds 600
    ```
 
-4. Přihlas se jako identita do odděleného profilu Azure CLI. Tvoje přihlášení zůstane beze změny.
+4. Získej app-only Graph token přes HTTPS. Secret tak nepředáš v argumentech procesu `az login`. Přihlášení Azure CLI ani `AZURE_CONFIG_DIR` se nezmění:
 
    ```powershell
-   $env:AZURE_CONFIG_DIR = Join-Path $work 'az-probe3'
-   az login --service-principal -u $probeApp -p $secret --tenant $tenantId --allow-no-subscriptions -o none
+   $appAccess = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/token" `
+       -ContentType 'application/x-www-form-urlencoded' -MaximumRedirection 0 -Body @{
+           client_id = $probeApp; client_secret = $secret
+           grant_type = 'client_credentials'; scope = 'https://graph.microsoft.com/.default'
+       }
+   $c1GraphToken = ConvertTo-SecureString $appAccess.access_token -AsPlainText -Force
+   $appAccess = $null
+   $secret = $null
    ```
 
-5. Pozitivní test: identita přiřadí skupině roli User v aplikaci GHE.
+5. Pozitivní test: identita přiřadí skupině roli User v aplikaci GHE. Zachyť HTTP stav i při chybě:
 
    ```powershell
-   $appRoleBody = Join-Path $work 'probe3-app-role.json'
-   @{ principalId = $group3; resourceId = $spId; appRoleId = $userRole } | ConvertTo-Json | Set-Content -LiteralPath $appRoleBody -Encoding utf8NoBOM
-   $appRoleAssignmentId = az rest --method post --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" --headers Content-Type=application/json --body "@$appRoleBody" --query id -o tsv
-   $appRoleAssignmentId
+   $positive = Invoke-WebRequest -Method Post -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" `
+       -Authentication Bearer -Token $c1GraphToken -ContentType 'application/json' -SkipHttpErrorCheck -MaximumRedirection 0 `
+       -Body (@{ principalId = $group3; resourceId = $spId; appRoleId = $userRole } | ConvertTo-Json)
+   $positiveBody = $positive.Content | ConvertFrom-Json -AsHashtable
+   $appRoleAssignmentId = if ($positive.StatusCode -eq 201) { $positiveBody['id'] } else { $null }
    ```
 
-6. Negativní test: identita nesmí přiřadit roli v jiné aplikaci.
+6. Negativní test: stejný app-only token nesmí přiřadit platnou roli v jiné aplikaci. Neplatná role by nerozlišila odmítnutí autorizace od chyby vstupu:
 
    ```powershell
-   @{ principalId = $group3; resourceId = $otherSpId; appRoleId = '00000000-0000-0000-0000-000000000000' } | ConvertTo-Json | Set-Content -LiteralPath $appRoleBody -Encoding utf8NoBOM
-   az rest --method post --url "https://graph.microsoft.com/v1.0/servicePrincipals/$otherSpId/appRoleAssignedTo" --headers Content-Type=application/json --body "@$appRoleBody"
+   $negative = Invoke-WebRequest -Method Post -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$otherSpId/appRoleAssignedTo" `
+       -Authentication Bearer -Token $c1GraphToken -ContentType 'application/json' -SkipHttpErrorCheck -MaximumRedirection 0 `
+       -Body (@{ principalId = $group3; resourceId = $otherSpId; appRoleId = $otherRoleId } | ConvertTo-Json)
+   $negativeBody = $negative.Content | ConvertFrom-Json -AsHashtable
+   $otherAssignmentId = if ($negative.StatusCode -eq 201) { $negativeBody['id'] } else { $null }
+   $c1Result = [ordered]@{
+       PositiveStatus = [int] $positive.StatusCode
+       PositiveErrorCode = if ($positiveBody['error']) { $positiveBody['error']['code'] } else { $null }
+       NegativeStatus = [int] $negative.StatusCode
+       NegativeErrorCode = if ($negativeBody['error']) { $negativeBody['error']['code'] } else { $null }
+   }
    ```
 
-7. Odhlas identitu a ověř, že nemá žádné application permissions:
+7. Odstraň app-only token z relace a ověř pod přihlášením operátora, že testovací identita stále nemá žádné application permissions. Ulož výsledek bez tokenů a ID:
 
    ```powershell
-   az logout
-   Remove-Item Env:AZURE_CONFIG_DIR
-   Remove-Item -Recurse -Force (Join-Path $work 'az-probe3')
-   Remove-Variable secret
-   az rest --url "https://graph.microsoft.com/v1.0/servicePrincipals/$probeSp/appRoleAssignments" --query "length(value)"
+   Remove-Variable c1GraphToken, secret
+   $permissions = Invoke-RestMethod @operatorRequest -Method Get -Uri "$graph/servicePrincipals/$probeSp/appRoleAssignments"
+   $c1Result.ApplicationPermissionCount = @($permissions.value).Count
+   $c1Result.AcceptancePassed = $c1Result.PositiveStatus -eq 201 -and $c1Result.NegativeStatus -eq 403 -and
+       $c1Result.NegativeErrorCode -ceq 'Authorization_RequestDenied' -and
+       $c1Result.ApplicationPermissionCount -eq 0 -and -not $permissions.'@odata.nextLink'
+   $c1Result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $c1Work 'result.json') -Encoding utf8NoBOM
+   [pscustomobject] $c1Result
    ```
 
-Pokud příkazy `az rest` pro vlastní roli selžou, vytvoř roli v UI: Entra admin center → Roles & admins → New custom role. Přiřaď ji v Enterprise applications → GitHub Enterprise Managed User (OIDC) → Roles and administrators.
+Pokud operace Graph pro vlastní roli selžou, vytvoř roli v UI: Entra admin center → Roles & admins → New custom role. Zahrň všechny tři akce a přiřaď ji testovací identitě v Enterprise applications → GitHub Enterprise Managed User (OIDC) → Roles and administrators.
 
 **Ověření:**
 
-- Pozitivní test vypíše ID přiřazení (HTTP 201).
+- Pozitivní test vrátí HTTP 201.
 - Negativní test skončí HTTP 403 `Authorization_RequestDenied`.
 - Identita má `0` application permissions. Úspěch tedy pochází z vlastní role.
 
-**Kam patří výsledek:** komentář v #3 s výsledky obou testů a HTTP stavy. Větu v ADR 0015 potom nahradí PR s výsledkem. Pokud pozitivní test selže, nepřecházej na `AppRoleAssignment.ReadWrite.All`. O náhradním řešení rozhoduje autor.
+**Kam patří výsledek:** komentář v #3 s výsledky obou testů a HTTP stavy. Výsledek zaznamenej také v ADR 0015 prostřednictvím PR. Pokud pozitivní test selže, nepřecházej na `AppRoleAssignment.ReadWrite.All`. O náhradním řešení rozhoduje autor.
 
 **Odblokuje:** #12 spolu s #11.
 
 **Úklid:**
 
 ```powershell
-az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo/$appRoleAssignmentId"
-az rest --method delete --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments/$roleAssignmentId"
-az rest --method delete --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleDefinitions/$roleDefinitionId"
-az ad app delete --id $probeApp
-az ad app delete --id $otherApp
-az ad group delete --group $group3
-Remove-Item (Join-Path $work 'probe3-*.json')
+if ($appRoleAssignmentId) {
+    Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/servicePrincipals/$spId/appRoleAssignedTo/$appRoleAssignmentId"
+}
+if ($otherAssignmentId) {
+    Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/servicePrincipals/$otherSpId/appRoleAssignedTo/$otherAssignmentId"
+}
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/roleManagement/directory/roleAssignments/$roleAssignmentId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/servicePrincipals/$probeSp"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/servicePrincipals/$otherSpId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/applications/$probeAppObjectId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/applications/$otherAppObjectId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/roleManagement/directory/roleDefinitions/$roleDefinitionId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/groups/$group3"
+$operatorRequest = $null
+Remove-Variable operatorToken
+if (-not $c1Result.AcceptancePassed) { throw 'C1 failed; retain result.json and do not grant broader permissions.' }
 ```
+
+Úklid proveď i po neúspěšném testu a ověř, že testovací aplikace, service principals, role, přiřazení a skupina už neexistují. Při přerušení uchovej potvrzené identifikátory v `$c1Work` mimo checkout; nikdy podle nich nemaž původní aplikaci GHE. Výsledek a HTTP stavy zachovej jako evidence (důkazní záznam).
 
 ### C2: Role security manager pro enterprise tým (#4)
 
 **Co ověřuješ:** Instalační token GitHub App přiřadí organizační roli security manager enterprise týmu, který SCIM vytvořil ze skupiny Entra. Člen týmu získá práva security manageru, ale ne roli owner.
 
-**Proč:** Modul `organizations` dává Security team (security tým) roli security manager ve všech organizacích instance. Enterprise tým ze skupiny Entra drží členství na jednom místě. Není ověřené, že REST API organizačních rolí přijme enterprise tým a instalační token App podle ADR 0016. Pokud nepřijme, modul `organizations` přiřadí roli týmu organizace propojenému se skupinou Entra ID.
+**Proč:** Modul `organizations` dává Security team (security tým) roli security manager ve všech organizacích instance. Enterprise tým ze skupiny Entra drží členství na jednom místě. Nestačí, že REST API přijme přiřazení: musíš potvrdit i dědění role na členovi týmu. Pokud přiřazení nebo dědění nepotvrdíš, modul použije tým organizace propojený se stejnou skupinou Entra ID.
 
-**Potřebuješ:** A4 (`$userRole`), A9 (`$probeOrg` a `$adminApp`), pomocné funkce z úvodu fáze C a role User Administrator a Application Administrator.
+**Potřebuješ:** A4 (`$spId` a `$userRole`), A9 (`$probeOrg` a `$adminApp`), pomocné funkce z úvodu fáze C a aktivní role User Administrator a Application Administrator nebo Cloud Application Administrator. Výslovně aktivovaný Global Administrator je také dostačující. Pro Graph používej token z účtu v cílovém tenantu přes `$mgmtSub`, ne výchozí účet Azure CLI.
+
+**Rozdíl rolí:** `member` je základní členství v organizaci a musí zůstat zachované. `security_manager` je další organizační role. Člen týmu nemusí být maintainer ani organization owner.
 
 **Postup:**
 
 1. Vytvoř testovacího uživatele a skupinu a přiřaď skupině roli User v aplikaci GHE. Heslo nikdo nepotřebuje, proto ho hned zahodíš.
 
    ```powershell
-   $password = 'Aa1-' + [guid]::NewGuid().ToString('N')
-   $userId = az ad user create --display-name "probe4-$name" --user-principal-name "probe4-$name@$($upn.Split('@')[1])" --password $password --force-change-password-next-sign-in true --mail-nickname "probe4-$name" --query id -o tsv
-   Remove-Variable password
-   $group4 = az ad group create --display-name "probe4-$name" --mail-nickname "probe4-$name" --query id -o tsv
-   az ad group member add --group $group4 --member-id $userId
-   $group4Body = Join-Path $work 'probe4-app-role.json'
-   @{ principalId = $group4; resourceId = $spId; appRoleId = $userRole } | ConvertTo-Json | Set-Content -LiteralPath $group4Body -Encoding utf8NoBOM
-   $group4AssignmentId = az rest --method post --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" --headers Content-Type=application/json --body "@$group4Body" --query id -o tsv
+   $c2Name = "probe4-$([guid]::NewGuid().ToString('N').Substring(0,12))"
+   $c2Work = Join-Path $work "c2\$c2Name"
+   $null = New-Item -ItemType Directory -Path $c2Work
+   $c2InventoryPath = Join-Path $c2Work 'inventory.json'
+   $c2Inventory = @{ name = $c2Name; groupName = "$c2Name-group"; userName = "$c2Name-user" }
+   $c2Inventory | ConvertTo-Json | Set-Content -LiteralPath $c2InventoryPath -Encoding utf8NoBOM
+   $c2Access = az account get-access-token --subscription $mgmtSub --resource https://graph.microsoft.com/ -o json --only-show-errors | ConvertFrom-Json
+   if ($LASTEXITCODE -ne 0 -or $c2Access.tenant -ne $tenantId) { throw 'Cannot acquire a Graph token for the configured tenant.' }
+   $c2OperatorToken = ConvertTo-SecureString $c2Access.accessToken -AsPlainText -Force
+   $c2Access = $null
+   $graph = 'https://graph.microsoft.com/v1.0'
+   $c2OperatorRequest = @{ Authentication = 'Bearer'; Token = $c2OperatorToken; ContentType = 'application/json'; MaximumRedirection = 0; TimeoutSec = 120 }
+   $initialDomains = @((Invoke-RestMethod @c2OperatorRequest -Uri "$graph/domains").value | Where-Object { $_.isInitial -and $_.isVerified })
+   if ($initialDomains.Count -ne 1) { throw 'A unique verified initial tenant domain is required.' }
+   $probeUserPrincipalName = "$c2Name-user@$($initialDomains[0].id)"
+   $password = 'Aa1!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+   try {
+       $userId = (Invoke-RestMethod @c2OperatorRequest -Method Post -Uri "$graph/users" -Body (@{
+           accountEnabled = $true; displayName = "$c2Name-user"; mailNickname = "$c2Name-user"
+           userPrincipalName = $probeUserPrincipalName
+           passwordProfile = @{ forceChangePasswordNextSignIn = $true; password = $password }
+       } | ConvertTo-Json -Depth 5)).id
+   }
+   finally { $password = $null }
+   $c2Inventory.userId = $userId
+   $c2Inventory | ConvertTo-Json | Set-Content -LiteralPath $c2InventoryPath -Encoding utf8NoBOM
+   $group4 = (Invoke-RestMethod @c2OperatorRequest -Method Post -Uri "$graph/groups" -Body (@{
+       displayName = "$c2Name-group"; mailNickname = "$c2Name-group"; mailEnabled = $false
+       securityEnabled = $true; groupTypes = @()
+   } | ConvertTo-Json)).id
+   $c2Inventory.groupId = $group4
+   $c2Inventory | ConvertTo-Json | Set-Content -LiteralPath $c2InventoryPath -Encoding utf8NoBOM
+   $null = Invoke-RestMethod @c2OperatorRequest -Method Post -Uri "$graph/groups/$group4/members/`$ref" -Body (@{
+       '@odata.id' = "$graph/directoryObjects/$userId"
+   } | ConvertTo-Json)
+   $group4AssignmentId = (Invoke-RestMethod @c2OperatorRequest -Method Post -Uri "$graph/servicePrincipals/$spId/appRoleAssignedTo" -Body (@{
+       principalId = $group4; resourceId = $spId; appRoleId = $userRole
+   } | ConvertTo-Json)).id
+   $c2Inventory.assignmentId = $group4AssignmentId
+   $c2Inventory | ConvertTo-Json | Set-Content -LiteralPath $c2InventoryPath -Encoding utf8NoBOM
    ```
 
-2. Entra admin center → Enterprise applications → GitHub Enterprise Managed User (OIDC) → Provisioning → Provision on demand → skupina `probe4-<name>` → uživatel `probe4-<name>`.
-3. Your enterprise → People → Enterprise teams → New enterprise team:
-   - název `probe4-<name>`,
-   - Identity provider group: `probe4-<name>`.
+   Heslo předáváš jen v HTTPS těle, ne v argumentech procesu. Při přerušení nejprve obnov inventář potvrzených ID a ověř prostředky podle unikátních názvů; neopakuj slepě vytváření.
 
-   Přidej enterprise tým do organizace `$probeOrg`. Tým vytváříš v UI, protože API enterprise týmů přijímá jen classic PAT.
+2. Entra admin center → Enterprise applications → GitHub Enterprise Managed User (OIDC) → Provisioning → Provision on demand → skupina `$c2Name-group` → uživatel `$c2Name-user`.
+
+   Terminál může použít `POST /servicePrincipals/{spId}/synchronization/jobs/{jobId}/provisionOnDemand` s předmětem `Group` a odkazem `links.members` na testovací `User`. Použij jediný aktivní job a odpovídající rule ze schématu. V živém běhu pole `key` obsahovalo název .NET typu, ne JSON výsledku; pole `value` obsahovalo JSON pole záznamů provisioningu. Ověř `sourceIdentity.id`, úspěšný export a `targetIdentity.id` pro oba vlastní objekty. Samotné HTTP 200 ani jeden úspěšný záznam nestačí.
+3. Your enterprise → People → Enterprise teams → New enterprise team:
+   - název `$c2Name`,
+   - Identity provider group: `$c2Name-group`.
+
+   Přidej enterprise tým pouze do organizace `$probeOrg` jako member, ne owner. Ruční přidání uživatele bez propojení skupiny není důkaz SCIM členství. Tým vytváříš v UI, protože API enterprise týmů přijímá jen classic PAT. Čtení propojení enterprise týmu přes organizační endpoint `/teams/{team_slug}/external-groups` v živém testu vrátilo HTTP 422; propojení proto potvrď v UI.
 4. Přiřaď roli tokenem App B a ověř výsledek:
 
    ```powershell
    $rolesToken = New-ProbeToken @adminApp -Permissions @{ members = 'write'; organization_custom_org_roles = 'read' }
    $securityManager = (Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles" -Token $rolesToken).roles | Where-Object name -eq 'security_manager'
-   $teamSlug = "ent:probe4-$name"
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/teams/$teamSlug/$($securityManager.id)" -Token $rolesToken -Method Put
-   (Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/$($securityManager.id)/teams" -Token $rolesToken).slug
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/$($securityManager.id)/users" -Token $rolesToken | Select-Object login, assignment
-   $probeLogin = '<login of probe4 user from the previous output>'
-   (Invoke-ProbeApi -Path "/orgs/$probeOrg/memberships/$probeLogin" -Token $rolesToken).role
+   $teamSlug = "ent:$c2Name"
+   $assigned = Invoke-WebRequest -Uri "$api/orgs/$probeOrg/organization-roles/teams/$teamSlug/$($securityManager.id)" `
+       -Method Put -Headers $headers -Authentication Bearer -Token $rolesToken -MaximumRedirection 0 -TimeoutSec 60
+   if ($assigned.StatusCode -ne 204) { throw 'Role assignment did not return HTTP 204.' }
+   $roleTeams = Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/$($securityManager.id)/teams?per_page=100" -Token $rolesToken
+   $roleUsers = Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/$($securityManager.id)/users?per_page=100" -Token $rolesToken
+   $probeLogin = '<login correlated to the sole member of the provisioned external group>'
+   $probeMembership = Invoke-ProbeApi -Path "/orgs/$probeOrg/memberships/$probeLogin" -Token $rolesToken
    ```
 
 **Ověření:**
 
-- `PUT` skončí bez chyby (HTTP 204).
-- Seznam týmů role obsahuje `ent:probe4-<name>`.
-- Seznam uživatelů role obsahuje testovacího uživatele.
-- Členství v organizaci vrátí `member`, ne `admin`. Role security manager tedy nedala roli owner.
+- `PUT` vrátí přesně HTTP 204.
+- Seznam týmů role obsahuje přesně vlastní tým s `type: enterprise` a slugem `ent:$c2Name`. Prefix `ent:` v cestě ponech doslova; jeho percent-encoded tvar `ent%3A` v živém čtení týmu vrátil HTTP 404.
+- Seznam uživatelů role obsahuje správného testovacího uživatele s `assignment: indirect` a vlastním týmem v `inherited_from`. Koreluj ID a e-mail člena provisionované skupiny, ne odhad normalizovaného loginu.
+- Členství v organizaci vrátí `member`, ne `admin`, před přiřazením i po něm.
+- Při prodlevě opakuj čtení nejdéle 60 sekund a vyřeš pagination. Prázdný seznam uživatelů nesmíš vykázat jako úspěšné dědění.
 
-**Kam patří výsledek:** komentář v #4 s oprávněními App (`members: write`, `organization_custom_org_roles: read`), HTTP stavy a výsledkem. Pokud API enterprise tým nepřijme, zapiš chybu. Modul `organizations` potom použije tým organizace propojený se skupinou Entra ID.
+**Pozorovaný výsledek 13. 10. 2026:** Token s `members: write` a `organization_custom_org_roles: read` přiřadil roli enterprise týmu s HTTP 204. Seznam přiřazených týmů obsahoval správné ID, slug i `type: enterprise`, ale seznam uživatelů role zůstal prázdný i po opakovaném čtení po dobu 60 sekund. Dědění práv enterprise týmu proto zůstalo nepotvrzené; tento výsledek sám o sobě nedokazuje absenci efektivních práv.
+
+Srovnávací test se stejnou SCIM skupinou, stejným uživatelem a stejnými oprávněními tokenu prošel pro tým organizace. API potvrdilo propojení skupiny, přiřazení HTTP 204, `assignment: indirect`, správný tým v `inherited_from` a členství `member` po přiřazení. Po odebrání role uživatel ze seznamu role zmizel. Toto je ověřená fallback varianta pro `organizations`; úspěšné HTTP 204 pro enterprise tým ji samo nenahrazuje.
+
+**Pozorovaný úklid 13. 10. 2026:** Oba testovací týmy po odstranění vrátily HTTP 404. On-demand provisioning potvrdil `Success` a akci `Disable` pro správného cílového uživatele. Po odebrání zdrojového členství API potvrdilo nulový počet členů cílové SCIM skupiny. Přiřazení GHE User, skupina a uživatel v Entra po odstranění vrátili HTTP 404; původní aplikace GHE zůstala dostupná s HTTP 200. Všechny vydané instalační tokeny byly odvolané. Závěrečné čtení cílové SCIM skupiny vrátilo HTTP 200 a nula členů, takže odstranění tohoto cílového záznamu zatím není potvrzené.
+
+**Kam patří výsledek:** komentář v #4 s oprávněními tokenu, HTTP stavy, důkazem dědění a stavem úklidu. Výsledek a inventář uchovej mimo zdrojový checkout, bez hesel, klíčů a tokenů. Dokud nepotvrdíš úklid a nezapíšeš komentář, akceptace issue není dokončená.
 
 **Odblokuje:** #13 spolu s #5 a #12.
 
@@ -1019,14 +1132,21 @@ Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/teams/$teamSlug/$($sec
 Invoke-ProbeApi -Path '/installation/token' -Token $rolesToken -Method Delete
 ```
 
-Smaž enterprise tým v UI: Your enterprise → People → Enterprise teams → `probe4-<name>` → Delete. Potom odstraň objekty v Entra ID:
+Odeber testovací přiřazení a odvolej každý vydaný token i po neúspěšném ověření. Srovnávací tým organizace odstraň jeho organizačním API a ověř HTTP 404; původní SCIM skupinu tím nesmaž.
+
+Smaž enterprise tým v UI: Your enterprise → People → Enterprise teams → `$c2Name` → Delete. Potom zakaž testovacího uživatele v Entra a proveď jeho on-demand deprovisioning; ověř úspěšné znepřístupnění v cíli.
+
+Před smazáním zdrojové skupiny odeber testovacího uživatele z jejího členství a proveď on-demand export skupiny s `links.members = @()`. Organizační API `/external-group/{group_id}` musí potvrdit správnou cílovou skupinu s nulovým počtem členů. Potom odstraň pouze potvrzené vlastní objekty explicitním tokenem:
 
 ```powershell
-az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo/$group4AssignmentId"
-az ad group delete --group $group4
-az ad user delete --id $userId
-Remove-Item $group4Body
+Invoke-RestMethod @c2OperatorRequest -Method Delete -Uri "$graph/servicePrincipals/$spId/appRoleAssignedTo/$group4AssignmentId"
+Invoke-RestMethod @c2OperatorRequest -Method Delete -Uri "$graph/groups/$group4"
+Invoke-RestMethod @c2OperatorRequest -Method Delete -Uri "$graph/users/$userId"
+$c2OperatorRequest = $null
+Remove-Variable c2OperatorToken
 ```
+
+Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. Odděleně zaznamenej stav cílové SCIM skupiny po odstranění zdroje; prázdná skupina neznamená smazanou skupinu. SCIM deprovisioning může účet GitHubu ponechat jako znepřístupněný záznam; nevydávej ho za fyzické smazání. App B, její klíč, probe organizaci a původní aplikaci GHE zachovej pro další ověření.
 
 ### C3: Nové použití názvu smazané organizace (#5)
 
