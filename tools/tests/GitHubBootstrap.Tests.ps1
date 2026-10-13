@@ -176,10 +176,22 @@ Describe 'GitHub bootstrap public interface' {
             }
             elseif ($path -like '*/git/refs' -and $Method -eq 'POST') {
                 $cloud.resources['/repos/demo-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = $data.sha } }
+                foreach ($file in $cloud.tree | Where-Object path -Match '^\.github/workflows/[^/]+\.ya?ml$') {
+                    $workflowPath = "/repos/demo-platform/instance/actions/workflows/$($file.path.Split('/')[-1])"
+                    if (-not $cloud.resources.ContainsKey($workflowPath)) {
+                        $cloud.resources[$workflowPath] = @{ state = 'active' }
+                    }
+                }
                 $reply = @{ ref = $data.ref }
             }
             elseif ($path -like '*/git/refs/heads/main' -and $Method -eq 'PATCH') {
                 $cloud.resources['/repos/demo-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = $data.sha } }
+                foreach ($file in $cloud.tree | Where-Object path -Match '^\.github/workflows/[^/]+\.ya?ml$') {
+                    $workflowPath = "/repos/demo-platform/instance/actions/workflows/$($file.path.Split('/')[-1])"
+                    if (-not $cloud.resources.ContainsKey($workflowPath)) {
+                        $cloud.resources[$workflowPath] = @{ state = 'active' }
+                    }
+                }
                 $reply = @{ ref = 'refs/heads/main' }
             }
             elseif ($path -like '*/environments/*' -and $path -notlike '*/variables*' -and $path -notlike '*/secrets*' -and $path -notlike '*/deployment-branch-policies*') {
@@ -209,9 +221,16 @@ Describe 'GitHub bootstrap public interface' {
             }
             elseif ($path -like '*/secrets/PLATFORM_APP_PRIVATE_KEY' -and $Method -eq 'PUT') { $cloud.secrets[$path] = $data }
             elseif ($path -like '*/secrets/public-key') { $reply = @{ key_id = 'public-key-id'; key = 'public-key' } }
-            elseif ($path -like '*/actions/workflows/deploy.yml/disable' -and $Method -eq 'PUT') {
+            elseif ($path -like '*/actions/workflows/*/disable' -and $Method -eq 'PUT') {
                 if (-not $cloud.commit) { throw 'The workflow cannot exist before repository contents are published.' }
-                $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'].state = 'disabled_manually'
+                $cloud.resources[$path.Substring(0, $path.Length - '/disable'.Length)].state = 'disabled_manually'
+            }
+            elseif ($path -like '*/actions/workflows' -and $Method -eq 'GET') {
+                $reply = @{ workflows = @($cloud.resources.Keys | Where-Object { $_ -like "$path/*" -and $_.Split('/').Count -eq 7 } |
+                    ForEach-Object { @{} + $cloud.resources[$_] + @{ path = ".github/workflows/$($_.Split('/')[-1])" } }) }
+                if ($cloud.ContainsKey('unregisteredWorkflow')) {
+                    $reply.workflows = @($reply.workflows | Where-Object { $_.path -cne $cloud.unregisteredWorkflow })
+                }
             }
             elseif ($path -like '*/rulesets' -and $Method -eq 'GET') {
                 $reply = @($cloud.resources.Keys | Where-Object { $_ -like "$path/*" } | ForEach-Object { $cloud.resources[$_] })
@@ -590,21 +609,71 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.resources.ContainsKey('/orgs/demo-platform/teams/security/memberships/owner_example') | Should -BeFalse
     }
 
-    It 'disables production deployment before enabling an acceptance-only repository' {
+    It 'activates only acceptance and disables every other workflow before enabling Actions' {
         @{ kind = 'github-bootstrap-acceptance' } | ConvertTo-Json | Set-Content (Join-Path $release 'bootstrap-acceptance.json')
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'] = @{ state = 'active' }
+        Copy-Item (Join-Path $tools 'acceptance/github/bootstrap-acceptance.yml') `
+            -Destination (Join-Path $release 'templates/instance/.github/workflows/bootstrap-acceptance.yml')
+        'name: Future' | Set-Content (Join-Path $release 'templates/instance/.github/workflows/future.yml')
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/custom.yml'] = @{ state = 'active' }
         $arguments.ResourcesOnly = $false
         $arguments.AcceptanceOnly = $true
 
         $result = & $bootstrap @arguments
 
         $result.CredentialsConfigured | Should -BeTrue
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'].state | Should -Be 'disabled_manually'
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/bootstrap-acceptance.yml'].state | Should -Be 'active'
         $paths = @($cloud.writes.path)
-        $disabled = [Array]::IndexOf($paths, '/repos/demo-platform/instance/actions/workflows/deploy.yml/disable')
         $enabled = @($cloud.writes | Where-Object { $_.path -like '*/actions/permissions' -and $_.body.enabled })[0]
-        $disabled | Should -BeGreaterOrEqual 0
-        [Array]::IndexOf(@($cloud.writes), $enabled) | Should -BeGreaterThan $disabled
+        foreach ($name in @('deploy.yml', 'vendor.yml', 'future.yml', 'custom.yml')) {
+            $path = "/repos/demo-platform/instance/actions/workflows/$name"
+            $cloud.resources[$path].state | Should -Be 'disabled_manually'
+            if ($name -cne 'custom.yml') { $cloud.tree.path | Should -Contain ".github/workflows/$name" }
+            $disabled = [Array]::IndexOf($paths, "$path/disable")
+            $disabled | Should -BeGreaterOrEqual 0
+            [Array]::IndexOf(@($cloud.writes), $enabled) | Should -BeGreaterThan $disabled
+        }
+        @($cloud.writes | Where-Object method -EQ 'DELETE').Count | Should -Be 0
+    }
+
+    It 'leaves deployment, vendoring and future workflows active in normal mode' {
+        'name: Future' | Set-Content (Join-Path $release 'templates/instance/.github/workflows/future.yml')
+        $arguments.ResourcesOnly = $false
+
+        $result = & $bootstrap @arguments
+
+        $result.CredentialsConfigured | Should -BeTrue
+        foreach ($name in @('deploy.yml', 'vendor.yml', 'future.yml')) {
+            $cloud.resources["/repos/demo-platform/instance/actions/workflows/$name"].state | Should -Be 'active'
+            $cloud.tree.path | Should -Contain ".github/workflows/$name"
+        }
+        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        @($cloud.writes | Where-Object path -Like '*/actions/workflows/*/disable').Count | Should -Be 0
+    }
+
+    It 'keeps Actions disabled when another acceptance-candidate workflow cannot be isolated' -TestCases @(
+        @{ Failure = 'disable' }
+        @{ Failure = 'registration' }
+    ) {
+        param($Failure)
+        @{ kind = 'github-bootstrap-acceptance' } | ConvertTo-Json | Set-Content (Join-Path $release 'bootstrap-acceptance.json')
+        Copy-Item (Join-Path $tools 'acceptance/github/bootstrap-acceptance.yml') `
+            -Destination (Join-Path $release 'templates/instance/.github/workflows/bootstrap-acceptance.yml')
+        $arguments.ResourcesOnly = $false
+        $arguments.AcceptanceOnly = $true
+        if ($Failure -ceq 'disable') {
+            $cloud.failPath = '/repos/demo-platform/instance/actions/workflows/vendor.yml/disable'
+            $errorMessage = '*HTTP 503*'
+        }
+        else {
+            $cloud.unregisteredWorkflow = '.github/workflows/vendor.yml'
+            $errorMessage = '*not uniquely registered*'
+        }
+
+        { & $bootstrap @arguments } | Should -Throw $errorMessage
+
+        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
+        @($cloud.writes | Where-Object { $_.path -like '*/actions/permissions' -and $_.body.enabled }).Count | Should -Be 0
     }
 
     It 'drives the public acceptance wizard through publication and real-run evidence without accepting missing nightly or rotation checks' {
