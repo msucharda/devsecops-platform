@@ -258,7 +258,9 @@ Describe 'GitHub bootstrap public interface' {
             if ($Uri -like '*/orgs/demo-platform/teams`?*') { return ,@(@{ id = 30; slug = 'platform' }) }
             if ($Uri -like '*/orgs/demo-platform/actions/permissions') { return @{ enabled_repositories = 'all' } }
             if ($Uri -like '*/orgs/demo-platform/code-security/configurations*') { return ,@() }
-            if ($Uri -like '*/orgs/demo-platform/rulesets`?*') { return ,@(@{ id = 7 }) }
+            if ($Uri -like '*/orgs/demo-platform/rulesets`?*') {
+                return ,@(@{ id = 7; source_type = 'Organization'; source = 'demo-platform' })
+            }
             if ($Uri -like '*/orgs/demo-platform/rulesets/7') { return @{ id = 7; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 123; bypass_mode = 'pull_request' }) } }
             $segment = $Headers.Authorization.Split(' ')[1].Split('.')[1].Replace('-', '+').Replace('_', '/')
             $segment = $segment.PadRight($segment.Length + (4 - $segment.Length % 4) % 4, '=')

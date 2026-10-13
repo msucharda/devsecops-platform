@@ -22,6 +22,11 @@ Describe 'Enterprise App key and installation token isolation' {
         $fakeRepositoryNames = @()
         $actualOwner = @{ login = 'example'; type = 'enterprise' }
         $repositorySelection = 'selected'
+        $rulesetApp = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ organization_administration = 'write' }
+            resources = @{ organizations = @('platform') }
+        }
         Mock Invoke-RestMethod {
             param($Uri, $Method)
             if ($Uri -eq 'https://api.example.test/app') {
@@ -288,5 +293,93 @@ Describe 'Enterprise App key and installation token isolation' {
             Should -Throw '*Organization API unavailable*'
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
         Test-Path -LiteralPath $environmentPath | Should -BeFalse
+    }
+
+    It 'validates local ruleset bypass details without claiming inherited enterprise detail coverage' {
+        $actualPermissions = @{ organization_administration = 'write'; metadata = 'read' }
+        $repositorySelection = 'all'
+        Mock Invoke-RestMethod {
+            return ,@(
+                @{ id = 41; source_type = 'Organization'; source = 'platform' }
+                @{ id = 42; source_type = 'Enterprise'; source = 'example' }
+            )
+        } -ParameterFilter { $Uri -like '*/orgs/platform/rulesets`?includes_parents=true*' }
+        Mock Invoke-RestMethod {
+            return @{ id = 41; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 7; bypass_mode = 'pull_request' }) }
+        } -ParameterFilter { $Uri -eq 'https://api.example.test/orgs/platform/rulesets/41' }
+        $result = & $issuer -BootstrapApp $rulesetApp -PrivateKey $privateKey -ValidateOnly -Phase rulesetPlan `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath -WarningVariable rulesetWarnings
+
+        $result.Verified | Should -BeTrue
+        $result.InheritedRulesetsNotDetailValidated | Should -Be 1
+        @($rulesetWarnings).Count | Should -Be 1
+        [string] $rulesetWarnings[0] | Should -Match '1 inherited enterprise ruleset.*not detail-validated'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'https://api.example.test/orgs/platform/rulesets/41'
+        }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter {
+            $Uri -eq 'https://api.example.test/orgs/platform/rulesets/42'
+        }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'rejects <Case> ruleset source metadata instead of silently skipping validation' -ForEach @(
+        @{ Case = 'missing source type'; Rule = @{ id = 51; source = 'platform' } }
+        @{ Case = 'unknown source type'; Rule = @{ id = 51; source_type = 'Repository'; source = 'platform' } }
+        @{ Case = 'missing source'; Rule = @{ id = 51; source_type = 'Organization' } }
+        @{ Case = 'mismatched organization source'; Rule = @{ id = 51; source_type = 'Organization'; source = 'another' } }
+        @{ Case = 'mismatched enterprise source'; Rule = @{ id = 51; source_type = 'Enterprise'; source = 'another' } }
+    ) {
+        $actualPermissions = @{ organization_administration = 'write'; metadata = 'read' }
+        $repositorySelection = 'all'
+        Mock Invoke-RestMethod { return ,@($Rule) } -ParameterFilter {
+            $Uri -like '*/orgs/platform/rulesets`?includes_parents=true*'
+        }
+        { & $issuer -BootstrapApp $rulesetApp -PrivateKey $privateKey -ValidateOnly -Phase rulesetPlan `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath } |
+            Should -Throw '*unknown or mismatched source metadata*'
+
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter {
+            $Uri -match '/orgs/platform/rulesets/[0-9]+$'
+        }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'rejects a local ruleset detail without a bypass actor collection' {
+        $actualPermissions = @{ organization_administration = 'write'; metadata = 'read' }
+        $repositorySelection = 'all'
+        Mock Invoke-RestMethod {
+            return ,@(@{ id = 61; source_type = 'Organization'; source = 'platform' })
+        } -ParameterFilter { $Uri -like '*/orgs/platform/rulesets`?includes_parents=true*' }
+        Mock Invoke-RestMethod { return @{ id = 61 } } -ParameterFilter {
+            $Uri -eq 'https://api.example.test/orgs/platform/rulesets/61'
+        }
+        { & $issuer -BootstrapApp $rulesetApp -PrivateKey $privateKey -ValidateOnly -Phase rulesetPlan `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath } |
+            Should -Throw '*did not expose the complete bypass configuration*'
+
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'https://api.example.test/orgs/platform/rulesets/61'
+        }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'fails closed and revokes the token when a local ruleset detail request fails' {
+        $actualPermissions = @{ organization_administration = 'write'; metadata = 'read' }
+        $repositorySelection = 'all'
+        Mock Invoke-RestMethod {
+            return ,@(@{ id = 71; source_type = 'Organization'; source = 'platform' })
+        } -ParameterFilter { $Uri -like '*/orgs/platform/rulesets`?includes_parents=true*' }
+        Mock Invoke-RestMethod { throw 'Local ruleset detail unavailable' } -ParameterFilter {
+            $Uri -eq 'https://api.example.test/orgs/platform/rulesets/71'
+        }
+        { & $issuer -BootstrapApp $rulesetApp -PrivateKey $privateKey -ValidateOnly -Phase rulesetPlan `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath } |
+            Should -Throw '*GitHub App API GET /orgs/platform/rulesets/71 failed*Local ruleset detail unavailable*'
+
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'https://api.example.test/orgs/platform/rulesets/71'
+        }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
     }
 }

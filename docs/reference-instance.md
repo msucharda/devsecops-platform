@@ -1219,11 +1219,13 @@ Průvodce nemění původní konfiguraci z #10. Samostatně vygeneruje `$work\gi
 
 Klíče ponecháš v externím pracovním adresáři. U každého klíče zadáš skutečné datum vytvoření včetně časové zóny; průvodce nastaví rotaci nejpozději za 90 dní. Po souhlasu zveřejní kandidáta a konfiguraci, zapojí environment credentials a ověří opakovaný bootstrap s `HasChanges: false`. Produkční `deploy.yml` vypne **před** zapnutím Actions. Spouštět lze jen vyhrazené `bootstrap-acceptance.yml`.
 
+Validace ruleset App v G6 načte seznam včetně zděděných enterprise rulesetů. Úplný detail a `bypass_actors` ověří jen u lokálních rulesetů, jejichž `source_type` je `Organization` a `source` odpovídá organizaci platformy. Zděděný ruleset musí mít `source_type: Enterprise` a `source` odpovídající deklarovanému enterprise. Průvodce uvede počet zděděných rulesetů bez ověřeného detailu; tento počet není důkazem jejich bypass konfigurace. Chybějící, neznámý nebo neshodný `source_type` či `source` G6 zastaví.
+
 | Krok | Průvodce ověří nebo vyžádá |
 |---|---|
 | G1–G2 | Ověřené předpoklady #10, schválení a izolovanou kopii kandidáta. |
 | G3–G4 | Souhlas s Azure a GitHub provisioningem; výstup odpovídá probe manifestům, nikoli fixture identitám z #10. |
-| G5–G6 | Ruční registraci čtyř Apps a klíčů, ověření credentials, publikaci a ochranu `main`. |
+| G5–G6 | Ruční registraci čtyř Apps a klíčů, ověření credentials a zdrojů rulesetů, publikaci a ochranu `main`. Detail zděděných enterprise rulesetů zůstává nepokrytý. |
 | G7–G8 | Opakování obou bootstrapů beze změn a čtení skutečné bypass konfigurace vypnutého organizačního rulesetu. |
 | G9 | Běh z konkrétní `main`: API čtení, OIDC identity a state izolaci, nesprávný subject odmítnutý jako `AADSTS700213`. Apply identita pouze čte; nejdřív schvaluje platformní tým, pak security tým. |
 | G10 | Úspěšný skutečný `schedule` běh stejné revize v 02:17 UTC. Musí běžet plan a ruleset probe, nikoli apply. Ruční dispatch nestačí. |
@@ -1253,7 +1255,7 @@ Před uzavřením #11 ověř na skutečné GHE.com instanci:
 | Vendoring a review | Repozitář obsahuje zafixovaný schválený acceptance kandidát a jeho konfiguraci. Přímý push do `main` neprojde. PR měnící App oprávnění neprojde bez platformního CODEOWNER a security review. GHE.com skutečně vynucuje beta `required_reviewers`, ne jen vrací přijatý request. |
 | Enterprise-owned Apps | Žádná ze čtyř Apps nemá přístup k repozitářům. Klíče běžného planu nemohou vydat write token. Běžný plan, apply a ruleset plan používají oddělené App identity a deklarované instalace. Zkušební tokeny po ověření již neplatí. |
 | Rozsah API | #11 ověřuje credential kontrakty, token issuer a read-only probe API. Potvrzení produkčního `githubAppAvailabilityVerified` musí později vycházet ze skutečných operací produkčních modulů. Probe čtení nenahrazuje custom patterns ani vytváření a změny prostředků. |
-| API rulesetů | Ruleset credential načte existující organizační ruleset včetně neprázdné bypass konfigurace. Nedostupný endpoint zastaví bootstrap bez PAT nebo rozšíření oprávnění. |
+| API rulesetů | Ruleset credential načte lokální organizační ruleset včetně kolekce `bypass_actors`; G8 použije vypnutý probe s neprázdnou bypass konfigurací. Nedostupný lokální detail zastaví bootstrap bez PAT nebo rozšíření oprávnění. Seznam zděděných enterprise rulesetů nedokazuje jejich detail ani bypass konfiguraci. |
 | Environmenty | PR plan platformního autora nečeká na review. `approve-apply` vyžaduje platformní tým a apply `enterprise-baseline` ještě security tým. Noční běžný a ruleset plan používají odlišné environmenty bez reviewerů, jen z `main`. |
 | Azure OIDC | Plan se přihlásí jen ze svých plan a drift environmentů. Apply se přihlásí jen ze svého apply environmentu. Jiný modul, fáze nebo gate environment nemá odpovídající subject. |
 | Teardown | `approve-teardown-platform` a `teardown` nemají secrets, variables ani federated credentials. V #22 musí druhý gate záviset na prvním; uvedení dvou reviewerů v jediném environmentu by obě schválení nevynutilo. |

@@ -137,6 +137,7 @@ finally {
 $jwt = "$unsigned.$(ConvertTo-JwtSegment $signature)"
 if (-not $ValidateOnly) { Write-Information "::add-mask::$jwt" -InformationAction Continue }
 $tokens = @{}
+$inheritedRulesetsNotDetailValidated = 0
 try {
     $app = Invoke-GitHubAppRequest -Path '/app' -Token $jwt
     if ([string] $app['id'] -cne $expected['appId'] -or -not (Test-PlatformGitHubAppOwner -Owner $app['owner'] -Enterprise $expected['enterprise'])) {
@@ -206,6 +207,13 @@ try {
             do {
                 $rules = @(Invoke-GitHubAppRequest -Path "/orgs/$organization/rulesets?includes_parents=true&per_page=100&page=$page" -Token $issued['token'])
                 foreach ($rule in $rules) {
+                    if ($rule['source_type'] -ceq 'Enterprise' -and $rule['source'] -ceq $expected['enterprise']) {
+                        $inheritedRulesetsNotDetailValidated++
+                        continue
+                    }
+                    if ($rule['source_type'] -cne 'Organization' -or $rule['source'] -cne $organization) {
+                        throw "Ruleset API for '$organization' returned unknown or mismatched source metadata."
+                    }
                     $detail = Invoke-GitHubAppRequest -Path "/orgs/$organization/rulesets/$($rule['id'])" -Token $issued['token']
                     if (-not $detail.Contains('bypass_actors') -or $detail['bypass_actors'] -isnot [Collections.IList]) {
                         throw "Ruleset API for '$organization' did not expose the complete bypass configuration."
@@ -216,11 +224,20 @@ try {
         }
     }
     if ($ValidateOnly) {
+        if ($inheritedRulesetsNotDetailValidated -gt 0) {
+            $rulesetNoun = if ($inheritedRulesetsNotDetailValidated -eq 1) { 'ruleset was' } else { 'rulesets were' }
+            Write-Warning "$inheritedRulesetsNotDetailValidated inherited enterprise $rulesetNoun not detail-validated; only local organization rulesets were checked for complete bypass configuration."
+        }
         foreach ($token in $tokens.PSBase.Values) {
             $null = Invoke-GitHubAppRequest -Path '/installation/token' -Method DELETE -Token $token
         }
         $tokens.Clear()
-        return [pscustomobject]@{ AppId = $expected['appId']; Installations = @($installations | ForEach-Object { [string] $_['id'] }); Verified = $true }
+        return [pscustomobject]@{
+            AppId = $expected['appId']
+            Installations = @($installations | ForEach-Object { [string] $_['id'] })
+            Verified = $true
+            InheritedRulesetsNotDetailValidated = $inheritedRulesetsNotDetailValidated
+        }
     }
     $json = ConvertTo-Json -InputObject $tokens -Depth 100 -Compress
     $content = "PLATFORM_GITHUB_TOKENS=$json`nTF_VAR_github_tokens=$json`n"
