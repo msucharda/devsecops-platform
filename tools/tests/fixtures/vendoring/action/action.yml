@@ -1,0 +1,11 @@
+name: Fixture composite
+description: Exercises nested action references
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4 # Keep this comment.
+    - uses: 'example/tool/subaction@v2'
+    - uses: ./local
+    - shell: bash
+      run: |
+        echo "uses: actions/not-an-action@v1"

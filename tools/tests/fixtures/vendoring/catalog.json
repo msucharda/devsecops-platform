@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "actions": {
+    "actions/checkout": {
+      "repository": "customer-actions/actions-checkout",
+      "sha": "1111111111111111111111111111111111111111"
+    },
+    "example/tool": {
+      "repository": "customer-actions/example-tool",
+      "sha": "2222222222222222222222222222222222222222"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+name: Local fixture
+description: Exercises recursive manifests
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4

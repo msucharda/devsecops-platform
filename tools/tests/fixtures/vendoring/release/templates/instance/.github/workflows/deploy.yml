@@ -1,0 +1,7 @@
+name: Fixture deployment
+on: workflow_dispatch
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4

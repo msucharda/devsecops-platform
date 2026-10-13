@@ -228,6 +228,8 @@ $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
 
 ### Testy a CI
 
+Workflow vendoringu, katalogový kontrakt, oddělené App identity a deklarovaný ruční import popisuje [Vendoring](docs/vendoring.md). Automatický import release mění jen `platform/`; povýšení přepsaných šablon do živých workflow zůstává schváleným ručním krokem #16 bez rozšíření App oprávnění.
+
 Testy Pester volají veřejné skripty bootstrapu, generátoru, výběru, validátorů, token issueru, reportování a runneru. Kontrolují výsledné YAML, JSON, summary, environmenty, pořadí jobů, PR původ, členství autora a oddělení skutečných App oprávnění. GitHub API testy nahrazují jen HTTP hranici; nevolají cloud. Testy bootstrapu nahrazují jen GitHub CLI, Azure CLI a HTTP API; ověřují potvrzení před změnou, preflight bez zápisu, ochrany backendu, scope identit, oddělení fází, opakovaný běh a dokončení přerušeného běhu. Testy runneru vyžadují Terraform; CI ho instaluje před Pesterem. Používají skutečný lokální backend a vestavěný provider `terraform_data`, včetně úplných pravidel a bypass driftu izolovaného ruleset rootu. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
 
 ```powershell
