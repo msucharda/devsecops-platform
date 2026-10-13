@@ -1171,96 +1171,34 @@ Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. 
 
 ### C4: Akce, které potřebuje Dependabot (#6)
 
-**Co ověřuješ:** Jaká politika akcí v organizaci dovolí Dependabotu provést version updates i security updates. Výsledkem je seznam akcí pro specifikaci `enterprise-baseline`.
+**Rozhodnutí:** Modul `enterprise-baseline` nesmí kvůli Dependabotu povolit žádnou externí akci. Dependabot version updates i security updates běží v dynamických workflow, která obcházejí kontroly Actions policy (politiky akcí) na úrovni repozitáře a organizace. Toto chování popisuje dokumentace [Dependabot on GitHub Actions runners](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-on-actions).
 
-**Proč:** README `enterprise-baseline` povoluje jen akce z Actions organization (organizace akcí) a akce, které potřebuje Dependabot. Dokumentace GitHubu uvádí dvě tvrzení, která test musí rozhodnout:
+**Rozsah ověření:** Dependabot používal `Standard GitHub runner`. Ověření pokrylo interní workflow `dynamic/dependabot/dependabot-updates`. Pull request Dependabotu může spustit CI workflow repozitáře. Toto workflow politice akcí nadále podléhá.
 
-- Dependabot zapnutý v repozitáři běží na GitHub Actions vždy a obchází kontroly politiky akcí.
-- Při politice, která povoluje jen akce z enterprise, Dependabot neběží. Politika musí povolit akce vytvořené GitHubem, nebo vybrané akce.
+**Metoda:** Každá varianta použila nový privátní repozitář vytvořený až po změně politiky. Security updates a version updates se ověřily odděleně:
 
-Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhají vždy.
+1. Hodnota [`open-pull-requests-limit: 0`](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#open-pull-requests-limit) vypnula version updates. Security updates tento limit nepoužívají.
+2. Security fáze musela vytvořit security PR a její dynamické workflow muselo skončit `success`.
+3. Po změně limitu na `5` musel vzniknout samostatný version PR a jeho dynamické workflow muselo skončit `success`.
 
-**Potřebuješ:** A9 (`$probeOrg` a `$adminApp`) a pomocné funkce z úvodu fáze C. Enterprise politika akcí musí organizacím dovolit vlastní volbu.
+| Varianta | Actions policy | Security update | Version update | Výsledek |
+| --- | --- | --- | --- | --- |
+| A | `allowed_actions = local_only` | Security PR vznikl při limitu `0`; dynamické workflow skončilo `success`. | Po změně limitu na `5` vznikl samostatný version PR; dynamické workflow skončilo `success`. | Dependabot nepotřebuje GitHub-owned ani externí akce v allowlistu. |
+| B | Původní zděděná politika `selected`, která povoluje GitHub-owned actions | Vznikly dva security PR a dvě dynamická workflow skončila `success`. | Vznikl samostatný version PR; dynamické workflow skončilo `success`. | Kontrolní varianta potvrdila výsledek A. |
+| C | `selected` s jediným explicitním patternem | Neprovedeno. | Neprovedeno. | Varianta A je přísnější a již prokázala nulový externí allowlist. |
 
-**Postup:**
+**Pozorování:** Log dynamického workflow obsahoval `github/dependabot-action@*`. Tento pattern popisuje interní implementaci jobu; není požadavkem pro Actions allowlist. Pokusy změnit zděděnou konfiguraci `selected-actions` skončily HTTP 409 s tokenem App i s osobním OAuth tokenem. Konflikt neovlivňuje rozhodnutí, protože varianta A prošla s přísnější politikou `local_only`.
 
-1. Nejdřív ověř nastavení **Dependabot on Actions runners** v Organization settings → Code security → Global settings → Dependabot. Pokud je vypnuté, zapni ho a ověř, že je zapnuté ještě před testem. Pokud ho nemůžeš zapnout nebo ověřit, C4 zastav: výsledky politiky by nebyly průkazné.
+**Ověření úklidu:**
 
-   ```powershell
-   function Set-ProbeFile([string] $Repository, [string] $Path, [string] $Content) {
-       $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Content))
-       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/contents/$Path" -f message="Add $Path" -f content=$encoded --silent
-   }
-   function New-DependabotProbeRepository([string] $Repository) {
-       gh api --hostname $githubHost -X POST "orgs/$probeOrg/repos" -f name=$Repository -f visibility=private -F auto_init=true --silent
-       Set-ProbeFile $Repository 'requirements.txt' "requests==2.25.0`n"
-       Set-ProbeFile $Repository '.github/dependabot.yml' "version: 2`nupdates:`n  - package-ecosystem: pip`n    directory: /`n    schedule:`n      interval: daily`n"
-       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/vulnerability-alerts" --silent
-       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/automated-security-fixes" --silent
-   }
-   ```
-
-   Každou variantu testuj v novém repozitáři. Repozitář založ až po nastavení její politiky; automatické security updates tak nemohou vytvořit PR před začátkem varianty. Použij názvy `dependabot-probe-a`, `dependabot-probe-b` a `dependabot-probe-c`.
-
-2. Připrav token:
-
-   ```powershell
-   $policyToken = New-ProbeToken @adminApp -Permissions @{ organization_administration = 'write' }
-   ```
-
-3. Proveď variantu A. Nejdřív nastav politiku a až potom vytvoř nový repozitář. Potom variantu vyhodnoť postupem „Vyhodnocení varianty“ pod tímto seznamem:
-
-   ```powershell
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'local_only' }
-   $policyChangedAt = [DateTimeOffset]::UtcNow
-   $Repository = 'dependabot-probe-a'
-   New-DependabotProbeRepository $Repository
-   ```
-
-4. Proveď variantu B a vyhodnoť ji. Nejdřív nastav obě části politiky a až potom vytvoř nový repozitář:
-
-   ```powershell
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'selected' }
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $true; verified_allowed = $false; patterns_allowed = @() }
-   $policyChangedAt = [DateTimeOffset]::UtcNow
-   $Repository = 'dependabot-probe-b'
-   New-DependabotProbeRepository $Repository
-   ```
-
-   Po vyhodnocení varianty B otevři v repozitáři `dependabot-probe-b` Actions → `dynamic/dependabot/dependabot-updates` → job → Set up job. Zapiš všechny akce z řádků `Download action repository`. Seznam použij ve variantě C.
-
-5. Proveď variantu C a vyhodnoť ji. Nahraď `<owner>/<action>@*` vzory akcí z varianty B:
-
-   ```powershell
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $false; verified_allowed = $false; patterns_allowed = @('<owner>/<action>@*') }
-   $policyChangedAt = [DateTimeOffset]::UtcNow
-   $Repository = 'dependabot-probe-c'
-   New-DependabotProbeRepository $Repository
-   ```
-
-6. Po vyhodnocení varianty C odvolej token: `Invoke-ProbeApi -Path '/installation/token' -Token $policyToken -Method Delete`.
-
-**Vyhodnocení varianty:** Proveď ho po každé variantě, ještě před změnou politiky pro další variantu. Bloky A, B a C proto nespouštěj najednou.
-
-1. Spusť version update: Insights → Dependency graph → Dependabot → `requirements.txt` → Check for updates.
-2. Ověř security update: Security → Dependabot alerts → alert pro `requests`. Automated security fixes jsou zapnuté při vytvoření repozitáře. Vyhodnoť jen PR vytvořený po změně politiky.
-3. Zkontroluj běhy. Filtr vrátí jen běhy Dependabotu zahájené po změně politiky:
-
-   ```powershell
-   $since = $policyChangedAt.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
-   gh api --hostname $githubHost "repos/$probeOrg/$Repository/actions/runs?per_page=100" --jq ('.workflow_runs[] | select(.path == "dynamic/dependabot/dependabot-updates" and .created_at >= "' + $since + '") | [.event, .status, .conclusion, .created_at] | @tsv')
-   ```
-
-   Pokud filtr nevrátí žádný běh, zaznamenej to jako výsledek varianty. Běh ani PR jiné varianty nesmíš použít jako důkaz. Před vyhodnocením ověř, že Dependabot on Actions runners zůstává zapnutý.
-4. Zaznamenej výsledek běhů a to, zda vznikl nový PR.
-
-**Ověření:** Pro každou variantu zaznamenej výsledek pouze z jejího nového repozitáře a z běhů zahájených po změně politiky, včetně toho, zda `dynamic/dependabot/dependabot-updates` skončil `success` a zda vznikl nový PR. Varianta C musí projít, aby seznam akcí stačil pro `enterprise-baseline`.
-
-**Kam patří výsledek:** komentář v #6 s výsledkem všech tří variant a seznamem akcí. Seznam akcí s odkazem na dokumentaci potom doplní PR do README `enterprise-baseline`. Pokud Dependabot běží i ve variantě A, PR upraví také větu „Dependabot na Actions jinak nepoběží.“
+- Skript obnovil původní organizační Actions policy.
+- Kontrola potvrdila nezměněnou zděděnou konfiguraci `selected-actions`.
+- Skript odvolal všechny vydané installation tokeny App.
+- API po odstranění obou testovacích repozitářů vrací HTTP 404.
+- `gh auth status` po odstranění repozitářů potvrdil odebrání dočasného OAuth scope `delete_repo`.
+- Privátní evidence zůstává mimo zdrojový repozitář.
 
 **Odblokuje:** #18.
-
-**Úklid:** Repozitáře `dependabot-probe-a`, `dependabot-probe-b` a `dependabot-probe-c` zaniknou se smazáním organizace ve fázi D.
 
 ## Akceptace GitHub části bootstrapu (#11)
 

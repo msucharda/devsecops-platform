@@ -25,7 +25,11 @@ Teardown tyto předpoklady zachová. Jejich ruční potvrzení není důkaz auto
 
 ## GitHub Actions
 
-- Povolené jsou jen akce z organizace akcí a akce, které potřebuje Dependabot. Dependabot na Actions jinak nepoběží. CodeQL default setup politika akcí neblokuje.
+- Povolené jsou jen vendorované akce z Actions organization (organizace akcí).
+- Dependabot version updates a security updates běží v dynamických workflow, která [obcházejí kontroly Actions policy](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-on-actions) na úrovni repozitáře a organizace.
+- Modul kvůli Dependabotu nesmí povolit externí action pattern ani `github/dependabot-action@*`. Log interního jobu při C4 tuto akci obsahoval, ale allowlist ji nevyžaduje.
+- Pull request Dependabotu může spustit CI workflow repozitáře. Toto workflow politice akcí podléhá.
+- CodeQL default setup politika akcí neblokuje.
 - Výchozí oprávnění `GITHUB_TOKEN` je jen čtení.
 - GitHub Actions nesmí vytvářet ani schvalovat PR.
 
