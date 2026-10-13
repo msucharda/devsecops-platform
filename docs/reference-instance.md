@@ -1119,7 +1119,7 @@ if (-not $c1Result.AcceptancePassed) { throw 'C1 failed; retain result.json and 
 
 Srovnávací test se stejnou SCIM skupinou, stejným uživatelem a stejnými oprávněními tokenu prošel pro tým organizace. API potvrdilo propojení skupiny, přiřazení HTTP 204, `assignment: indirect`, správný tým v `inherited_from` a členství `member` po přiřazení. Po odebrání role uživatel ze seznamu role zmizel. Toto je ověřená fallback varianta pro `organizations`; úspěšné HTTP 204 pro enterprise tým ji samo nenahrazuje.
 
-**Pozorovaný úklid 13. 10. 2026:** Oba testovací týmy po odstranění vrátily HTTP 404. On-demand provisioning potvrdil `Success` a akci `Disable` pro správného cílového uživatele. Po odebrání zdrojového členství API potvrdilo nulový počet členů cílové SCIM skupiny. Přiřazení GHE User, skupina a uživatel v Entra po odstranění vrátili HTTP 404; původní aplikace GHE zůstala dostupná s HTTP 200. Všechny vydané instalační tokeny byly odvolané. Závěrečné čtení cílové SCIM skupiny vrátilo HTTP 200 a nula členů, takže odstranění tohoto cílového záznamu zatím není potvrzené.
+**Pozorovaný úklid 13. 10. 2026:** Oba testovací týmy po odstranění vrátily HTTP 404. On-demand provisioning potvrdil `Success` a akci `Disable` pro správného cílového uživatele. Po odebrání zdrojového členství API potvrdilo nulový počet členů cílové SCIM skupiny. Čtení přiřazení GHE User, skupiny a uživatele v Entra po odstranění vrátilo HTTP 404; původní aplikace GHE zůstala dostupná s HTTP 200. Cílový organizační záznam SCIM skupiny nejprve zůstal prázdný s HTTP 200. Po následujícím standardním SCIM cyklu vrátil HTTP 404; závěrečné čtení proběhlo ve 12:22 CEST. Všechny vydané instalační tokeny včetně tokenu závěrečné kontroly byly odvolané s HTTP 204. Znepřístupněný managed-user záznam není fyzické smazání účtu.
 
 **Kam patří výsledek:** komentář v #4 s oprávněními tokenu, HTTP stavy, důkazem dědění a stavem úklidu. Výsledek a inventář uchovej mimo zdrojový checkout, bez hesel, klíčů a tokenů. Dokud nepotvrdíš úklid a nezapíšeš komentář, akceptace issue není dokončená.
 
@@ -1146,7 +1146,7 @@ $c2OperatorRequest = $null
 Remove-Variable c2OperatorToken
 ```
 
-Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. Odděleně zaznamenej stav cílové SCIM skupiny po odstranění zdroje; prázdná skupina neznamená smazanou skupinu. SCIM deprovisioning může účet GitHubu ponechat jako znepřístupněný záznam; nevydávej ho za fyzické smazání. App B, její klíč, probe organizaci a původní aplikaci GHE zachovej pro další ověření.
+Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. Odděleně zaznamenej stav cílové SCIM skupiny po odstranění zdroje; prázdná skupina neznamená smazanou skupinu. Pokud cílový záznam zůstane prázdný, počkej na následující standardní SCIM cyklus a ověř HTTP 404. Ověřený job měl interval 40 minut. Cílený on-demand export již smazané zdrojové skupiny skončil `Failure`; není náhradou za potvrzené odstranění a nesmíš kvůli němu obnovit zdrojové objekty ani restartovat celou synchronizaci. SCIM deprovisioning může účet GitHubu ponechat jako znepřístupněný záznam; nevydávej ho za fyzické smazání. App B, její klíč, probe organizaci a původní aplikaci GHE zachovej pro další ověření.
 
 ### C3: Nové použití názvu smazané organizace (#5)
 
