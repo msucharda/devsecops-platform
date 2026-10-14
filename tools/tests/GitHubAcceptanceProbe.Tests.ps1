@@ -85,7 +85,10 @@ Describe 'Live bootstrap acceptance probe public interface' {
         $env:AZURE_TENANT_ID = '11111111-1111-1111-1111-111111111111'
         $env:ACTIONS_ID_TOKEN_REQUEST_URL = 'https://pipelines.actions.githubusercontent.com/oidctoken?api-version=2.0'
         $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN = 'runner-test-token'
-        Mock Invoke-RestMethod { @{ value = 'test-assertion' } }
+        $subjectPayload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+            '{"sub":"repo:demo-platform@10/instance@20:ref:refs/heads/main","aud":"api://AzureADTokenExchange"}')).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+        $assertion = "header.$subjectPayload.signature"
+        Mock Invoke-RestMethod { @{ value = $assertion } }
         $errorContent = ConvertTo-Json @{ error_codes = @($Code) }
         Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = 400; Content = $errorContent } }
         if ($Accepted) {
@@ -100,5 +103,8 @@ Describe 'Live bootstrap acceptance probe public interface' {
             Test-Path $output | Should -BeFalse
         }
         Should -Invoke az -Times 0 -Exactly
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            $Body.client_assertion -ceq $assertion -and $Body.scope -ceq 'https://management.azure.com/.default'
+        }
     }
 }

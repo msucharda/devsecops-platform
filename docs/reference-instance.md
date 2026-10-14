@@ -1225,6 +1225,10 @@ Kontrola přístupu týmu k repozitáři používá pro `GET /orgs/{org}/teams/{
 
 Validace ruleset App v G6 načte seznam včetně zděděných enterprise rulesetů. Úplný detail a `bypass_actors` ověří jen u lokálních rulesetů, jejichž `source_type` je `Organization` a `source` odpovídá organizaci platformy. Zděděný ruleset musí mít `source_type: Enterprise` a `source` odpovídající deklarovanému enterprise. Průvodce uvede počet zděděných rulesetů bez ověřeného detailu; tento počet není důkazem jejich bypass konfigurace. Chybějící, neznámý nebo neshodný `source_type` či `source` G6 zastaví.
 
+Před G9 porovnej živé federated credentials se skutečným OIDC subject kontraktem repozitáře podle [bootstrapu](bootstrap.md#environmenty-noční-plan-a-teardown). V immutable režimu musí subject obsahovat přesné owner a repository IDs; název organizace a repozitáře nestačí. Pro acceptance konfiguraci musí zůstat osm vazeb: `bootstrap-probe` plan, plan-drift a apply; `enterprise-baseline` plan, plan-drift, ruleset-plan, ruleset-plan-drift a apply. Čtyři Azure identity zachovávají oddělení modulů a plan/apply. Gate environmenty nemají federated credentials; wrongSubject musí dál selhat výslovně jako `AADSTS700213`.
+
+Při neshodě ponech Actions vypnuté a zachovej původní kandidát i neúspěšnou evidence. Lokální oprava vytvoří nový commit, kandidát a hash; nemění publikovaný kandidát ani živou důvěru. Samostatné schválení migrace musí určit osm starých a osm nových vazeb na stejných identitách, nový publication kandidát a nejvýše jeden nový G9 dispatch. Nesmí rozšířit issuer, audience, role, App permissions ani OAuth scopes. Změna subject mění i hashovaný název federated credential, proto samotné přepsání subject pod starým názvem veřejný bootstrap nepřijme. Migrace musí mít vlastní guard a readback; při nejasném zápisu nebo chybě musí zastavit bez automatického retry. G10 vyžaduje skutečný schedule nové schválené revize; G11 nadále vyžaduje lidské důkazy.
+
 | Krok | Průvodce ověří nebo vyžádá |
 |---|---|
 | G1–G2 | Ověřené předpoklady #10, schválení a izolovanou kopii kandidáta. |

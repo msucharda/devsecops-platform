@@ -73,6 +73,7 @@ Describe 'GitHub bootstrap public interface' {
             appPermissions = @{ members = 'read'; metadata = 'read' }
             apps = @{}
             teamRepositoryResponses = @{}
+            oidcSettings = @{ use_default = $true; use_immutable_subject = $false; sub_claim_prefix = 'repo:demo-platform/instance' }
             defaultBranch = 'main'; failPath = ''; rejectSecurityReview = $false
         }
         foreach ($module in $azure.Modules) {
@@ -151,12 +152,19 @@ Describe 'GitHub bootstrap public interface' {
                 $reply = @{ workflow_runs = @($cloud.scheduledRuns) }
             }
             elseif ($path -eq '/orgs/demo-platform/repos' -and $Method -eq 'POST') {
-                $cloud.resources['/repos/demo-platform/instance'] = @{ id = 20; name = 'instance'; private = $true; default_branch = $cloud.defaultBranch; description = $data.description }
+                $cloud.resources['/repos/demo-platform/instance'] = @{
+                    id = 20; name = 'instance'; full_name = 'demo-platform/instance'
+                    owner = @{ id = 10; login = 'demo-platform'; type = 'Organization' }
+                    private = $true; default_branch = $cloud.defaultBranch; description = $data.description
+                }
                 $cloud.resources['/repos/demo-platform/instance/actions/permissions'] = @{ enabled = $true }
                 $reply = $cloud.resources['/repos/demo-platform/instance']
                 if ($data.auto_init) {
                     $cloud.resources["/repos/demo-platform/instance/git/ref/heads/$($cloud.defaultBranch)"] = @{ object = @{ sha = 'seed-sha' } }
                 }
+            }
+            elseif ($path -eq '/repos/demo-platform/instance/actions/oidc/customization/sub' -and $Method -eq 'GET') {
+                $reply = $cloud.oidcSettings
             }
             elseif ($path -eq '/orgs/demo-platform/teams' -and $Method -eq 'POST') {
                 $reply = @{ id = $(if ($data.name -eq 'platform') { 30 } else { 31 }); slug = $data.name; description = $data.description }
@@ -371,6 +379,61 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Count | Should -Be 0
         (ConvertTo-Json -InputObject $cloud.commit -Compress) | Should -Be $seed
     }
+    It 'binds immutable OIDC subjects to the exact repository IDs and each phase without widening trust' {
+        $cloud.oidcSettings = @{
+            use_default = $true; use_immutable_subject = $true; sub_claim_prefix = 'repo:demo-platform@10/instance@20'
+        }
+        & $bootstrap @arguments | Out-Null
+        $planPath = $azure.Modules[0].Plan.ResourceId
+        $applyPath = $azure.Modules[0].Apply.ResourceId
+        $plan = @($cloud.resources.Keys | Where-Object { $_.StartsWith("$planPath/federatedIdentityCredentials/") } |
+            ForEach-Object { $cloud.resources[$_].properties.subject })
+        $apply = @($cloud.resources.Keys | Where-Object { $_.StartsWith("$applyPath/federatedIdentityCredentials/") } |
+            ForEach-Object { $cloud.resources[$_].properties.subject })
+        $plan | Should -HaveCount 2
+        $plan | Should -Contain 'repo:demo-platform@10/instance@20:environment:application-plan'
+        $plan | Should -Contain 'repo:demo-platform@10/instance@20:environment:application-plan-drift'
+        $apply | Should -HaveCount 1
+        $apply[0] | Should -BeExactly 'repo:demo-platform@10/instance@20:environment:application-apply'
+        @($plan + $apply | Where-Object { $_ -like '*approve-*' -or $_ -like '*teardown*' -or $_ -like '*foundation*' }) | Should -HaveCount 0
+        $cloud.writes.Clear()
+        (& $bootstrap @arguments).HasChanges | Should -BeFalse
+        $cloud.writes | Should -HaveCount 0
+    }
+    It 'rejects unproven OIDC mode or repository identity before federation writes (<Invalid>)' -TestCases @(
+        @{ Invalid = 'MissingMode' }, @{ Invalid = 'StringMode' }, @{ Invalid = 'CustomTemplate' },
+        @{ Invalid = 'PrefixIds' }, @{ Invalid = 'MissingPrefix' }, @{ Invalid = 'MissingOwnerId' },
+        @{ Invalid = 'MissingOwner' }, @{ Invalid = 'StringOwnerId' }, @{ Invalid = 'DifferentOwner' }, @{ Invalid = 'ZeroRepositoryId' }
+    ) {
+        param($Invalid)
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        switch ($Invalid) {
+            MissingMode { $cloud.oidcSettings.Remove('use_immutable_subject') }
+            StringMode { $cloud.oidcSettings.use_immutable_subject = 'true' }
+            CustomTemplate { $cloud.oidcSettings.use_default = $false }
+            PrefixIds { $cloud.oidcSettings.sub_claim_prefix = 'repo:demo-platform@10/instance@999' }
+            MissingPrefix { $cloud.oidcSettings.Remove('sub_claim_prefix') }
+            MissingOwnerId { $cloud.resources['/repos/demo-platform/instance'].owner.Remove('id') }
+            MissingOwner { $cloud.resources['/repos/demo-platform/instance'].Remove('owner') }
+            StringOwnerId { $cloud.resources['/repos/demo-platform/instance'].owner.id = '10' }
+            DifferentOwner { $cloud.resources['/repos/demo-platform/instance'].owner.login = 'other-platform' }
+            ZeroRepositoryId { $cloud.resources['/repos/demo-platform/instance'].id = 0 }
+        }
+        { & $bootstrap @arguments } | Should -Throw '*OIDC*'
+        @($cloud.writes | Where-Object { $_.path -like '*/federatedIdentityCredentials*' }) | Should -HaveCount 0
+        @($cloud.writes | Where-Object { $_.path -like '*/actions/oidc/*' }) | Should -HaveCount 0
+    }
+
+    It 'refuses to silently migrate existing legacy federation when the repository switches to immutable subjects' {
+        & $bootstrap @arguments | Out-Null
+        $cloud.writes.Clear()
+        $cloud.oidcSettings = @{
+            use_default = $true; use_immutable_subject = $true; sub_claim_prefix = 'repo:demo-platform@10/instance@20'
+        }
+        { & $bootstrap @arguments } | Should -Throw '*unexpected federated credential*approved access change*'
+        @($cloud.writes | Where-Object { $_.path -like '*/federatedIdentityCredentials*' }) | Should -HaveCount 0
+    }
 
     It 'reads existing team push permissions without writes or changing other endpoint headers' -Tag 'TeamPermissions' {
         & $bootstrap @arguments | Out-Null
@@ -516,7 +579,12 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Count | Should -Be 0
     }
 
-    It 'isolates all three enterprise-baseline App identities including both nightly plans' {
+    It 'isolates all three enterprise-baseline App identities including both nightly plans (<Immutable>)' -TestCases @(
+        @{ Immutable = $false }, @{ Immutable = $true }
+    ) {
+        param($Immutable)
+        $subjectPrefix = if ($Immutable) { 'repo:demo-platform@10/instance@20' } else { 'repo:demo-platform/instance' }
+        $cloud.oidcSettings = @{ use_default = $true; use_immutable_subject = $Immutable; sub_claim_prefix = $subjectPrefix }
         $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @('demo-platform') } } }
         $instance.credentials = @{ 'enterprise-baseline' = @{
             plan = @{ environment = 'enterprise-baseline-plan'; githubApp = 'reader' }
@@ -568,6 +636,19 @@ Describe 'GitHub bootstrap public interface' {
         @($cloud.secrets.Keys).Count | Should -Be 6
         $federation = @($cloud.resources.Values | Where-Object { $_.Contains('properties') -and $_.properties.Contains('subject') })
         @($federation | Where-Object { $_.properties.subject -like '*enterprise-baseline*' }).Count | Should -Be 5
+        $identity = $azure.Modules | Where-Object { $_.Name -eq 'enterprise-baseline' }
+        $planSubjects = @($cloud.resources.Keys | Where-Object { $_.StartsWith("$($identity.Plan.ResourceId)/federatedIdentityCredentials/") } |
+            ForEach-Object { $cloud.resources[$_].properties.subject })
+        $applySubjects = @($cloud.resources.Keys | Where-Object { $_.StartsWith("$($identity.Apply.ResourceId)/federatedIdentityCredentials/") } |
+            ForEach-Object { $cloud.resources[$_].properties.subject })
+        $planSubjects | Should -HaveCount 4
+        foreach ($environment in @('enterprise-baseline-plan', 'enterprise-baseline-plan-drift',
+            'enterprise-baseline-ruleset-plan', 'enterprise-baseline-ruleset-plan-drift')) {
+            $planSubjects | Should -Contain "${subjectPrefix}:environment:$environment"
+        }
+        $applySubjects | Should -HaveCount 1
+        $applySubjects[0] | Should -BeExactly "${subjectPrefix}:environment:enterprise-baseline-apply"
+        @($federation | Where-Object { $_.properties.subject -match 'pr-authorization|approve-|teardown' }) | Should -HaveCount 0
     }
 
     It 'does not publish keys or initial main when an App is owned by a workload organization' {

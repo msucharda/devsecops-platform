@@ -565,6 +565,28 @@ foreach ($name in $selected) {
         }
     }
 }
+$repositorySubject = ''
+if ($selected.Count) {
+    $oidc = Invoke-GitHubBootstrapApi -Path "/repos/$repository/actions/oidc/customization/sub"
+    if ($oidc -isnot [Collections.IDictionary] -or
+        $oidc['use_default'] -isnot [bool] -or -not $oidc['use_default'] -or
+        $oidc['use_immutable_subject'] -isnot [bool]) {
+        throw 'Repository OIDC must expose its default template and an explicit immutable-subject mode. Custom templates require an approved trust change.'
+    }
+    if ($repo['owner'] -isnot [Collections.IDictionary] -or $repo['name'] -cne 'instance' -or
+        $repo['full_name'] -cne $repository -or $repo['owner']['login'] -cne $organization -or
+        $repo['owner']['type'] -cne 'Organization' -or
+        ($repo['id'] -isnot [long] -and $repo['id'] -isnot [int]) -or $repo['id'] -le 0 -or
+        ($repo['owner']['id'] -isnot [long] -and $repo['owner']['id'] -isnot [int]) -or $repo['owner']['id'] -le 0) {
+        throw 'Repository OIDC requires the exact organization owner and positive numeric repository and owner IDs.'
+    }
+    $repositorySubject = if ($oidc['use_immutable_subject']) {
+        "repo:$organization@$($repo['owner']['id'])/instance@$($repo['id'])"
+    } else { "repo:$repository" }
+    if ($oidc['sub_claim_prefix'] -isnot [string] -or $oidc['sub_claim_prefix'] -cne $repositorySubject) {
+        throw 'Repository OIDC subject prefix does not match its declared mode and exact repository identity.'
+    }
+}
 $azureToken = ''
 if ($selected.Count) {
     $text = & az account get-access-token --tenant $connection['tenantId'] --resource 'https://management.azure.com/' --output json --only-show-errors 2>&1 | Out-String
@@ -603,7 +625,7 @@ foreach ($name in $selected) {
         foreach ($binding in @($environmentBindings | Where-Object {
             $_['module'] -ceq $name -and (($_['phase'] -ceq 'apply') -eq ($phase -ceq 'apply'))
         })) {
-            $subject = "repo:${repository}:environment:$($binding['name'])"
+            $subject = "${repositorySubject}:environment:$($binding['name'])"
             $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($subject))).ToLowerInvariant()
             $desired["fic-$($digest.Substring(0, 24))"] = @{ properties = @{
                 issuer = "https://token.actions.$($connection['githubHost'])"
