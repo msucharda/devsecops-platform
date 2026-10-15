@@ -122,10 +122,13 @@ jobs:
         run: |
           "client=$env:CLIENT" >> $env:GITHUB_OUTPUT
           "tenant=$env:TENANT" >> $env:GITHUB_OUTPUT
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: bootstrap-acceptance-${{ matrix.phase }}
-          path: evidence/result.json
+          path: |
+            evidence/result.json
+            evidence/result.state-isolation.json
           retention-days: 7
       - if: always() && env.PLATFORM_GITHUB_TOKENS != ''
         shell: pwsh
@@ -194,10 +197,13 @@ jobs:
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
           AUTHORIZATION_KEY_FINGERPRINT: ${{ needs.authorize.outputs.fingerprint }}
         run: ./platform/tools/Test-GitHubBootstrapAcceptance.ps1 -InstancePath ./instance.yaml -Phase apply -ResultPath ./evidence/result.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: bootstrap-acceptance-apply
-          path: evidence/result.json
+          path: |
+            evidence/result.json
+            evidence/result.state-isolation.json
           retention-days: 7
       - if: always() && env.PLATFORM_GITHUB_TOKENS != ''
         shell: pwsh

@@ -13,6 +13,8 @@ $PSNativeCommandUseErrorActionPreference = $false
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $instance = Get-PlatformYaml -Path $InstancePath
 if (Test-Path -LiteralPath $ResultPath) { Remove-Item -LiteralPath $ResultPath }
+$diagnosticPath = [IO.Path]::ChangeExtension([IO.Path]::GetFullPath($ResultPath), 'state-isolation.json')
+if (Test-Path -LiteralPath $diagnosticPath) { Remove-Item -LiteralPath $diagnosticPath }
 $organization = "$($instance['instance']['name'])-platform"
 $checks = [ordered]@{}
 $keyFingerprint = ''
@@ -87,10 +89,69 @@ else {
     $null = & az storage blob list --account-name $env:PLATFORM_STATE_STORAGE_ACCOUNT --container-name enterprise-baseline `
         --auth-mode login --output json --only-show-errors 2>&1
     if ($LASTEXITCODE -ne 0) { throw 'The phase identity cannot read its own enterprise-baseline state container.' }
-    $denied = & az storage blob list --account-name $env:PLATFORM_STATE_STORAGE_ACCOUNT --container-name bootstrap-probe `
-        --auth-mode login --output json --only-show-errors 2>&1 | Out-String
-    if ($LASTEXITCODE -eq 0 -or $denied -notmatch 'AuthorizationPermissionMismatch|AuthorizationFailure') {
-        throw 'Another module state container was accessible or failed for a reason other than authorization.'
+    $diagnostic = [ordered]@{
+        version = 1; phase = $Phase; outcome = 'UnrecognizedFailure'
+        nativeExitCode = $null; httpStatus = $null; errorCode = 'not-observed'
+    }
+    try {
+        try {
+            $null = & az storage blob list --account-name $env:PLATFORM_STATE_STORAGE_ACCOUNT --container-name bootstrap-probe `
+                --auth-mode login --num-results 1 --output json --only-show-errors 2>&1
+            $negativeExitCode = $LASTEXITCODE
+        }
+        catch {
+            $diagnostic.outcome = 'NativeInvocationFailure'
+            throw 'The cross-module state command could not be executed. See the state isolation diagnostic.'
+        }
+        if ($negativeExitCode -isnot [int]) { throw 'The cross-module state read returned no valid native exit status.' }
+        $diagnostic.nativeExitCode = $negativeExitCode
+        if ($negativeExitCode -eq 0) {
+            $diagnostic.outcome = 'UnexpectedSuccess'
+            throw 'The cross-module state read succeeded unexpectedly.'
+        }
+        if ($env:PLATFORM_STATE_STORAGE_ACCOUNT -cnotmatch '^[a-z0-9]{3,24}$') {
+            throw 'The cross-module state check requires a valid Azure Storage account name.'
+        }
+        try {
+            $response = [pscustomobject](Invoke-WebRequest -Method GET `
+                -Uri "https://$env:PLATFORM_STATE_STORAGE_ACCOUNT.blob.core.windows.net/bootstrap-probe?restype=container&comp=list&maxresults=1" `
+                -Headers @{
+                    Authorization = "Bearer $($access['accessToken'])"
+                    'x-ms-date' = [DateTime]::UtcNow.ToString('R', [Globalization.CultureInfo]::InvariantCulture)
+                    'x-ms-version' = '2023-11-03'
+                } -SkipHttpErrorCheck -MaximumRedirection 0 -MaximumRetryCount 0 -TimeoutSec 60)
+        }
+        catch {
+            $diagnostic.outcome = 'TransportFailure'
+            throw 'The cross-module state authorization request failed. See the state isolation diagnostic.'
+        }
+        if (-not $response -or -not $response.PSObject.Properties['StatusCode'] -or
+            $response.StatusCode -isnot [int] -or $response.StatusCode -lt 100 -or $response.StatusCode -gt 599 -or
+            -not $response.PSObject.Properties['Headers'] -or $response.Headers -isnot [Collections.IDictionary]) {
+            $diagnostic.outcome = 'InvalidResponse'
+            throw 'The cross-module state authorization response is malformed. See the state isolation diagnostic.'
+        }
+        $diagnostic.httpStatus = $response.StatusCode
+        $codes = @($response.Headers['x-ms-error-code'])
+        $knownCodes = @('AuthorizationPermissionMismatch', 'AuthorizationFailure', 'AuthenticationFailed',
+            'InvalidAuthenticationInfo', 'ContainerNotFound', 'ResourceNotFound', 'AccountIsDisabled',
+            'InsufficientAccountPermissions', 'OperationTimedOut', 'ServerBusy', 'InternalError')
+        $diagnostic.errorCode = if ($codes.Count -eq 1 -and $codes[0] -cin $knownCodes) { $codes[0] }
+            elseif ($codes.Count -eq 0 -or $null -eq $codes[0]) { 'missing' } else { 'unrecognized' }
+        if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) {
+            $diagnostic.outcome = 'UnexpectedSuccess'
+            throw 'The cross-module state REST read succeeded unexpectedly.'
+        }
+        if ($response.StatusCode -ne 403 -or $diagnostic.errorCode -cne 'AuthorizationPermissionMismatch') {
+            throw 'The cross-module state check did not prove an authorization permission denial. See the state isolation diagnostic.'
+        }
+        $diagnostic.outcome = 'AuthorizationDenied'
+    }
+    finally {
+        $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($diagnosticPath))
+        $diagnosticJson = ConvertTo-Json $diagnostic -Compress
+        [IO.File]::WriteAllText($diagnosticPath, $diagnosticJson + "`n", [Text.UTF8Encoding]::new($false))
+        Write-Information "State isolation diagnostic: $diagnosticJson" -InformationAction Continue
     }
     $checks['phaseIdentityVerified'] = $true
     $checks['otherModuleStateDenied'] = $true
@@ -111,3 +172,5 @@ $directory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($ResultPath))
 $null = [IO.Directory]::CreateDirectory($directory)
 [IO.File]::WriteAllText([IO.Path]::GetFullPath($ResultPath), (ConvertTo-Json $result -Depth 10) + "`n", [Text.UTF8Encoding]::new($false))
 [pscustomobject] $result
+# The expected native denial must not become the successful pwsh step exit status.
+exit 0
