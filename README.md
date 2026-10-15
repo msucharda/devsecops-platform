@@ -36,6 +36,8 @@ Instalační skript stáhne chybějící verze modulů z PowerShell Gallery do r
 
 `schemas/instance.schema.json` popisuje soubor `instance.yaml`. Výchozí příklad je v `templates/instance/instance.yaml`. Validátor, výběr modulů i runner používají stejné schéma. Chyba uvádí cestu k položce, například `$.instance.name` nebo `$.credentials.organizations.plan.githubApp`.
 
+Validátor načítá pouze pevná schémata `instance.schema.json` a `module.schema.json` z adresáře `schemas/` vedle nástrojů. Před validací spojí jejich definice do jednoho schématu s lokálními odkazy. Povoluje jen `#/definitions/<name>` a `module.schema.json#/definitions/<name>` s existující definicí; odmítne jiné soubory, vzdálená URI, chybějící definice i `$id`, který by změnil význam odkazu. Nestahuje schémata podle URI z konfigurace a nezapíná `FetchExternalReference`. Tento postup zachovává kontrakt PowerShellu 7.4+ včetně 7.6. Pokud `Test-Json` odmítne data bez podrobností, validátor získá chybové cesty ze stejného schématu přes `JsonSchema.Net`, který je součástí podporovaného PowerShellu; odmítnutí dat tím nesmí změnit na úspěch.
+
 | Položka | Kontrakt |
 |---|---|
 | `instance.name` | Povinných 2–8 malých písmen nebo číslic; první znak musí být písmeno. |

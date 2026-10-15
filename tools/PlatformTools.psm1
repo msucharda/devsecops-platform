@@ -31,11 +31,61 @@ function Get-PlatformYaml {
     return $documents[0]
 }
 
+function Get-PlatformJsonSchema {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param([Parameter(Mandatory)][ValidateSet('instance', 'module')][string] $Name)
+
+    $schemas = @{
+        module = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/module.schema.json') -Raw -ErrorAction Stop |
+            ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    }
+    if ($Name -ceq 'instance') {
+        $schemas['instance'] = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/instance.schema.json') -Raw -ErrorAction Stop |
+            ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        if ($schemas['instance'].definitions.Contains('platformModuleSchema')) {
+            throw 'The instance schema uses the reserved platformModuleSchema definition.'
+        }
+    }
+    $rewrite = {
+        param($Value, [string] $Source)
+        if ($Value -is [System.Collections.IDictionary]) {
+            foreach ($keyword in @('$id', '$anchor', '$dynamicRef', '$recursiveRef')) {
+                if ($Value.Contains($keyword)) { throw "Unsupported schema keyword '$keyword' in the local $Source schema." }
+            }
+            if ($Value.Contains('$ref')) {
+                $reference = $Value['$ref']
+                if ($reference -isnot [string] -or $reference -cnotmatch '^(module\.schema\.json)?#/definitions/([A-Za-z][A-Za-z0-9]*)$') {
+                    throw "Unsupported schema reference in the local $Source schema."
+                }
+                $target = if ($Matches[1]) { 'module' } else { $Source }
+                $definition = $Matches[2]
+                if (-not $schemas[$target].definitions.Contains($definition)) {
+                    throw "Missing schema definition '$definition' in the local $target schema."
+                }
+                $prefix = if ($Name -ceq 'instance' -and $target -ceq 'module') { '#/definitions/platformModuleSchema' } else { '#' }
+                $Value['$ref'] = "$prefix/definitions/$definition"
+            }
+            foreach ($key in @($Value.PSBase.Keys)) { & $rewrite $Value[$key] $Source }
+        }
+        elseif ($Value -is [System.Collections.IList]) {
+            foreach ($item in $Value) { & $rewrite $item $Source }
+        }
+    }
+    foreach ($source in @($schemas.Keys)) { & $rewrite $schemas[$source] $source }
+    if ($Name -ceq 'instance') {
+        # Rebase the sibling's own references as well as references from the instance schema.
+        $schemas['instance'].definitions['platformModuleSchema'] = $schemas['module']
+    }
+    return $schemas[$Name]
+}
+
 function Get-PlatformModuleGraph {
     [CmdletBinding()]
     [OutputType([System.Collections.IDictionary])]
     param([Parameter(Mandatory)][string] $ModulesPath)
 
+    $schema = ConvertTo-Json -InputObject (Get-PlatformJsonSchema -Name module) -Depth 100
     $modules = [ordered]@{}
     $directories = @(Get-ChildItem -LiteralPath $ModulesPath -Directory -ErrorAction Stop)
     [string[]] $names = @($directories | ForEach-Object { $_.Name })
@@ -48,7 +98,7 @@ function Get-PlatformModuleGraph {
         $manifest = Get-PlatformYaml -Path $manifestPath
         try {
             $valid = Test-Json -Json (ConvertTo-Json -InputObject $manifest -Depth 100 -Compress) `
-                -SchemaFile (Join-Path $PSScriptRoot '../schemas/module.schema.json') -ErrorAction Stop
+                -Schema $schema -ErrorAction Stop
         }
         catch {
             throw "Invalid module manifest '$manifestPath': $($_.Exception.Message)"
@@ -172,7 +222,7 @@ function Get-PlatformAppScope {
             $scope[$kind] = $parameters[$parameter]
         }
     }
-    $schema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/module.schema.json') -Raw | ConvertFrom-Json -AsHashtable
+    $schema = Get-PlatformJsonSchema -Name module
     $resourceSchema = $schema.definitions.githubAppResources
     $resourceSchema.definitions = @{ githubOrganization = $schema.definitions.githubOrganization }
     $valid = Test-Json -Json (ConvertTo-Json -InputObject $scope -Depth 100) `
@@ -208,8 +258,7 @@ function Get-PlatformInstance {
         }
     }
     if ($instance['modules'] -is [System.Collections.IDictionary]) {
-        $manifestSchema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/module.schema.json') -Raw |
-            ConvertFrom-Json -AsHashtable
+        $manifestSchema = Get-PlatformJsonSchema -Name module
         $nameSchema = ConvertTo-Json -InputObject $manifestSchema['definitions']['moduleName'] -Compress
         foreach ($name in $instance['modules'].PSBase.Keys) {
             if (-not (Test-Json -Json (ConvertTo-Json -InputObject $name -Compress) -Schema $nameSchema -ErrorAction SilentlyContinue)) {
@@ -217,20 +266,36 @@ function Get-PlatformInstance {
             }
         }
     }
+    $schema = Get-PlatformJsonSchema -Name instance
+    $schemaJson = ConvertTo-Json -InputObject $schema -Depth 100
+    $instanceJson = ConvertTo-Json -InputObject $instance -Depth 100 -Compress
     $validationErrors = @()
-    $valid = Test-Json -Json (ConvertTo-Json -InputObject $instance -Depth 100 -Compress) `
-        -SchemaFile (Join-Path $PSScriptRoot '../schemas/instance.schema.json') `
+    $valid = Test-Json -Json $instanceJson -Schema $schemaJson `
         -ErrorAction SilentlyContinue -ErrorVariable validationErrors
     if (-not $valid) {
-        $messages = foreach ($errorRecord in $validationErrors) {
+        $messages = @(foreach ($errorRecord in $validationErrors) {
             $errorRecord.Exception.Message -replace "at '(/[^']*)'", {
                 "at '$" + $_.Groups[1].Value.TrimEnd('/').Replace('/', '.') + "'"
+            }
+        })
+        if ($messages.Count -eq 0) {
+            # PowerShell 7.6 can reject nested data without emitting its validation errors.
+            $options = [Json.Schema.EvaluationOptions]::new()
+            $options.OutputFormat = [Json.Schema.OutputFormat]::List
+            $evaluation = [Json.Schema.JsonSchema]::FromText($schemaJson).Evaluate(
+                [System.Text.Json.Nodes.JsonNode]::Parse($instanceJson), $options)
+            $messages = @(foreach ($result in @($evaluation) + @($evaluation.Details)) {
+                if ($result.HasErrors) {
+                    $location = '$' + $result.InstanceLocation.ToString().Replace('/', '.')
+                    foreach ($message in $result.Errors.Values) { "$message at '$location'" }
+                }
+            })
+            if ($messages.Count -eq 0) {
+                throw "Invalid instance configuration '$Path': Test-Json rejected the data without diagnostic details."
             }
         }
         throw "Invalid instance configuration '$Path': $($messages -join '; ')"
     }
-    $schema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/instance.schema.json') -Raw |
-        ConvertFrom-Json -AsHashtable
     $checkParameter = {
         param($Value, [string] $ParameterPath)
         if ($Value -is [System.Collections.IDictionary]) {
