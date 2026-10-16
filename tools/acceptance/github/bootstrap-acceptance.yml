@@ -83,9 +83,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    outputs:
-      client: ${{ steps.identity.outputs.client }}
-      tenant: ${{ steps.identity.outputs.tenant }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -114,14 +111,6 @@ jobs:
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
           AUTHORIZATION_KEY_FINGERPRINT: ${{ needs.authorize.outputs.fingerprint }}
         run: ./platform/tools/Test-GitHubBootstrapAcceptance.ps1 -InstancePath ./instance.yaml -Phase $env:ACCEPTANCE_PHASE -ResultPath ./evidence/result.json
-      - id: identity
-        shell: pwsh
-        env:
-          CLIENT: ${{ vars.AZURE_CLIENT_ID }}
-          TENANT: ${{ vars.AZURE_TENANT_ID }}
-        run: |
-          "client=$env:CLIENT" >> $env:GITHUB_OUTPUT
-          "tenant=$env:TENANT" >> $env:GITHUB_OUTPUT
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -133,8 +122,25 @@ jobs:
       - if: always() && env.PLATFORM_GITHUB_TOKENS != ''
         shell: pwsh
         run: ./platform/tools/Remove-PlatformGitHubToken.ps1
-  wrong_subject:
+  wrong_subject_identity:
     needs: probe
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'schedule' && 'enterprise-baseline-plan-drift' || 'enterprise-baseline-plan' }}
+    permissions: {}
+    outputs:
+      client: ${{ steps.identity.outputs.client }}
+      tenant: ${{ steps.identity.outputs.tenant }}
+    steps:
+      - id: identity
+        shell: pwsh
+        env:
+          CLIENT: ${{ vars.AZURE_CLIENT_ID }}
+          TENANT: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          "client=$env:CLIENT" >> $env:GITHUB_OUTPUT
+          "tenant=$env:TENANT" >> $env:GITHUB_OUTPUT
+  wrong_subject:
+    needs: wrong_subject_identity
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -148,8 +154,8 @@ jobs:
         run: ./platform/tools/Install-ToolDependencies.ps1
       - shell: pwsh
         env:
-          AZURE_CLIENT_ID: ${{ needs.probe.outputs.client }}
-          AZURE_TENANT_ID: ${{ needs.probe.outputs.tenant }}
+          AZURE_CLIENT_ID: ${{ needs.wrong_subject_identity.outputs.client }}
+          AZURE_TENANT_ID: ${{ needs.wrong_subject_identity.outputs.tenant }}
         run: ./platform/tools/Test-GitHubBootstrapAcceptance.ps1 -InstancePath ./instance.yaml -Phase wrongSubject -ResultPath ./evidence/result.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

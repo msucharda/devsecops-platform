@@ -328,3 +328,31 @@ Describe 'Bootstrap acceptance diagnostic artifact contract' {
         $upload[0].with.'retention-days' | Should -Be 7
     }
 }
+
+Describe 'Bootstrap acceptance wrong-subject identity handoff' {
+    It 'passes identity metadata from an isolated job without Azure login masking' {
+        $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+        $workflow = Get-Content (Join-Path $root 'tools/acceptance/github/bootstrap-acceptance.yml') -Raw | ConvertFrom-Yaml
+        $consumer = $workflow.jobs.wrong_subject
+        $provider = $workflow.jobs[$consumer.needs]
+
+        @($provider.steps | Where-Object { $_.Contains('uses') -and $_.uses -like 'Azure/login@*' }).Count |
+            Should -Be 0 -Because 'Azure/login masks the client ID and GitHub then withholds that job output.'
+        $provider.needs | Should -Be 'probe'
+        $provider.environment | Should -Be '${{ github.event_name == ''schedule'' && ''enterprise-baseline-plan-drift'' || ''enterprise-baseline-plan'' }}'
+        $provider.permissions.Count | Should -Be 0
+        $provider.outputs.client | Should -Be '${{ steps.identity.outputs.client }}'
+        $provider.outputs.tenant | Should -Be '${{ steps.identity.outputs.tenant }}'
+        $provider.steps.Count | Should -Be 1
+        $provider.steps[0].env.CLIENT | Should -Be '${{ vars.AZURE_CLIENT_ID }}'
+        $provider.steps[0].env.TENANT | Should -Be '${{ vars.AZURE_TENANT_ID }}'
+        $provider.steps[0].run | Should -Match '"client=\$env:CLIENT" >> \$env:GITHUB_OUTPUT'
+        $provider.steps[0].run | Should -Match '"tenant=\$env:TENANT" >> \$env:GITHUB_OUTPUT'
+        $consumer.Contains('environment') | Should -BeFalse
+        $consumer.permissions.'id-token' | Should -Be 'write'
+        $probeStep = @($consumer.steps | Where-Object { $_.Contains('run') -and $_.run -like '*-Phase wrongSubject*' })
+        $probeStep.Count | Should -Be 1
+        $probeStep[0].env.AZURE_CLIENT_ID | Should -Be '${{ needs.wrong_subject_identity.outputs.client }}'
+        $probeStep[0].env.AZURE_TENANT_ID | Should -Be '${{ needs.wrong_subject_identity.outputs.tenant }}'
+    }
+}
