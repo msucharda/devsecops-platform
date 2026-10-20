@@ -258,7 +258,13 @@ Describe 'Enterprise installation credentials' {
     }
 
     It 'validates and proves revocation with an enterprise endpoint, not a repository endpoint' {
+        $validationEvents = [Collections.Generic.List[string]]::new()
+        Mock Invoke-RestMethod {
+            $validationEvents.Add('Read')
+            return @()
+        } -ParameterFilter { $Uri -like '*/enterprises/example/apps/installable_organizations*' }
         Mock Invoke-WebRequest {
+            $validationEvents.Add($Method)
             [pscustomobject]@{ StatusCode = $(if ($Method -eq 'DELETE') { 204 } else { 401 }) }
         }
 
@@ -268,10 +274,45 @@ Describe 'Enterprise installation credentials' {
         $result.Verified | Should -BeTrue
         $result.Installations | Should -Be @('201')
         $result.RevocationsVerified | Should -Be 1
+        @($validationEvents) | Should -Be @('Read', 'DELETE', 'GET')
         Test-Path -LiteralPath $environmentPath | Should -BeFalse
         Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
             $Method -eq 'GET' -and $Uri -eq 'https://api.example.test/enterprises/example/apps/installable_organizations?per_page=1'
         }
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Uri -like '*/installation/repositories*' }
+    }
+
+    It 'revokes the enterprise token and fails validation when the active-token read fails' {
+        Mock Invoke-RestMethod { throw 'Active enterprise read denied.' } -ParameterFilter {
+            $Uri -like '*/enterprises/example/apps/installable_organizations*'
+        }
+
+        { & $issuer -Module observer -InstancePath $instancePath -ModulesPath $modulesPath -PrivateKey $privateKey `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath -ValidateOnly } |
+            Should -Throw '*Active enterprise read denied*'
+
+        Test-Path -LiteralPath $environmentPath | Should -BeFalse
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'rejects a revocation proof with HTTP <Status> instead of treating it as token rejection' -ForEach @(
+        @{ Status = 200 }
+        @{ Status = 403 }
+        @{ Status = 404 }
+        @{ Status = 500 }
+    ) {
+        Mock Invoke-RestMethod { return @() } -ParameterFilter {
+            $Uri -like '*/enterprises/example/apps/installable_organizations*'
+        }
+        Mock Invoke-WebRequest {
+            [pscustomobject]@{ StatusCode = $(if ($Method -eq 'DELETE') { 204 } else { $Status }) }
+        }
+
+        { & $issuer -Module observer -InstancePath $instancePath -ModulesPath $modulesPath -PrivateKey $privateKey `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath -ValidateOnly -VerifyRevocation } |
+            Should -Throw '*not rejected*HTTP 401*'
+
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        Test-Path -LiteralPath $environmentPath | Should -BeFalse
     }
 }

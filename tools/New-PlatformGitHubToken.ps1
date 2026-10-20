@@ -279,6 +279,10 @@ try {
         Send-GitHubAppTokenEvent -EventName Issued -Token $issued['token']
         if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }
         Assert-AppPermission -Actual $issued['permissions']
+        if ($ValidateOnly -and $enterpriseInstallation -and $expected['permissions'].Contains('enterprise_organization_installations')) {
+            $null = Invoke-GitHubAppRequest -Path "/enterprises/$($expected['enterprise'])/apps/installable_organizations?per_page=1" `
+                -Token $issued['token']
+        }
         if ($selected -or $Authorization -or $noRepositoryAccess) {
             $actualRepositories = [Collections.Generic.List[string]]::new()
             $page = 1

@@ -36,7 +36,7 @@ try {
 } finally { Remove-Variable c3Key }
 ```
 
-`-Phase apply` zde označuje izolovaný ověřovací pokus, nikoli produkční plan. Issuer ověří enterprise vlastníka, App ID, přesná oprávnění App i instalace, enterprise slug a ID, installation ID a aktivní stav. Vydá token bez těla `permissions`, odvolá ho přes `DELETE /installation/token` a musí dostat HTTP 401 při následném čtení enterprise endpointu. Nic nezapíše do `GITHUB_ENV`.
+`-Phase apply` zde označuje izolovaný ověřovací pokus, nikoli produkční plan. Issuer ověří enterprise vlastníka, App ID, přesná oprávnění App i instalace, enterprise slug a ID, installation ID a aktivní stav. Vydá token bez těla `permissions`. U kontraktu s `enterprise_organization_installations` musí aktivním tokenem úspěšně přečíst `GET /enterprises/{enterprise}/apps/installable_organizations`; při chybě token odvolá a vrátí chybu. Potom token odvolá přes `DELETE /installation/token` a musí dostat právě HTTP 401 při následném čtení enterprise endpointu. HTTP 403 ani 404 nejsou důkaz revokace. Kontrakt bez tohoto oprávnění neprokazuje aktivní čtení tímto endpointem. Issuer nic nezapíše do `GITHUB_ENV`.
 
 GitHub pro enterprise installation nepodporuje zúžení přes `permissions` a token nemá přístup k repozitářům. Oprávnění pro `createEnterpriseOrganization` zatím nejsou prokázaná. Pokud API vrátí jiný tvar vlastníka nebo instalace, zastav se a zaznamenej anonymizovaný tvar; kontrolu identity nevypínej.
 
@@ -45,6 +45,7 @@ GitHub pro enterprise installation nepodporuje zúžení přes `permissions` a t
 Funkce samy nic nespouštějí. Každé vydání tokenu proveď až po úspěšném kroku 1 pro aktuální App a oprávnění. Organizační App ověř stejným issuerem s kontraktem `resources = @{ organizations = @($c3Org); repositories = @{} }` a vlastními ID a oprávněními.
 
 ```powershell
+Import-Module .\tools\PlatformTools.psm1
 $c3Headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
 function ConvertTo-C3Base64Url([byte[]] $Bytes) {
     [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
@@ -75,7 +76,33 @@ function New-C3Token {
         }
         $issued = Invoke-RestMethod @request
         if (-not $issued.token) { throw 'Installation token was not issued.' }
-        ConvertTo-SecureString $issued.token -AsPlainText -Force
+        $token = ConvertTo-SecureString $issued.token -AsPlainText -Force
+        try {
+            $actualPermissions = ConvertTo-Json -InputObject $issued.permissions -Depth 10 |
+                ConvertFrom-Json -AsHashtable
+            if ($actualPermissions -isnot [System.Collections.IDictionary]) {
+                throw 'Installation token permissions were not returned as a map.'
+            }
+            $comparison = @{} + $actualPermissions
+            if (-not $App.permissions.Contains('metadata') -and $comparison['metadata'] -ceq 'read') {
+                $comparison.Remove('metadata')
+            }
+            if ((ConvertTo-PlatformCanonicalJson $comparison) -cne (ConvertTo-PlatformCanonicalJson $App.permissions)) {
+                throw "Installation token permissions differ from the current contract. Actual permissions: $(ConvertTo-PlatformCanonicalJson $actualPermissions)"
+            }
+            [pscustomobject]@{ Token = $token; Permissions = $actualPermissions }
+        } catch {
+            $failure = $_
+            try {
+                $revocation = Invoke-C3Request -Path '/installation/token' -Token $token -Method DELETE
+                if ($revocation.StatusCode -ne 204) {
+                    throw "Token revocation returned HTTP $($revocation.StatusCode); stop and wait for expiration."
+                }
+            } catch {
+                throw "Token permission validation failed and revocation was not confirmed; stop and wait for expiration. $($_.Exception.Message)"
+            } finally { $token.Dispose() }
+            throw $failure
+        }
     } finally { $jwt.Dispose(); Remove-Variable issued -ErrorAction SilentlyContinue }
 }
 function Invoke-C3Request {
@@ -95,6 +122,8 @@ function Invoke-C3Request {
 
 Po timeoutu mutace nic automaticky neopakuj. Nejprve ověř skutečný stav přes UI a čtecí API. HTTP 200 GraphQL není důkaz úspěchu: vždy kontroluj `errors` i `data`. HTTP 401/403/404 samo nerozliší nedostupné preview od chybějícího oprávnění.
 
+`New-C3Token` vrací objekt `Token` (`SecureString`) a `Permissions` (skutečnou mapu oprávnění bez tokenu). Před vrácením porovná oprávnění s aktuálním kontraktem; implicitní `metadata: read` přijme stejně jako issuer. Při neshodě token odvolá a vrátí chybu. Do sanitizovaného záznamu ulož jen `Permissions`, nikdy celý návratový objekt. Při nepotvrzené revokaci se zastav a vyčkej expirace.
+
 ## 3. Nejmenší oprávnění a vytvoření organizace
 
 Nejdřív enterprise owner přes UI zjistí GraphQL node ID enterprise. Ulož ho lokálně jako `$c3EnterpriseNodeId`. Urči existujícího enterprise člena platformního týmu jako `$c3OwnerLogin` a schválený billing email jako `$c3BillingEmail`. `adminLogins` bude explicitní; tím se nerozhoduje o produkčním zdroji ownerů (Q2).
@@ -111,7 +140,9 @@ Pro každý pokus uprav `$c3App.permissions`, proveď krok 1 a pak:
 
 ```powershell
 $c3Org = "probe13-$([guid]::NewGuid().ToString('N').Substring(0, 12))-actions"
-$c3Token = New-C3Token -App $c3App -KeyPath $c3KeyPath
+$c3Issued = New-C3Token -App $c3App -KeyPath $c3KeyPath
+$c3Token = $c3Issued.Token
+$c3PermissionEvidence = $c3Issued.Permissions | ConvertTo-Json -Compress
 $c3CreateBody = @{
     query = @'
 mutation($input: CreateEnterpriseOrganizationInput!) {
@@ -145,7 +176,7 @@ if ($c3InstallReply.StatusCode -notin @(200, 201)) { throw 'Organization App ins
 
 Pokud sada pro tvorbu toto oprávnění nemá, použij samostatnou schválenou enterprise App nebo App nainstaluj ručně přes UI. Úspěch ruční instalace není důkaz podpory enterprise instalačního API. Před API pokusem znovu proveď krok 1 pro použitou App. Nepřidávej organizační instalaci do enterprise-only App; tento PR takovou kombinaci úmyslně odmítá.
 
-Z odpovědi instalace zjisti installation ID organizační App. Vytvoř `$c3OrganizationApp` s jejími `appId`, `installationId`, `enterprise`, přesnými `permissions` a `resources` podle kroku 2. Ověř kontrakt issuerem a pak vydej `$c3OrgToken = New-C3Token -App $c3OrganizationApp -KeyPath $c3OrganizationKeyPath -Organization`.
+Z odpovědi instalace zjisti installation ID organizační App. Vytvoř `$c3OrganizationApp` s jejími `appId`, `installationId`, `enterprise`, přesnými `permissions` a `resources` podle kroku 2. Ověř kontrakt issuerem. Potom vydej `$c3OrgIssued = New-C3Token -App $c3OrganizationApp -KeyPath $c3OrganizationKeyPath -Organization` a přiřaď `$c3OrgToken = $c3OrgIssued.Token`. Do sanitizovaného záznamu zahrň i `$c3OrgIssued.Permissions`, ne celý objekt.
 
 Přes `GET /orgs/{org}/memberships/{login}` s `$c3OrgToken` musí mít explicitní `$c3OwnerLogin` `state: active` a `role: admin`. Potvrď stav také přihlášením tohoto vlastníka do UI. Existující enterprise člen se má přidat přímo; pozvánka se nesmí vykázat jako aktivní vlastnictví. Přes `GET /orgs/{org}/members?role=admin` projdi všechny stránky a zaznamenej všechny skutečné ownery v soukromém inventáři. Ve veřejném výsledku uveď jen počet a zda všichni patří do platformního týmu.
 
@@ -177,7 +208,7 @@ Výsledek smí změnit člověk až po běhu. PR s výsledkem musí oddělit dol
 |---|---|---|
 | Relace | Datum UTC, operátor, commit nástrojů, API verze, GHE.com a stav preview | Neprovedeno |
 | Issuer | Přesná oprávnění a scope, vlastník App, Enterprise target, vydání bez permissions, revokace 204 → 401 | Neprovedeno |
-| Minimum pro tvorbu | Sada oprávnění každého pokusu, HTTP, GraphQL errors/data, negativní pokus bez každého požadovaného práva | Neprovedeno |
+| Minimum pro tvorbu | Deklarovaná i skutečně vrácená mapa oprávnění každého tokenu (`Permissions`), HTTP, GraphQL errors/data, negativní pokus bez každého požadovaného práva | Neprovedeno |
 | Read-only | Pokus A, tvorba zamítnutá bez vedlejšího efektu; jiný výsledek blokuje návrh planu | Neprovedeno |
 | Vlastník | Explicitní adminLogins, aktivní admin členství, počet ownerů, platformní tým; stav varianty bez adminLogins | Neprovedeno |
 | Billing email | Povinnost/volitelnost v EMU, nebo výslovně neověřeno | Neprovedeno |
