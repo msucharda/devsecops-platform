@@ -94,8 +94,26 @@ Describe 'Module runner with local Terraform' {
 
         $outputs = Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json
         $outputs.message | Should -Be 'hello'
+        $outputs.entra_application | Should -Be 'none'
         $result.HasChanges | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $arguments.StatePath 'foundation.tfstate') | Should -BeFalse
+    }
+
+    It 'passes the Entra connection identifiers from the bootstrap section' {
+        $instance.bootstrap = @{
+            tenantId = '11111111-1111-1111-1111-111111111111'
+            managementSubscriptionId = '22222222-2222-2222-2222-222222222222'
+            subscriptionIds = @('22222222-2222-2222-2222-222222222222')
+            enterpriseApplicationObjectId = '33333333-3333-3333-3333-333333333333'
+            githubHost = 'example.ghe.com'
+            enterprise = 'example'
+        }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        $result = & $runner -Module foundation -Action plan @arguments 6>$null
+
+        (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).entra_application |
+            Should -Be '33333333-3333-3333-3333-333333333333'
     }
 
     It 'reports no changes after apply but publishes newly planned values without mutating state' {

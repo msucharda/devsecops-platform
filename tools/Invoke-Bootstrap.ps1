@@ -107,7 +107,7 @@ function Invoke-BootstrapRequest {
     [OutputType([System.Collections.IDictionary])]
     param(
         [Parameter(Mandatory)][string] $Uri,
-        [ValidateSet('GET', 'POST', 'PUT')][string] $Method = 'GET',
+        [ValidateSet('GET', 'POST', 'PUT', 'PATCH')][string] $Method = 'GET',
         [System.Collections.IDictionary] $Body,
         [switch] $AllowNotFound,
         [switch] $WaitForPrincipal
@@ -338,6 +338,27 @@ function Get-BootstrapIdentityGrant {
     return $graphAssignments
 }
 
+function Get-BootstrapDirectoryRoleAssignment {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][ValidateSet('plan', 'apply')][string] $Phase,
+        [Parameter(Mandatory)][string] $PrincipalId
+    )
+
+    $expected = $directoryRoles[$Name][$Phase]
+    $filter = [uri]::EscapeDataString("principalId eq '$PrincipalId'")
+    $assignments = @(Get-BootstrapCollection -Uri "$graph/roleManagement/directory/roleAssignments?`$filter=$filter" -WaitForPrincipal)
+    foreach ($assignment in $assignments) {
+        if (-not $expected -or -not $expected['Definition'] -or $assignment['roleDefinitionId'] -ne $expected['Definition']['id'] -or
+            $assignment['directoryScopeId'] -ne $expected['ScopeId']) {
+            throw "Identity '$Name/$Phase' has an unexpected Entra directory role '$($assignment['roleDefinitionId'])' at '$($assignment['directoryScopeId'])'. Remove it through an approved access change before rerunning bootstrap."
+        }
+    }
+    return $assignments
+}
+
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules -AllowUnboundApps:$AllowUnboundApps
 if (-not $Preflight) {
@@ -484,6 +505,7 @@ $selected = Get-PlatformModuleSelection -Instance $instance -Modules $modules
 $azureAuditScopes = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $azureGrants = @{}
 $graphGrants = @{}
+$directoryRoles = @{}
 $graphServicePrincipal = $null
 if ($Preflight) {
     $managementScope = "/subscriptions/$($connection['managementSubscriptionId'])"
@@ -631,6 +653,32 @@ if (@($selected).Count -gt 0) {
                 if ($roles.Count -ne 1) { throw "Module '$name' Microsoft Graph application permission '$permission' is missing or disabled." }
                 $graphGrants[$name][$phase][$roles[0]['id']] = $permission
             }
+            $directoryRoles[$name] = @{}
+            $declaredRoles = if ($modules[$name]['permissions'].Contains('entraDirectoryRoles')) { @($modules[$name]['permissions']['entraDirectoryRoles']) } else { @() }
+            foreach ($role in $declaredRoles) {
+                $phase = $role['phase']
+                if ($directoryRoles[$name].ContainsKey($phase)) {
+                    throw "Module '$name' declares more than one $phase Entra directory role."
+                }
+                [string[]] $actions = @($role['actions'] | Sort-Object -Unique -CaseSensitive)
+                if ($phase -eq 'plan' -and @($actions | Where-Object { $_ -notlike '*/read' }).Count -gt 0) {
+                    throw "Module '$name' plan Entra directory role is not read-only."
+                }
+                $displayName = "platform-$($instance['instance']['name'])-$name-$phase"
+                $filter = [uri]::EscapeDataString("displayName eq '$displayName'")
+                $definitions = @(Get-BootstrapCollection -Uri "$graph/roleManagement/directory/roleDefinitions?`$filter=$filter")
+                if ($definitions.Count -gt 1) { throw "Entra directory role '$displayName' is ambiguous." }
+                $definition = if ($definitions.Count -eq 1) { $definitions[0] } else { $null }
+                if ($definition -and $definition['isBuiltIn'] -ne $false) {
+                    throw "Entra directory role '$displayName' is built-in; refusing to adopt it."
+                }
+                $directoryRoles[$name][$phase] = @{
+                    DisplayName = $displayName
+                    Actions = $actions
+                    Definition = $definition
+                    ScopeId = "/$($connection['enterpriseApplicationObjectId'])"
+                }
+            }
         }
         $graphPrincipal
     }
@@ -674,6 +722,7 @@ if (@($selected).Count -gt 0) {
                         throw "Existing resource '$identityId' does not have the expected bootstrap ownership tags; refusing to adopt it."
                     }
                     $null = @(Get-BootstrapIdentityGrant -Name $name -Phase $phase -Identity $identity)
+                    $null = @(Get-BootstrapDirectoryRoleAssignment -Name $name -Phase $phase -PrincipalId $identity['properties']['principalId'])
                 }
             }
         }
@@ -761,6 +810,41 @@ foreach ($name in $selected) {
                     }
                     $changedResources.Add("$graph/servicePrincipals/$principalId/appRoleAssignments/$roleId")
                 }
+            }
+        }
+        $directoryAssignments = @(Get-BootstrapDirectoryRoleAssignment -Name $name -Phase $phase -PrincipalId $principalId)
+        $directoryRole = $directoryRoles[$name][$phase]
+        if ($directoryRole) {
+            $rolePermissions = @(@{ allowedResourceActions = $directoryRole['Actions'] })
+            $definition = $directoryRole['Definition']
+            if (-not $definition) {
+                $definition = Invoke-BootstrapRequest -Uri "$graph/roleManagement/directory/roleDefinitions" -Method POST -Body @{
+                    displayName = $directoryRole['DisplayName']
+                    description = "Platform module $name ($phase) on the EMU enterprise application. Managed by bootstrap."
+                    isEnabled = $true
+                    rolePermissions = $rolePermissions
+                }
+                $directoryRole['Definition'] = $definition
+                $changedResources.Add("$graph/roleManagement/directory/roleDefinitions/$($definition['id'])")
+            }
+            else {
+                [string[]] $currentActions = @($definition['rolePermissions'] | ForEach-Object { $_['allowedResourceActions'] } | Sort-Object -Unique -CaseSensitive)
+                if ($definition['isEnabled'] -ne $true -or @($definition['rolePermissions']).Count -ne 1 -or
+                    ($currentActions -join "`n") -cne ($directoryRole['Actions'] -join "`n")) {
+                    $null = Invoke-BootstrapRequest -Uri "$graph/roleManagement/directory/roleDefinitions/$($definition['id'])" -Method PATCH -Body @{
+                        isEnabled = $true
+                        rolePermissions = $rolePermissions
+                    }
+                    $changedResources.Add("$graph/roleManagement/directory/roleDefinitions/$($definition['id'])")
+                }
+            }
+            if ($directoryAssignments.Count -eq 0) {
+                $null = Invoke-BootstrapRequest -Uri "$graph/roleManagement/directory/roleAssignments" -Method POST -WaitForPrincipal -Body @{
+                    principalId = $principalId
+                    roleDefinitionId = $definition['id']
+                    directoryScopeId = $directoryRole['ScopeId']
+                }
+                $changedResources.Add("$graph/roleManagement/directory/roleAssignments/$principalId")
             }
         }
         $result[$phase] = [pscustomobject]@{

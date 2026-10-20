@@ -213,6 +213,12 @@ $variables = @{
     }
     prerequisites = @{}
 }
+if ($instance.Contains('bootstrap')) {
+    $variables.instance.entra = @{
+        tenantId = $instance['bootstrap']['tenantId']
+        enterpriseApplicationObjectId = $instance['bootstrap']['enterpriseApplicationObjectId']
+    }
+}
 if ($instance['modules'].Contains($Module) -and $instance['modules'][$Module].Contains('parameters')) {
     foreach ($name in $instance['modules'][$Module]['parameters'].PSBase.Keys) {
         $variables[$name] = $instance['modules'][$Module]['parameters'][$name]
