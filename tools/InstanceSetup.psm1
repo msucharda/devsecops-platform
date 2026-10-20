@@ -1642,18 +1642,24 @@ function Get-SetupProvisionResult {
     if ($summary -isnot [System.Collections.IDictionary]) { $summary = @{} }
     $parsedValue = & $parse $Data['value']
     $records = @(@($parsedValue) | Where-Object { $_ -is [System.Collections.IDictionary] })
-    $identified = @($records | Where-Object { $_['sourceIdentity'] -is [System.Collections.IDictionary] -and $_['sourceIdentity']['id'] })
-    if ($identified.Count -gt 0) { $records = @($identified | Where-Object { $_['sourceIdentity']['id'] -eq $ObjectId }) }
+    $sourceOf = { param($Record) if ($Record['sourceIdentity'] -is [System.Collections.IDictionary]) { [string] $Record['sourceIdentity']['id'] } }
+    $identified = @($records | Where-Object { & $sourceOf $_ })
+    if ($identified.Count -gt 0) { $records = @($identified | Where-Object { (& $sourceOf $_) -eq $ObjectId }) }
     if ($records.Count -eq 0) { return $result }
-    $statusOf = { param($Record) if ($Record['statusInfo'] -is [System.Collections.IDictionary]) { [string] $Record['statusInfo']['status'] } }
+    $statusOf = {
+        param($Record)
+        $own = if ($Record['statusInfo'] -is [System.Collections.IDictionary]) { [string] $Record['statusInfo']['status'] }
+        if ($own) { $own } elseif ($summary['result']) { [string] $summary['result'] }
+    }
     $failed = @($records | Where-Object { (& $statusOf $_) -eq 'Failure' })
     $exported = @($records | Where-Object {
-            (& $statusOf $_) -eq 'Success' -and $_['targetIdentity'] -is [System.Collections.IDictionary] -and $_['targetIdentity']['id']
+            (& $statusOf $_) -eq 'Success' -and (& $sourceOf $_) -eq $ObjectId -and
+            $_['targetIdentity'] -is [System.Collections.IDictionary] -and $_['targetIdentity']['id']
         })
     $record = if ($failed.Count -gt 0) { $failed[0] } elseif ($exported.Count -gt 0) { $exported[0] } else { $records[0] }
     $status = & $statusOf $record
-    if ($status -eq 'Success' -and $exported.Count -eq 0) { return $result }
-    $result.Status = if ($status) { $status } elseif ($summary['result']) { [string] $summary['result'] }
+    if (-not $status -or ($status -eq 'Success' -and $exported.Count -eq 0)) { return $result }
+    $result.Status = $status
     $info = if ($record['statusInfo'] -is [System.Collections.IDictionary]) { $record['statusInfo'] } else { @{} }
     $details = if ($summary['details'] -is [System.Collections.IDictionary]) { $summary['details'] } else { @{} }
     $skipReason = @($record['provisioningSteps'] | Where-Object {
@@ -2182,6 +2188,9 @@ function Invoke-StepProbeOrg {
             elseif ($text.Length -gt 39 -or $text -cnotmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { 'Use lowercase letters, digits and single hyphens, at most 39 characters.' }
         }.GetNewClosure()
         $org = Read-SetupValue -Prompt 'Name of the new probe organization' -Default $suggested -Validate $validateName
+        # Probe results and the App B installation belong to the deleted organization; resumed runs must verify the new one.
+        foreach ($key in @('authorizationPassed', 'adminPassed', 'adminInstallationId', 'adminReadRulesets')) { $probe.Remove($key) }
+        Save-SetupState -Setup $Setup
     }
     $repoMissing = $orgMissing -or $null -eq (Assert-SetupResponse -Response (Invoke-SetupApi -Setup $Setup -Uri "$api/repos/$org/instance-probe") -Action 'Reading the probe repository' -AllowMissing)
     $teamMissing = $orgMissing -or $null -eq (Assert-SetupResponse -Response (Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org/teams/platform-probe") -Action 'Reading the probe team' -AllowMissing)

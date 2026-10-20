@@ -460,6 +460,9 @@ Describe 'Instance setup wizard' {
             $setup.State.probe['organization'] = $stored
             $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
             $setup.State.probe['adminPassed'] = '2026-01-01T00:00:00Z'
+            $setup.State.probe['adminInstallationId'] = '42'
+            $setup.State.probe['adminReadRulesets'] = 'HTTP 200'
+            $setup.State.probe['adminAppId'] = 'app-b'
             $setup.Facts.EnterpriseId = 'E_test'
             $answers.Enqueue($stored)
             $answers.Enqueue('')
@@ -485,6 +488,11 @@ Describe 'Instance setup wizard' {
             $created | Should -Not -Be $stored
             $created | Should -Match '^probe-\d{12}$'
             $setup.State.probe['organization'] | Should -Be $created
+            $setup.State.probe.Contains('authorizationPassed') | Should -BeFalse
+            $setup.State.probe.Contains('adminPassed') | Should -BeFalse
+            $setup.State.probe.Contains('adminInstallationId') | Should -BeFalse
+            $setup.State.probe.Contains('adminReadRulesets') | Should -BeFalse
+            $setup.State.probe['adminAppId'] | Should -Be 'app-b'
         }
 
         It 'waits for a created organization instead of renaming it while sign-in is pending' {
@@ -834,6 +842,26 @@ Describe 'Instance setup wizard' {
             }
         }
 
+        It 'does not report success for <Case>' -ForEach @(
+            @{ Case = 'a summary without records'; Key = '{"result":"Success"}'; Value = '{}' }
+            @{ Case = 'a summary with an empty record list'; Key = '{"result":"Success"}'; Value = '[]' }
+            @{ Case = 'a successful record without a source identity'; Key = 'Microsoft.Type'; Value = '[{"statusInfo":{"status":"Success"},"targetIdentity":{"id":"github-user"}}]' }
+            @{ Case = 'a record without a target identity under a successful summary'; Key = '{"result":"Success"}'; Value = '[{"sourceIdentity":{"id":"44444444-4444-4444-4444-444444444444"}}]' }
+        ) {
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Rules = $schemaRules; Key = $Key; Value = $Value } } {
+                param($Scenario)
+                Mock Confirm-SetupAction { $true }
+                Mock Show-SetupMessage {}
+                Mock Show-SetupGuidance {}
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/schema') { return @{ Status = 'Ok'; Data = @{ synchronizationRules = $Scenario.Rules } } }
+                    return @{ Status = 'Ok'; Code = 200; Data = @{ key = $Scenario.Key; value = $Scenario.Value } }
+                }
+                Invoke-SetupProvisionOnDemand -Setup $Scenario.Setup
+                Should -Invoke Show-SetupMessage -Times 0 -Exactly -ParameterFilter { $Kind -eq 'Ok' }
+                Should -Invoke Show-SetupMessage -Times 1 -Exactly -ParameterFilter { $Kind -eq 'Warning' -and $Message -like '*Cannot read the provisioning result*' }
+            }
+        }
         It 'does not report success when the provisioning result cannot be read' {
             InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Rules = $schemaRules } } {
                 param($Scenario)
