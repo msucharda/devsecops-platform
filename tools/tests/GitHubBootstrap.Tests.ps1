@@ -379,7 +379,7 @@ Describe 'GitHub bootstrap public interface' {
         $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
         $record.deploymentIdentifier | Should -BeExactly 'a1b2c3'
         $record.repository | Should -BeExactly 'demo-a1b2c3-platform/instance'
-        @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' }).Count | Should -Be 1
+        @($cloud.writes | Where-Object { $_.path -ceq '/graphql' -and $_.body.query -like '*createEnterpriseOrganization*' }).Count | Should -Be 1
         Should -Invoke Get-RandomPlatformDeploymentIdentifier -Times 1 -Exactly
     }
 
@@ -402,7 +402,7 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Clear()
 
         { & $bootstrap @arguments } | Should -Throw '*demo-a1b2c3-platform*no longer exists*new inventory*'
-        @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' }).Count | Should -Be 0
+        @($cloud.writes | Where-Object { $_.path -ceq '/graphql' -and $_.body.query -like '*createEnterpriseOrganization*' }).Count | Should -Be 0
     }
 
     It 'uses a new deployment identifier for a new deployment after the platform organization was deleted' -Tag 'DeploymentIdentifier' {
@@ -418,7 +418,7 @@ Describe 'GitHub bootstrap public interface' {
         $record.deploymentIdentifier | Should -BeExactly 'd4e5f6'
         $record.repository | Should -BeExactly 'demo-d4e5f6-platform/instance'
         $record.resources | Should -Contain '/orgs/demo-d4e5f6-platform'
-        $created = @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' })
+        $created = @($cloud.writes | Where-Object { $_.path -ceq '/graphql' -and $_.body.query -like '*createEnterpriseOrganization*' })
         $created.body.variables.input.login | Should -Be @('demo-a1b2c3-platform', 'demo-d4e5f6-platform')
     }
 
@@ -435,7 +435,7 @@ Describe 'GitHub bootstrap public interface' {
         $record.repository | Should -BeExactly 'demo-platform/instance'
         $record.resources | Should -Contain '/orgs/demo-platform'
         $record.Contains('deploymentIdentifier') | Should -BeFalse
-        @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' }).body.variables.input.login |
+        @($cloud.writes | Where-Object { $_.path -ceq '/graphql' -and $_.body.query -like '*createEnterpriseOrganization*' }).body.variables.input.login |
             Should -BeExactly 'demo-platform'
         Should -Invoke Get-RandomPlatformDeploymentIdentifier -Times 0 -Exactly
     }
