@@ -1225,7 +1225,40 @@ Při `AcceptanceOnly` průvodce ověří registraci všech publikovaných templa
 
 `WorkPath` veřejného průvodce označuje kořen ověřených vstupů #10. Průvodce čte přímo `$work\instance.yaml` a vlastní evidence #11 ukládá pod `$work\github-acceptance`. Adresář staršího kandidáta není náhradní vstup #10. Pokud se změnil schválený kandidát nebo skončil jednorázový execution guard, nepoužívej retry, nekopíruj acceptance konfiguraci za vstup #10 a nemaž původní guard. Obnova vyžaduje nový kandidát, chráněnou publikaci a samostatné schválení konkrétního běhu.
 
-Oba veřejné entrypointy `Invoke-Bootstrap.ps1` a `Invoke-GitHubBootstrap.ps1` podporují `-NoChanges`. Přepínač spouští skutečný bootstrap, nikoli `-Preflight`, a před odesláním každého reconcile requestu vyhodí chybu. Azure povolí pouze GET, přesný read-only GraphQL dotaz na enterprise owners a čtení předků subscriptions přes `getEntities`. GitHub povolí pouze GET a přesný read-only GraphQL dotaz na organizace enterprise. Drift nesmí způsobit PUT, PATCH, mutační POST ani ochranné vypnutí Actions uvnitř bootstrapu. Kontrolu požadovaného stavu Actions musí předem zajistit samostatný controller. `-NoChanges` nemění lokální bootstrap inventory a při chybě HTTP neopakuje Azure request. Bez přepínače zůstává běžný provisioning zachovaný.
+Oba veřejné entrypointy `Invoke-Bootstrap.ps1` a `Invoke-GitHubBootstrap.ps1` podporují `-NoChanges`. Přepínač spouští skutečný bootstrap, nikoli `-Preflight`, a před odesláním každého reconcile requestu vyhodí chybu. Azure povolí pouze GET, přesný read-only GraphQL dotaz na enterprise owners a čtení předků subscriptions přes `getEntities`. GitHub povolí pouze GET a přesný read-only GraphQL dotaz na organizace enterprise. Drift nesmí způsobit PUT, PATCH, mutační POST ani ochranné vypnutí Actions uvnitř bootstrapu. Kontrolu požadovaného stavu Actions musí předem zajistit spouštějící člověk nebo samostatný controller. `-NoChanges` nemění lokální bootstrap inventory a při chybě HTTP neopakuje Azure request. Bez přepínače zůstává běžný provisioning zachovaný.
+
+GitHub `-NoChanges` může navázat na inventory staršího release, ale pouze po dokončené inicializaci (`initializationPending=false`). Před vydáním validačního App tokenu musí existovat `main`, její `.platform-bootstrap.json` musí přesně odpovídat aktuálnímu schválenému release včetně úplné mapy SHA-256 a její `instance.yaml` musí odpovídat místní konfiguraci. Oba soubory bootstrap čte z jednoho commit SHA, ověří požadovanou ochranu `main` a před validačními tokeny znovu ověří, že se `main` neposunula. Chybějící soubor, drift nebo nedokončená inicializace běh zastaví před tokeny. Bootstrap nepřepisuje historickou verzi, App identity, otisky klíčů, termíny rotace ani historii v inventory. Běžný provisioning nadále odmítne jinou verzi inventory před prvním API requestem.
+
+Tato možnost nepublikuje nový release ani neaktualizuje repozitář instance. Pokud chráněná `main` obsahuje starší kód, nejprve projdi samostatně schválenou publikací a lidským review a merge nového kandidáta. Neupravuj verzi inventory, neměň již zafixovaný kandidát a nevynechávej kontrolu markeru.
+
+### Ruční G7–G9 bez privátního controlleru
+
+Použij běžnou lidskou konzoli, původní identity a původní inventory. Pokud veřejný průvodce při změně kandidáta vyžaduje G3–G6, neobcházej jeho `sourceApproval`; následující veřejné entrypointy ho nemění. Před spuštěním člověk samostatně schválí konkrétní G7–G9 okno, nejvýše čtyři existující validační App tokeny a jeden G9 dispatch bez rerunu.
+
+```powershell
+$azure = & (Join-Path $release 'tools\Invoke-Bootstrap.ps1') `
+    -InstancePath $cfg -ModulesPath (Join-Path $release 'modules') -NoChanges
+if ($azure.HasChanges) { throw 'G7 Azure did not prove no changes.' }
+$github = & (Join-Path $release 'tools\Invoke-GitHubBootstrap.ps1') `
+    -InstancePath $cfg -AzureBootstrap $azure -ReleasePath $release -ReleaseVersion $version `
+    -InventoryPath $inventory -AppKeysPath $keys -AuthorizationApp authorization `
+    -AcceptanceOnly -NoChanges -VerifyTokenRevocation
+if ($github.HasChanges -or -not $github.CredentialsConfigured) {
+    throw 'G7 GitHub did not prove unchanged configured credentials.'
+}
+```
+
+Proměnné označují ověřený aktuální kandidát a externí soubory původní instance. Tyto příkazy jsou jen G7, nikoli souhlas s jejich spuštěním. Před GitHub G7 musí člověk ověřit původní Azure identitu skutečným Graph `/me`, GitHub actor, schválený merge commit, ochrany, environment reviewery a main-only policy. Azure profil nastaví jen procesovým `AZURE_CONFIG_DIR` v `try/finally`, bez změny globálního defaultu a bez automatického loginu.
+
+Actions zapni jen v samostatně schváleném acceptance okně mimo noční schedule. Předem musí být nulový počet neukončených běhů a všechna workflow kromě `bootstrap-acceptance.yml` vypnutá. Po zapnutí přečti skutečné repository i organization selected-actions policy a ověř povolení všech tří pinů použitých v acceptance workflow. Při odmítnutí nebo nejasném výsledku Actions vypni, policy neměň. GitHub G7 očekává zapnuté Actions; při vypnutých Actions jeho `NoChanges` správně odmítne PUT.
+
+G8 pouze přečte existující vypnutý `bootstrap-acceptance-probe` ruleset a jeho úplný lokální bypass detail. Chybějící probe nevytvářej. G9 spustí právě jeden `mode=apply` dispatch na schválené `main` s novým `evidence_id`. Skutečný platformní člověk schválí `approve-apply`, potom security člověk `enterprise-baseline-apply`. Ověř run attempt 1, přesnou revizi, obě schválení a čtyři výsledky artefaktů; zelený status nestačí. `mode=apply` ověřuje apply identitu čtením, nenasazuje moduly.
+
+Po úspěchu i chybě člověk vypne Actions a ověří nulový počet neukončených běhů a nezměněné ochrany. Při chybě nejprve zruší pouze svůj přesně identifikovaný aktivní běh. Připrav druhou konzoli pro cleanup při pádu první; žádný privátní helper není potřeba. Nejasné vydání nebo odvolání tokenu, neúspěšný readback či HTTP 409 znamenají STOP bez automatického opakování. `-VerifyTokenRevocation` musí potvrdit DELETE 204 a následný GET 401.
+
+Pro #11 zbývají G7–G9. Skutečný noční běh G10 a zbývající lidské důkazy G11 včetně praktické rotace klíče přebírá #42. Konfigurace nočních environmentů a pravidla rotace zůstávají v #11. Přesun kontrol neznamená jejich splnění; veřejný průvodce nadále může vracet `AcceptancePassed=false`.
+
+### Automatizovaný dohled nad veřejnými entrypointy
 
 Controller může oběma entrypointům předat `-RequestPolicy`. Callback před každým API requestem dostane `Uri`, `Method`, `Body` a `Kind`, nikdy authorization header. Musí vrátit právě jednu boolean hodnotu `true`; jiný výstup nebo výjimka request zastaví. Callback nesmí obejít zákaz reconcile v `-NoChanges`. Musí sám vynutit přesné cíle, schválený deadline, rozpočty a stav nezávislého watchdogu. Neznámý nebo nejasný výsledek mutace není důvod k opakování.
 

@@ -95,8 +95,11 @@ if (Test-Path -LiteralPath $inventoryFile) {
     if ($inventory['repository'] -cne $repository -or $inventory['enterprise'] -cne $connection['enterprise']) {
         throw 'The bootstrap inventory belongs to another instance.'
     }
-    if ($inventory['releaseVersion'] -cne $ReleaseVersion) {
+    if ($inventory['releaseVersion'] -cne $ReleaseVersion -and -not $NoChanges) {
         throw 'The bootstrap inventory belongs to another release. Resume with the recorded approved release.'
+    }
+    if ($NoChanges -and ($inventory['initializationPending'] -isnot [bool] -or $inventory['initializationPending'])) {
+        throw 'NoChanges requires an initialized inventory with initializationPending=false.'
     }
 }
 if (-not $inventory.Contains('declaredApps')) { $inventory['declaredApps'] = @{} }
@@ -474,8 +477,10 @@ $files['.github/CODEOWNERS'] = [Text.Encoding]::UTF8.GetBytes("* @$organization/
 $marker = @{ instance = $instance['instance']['name']; releaseVersion = $ReleaseVersion; files = $releaseHashes }
 $files['.platform-bootstrap.json'] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker) + "`n")
 $main = Invoke-GitHubBootstrapApi -Path "/repos/$repository/git/ref/heads/main" -AllowNotFound
+if ($NoChanges -and -not $main) { throw 'NoChanges requires an existing main branch.' }
 if ($main) {
-    $stored = Invoke-GitHubBootstrapApi -Path "/repos/$repository/contents/.platform-bootstrap.json?ref=main" -AllowNotFound
+    $contentRef = if ($NoChanges) { $main['object']['sha'] } else { 'main' }
+    $stored = Invoke-GitHubBootstrapApi -Path "/repos/$repository/contents/.platform-bootstrap.json?ref=$contentRef" -AllowNotFound
     if (-not $stored) {
         if (-not $inventory['initializationPending'] -or $main['object']['sha'] -cne $inventory['seedCommit']) {
             throw 'Existing main has no bootstrap marker or has changed during initialization; refusing to overwrite it.'
@@ -484,11 +489,14 @@ if ($main) {
     }
     else {
         $previous = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($stored['content'])) | ConvertFrom-Json -AsHashtable
-        if (-not (Test-GitHubBootstrapValue -Actual $previous -Desired $marker)) {
+        $markerMatches = if ($NoChanges) {
+            (ConvertTo-PlatformCanonicalJson $previous) -ceq (ConvertTo-PlatformCanonicalJson $marker)
+        } else { Test-GitHubBootstrapValue -Actual $previous -Desired $marker }
+        if (-not $markerMatches) {
             throw 'Repository bootstrap marker differs from the running release. Use the approved release; updates require a PR.'
         }
         $inventory['initializationPending'] = $false
-        $storedConfiguration = Invoke-GitHubBootstrapApi -Path "/repos/$repository/contents/instance.yaml?ref=main"
+        $storedConfiguration = Invoke-GitHubBootstrapApi -Path "/repos/$repository/contents/instance.yaml?ref=$contentRef"
         $configuration = ConvertFrom-Yaml ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($storedConfiguration['content'])))
         if ((ConvertTo-PlatformCanonicalJson $configuration) -cne (ConvertTo-PlatformCanonicalJson $instance)) {
             throw 'Local instance configuration differs from protected main. Apply configuration changes through a reviewed PR, not bootstrap.'
@@ -559,6 +567,7 @@ function Initialize-GitHubBootstrapMainProtection {
     }
     Register-GitHubBootstrapResource -Path "/repos/$repository/rulesets/$($rule['id'])"
 }
+if ($NoChanges) { Initialize-GitHubBootstrapMainProtection }
 $environmentNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($name in @('pr-authorization', 'approve-apply', 'approve-teardown-platform', 'teardown')) {
     $null = $environmentNames.Add($name)
@@ -675,6 +684,12 @@ foreach ($name in $selected) {
                 $null = Invoke-GitHubBootstrapAzure -Path "$path/$credentialName`?api-version=2023-01-31" -Method PUT -Body $desired[$credentialName]
             }
         }
+    }
+}
+if ($NoChanges) {
+    $currentMain = Invoke-GitHubBootstrapApi -Path "/repos/$repository/git/ref/heads/main"
+    if ($currentMain['object']['sha'] -cne $main['object']['sha']) {
+        throw 'Repository main changed during NoChanges verification. Review the new main before retrying.'
     }
 }
 $configured = $false

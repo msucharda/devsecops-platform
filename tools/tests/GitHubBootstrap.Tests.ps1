@@ -360,6 +360,7 @@ Describe 'GitHub bootstrap public interface' {
         @{ Drift = 'variable'; Method = 'PATCH' }
         @{ Drift = 'federation'; Method = 'PUT' }
     ) {
+        $arguments.ResourcesOnly = $false
         $null = & $bootstrap @arguments
         switch ($Drift) {
             environment { $cloud.environments['/repos/demo-platform/instance/environments/approve-apply'].can_admins_bypass = $true }
@@ -380,6 +381,7 @@ Describe 'GitHub bootstrap public interface' {
     }
 
     It 'keeps the recorded inventory unchanged on a successful no-change repeat' -Tag 'NoChanges' {
+        $arguments.ResourcesOnly = $false
         $null = & $bootstrap @arguments
         $before = (Get-FileHash $inventory).Hash
         $cloud.writes.Clear()
@@ -392,9 +394,212 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash $inventory).Hash | Should -BeExactly $before
     }
 
-    It 'supervises credential validation and verifies revocation during the actual no-change GitHub repeat' -Tag 'NoChanges' {
+    It 'validates the current protected release without rewriting historical inventory' -Tag 'NoChanges', 'HistoricalInventory' {
         $arguments.ResourcesOnly = $false
         $null = & $bootstrap @arguments
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.9.0'
+        $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
+        $before = (Get-FileHash $inventory).Hash
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[string]]::new()
+        $arguments.NoChanges = $true
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation.Kind)
+            return $true
+        }.GetNewClosure()
+
+        $result = & $bootstrap @arguments
+
+        $result.ReleaseVersion | Should -BeExactly '1.0.0'
+        $result.HasChanges | Should -BeFalse
+        $result.CredentialsConfigured | Should -BeTrue
+        @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 1
+        Should -Invoke Invoke-WebRequest -Exactly -Times 1 -ParameterFilter {
+            $Method -ceq 'GET' -and $Uri -like '*/contents/.platform-bootstrap.json?ref=commit-sha'
+        }
+        Should -Invoke Invoke-WebRequest -Exactly -Times 1 -ParameterFilter {
+            $Method -ceq 'GET' -and $Uri -like '*/contents/instance.yaml?ref=commit-sha'
+        }
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects missing main before issuing any validation token with historical inventory' -Tag 'NoChanges', 'HistoricalInventory' {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.9.0'
+        $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
+        $before = (Get-FileHash $inventory).Hash
+        $cloud.resources.Remove('/repos/demo-platform/instance/git/ref/heads/main')
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[string]]::new()
+        $arguments.NoChanges = $true
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation.Kind)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*NoChanges*existing main*'
+
+        @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects <State> inventory before issuing any validation token in no-change mode' -Tag 'NoChanges', 'HistoricalInventory' -ForEach @(
+        @{ State = 'pending'; Pending = $true }
+        @{ State = 'unconfirmed'; Pending = $null }
+    ) {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.9.0'
+        $record.initializationPending = $Pending
+        $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
+        $before = (Get-FileHash $inventory).Hash
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[string]]::new()
+        $arguments.NoChanges = $true
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation.Kind)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*NoChanges*initialized inventory*'
+
+        @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects unprotected main before issuing any validation token with historical inventory' -Tag 'NoChanges', 'HistoricalInventory' {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.9.0'
+        $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
+        $before = (Get-FileHash $inventory).Hash
+        $cloud.resources['/repos/demo-platform/instance/rulesets/60'].enforcement = 'disabled'
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[string]]::new()
+        $arguments.NoChanges = $true
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation.Kind)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*NoChanges*PUT*rulesets*'
+
+        @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects main moving during verification before issuing any validation token' -Tag 'NoChanges', 'HistoricalInventory' {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.9.0'
+        $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
+        $before = (Get-FileHash $inventory).Hash
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[string]]::new()
+        $arguments.NoChanges = $true
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation.Kind)
+            return $true
+        }.GetNewClosure()
+        Mock Invoke-WebRequest {
+            $cloud.resources['/repos/demo-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = 'changed-commit' } }
+            $blob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
+            [pscustomobject]@{ StatusCode = 200; Content = (@{
+                content = [Convert]::ToBase64String($cloud.blobs[$blob.sha])
+            } | ConvertTo-Json -Compress) }
+        } -ParameterFilter { $Method -ceq 'GET' -and $Uri -like '*/contents/instance.yaml?*' }
+
+        { & $bootstrap @arguments } | Should -Throw '*main changed during*'
+
+        @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects <Drift> before tokens or writes with historical inventory' -Tag 'NoChanges', 'HistoricalInventory' -ForEach @(
+        @{ Drift = 'missing marker'; ExpectedError = '*Existing main has no bootstrap marker*' }
+        @{ Drift = 'marker version'; ExpectedError = '*bootstrap marker differs*' }
+        @{ Drift = 'marker instance'; ExpectedError = '*bootstrap marker differs*' }
+        @{ Drift = 'marker file hash'; ExpectedError = '*bootstrap marker differs*' }
+        @{ Drift = 'extra marker file'; ExpectedError = '*bootstrap marker differs*' }
+        @{ Drift = 'missing configuration'; ExpectedError = '*GET*instance.yaml*HTTP 404*' }
+        @{ Drift = 'configuration'; ExpectedError = '*configuration differs from protected main*' }
+        @{ Drift = 'missing protection'; ExpectedError = '*NoChanges*POST*rulesets*' }
+        @{ Drift = 'main bypass'; ExpectedError = '*NoChanges*PUT*rulesets*' }
+        @{ Drift = 'security reviewers'; ExpectedError = '*NoChanges*PUT*rulesets*' }
+        @{ Drift = 'main-only policy'; ExpectedError = '*NoChanges*PUT*rulesets*' }
+    ) {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.9.0'
+        $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
+        $before = (Get-FileHash $inventory).Hash
+        $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
+        $remoteMarker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
+        switch ($Drift) {
+            'missing marker' { $cloud.tree = @($cloud.tree | Where-Object { $_.path -cne '.platform-bootstrap.json' }) }
+            'marker version' { $remoteMarker.releaseVersion = '0.9.0' }
+            'marker instance' { $remoteMarker.instance = 'another-instance' }
+            'marker file hash' { $remoteMarker.files['tools/Invoke-GitHubBootstrap.ps1'] = 'wrong-hash' }
+            'extra marker file' { $remoteMarker.files['extra.ps1'] = 'unapproved-hash' }
+            'missing configuration' { $cloud.tree = @($cloud.tree | Where-Object { $_.path -cne 'instance.yaml' }) }
+            'configuration' {
+                $configBlob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
+                $remoteConfig = ConvertFrom-Yaml ([Text.Encoding]::UTF8.GetString($cloud.blobs[$configBlob.sha]))
+                $remoteConfig.instance.name = 'another-instance'
+                $cloud.blobs[$configBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Yaml $remoteConfig))
+            }
+            'missing protection' { $cloud.resources.Remove('/repos/demo-platform/instance/rulesets/60') }
+            'main bypass' {
+                $cloud.resources['/repos/demo-platform/instance/rulesets/60'].bypass_actors = @(@{ actor_type = 'OrganizationAdmin'; bypass_mode = 'always' })
+            }
+            'security reviewers' {
+                ($cloud.resources['/repos/demo-platform/instance/rulesets/60'].rules |
+                    Where-Object { $_.type -ceq 'pull_request' }).parameters.required_reviewers = @()
+            }
+            'main-only policy' {
+                $cloud.resources['/repos/demo-platform/instance/rulesets/60'].conditions.ref_name.include = @('~ALL')
+            }
+        }
+        $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes(($remoteMarker | ConvertTo-Json -Depth 100))
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[string]]::new()
+        $arguments.NoChanges = $true
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation.Kind)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw $ExpectedError
+
+        @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'supervises credential validation and verifies revocation during the actual historical-inventory repeat' -Tag 'NoChanges', 'HistoricalInventory' {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.9.0'
+        $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
         $before = (Get-FileHash $inventory).Hash
         $cloud.writes.Clear()
         $events = [Collections.Generic.List[string]]::new()
@@ -830,13 +1035,16 @@ Describe 'GitHub bootstrap public interface' {
         Test-Path -LiteralPath $sourceInventory | Should -BeFalse
     }
 
-    It 'rejects changing the release version of an existing preparation before any cloud write' {
+    It 'rejects changing the release version of an existing preparation before any cloud write' -Tag 'HistoricalInventory' {
         & $bootstrap @arguments | Out-Null
         $cloud.writes.Clear()
         $arguments.ReleaseVersion = '2.0.0'
+        $before = (Get-FileHash $inventory).Hash
+        $arguments.RequestPolicy = { throw 'Provisioning must reject historical inventory before any API request.' }
 
         { & $bootstrap @arguments } | Should -Throw '*inventory*release*'
         $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
         (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -Be '1.0.0'
     }
 
