@@ -528,7 +528,8 @@ function Get-RandomPlatformDeploymentIdentifier {
     [OutputType([string])]
     param()
 
-    [Security.Cryptography.RandomNumberGenerator]::GetString('abcdefghijklmnopqrstuvwxyz0123456789'.ToCharArray(), 6)
+    $alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    -join (1..6 | ForEach-Object { $alphabet[[Security.Cryptography.RandomNumberGenerator]::GetInt32($alphabet.Length)] })
 }
 
 function Get-PlatformOrganizationName {
