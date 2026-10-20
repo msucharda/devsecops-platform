@@ -106,6 +106,41 @@ Describe 'Instance setup wizard' {
             $results[2].Area | Should -Be 'azure'
         }
 
+        It 'adds the token issue time and directory roles to a denied Azure response (<Case>)' -ForEach @(
+            @{ Case = 'Global Administrator'; Claims = @{ iat = 1790000000; wids = @('62e90394-69f5-4237-9190-012177145e10', 'b79fbf4d-3ef9-4689-8143-76b194e85509') }; Text = '*wids claim includes Global Administrator*' }
+            @{ Case = 'other roles'; Claims = @{ iat = 1790000000; wids = @('b79fbf4d-3ef9-4689-8143-76b194e85509') }; Text = '*wids claim does not include Global Administrator*' }
+            @{ Case = 'no roles'; Claims = @{ iat = 1790000000 }; Text = '*has no wids claim*' }
+        ) {
+            $encode = { param($Value) [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $Value -Compress))).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
+            $payload = & $encode $Claims
+            $jwt = "$(& $encode @{ alg = 'RS256'; typ = 'JWT' }).$payload.c2lnbmF0dXJl"
+            Mock Invoke-WebRequest -ModuleName InstanceSetup { Get-TestResponse -StatusCode 403 -Data @{ error = @{ code = 'AuthorizationFailed'; message = 'denied' } } }
+            $setup = Get-TestSetup
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup; Jwt = $jwt } {
+                param($Setup, $Jwt)
+                Invoke-SetupApi -Setup $Setup -Uri 'https://management.azure.com/providers/Microsoft.Authorization/elevateAccess?api-version=2016-07-01' -Method POST -Token $Jwt
+            }
+
+            $result.Status | Should -Be 'Forbidden'
+            $result.Message | Should -BeLike '*AuthorizationFailed: denied*Azure token issued at 2026-09-21T14:13:20Z*'
+            $result.Message | Should -BeLike $Text
+            $result.Message | Should -Not -BeLike "*$payload*"
+        }
+
+        It 'reports unreadable Azure token details and keeps GitHub responses without them' {
+            Mock Invoke-WebRequest -ModuleName InstanceSetup { Get-TestResponse -StatusCode 403 -Data @{ message = 'denied' } }
+            $setup = Get-TestSetup
+            $results = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-SetupApi -Setup $Setup -Uri 'https://graph.microsoft.com/v1.0/me' -Token 'opaque-token'
+                Invoke-SetupApi -Setup $Setup -Uri 'https://api.example.ghe.com/user' -Token 'gho_test'
+            }
+
+            $results[0].Message | Should -BeLike '*Azure token details are not readable.'
+            $results[0].Message | Should -Not -BeLike '*opaque-token*'
+            $results[1].Message | Should -Not -BeLike '*Azure token*'
+        }
+
         It 'retries network errors and throttling' {
             $responses = [System.Collections.Generic.Queue[object]]::new()
             $responses.Enqueue('network')
@@ -138,6 +173,44 @@ Describe 'Instance setup wizard' {
                     } } | Should -Throw '*Untrusted setup API address*'
             }
             Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 0 -Exactly
+        }
+    }
+
+    Context 'Azure sign-in' {
+        It 'signs the known account out of Azure CLI before it signs in again' {
+            $azCalls = [System.Collections.Generic.List[string]]::new()
+            Mock az -ModuleName InstanceSetup {
+                $azCalls.Add($args -join ' ')
+                $global:LASTEXITCODE = if ($args[0] -eq 'logout') { 1 } else { 0 }
+            }
+            $setup = Get-TestSetup
+            $setup.AzureTokens['management.azure.com'] = @{ Token = 'stale'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1) }
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-SetupAzureLogin -Setup $Setup
+            }
+
+            $azCalls.Count | Should -Be 2
+            $azCalls[0] | Should -BeLike 'logout --username owner@contoso.test*'
+            $azCalls[1] | Should -BeLike 'login --tenant 11111111-1111-1111-1111-111111111111*'
+            $setup.AzureTokens.Count | Should -Be 0
+        }
+
+        It 'signs in without a sign-out while the account is unknown' {
+            $azCalls = [System.Collections.Generic.List[string]]::new()
+            Mock az -ModuleName InstanceSetup {
+                $azCalls.Add($args -join ' ')
+                $global:LASTEXITCODE = 0
+            }
+            $setup = Get-TestSetup
+            $setup.Facts.Upn = $null
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-SetupAzureLogin -Setup $Setup
+            }
+
+            $azCalls.Count | Should -Be 1
+            $azCalls[0] | Should -BeLike 'login --tenant *'
         }
     }
 
@@ -203,6 +276,52 @@ Describe 'Instance setup wizard' {
                     Invoke-SetupStage -Setup $Setup -Id 'tools' -Step 'A1' -Title 'Tools' -Handler 'Invoke-StepTool'
                 } } | Should -Throw -ExceptionType ([System.OperationCanceledException])
             $setup.Stages['tools'].Status | Should -Be 'Error'
+        }
+    }
+
+    Context 'Setup state' {
+        It 'writes the setup state with sorted keys and leaves an unchanged file alone' {
+            $newState = {
+                param([string[]] $Order)
+                $probe = @{}
+                $confirmations = @{}
+                foreach ($key in $Order) {
+                    $probe[$key] = @{ zulu = "z-$key"; Alpha = @('b', @{ y = 1; x = 2 }) }
+                    $confirmations["c-$key"] = "confirmed-$key"
+                }
+                @{ probe = $probe; confirmations = $confirmations }
+            }
+            $keys = [string[]] @('zeta', 'alpha', 'Mid', 'beta', 'omega', 'gamma', 'Delta', 'kappa')
+            $sorted = [string[]] $keys.Clone()
+            [Array]::Sort($sorted, [System.StringComparer]::Ordinal)
+            $setup = Get-TestSetup
+            $null = New-Item -ItemType Directory -Force -Path $setup.WorkPath
+            $save = {
+                InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                    param($Setup)
+                    Save-SetupState -Setup $Setup
+                }
+            }
+            $setup.State = & $newState $keys
+            & $save
+            $text = Get-Content -LiteralPath $setup.StatePath -Raw
+            $written = @([regex]::Matches($text, '"([^"]+)":') | ForEach-Object { $_.Groups[1].Value })
+
+            @($written | Where-Object { $_ -cin $keys }) | Should -Be $sorted
+            @($written | Select-Object -First 2) | Should -Be @('confirmations', 'c-Delta')
+            $text | Should -BeLike '*"Alpha": `[*"x": 2,*"y": 1*"zulu"*'
+
+            $old = [datetime]::new(2000, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc)
+            (Get-Item -LiteralPath $setup.StatePath).LastWriteTimeUtc = $old
+            [Array]::Reverse($keys)
+            $setup.State = & $newState $keys
+            & $save
+            (Get-Item -LiteralPath $setup.StatePath).LastWriteTimeUtc | Should -Be $old
+
+            $setup.State.probe['alpha']['zulu'] = 'changed'
+            & $save
+            (Get-Item -LiteralPath $setup.StatePath).LastWriteTimeUtc | Should -BeGreaterThan $old
+            Get-Content -LiteralPath $setup.StatePath -Raw | Should -BeLike '*"zulu": "changed"*'
         }
     }
 
@@ -710,6 +829,224 @@ Describe 'Instance setup wizard' {
         }
     }
 
+    Context 'App A deletion' {
+        BeforeEach {
+            $setup = Get-TestSetup
+            $keyPath = Join-Path $setup.WorkPath 'keys/probe-authorization.pem'
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path $keyPath -Parent)
+            Set-Content -LiteralPath $keyPath -Value 'synthetic key'
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['authorizationAppId'] = '101'
+            $appCalls = [System.Collections.Generic.List[string]]::new()
+            $appResponse = @{ Code = 401 }
+            Mock ConvertTo-SetupAppJwt -ModuleName InstanceSetup { "jwt-$AppId" }
+            Mock Invoke-SetupApi -ModuleName InstanceSetup {
+                if ($Uri -ne 'https://api.example.ghe.com/app') { throw "Unexpected API call: $Uri" }
+                $appCalls.Add("$Token key=$(Test-Path -LiteralPath $keyPath)")
+                $code = $appResponse.Code
+                $status = if ($code -eq 200) { 'Ok' } elseif ($code -eq 404) { 'Missing' } elseif ($code -in @(401, 403)) { 'Forbidden' } else { 'Error' }
+                @{ Status = $status; Code = $code; Data = @{ id = 101 }; Headers = @{}; Message = "HTTP $code from GET https://api.example.ghe.com/app: test"; Area = 'github' }
+            }
+        }
+
+        It 'waits until App A is deleted and verified before it deletes the key' {
+            $fakeRepo = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Force -Path (Join-Path $fakeRepo 'tools')
+            Set-Content -LiteralPath (Join-Path $fakeRepo 'tools/New-PlatformGitHubToken.ps1') -Value @'
+param([switch] $Authorization, $EnvironmentPath, $ApiUrl)
+Set-Content -LiteralPath $EnvironmentPath -Value @('GH_TOKEN=installation-token', 'PLATFORM_GITHUB_TOKENS=installation-token')
+'@
+            Set-Content -LiteralPath (Join-Path $fakeRepo 'tools/Remove-PlatformGitHubToken.ps1') -Value 'param($ApiUrl)'
+            $setup.RepoPath = $fakeRepo
+            $memberships = @{ Count = 0 }
+            Mock Get-SetupProbeApp -ModuleName InstanceSetup {
+                @{
+                    AppId = '101'; Slug = 'ref-probe-authorization'; KeyPath = $keyPath; InstallationId = '201'
+                    SettingsUrl = 'https://example.ghe.com/enterprises/example/settings/apps/ref-probe-authorization'
+                }
+            }
+            Mock Invoke-SetupApi -ModuleName InstanceSetup -ParameterFilter { $Uri -like '*/teams/platform-probe/memberships/owner' } {
+                $memberships.Count++
+                if ($memberships.Count -eq 1) { @{ Status = 'Ok'; Code = 200; Data = @{ state = 'active' } } }
+                else { @{ Status = 'Forbidden'; Code = 401; Data = @{} } }
+            }
+            $answers.Enqueue('n')
+            $answers.Enqueue('y')
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-StepProbeAuthorization -Setup $Setup
+            }
+
+            $result | Should -Be 'The authorization token probe passed and App A is deleted.'
+            $setup.Facts.AuthorizationProbePassed | Should -BeTrue
+            $answers.Count | Should -Be 0
+            Should -Invoke Read-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter { $Prompt -like 'Is this step done?*' }
+            @($appCalls) | Should -Be @('jwt-101 key=True')
+            Test-Path -LiteralPath $keyPath | Should -BeFalse
+            $setup.State.probe.Contains('authorizationAppId') | Should -BeFalse
+            $setup.State.probe['authorizationPassed'] | Should -Not -BeNullOrEmpty
+            $saved = Get-Content -LiteralPath $setup.StatePath -Raw | ConvertFrom-Json -AsHashtable
+            $saved.probe.Contains('authorizationAppId') | Should -BeFalse
+        }
+
+        It 'accepts HTTP <Code> for the private key as a deleted App A on a resumed run' -ForEach @(
+            @{ Code = 401 }
+            @{ Code = 404 }
+        ) {
+            $appResponse.Code = $Code
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $answers.Enqueue('n')
+            $answers.Enqueue('y')
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-StepProbeAuthorization -Setup $Setup
+            }
+
+            $result | Should -Be 'The authorization token probe passed on 2026-01-01T00:00:00Z. App A is deleted.'
+            @($appCalls) | Should -Be @('jwt-101 key=True')
+            Test-Path -LiteralPath $keyPath | Should -BeFalse
+            $setup.State.probe.Contains('authorizationAppId') | Should -BeFalse
+        }
+
+        It 'keeps App A pending while GitHub still accepts its private key' {
+            $appResponse.Code = 200
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $answers.Enqueue('n')
+            $answers.Enqueue('y')
+            $failure = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                try { Invoke-StepProbeAuthorization -Setup $Setup } catch { Get-SetupFailure -ErrorRecord $_ }
+            }
+
+            $failure.Status | Should -Be 'Missing'
+            $failure.Message | Should -BeLike 'App A (ref-probe-authorization) still exists*'
+            ($failure.Guidance -join ' ') | Should -BeLike '*/settings/apps/ref-probe-authorization/advanced*[[]r]*'
+            Test-Path -LiteralPath $keyPath | Should -BeTrue
+            $setup.State.probe['authorizationAppId'] | Should -Be '101'
+        }
+
+        It 'reports an unclear deletion check as an error and keeps the key' {
+            $appResponse.Code = 500
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $answers.Enqueue('n')
+            $answers.Enqueue('y')
+            $failure = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                try { Invoke-StepProbeAuthorization -Setup $Setup } catch { Get-SetupFailure -ErrorRecord $_ }
+            }
+
+            $failure.Status | Should -Be 'Error'
+            $failure.Message | Should -BeLike 'Checking the deletion of App A failed. HTTP 500*'
+            Test-Path -LiteralPath $keyPath | Should -BeTrue
+            $setup.State.probe['authorizationAppId'] | Should -Be '101'
+        }
+
+        It 'stops while App A is not deleted' {
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $answers.Enqueue('y')
+            $answers.Enqueue('n')
+            $failure = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                try { Invoke-StepProbeAuthorization -Setup $Setup } catch { Get-SetupFailure -ErrorRecord $_ }
+            }
+
+            $failure.Status | Should -Be 'Missing'
+            $failure.Message | Should -BeLike 'Manual step not done: Delete App A*'
+            Should -Invoke Start-Process -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
+                $FilePath -eq 'https://example.ghe.com/enterprises/example/settings/apps/ref-probe-authorization/advanced'
+            }
+            $appCalls.Count | Should -Be 0
+            Test-Path -LiteralPath $keyPath | Should -BeTrue
+            $setup.State.probe['authorizationAppId'] | Should -Be '101'
+        }
+
+        It 'relies on the confirmation when the private key is missing' {
+            Remove-Item -LiteralPath $keyPath
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $answers.Enqueue('n')
+            $answers.Enqueue('y')
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-StepProbeAuthorization -Setup $Setup
+            }
+
+            $result | Should -BeLike '*App A is deleted.'
+            $appCalls.Count | Should -Be 0
+            $setup.State.probe.Contains('authorizationAppId') | Should -BeFalse
+            Should -Invoke Write-Host -ModuleName InstanceSetup -ParameterFilter { "$Object" -like '*cannot verify the deletion of App A*' }
+        }
+
+        It 'does not ask again after App A was deleted' {
+            $setup.State.probe.Remove('authorizationAppId')
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-StepProbeAuthorization -Setup $Setup
+            }
+
+            $result | Should -Be 'The authorization token probe passed on 2026-01-01T00:00:00Z.'
+            $appCalls.Count | Should -Be 0
+        }
+
+        It 'finishes the App A deletion on a retry of a probe that passed in this -Reconfirm run' {
+            Mock Get-SetupProbeApp -ModuleName InstanceSetup { throw 'The probe must not run again.' }
+            $setup.Reconfirm = $true
+            $setup.Facts.AuthorizationProbePassed = $true
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $answers.Enqueue('n')
+            $answers.Enqueue('y')
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-StepProbeAuthorization -Setup $Setup
+            }
+
+            $result | Should -Be 'The authorization token probe passed on 2026-01-01T00:00:00Z. App A is deleted.'
+            Test-Path -LiteralPath $keyPath | Should -BeFalse
+            $setup.State.probe.Contains('authorizationAppId') | Should -BeFalse
+        }
+
+        It 'deletes a pending App A before -Reconfirm repeats the probe' {
+            Mock Get-SetupProbeApp -ModuleName InstanceSetup {
+                "AppId=$($Setup.State.probe['authorizationAppId']) key=$(Test-Path -LiteralPath $keyPath)" | Should -Be 'AppId= key=False'
+                throw 'The probe restarted.'
+            }
+            $setup.Reconfirm = $true
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $answers.Enqueue('n')
+            $answers.Enqueue('y')
+            { InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                    param($Setup)
+                    Invoke-StepProbeAuthorization -Setup $Setup
+                } } | Should -Throw 'The probe restarted.'
+
+            @($appCalls) | Should -Be @('jwt-101 key=True')
+            Should -Invoke Get-SetupProbeApp -ModuleName InstanceSetup -Times 1 -Exactly
+        }
+
+        It 'keeps the replacement App A when a repeated -Reconfirm probe is retried' {
+            Mock Get-SetupProbeApp -ModuleName InstanceSetup {
+                $Setup.State.probe['authorizationAppId'] = '202'
+                throw 'The installation of App A is incomplete.'
+            }
+            $setup.Reconfirm = $true
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $answers.Enqueue('n')
+            $answers.Enqueue('y')
+            foreach ($attempt in 1..2) {
+                { InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                        param($Setup)
+                        Invoke-StepProbeAuthorization -Setup $Setup
+                    } } | Should -Throw 'The installation of App A is incomplete.'
+            }
+
+            @($appCalls) | Should -Be @('jwt-101 key=True')
+            $setup.State.probe['authorizationAppId'] | Should -Be '202'
+            $saved = Get-Content -LiteralPath $setup.StatePath -Raw | ConvertFrom-Json -AsHashtable
+            $saved.probe.Contains('authorizationPassed') | Should -BeFalse
+            Should -Invoke Get-SetupProbeApp -ModuleName InstanceSetup -Times 2 -Exactly
+        }
+    }
+
     Context 'Elevated access' {
         BeforeEach {
             $apiCalls = [System.Collections.Generic.List[string]]::new()
@@ -735,6 +1072,106 @@ Describe 'Instance setup wizard' {
 
             $apiCalls[0] | Should -BeLike 'POST */elevateAccess?*'
             $apiCalls[-1] | Should -Be 'DELETE https://management.azure.com/providers/Microsoft.Authorization/roleAssignments/elevated?api-version=2022-04-01'
+        }
+
+        It 'reports a denied elevation without asking about an earlier elevation' {
+            Mock Get-SetupRootAccess -ModuleName InstanceSetup {}
+            Mock Invoke-SetupElevationRevoke -ModuleName InstanceSetup {}
+            Mock Invoke-SetupApi -ModuleName InstanceSetup {
+                $apiCalls.Add("$($PesterBoundParameters['Method']) $Uri")
+                @{ Status = 'Forbidden'; Code = 403; Data = @{}; Headers = @{}; Message = 'HTTP 403 from POST elevateAccess: denied'; Area = 'azure' }
+            }
+            $answers.Enqueue('y')
+            $setup = Get-TestSetup
+            $failure = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                try { Invoke-SetupElevatedAction -Setup $Setup -Purpose 'Test' -AdminGuidance @('Ask.') -Action { throw 'The action must not run.' } }
+                catch { Get-SetupFailure -ErrorRecord $_ }
+            }
+
+            $failure.Status | Should -Be 'Forbidden'
+            $failure.Area | Should -Be 'azure'
+            $failure.Message | Should -BeLike 'Elevating access failed.*HTTP 403*'
+            ($failure.Guidance -join ' ') | Should -BeLike '*[[]l]*'
+            $answers.Count | Should -Be 0
+            Should -Invoke Read-Host -ModuleName InstanceSetup -Times 0 -Exactly -ParameterFilter { $Prompt -like '*existed before*' }
+            Should -Invoke Invoke-SetupElevationRevoke -ModuleName InstanceSetup -Times 0 -Exactly
+        }
+
+        It 'removes any elevation it finds when the elevation request has an unclear result (<Case>)' -ForEach @(
+            @{ Case = 'HTTP 500'; Throws = $false; Expected = 'Elevating access failed.*HTTP 500*' }
+            @{ Case = 'exception'; Throws = $true; Expected = '*connection reset*' }
+        ) {
+            Mock Get-SetupRootAccess -ModuleName InstanceSetup {}
+            Mock Invoke-SetupElevationRevoke -ModuleName InstanceSetup {}
+            Mock Invoke-SetupApi -ModuleName InstanceSetup {
+                if ($Throws) { throw 'connection reset' }
+                @{ Status = 'Error'; Code = 500; Data = @{}; Headers = @{}; Message = 'HTTP 500 from POST elevateAccess: busy'; Area = 'azure' }
+            }
+            $answers.Enqueue('y')
+            $setup = Get-TestSetup
+            { InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                    param($Setup)
+                    Invoke-SetupElevatedAction -Setup $Setup -Purpose 'Test' -AdminGuidance @('Ask.') -Action { throw 'The action must not run.' }
+                } } | Should -Throw $Expected
+
+            Should -Invoke Read-Host -ModuleName InstanceSetup -Times 0 -Exactly -ParameterFilter { $Prompt -like '*existed before*' }
+            Should -Invoke Invoke-SetupElevationRevoke -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter { -not $ExpectAssignment }
+        }
+
+        It 'removes any elevation it finds when the elevation request is stopped' {
+            $log = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+            $shell = [powershell]::Create()
+            try {
+                $null = $shell.AddScript({
+                        param($ModulePath, $Log)
+                        Import-Module $ModulePath -Force
+                        & (Get-Module InstanceSetup) {
+                            param($Log)
+                            $script:TestLog = $Log
+                            function script:Test-SetupGlobalAdministrator { $true }
+                            function script:Confirm-SetupAction { $true }
+                            function script:Get-SetupRootAccess {}
+                            function script:Show-SetupMessage {}
+                            function script:Invoke-SetupApi {
+                                $script:TestLog.Enqueue('POST')
+                                for ($i = 0; $i -lt 300; $i++) { Start-Sleep -Milliseconds 100 }
+                                @{ Status = 'Ok'; Code = 200; Data = @{}; Headers = @{}; Message = 'OK'; Area = 'azure' }
+                            }
+                            function script:Invoke-SetupElevationRevoke { param([hashtable] $Setup, [switch] $ExpectAssignment) $script:TestLog.Enqueue("revoke $($Setup.Name) expect=$ExpectAssignment") }
+                            Invoke-SetupElevatedAction -Setup @{ Name = 'setup' } -Purpose 'Test' -AdminGuidance @('Ask.') -Action { $script:TestLog.Enqueue('action') }
+                        } $Log
+                    }).AddArgument((Join-Path $repoRoot 'tools/InstanceSetup.psm1')).AddArgument($log)
+                $invocation = $shell.BeginInvoke()
+                $deadline = [datetime]::UtcNow.AddSeconds(30)
+                while ('POST' -notin @($log) -and -not $invocation.IsCompleted -and [datetime]::UtcNow -lt $deadline) { [System.Threading.Thread]::Sleep(50) }
+                $shell.Stop()
+                # The error stream blocks enumeration until the pipeline ends, so read it only after Stop().
+                $shell.InvocationStateInfo.State | Should -Be 'Stopped' -Because ($shell.Streams.Error | Out-String)
+            }
+            finally {
+                $shell.Dispose()
+            }
+
+            @($log) | Should -Be @('POST', 'revoke setup expect=False')
+        }
+
+        It 'asks before it removes an elevation that existed before the wizard started' {
+            Mock Get-SetupRootAccess -ModuleName InstanceSetup {
+                , @{ id = '/providers/Microsoft.Authorization/roleAssignments/elevated'; properties = @{ scope = '/' } }
+            }
+            $answers.Enqueue('y')
+            $answers.Enqueue('n')
+            $setup = Get-TestSetup
+            $result = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Invoke-SetupElevatedAction -Setup $Setup -Purpose 'Test' -AdminGuidance @('Ask.') -Action { 'changed' }
+            }
+
+            $result | Should -Be 'changed'
+            $answers.Count | Should -Be 0
+            Should -Invoke Read-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter { $Prompt -like '*existed before the wizard started*' }
+            $apiCalls.Count | Should -Be 0
         }
 
         It 'changes nothing when the user declines the elevation' {
