@@ -160,6 +160,22 @@ Describe 'Enterprise installation credentials' {
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
+    It 'requires positive enterprise IDs even when invalid values would compare equal: <Case>' -ForEach @(
+        @{ Case = 'missing IDs'; EnterpriseId = $null }
+        @{ Case = 'zero IDs'; EnterpriseId = 0 }
+        @{ Case = 'malformed IDs'; EnterpriseId = 'invalid' }
+    ) {
+        $owner = @{ login = 'example'; type = 'Enterprise'; id = $EnterpriseId }
+        $actualInstallations[0].account = @{ slug = 'example'; id = $EnterpriseId }
+        $actualInstallations[0].target_id = $EnterpriseId
+
+        { & $issuer -Module observer -InstancePath $instancePath -ModulesPath $modulesPath -PrivateKey $privateKey `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } | Should -Throw '*enterprise installation*'
+
+        Test-Path -LiteralPath $environmentPath | Should -BeFalse
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
     It 'rejects missing or additional installations instead of weakening exact inventory: <Case>' -ForEach @(
         @{ Case = 'missing enterprise installation'; Extra = $false }
         @{ Case = 'additional organization installation'; Extra = $true }

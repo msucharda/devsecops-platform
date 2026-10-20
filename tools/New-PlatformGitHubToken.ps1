@@ -242,6 +242,9 @@ try {
         if ($installations.Count -ne 1 -or [string] $installations[0]['id'] -cne $expected['installationId'] -or
             $installations[0]['target_type'] -cne 'Enterprise' -or
             $installations[0]['account']['slug'] -cne $expected['enterprise'] -or
+            [string] $app['owner']['id'] -cnotmatch '^[1-9][0-9]*$' -or
+            [string] $installations[0]['account']['id'] -cnotmatch '^[1-9][0-9]*$' -or
+            [string] $installations[0]['target_id'] -cnotmatch '^[1-9][0-9]*$' -or
             [string] $installations[0]['account']['id'] -cne [string] $app['owner']['id'] -or
             [string] $installations[0]['target_id'] -cne [string] $app['owner']['id'] -or
             [string] $installations[0]['app_id'] -cne $expected['appId']) {
