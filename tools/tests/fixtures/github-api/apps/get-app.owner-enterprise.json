@@ -1,0 +1,72 @@
+{
+  "source": {
+    "operation": "GET /app",
+    "operationId": "apps/get-authenticated",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/apps/apps#get-the-authenticated-app",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/integration",
+    "variant": "owner: oneOf[1] #/components/schemas/enterprise",
+    "note": "Documented variant without owner.login and owner.type. No test uses it yet because the current owner check rejects it; see the pull request that introduced this fixture."
+  },
+  "required": {
+    "": [
+      "id",
+      "node_id",
+      "owner",
+      "name",
+      "description",
+      "external_url",
+      "html_url",
+      "created_at",
+      "updated_at",
+      "permissions",
+      "events"
+    ],
+    "owner": [
+      "id",
+      "node_id",
+      "name",
+      "slug",
+      "html_url",
+      "created_at",
+      "updated_at",
+      "avatar_url"
+    ]
+  },
+  "body": {
+    "id": 1,
+    "slug": "octoapp",
+    "client_id": "Iv1.ab1112223334445c",
+    "node_id": "MDExOkludGVncmF0aW9uMQ==",
+    "owner": {
+      "id": 42,
+      "node_id": "MDEwOlJlcG9zaXRvcnkxMjk2MjY5",
+      "name": "Octo Business",
+      "slug": "octo-business",
+      "html_url": "https://github.com/enterprises/octo-business",
+      "created_at": "2019-01-26T19:01:12Z",
+      "updated_at": "2019-01-26T19:14:43Z",
+      "avatar_url": "https://avatars.githubusercontent.com/b/42?v=4",
+      "description": null,
+      "website_url": null
+    },
+    "name": "Octocat App",
+    "description": "",
+    "external_url": "https://example.com",
+    "html_url": "https://github.com/apps/octoapp",
+    "created_at": "2017-07-08T16:18:44-04:00",
+    "updated_at": "2017-07-08T16:18:44-04:00",
+    "permissions": {
+      "metadata": "read",
+      "contents": "read",
+      "issues": "write",
+      "single_file": "write"
+    },
+    "events": [
+      "push",
+      "pull_request"
+    ]
+  }
+}

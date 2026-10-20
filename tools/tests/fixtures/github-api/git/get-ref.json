@@ -1,0 +1,34 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/git/ref/{ref}",
+    "operationId": "git/get-ref",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/refs#get-a-reference",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/git-ref"
+  },
+  "required": {
+    "": [
+      "ref",
+      "node_id",
+      "url",
+      "object"
+    ],
+    "object": [
+      "type",
+      "sha",
+      "url"
+    ]
+  },
+  "body": {
+    "ref": "refs/heads/featureA",
+    "node_id": "MDM6UmVmcmVmcy9oZWFkcy9mZWF0dXJlQQ==",
+    "url": "https://api.github.com/repos/octocat/Hello-World/git/refs/heads/featureA",
+    "object": {
+      "type": "commit",
+      "sha": "aa218f56b14c9653891f9e74264a383fa43fefbd",
+      "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/aa218f56b14c9653891f9e74264a383fa43fefbd"
+    }
+  }
+}

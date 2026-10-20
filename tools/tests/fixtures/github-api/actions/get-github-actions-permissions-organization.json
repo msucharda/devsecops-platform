@@ -1,0 +1,22 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/actions/permissions",
+    "operationId": "actions/get-github-actions-permissions-organization",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions#get-github-actions-permissions-for-an-organization",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/actions-organization-permissions"
+  },
+  "required": {
+    "": [
+      "enabled_repositories"
+    ]
+  },
+  "body": {
+    "enabled_repositories": "all",
+    "allowed_actions": "selected",
+    "selected_actions_url": "https://api.github.com/organizations/42/actions/permissions/selected-actions",
+    "sha_pinning_required": true
+  }
+}

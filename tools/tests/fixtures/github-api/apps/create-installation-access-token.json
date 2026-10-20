@@ -1,0 +1,26 @@
+{
+  "source": {
+    "operation": "POST /app/installations/{installation_id}/access_tokens",
+    "operationId": "apps/create-installation-access-token",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/apps/apps#create-an-installation-access-token-for-an-app",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 201,
+    "schema": "#/components/schemas/installation-token"
+  },
+  "required": {
+    "": [
+      "token",
+      "expires_at"
+    ]
+  },
+  "body": {
+    "token": "ghs_16C7e42F292c6912E7710c838347Ae178B4a",
+    "expires_at": "2016-07-11T22:14:10Z",
+    "permissions": {
+      "issues": "write",
+      "contents": "read"
+    },
+    "repository_selection": "selected"
+  }
+}

@@ -1,4 +1,5 @@
 BeforeAll {
+    Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $download = Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-VendoringSource.ps1'
     function gh { $global:LASTEXITCODE = 0 }
 }
@@ -10,7 +11,7 @@ Describe 'Tagged vendoring source and attestation policy' {
         $verifyExitCode = 0
         Mock Invoke-RestMethod {
             param($Uri)
-            if ($Uri -like '*/git/ref/tags/v1.2.3') { return @{ object = @{ type = 'commit'; sha = '3333333333333333333333333333333333333333' } } }
+            if ($Uri -like '*/git/ref/tags/v1.2.3') { return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' } }
             if ($Uri -like '*/attestations/sha256:*') { return @{ attestations = $fakeAttestations } }
             throw "Unexpected source API: $Uri"
         }
@@ -58,7 +59,7 @@ Describe 'Tagged vendoring source and attestation policy' {
     It 'does not interpret attestation API errors as absence' {
         Mock Invoke-RestMethod {
             param($Uri)
-            if ($Uri -like '*/git/ref/tags/v1.2.3') { return @{ object = @{ type = 'commit'; sha = '3333333333333333333333333333333333333333' } } }
+            if ($Uri -like '*/git/ref/tags/v1.2.3') { return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' } }
             throw 'Attestation API unavailable (403)'
         }
         { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work } |
@@ -87,7 +88,7 @@ Describe 'Tagged vendoring source and attestation policy' {
     It 'accepts digest 404 only after confirming the GitHub.com repository is public' {
         Mock Invoke-RestMethod {
             param($Uri)
-            if ($Uri -like '*/git/ref/tags/v1.2.3') { return @{ object = @{ type = 'commit'; sha = '3333333333333333333333333333333333333333' } } }
+            if ($Uri -like '*/git/ref/tags/v1.2.3') { return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' } }
             if ($Uri -eq 'https://api.github.com/repos/upstream/action') { return @{ full_name = 'upstream/action'; private = $false } }
             $httpResponse = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound)
             throw [Microsoft.PowerShell.Commands.HttpResponseException]::new('Not Found', $httpResponse)
@@ -99,7 +100,7 @@ Describe 'Tagged vendoring source and attestation policy' {
     It 'does not interpret private repository attestation 404 as proven absence' {
         Mock Invoke-RestMethod {
             param($Uri)
-            if ($Uri -like '*/git/ref/tags/v1.2.3') { return @{ object = @{ type = 'commit'; sha = '3333333333333333333333333333333333333333' } } }
+            if ($Uri -like '*/git/ref/tags/v1.2.3') { return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' } }
             if ($Uri -eq 'https://api.github.com/repos/upstream/action') { return @{ full_name = 'upstream/action'; private = $true } }
             $httpResponse = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound)
             throw [Microsoft.PowerShell.Commands.HttpResponseException]::new('Not Found', $httpResponse)
@@ -112,7 +113,7 @@ Describe 'Tagged vendoring source and attestation policy' {
     It 'resolves annotated tags and downloads a named ZIP asset from that release' {
         Mock Invoke-RestMethod {
             param($Uri)
-            if ($Uri -like '*/git/ref/tags/v1.2.3') { return @{ object = @{ type = 'tag'; sha = '4444444444444444444444444444444444444444' } } }
+            if ($Uri -like '*/git/ref/tags/v1.2.3') { return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'tag'; 'object.sha' = '4444444444444444444444444444444444444444' } }
             if ($Uri -like '*/git/tags/4444444444444444444444444444444444444444') { return @{ object = @{ type = 'commit'; sha = '3333333333333333333333333333333333333333' } } }
             if ($Uri -like '*/releases/tags/v1.2.3') { return @{ assets = @(@{ id = 17; name = 'platform.zip' }) } }
             if ($Uri -like '*/attestations/sha256:*') { return @{ attestations = @() } }
