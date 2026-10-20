@@ -452,6 +452,64 @@ Describe 'Instance setup wizard' {
             $saved = ConvertFrom-Json (Get-Content -LiteralPath $setup.StatePath -Raw) -AsHashtable
             $saved['probe']['organizationSignInPending'] | Should -BeTrue
         }
+
+        It 'asks for a new probe organization name when the stored organization was deleted' {
+            $setup = Get-TestSetup
+            $setup.Reconfirm = $true
+            $stored = "probe-$((Get-Date).ToString('yyyyMMdd'))"
+            $setup.State.probe['organization'] = $stored
+            $setup.State.probe['authorizationPassed'] = '2026-01-01T00:00:00Z'
+            $setup.State.probe['adminPassed'] = '2026-01-01T00:00:00Z'
+            $setup.State.probe['adminInstallationId'] = '42'
+            $setup.State.probe['adminReadRulesets'] = 'HTTP 200'
+            $setup.State.probe['adminAppId'] = 'app-b'
+            $setup.Facts.EnterpriseId = 'E_test'
+            $answers.Enqueue($stored)
+            $answers.Enqueue('')
+            $created = InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Stored = $stored } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Wait-SetupCondition { $true }
+                Mock Invoke-SetupProbeOrganizationSignIn {}
+                Mock Show-SetupMessage {}
+                Mock Invoke-SetupGraphQL { $Setup.Settings['testCreatedOrg'] = $Variables['input']['login'] }
+                Mock Invoke-SetupApi {
+                    if ($Method -eq 'PUT') { return @{ Status = 'Ok'; Data = @{ state = 'active' } } }
+                    if ($Method -eq 'POST') { return @{ Status = 'Ok'; Data = @{} } }
+                    return @{ Status = 'Missing'; Data = $null }
+                }
+                $null = Invoke-StepProbeOrg -Setup $Setup
+                Should -Invoke Show-SetupMessage -Times 1 -Exactly -ParameterFilter { $Kind -eq 'Warning' -and $Message -like "*$($Scenario.Stored)*no longer exists*ADR 0008*" }
+                $Setup.Settings['testCreatedOrg']
+            }
+
+            $created | Should -Not -Be $stored
+            $created | Should -Match '^probe-\d{12}$'
+            $setup.State.probe['organization'] | Should -Be $created
+            $setup.State.probe.Contains('authorizationPassed') | Should -BeFalse
+            $setup.State.probe.Contains('adminPassed') | Should -BeFalse
+            $setup.State.probe.Contains('adminInstallationId') | Should -BeFalse
+            $setup.State.probe.Contains('adminReadRulesets') | Should -BeFalse
+            $setup.State.probe['adminAppId'] | Should -Be 'app-b'
+        }
+
+        It 'waits for a created organization instead of renaming it while sign-in is pending' {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['organizationSignInPending'] = $true
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                Mock Invoke-SetupProbeOrganizationSignIn {}
+                Mock Read-SetupValue { throw 'The created organization must not be renamed.' }
+                Mock Invoke-SetupGraphQL { throw 'The organization must not be created again.' }
+                Mock Invoke-SetupApi { @{ Status = 'Missing'; Data = $null } }
+                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw '*probe-test was created but is not readable yet*'
+            }
+            $setup.State.probe['organization'] | Should -Be 'probe-test'
+        }
     }
 
     Context 'Inputs' {
@@ -688,6 +746,153 @@ Describe 'Instance setup wizard' {
                     Invoke-SetupElevatedAction -Setup $Setup -Purpose 'Test' -AdminGuidance @('Ask.') -Action { 'changed' }
                 } } | Should -Throw '*was declined*'
             $apiCalls.Count | Should -Be 0
+        }
+
+        It 'waits up to 10 minutes for elevated access before it reports a forbidden role assignment' {
+            Mock Wait-SetupCondition -ModuleName InstanceSetup { $null }
+            $setup = Get-TestSetup
+            $setup.Facts.Me = '44444444-4444-4444-4444-444444444444'
+            { InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                    param($Setup)
+                    Invoke-SetupRoleAssignment -Setup $Setup -Scope '/subscriptions/22222222-2222-2222-2222-222222222222' -RoleId $script:RoleOwner
+                } } | Should -Throw '*within 10 minutes*'
+            Should -Invoke Wait-SetupCondition -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter { $TimeoutSeconds -eq 600 }
+        }
+
+        It 'waits up to 10 minutes for the Owner role to take effect' {
+            $setup = Get-TestSetup
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                Mock Get-SetupOwnerGap { '/subscriptions/22222222-2222-2222-2222-222222222222' }
+                Mock Invoke-SetupElevatedAction {}
+                Mock Wait-SetupCondition { $null }
+                { Invoke-StepAzureOwner -Setup $Setup } | Should -Throw '*not effective yet*'
+                Should -Invoke Wait-SetupCondition -Times 1 -Exactly -ParameterFilter { $TimeoutSeconds -eq 600 }
+            }
+        }
+    }
+
+    Context 'SCIM provision on demand' {
+        BeforeEach {
+            $setup = Get-TestSetup
+            $setup.Facts.Me = '44444444-4444-4444-4444-444444444444'
+            $setup.Facts.ScimJobId = 'gitHubEMU.job'
+            $requests = [System.Collections.Generic.List[object]]::new()
+            $schemaRules = @(
+                @{ id = 'group-rule'; sourceDirectoryName = 'Azure Active Directory'; objectMappings = @(@{ enabled = $true; sourceObjectName = 'Group'; targetObjectName = 'Group' }) }
+                @{ id = 'disabled-user-rule'; objectMappings = @(@{ enabled = $false; sourceObjectName = 'User'; targetObjectName = 'User' }) }
+                @{ id = 'user-rule'; sourceDirectoryName = 'Azure Active Directory'; objectMappings = @(@{ enabled = $true; sourceObjectName = 'User'; targetObjectName = 'User' }) }
+            )
+        }
+
+        It 'reports <Expected> for the provisioning result <Result> <ErrorCode>' -ForEach @(
+            @{ Result = 'Success'; ErrorCode = $null; Expected = 'Ok'; Text = '*EMU account exists in GitHub*'; Target = 'github-user'; Source = 'me' }
+            @{ Result = 'Success'; ErrorCode = $null; Expected = 'Warning'; Text = '*Cannot read the provisioning result*'; Target = $null; Source = 'me' }
+            @{ Result = 'Success'; ErrorCode = $null; Expected = 'Warning'; Text = '*Cannot read the provisioning result*'; Target = 'github-user'; Source = 'other' }
+            @{ Result = 'Skipped'; ErrorCode = 'RedundantExport'; Expected = 'Ok'; Text = '*already matches*'; Target = $null; Source = 'me' }
+            @{ Result = 'Skipped'; ErrorCode = 'NotEffectivelyEntitled'; Expected = 'Warning'; Text = '*Skipped*NotEffectivelyEntitled*'; Target = $null; Source = 'me' }
+            @{ Result = 'Failure'; ErrorCode = 'SystemForCrossDomainIdentityManagementServiceIncompatible'; Expected = 'Warning'; Text = '*Failure*SystemForCrossDomainIdentityManagementServiceIncompatible*'; Target = $null; Source = 'me' }
+        ) {
+            # Shape observed on the live service: key holds a .NET type name, value holds a JSON array of records.
+            $key = 'Microsoft.Identity.Hcm.ProvisioningService.Contracts.ProvisionOnDemandResponse'
+            $sourceId = if ($Source -eq 'me') { $setup.Facts.Me } else { '55555555-5555-5555-5555-555555555555' }
+            $record = [ordered]@{
+                sourceIdentity = @{ id = $sourceId; identityType = 'User' }
+                statusInfo = @{ status = $Result }
+                provisioningSteps = @(@{ name = 'EntryExportSkipped'; status = $Result; details = @{ SkipReason = $ErrorCode } })
+            }
+            if ($Target) { $record.targetIdentity = @{ id = $Target; identityType = 'User' } }
+            if ($Result -eq 'Failure') { $record.statusInfo.errorCode = $ErrorCode; $record.statusInfo.reason = 'detail' }
+            $value = ConvertTo-Json -Compress -Depth 6 -InputObject @($record)
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Requests = $requests; Rules = $schemaRules; Key = $key; Value = $value } } {
+                param($Scenario)
+                Mock Confirm-SetupAction { $true }
+                Mock Show-SetupMessage {}
+                Mock Show-SetupGuidance {}
+                Mock Invoke-SetupApi {
+                    $Scenario.Requests.Add($PesterBoundParameters)
+                    if ($Uri -like '*/schema') { return @{ Status = 'Ok'; Data = @{ synchronizationRules = $Scenario.Rules } } }
+                    return @{ Status = 'Ok'; Code = 200; Data = @{ key = $Scenario.Key; value = $Scenario.Value } }
+                }
+                Invoke-SetupProvisionOnDemand -Setup $Scenario.Setup
+            }
+
+            $post = $requests | Where-Object { $_['Method'] -eq 'POST' }
+            $post['Body']['parameters'][0]['ruleId'] | Should -Be 'user-rule'
+            Should -Invoke Show-SetupMessage -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter { $Kind -eq $Expected -and $Message -like $Text }
+            $guidance = if ($Expected -eq 'Ok') { 0 } else { 1 }
+            Should -Invoke Show-SetupGuidance -ModuleName InstanceSetup -Times $guidance -Exactly
+        }
+
+        It 'reads the documented JSON result when the record has no source identity' {
+            $key = ConvertTo-Json -Compress -InputObject @{ result = 'Failure'; details = @{ errorCode = 'InvalidSubject'; errorMessage = 'detail' } }
+            $value = ConvertTo-Json -Compress -Depth 5 -InputObject @{ statusInfo = @{ status = 'Failure' } }
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Rules = $schemaRules; Key = $key; Value = $value } } {
+                param($Scenario)
+                Mock Confirm-SetupAction { $true }
+                Mock Show-SetupMessage {}
+                Mock Show-SetupGuidance {}
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/schema') { return @{ Status = 'Ok'; Data = @{ synchronizationRules = $Scenario.Rules } } }
+                    return @{ Status = 'Ok'; Code = 200; Data = @{ key = $Scenario.Key; value = $Scenario.Value } }
+                }
+                Invoke-SetupProvisionOnDemand -Setup $Scenario.Setup
+                Should -Invoke Show-SetupMessage -Times 1 -Exactly -ParameterFilter { $Kind -eq 'Warning' -and $Message -like '*Failure*InvalidSubject: detail*' }
+            }
+        }
+
+        It 'does not report success for <Case>' -ForEach @(
+            @{ Case = 'a summary without records'; Key = '{"result":"Success"}'; Value = '{}' }
+            @{ Case = 'a summary with an empty record list'; Key = '{"result":"Success"}'; Value = '[]' }
+            @{ Case = 'a successful record without a source identity'; Key = 'Microsoft.Type'; Value = '[{"statusInfo":{"status":"Success"},"targetIdentity":{"id":"github-user"}}]' }
+            @{ Case = 'a record without a target identity under a successful summary'; Key = '{"result":"Success"}'; Value = '[{"sourceIdentity":{"id":"44444444-4444-4444-4444-444444444444"}}]' }
+        ) {
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Rules = $schemaRules; Key = $Key; Value = $Value } } {
+                param($Scenario)
+                Mock Confirm-SetupAction { $true }
+                Mock Show-SetupMessage {}
+                Mock Show-SetupGuidance {}
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/schema') { return @{ Status = 'Ok'; Data = @{ synchronizationRules = $Scenario.Rules } } }
+                    return @{ Status = 'Ok'; Code = 200; Data = @{ key = $Scenario.Key; value = $Scenario.Value } }
+                }
+                Invoke-SetupProvisionOnDemand -Setup $Scenario.Setup
+                Should -Invoke Show-SetupMessage -Times 0 -Exactly -ParameterFilter { $Kind -eq 'Ok' }
+                Should -Invoke Show-SetupMessage -Times 1 -Exactly -ParameterFilter { $Kind -eq 'Warning' -and $Message -like '*Cannot read the provisioning result*' }
+            }
+        }
+        It 'does not report success when the provisioning result cannot be read' {
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Rules = $schemaRules } } {
+                param($Scenario)
+                Mock Confirm-SetupAction { $true }
+                Mock Show-SetupMessage {}
+                Mock Show-SetupGuidance {}
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/schema') { return @{ Status = 'Ok'; Data = @{ synchronizationRules = $Scenario.Rules } } }
+                    return @{ Status = 'Ok'; Code = 200; Data = @{} }
+                }
+                Invoke-SetupProvisionOnDemand -Setup $Scenario.Setup
+                Should -Invoke Show-SetupMessage -Times 0 -Exactly -ParameterFilter { $Kind -eq 'Ok' }
+                Should -Invoke Show-SetupMessage -Times 1 -Exactly -ParameterFilter { $Kind -eq 'Warning' -and $Message -like '*Cannot read the provisioning result*' }
+                Should -Invoke Show-SetupGuidance -Times 1 -Exactly
+            }
+        }
+
+        It 'provisions nothing when the schema has no enabled user rule' {
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Rules = @($schemaRules[0], $schemaRules[1]) } } {
+                param($Scenario)
+                Mock Confirm-SetupAction { $true }
+                Mock Show-SetupMessage {}
+                Mock Show-SetupGuidance {}
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/schema') { return @{ Status = 'Ok'; Data = @{ synchronizationRules = $Scenario.Rules } } }
+                    throw "Unexpected API call: $Method $Uri"
+                }
+                Invoke-SetupProvisionOnDemand -Setup $Scenario.Setup
+                Should -Invoke Show-SetupMessage -Times 1 -Exactly -ParameterFilter { $Kind -eq 'Warning' -and $Message -like '*no enabled rule for users*' }
+                Should -Invoke Show-SetupGuidance -Times 1 -Exactly
+            }
         }
     }
 
