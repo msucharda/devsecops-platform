@@ -1158,6 +1158,8 @@ Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. 
 
 **Výsledek (20. 10. 2026):** GHE.com název smazané organizace neuvolnil okamžitě ani po 7 dnech. ADR 0008 proto určuje, že názvy organizací instance obsahují Deployment identifier (identifikátor nasazení). Implementaci sledují #44 a #13. Test není potřeba opakovat.
 
+**Rozšíření C3 pro #13:** [Organizace přes enterprise installation token](runbooks/organizations-c3.md) ověří issuer, minimální oprávnění pro vytvoření organizace, vlastníka, instalaci App a smazání. Tento běh zatím neproběhl. Provede ho člověk a výsledek zapíše do runbooku; dosavadní důkaz blokace názvu tím nemění.
+
 **Proč:** Teardown (odstranění instance) smaže organizace akcí a workloadů, lokální odstranění bootstrapu smaže organizaci platformy. Nové nasazení je vytvoří znovu. Pokud GitHub název blokuje, nové nasazení se stejným názvem selže. Na github.com GitHub blokuje název smazané organizace 90 dní.
 
 **Postup:**

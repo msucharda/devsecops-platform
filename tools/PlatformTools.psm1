@@ -10,8 +10,12 @@ function Test-PlatformGitHubAppOwner {
         [Parameter(Mandatory)][string] $Enterprise
     )
 
-    return $Owner -is [System.Collections.IDictionary] -and
-        $Owner['type'] -ieq 'enterprise' -and $Owner['login'] -ieq $Enterprise
+    if ($Owner -isnot [System.Collections.IDictionary]) { return $false }
+    if ($Owner.Contains('login')) {
+        return $Owner['type'] -ieq 'enterprise' -and $Owner['login'] -ieq $Enterprise
+    }
+    return -not $Owner.Contains('type') -and $Owner['slug'] -ceq $Enterprise -and
+        [string] $Owner['id'] -cmatch '^[1-9][0-9]*$' -and -not [string]::IsNullOrWhiteSpace($Owner['node_id'])
 }
 
 function Get-PlatformYaml {
@@ -121,6 +125,7 @@ function Get-PlatformModuleGraph {
                 if (-not $declaration.Contains('purpose') -or
                     $declaration.permissions.Count -ne 1 -or
                     $declaration.permissions['organization_administration'] -cne 'write' -or
+                    -not $declaration.resources.Contains('organizations') -or
                     $declaration.resources.Contains('repositories')) {
                     throw "Module '$name': rulesetPlan must declare the organization-rulesets-full-read exception with only organization_administration: write for target organizations."
                 }
@@ -208,6 +213,9 @@ function Get-PlatformAppScope {
         [Parameter(Mandatory)][System.Collections.IDictionary] $Declaration
     )
 
+    if ($Declaration['resources'].Contains('enterprise')) {
+        return @{ enterprise = $true }
+    }
     $parameters = @{}
     if ($Instance['modules'].Contains($Module) -and $Instance['modules'][$Module].Contains('parameters')) {
         $parameters = $Instance['modules'][$Module]['parameters']
@@ -347,7 +355,9 @@ function Get-PlatformInstance {
     $appContracts = @{}
     foreach ($alias in $instance['githubApps'].PSBase.Keys) {
         $app = $instance['githubApps'][$alias]
-        $app['resources']['organizations'] = @($app['resources']['organizations'] | Sort-Object -CaseSensitive)
+        if ($app['resources'].Contains('organizations')) {
+            $app['resources']['organizations'] = @($app['resources']['organizations'] | Sort-Object -CaseSensitive)
+        }
         if ($app['resources'].Contains('repositories')) {
             foreach ($organization in @($app['resources']['repositories'].PSBase.Keys)) {
                 if ($organization -cnotin $app['resources']['organizations']) {
