@@ -1152,7 +1152,9 @@ Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. 
 
 **Co ověřuješ:** GitHub po smazání organizace dovolí ihned vytvořit organizaci se stejným názvem.
 
-**Proč:** Organizace instance se jmenují `{name}-platform`, `{name}-actions` a `{name}-workloads`. Teardown (odstranění instance) je smaže a nové nasazení je vytvoří znovu. Pokud GitHub název blokuje, nové nasazení selže. ADR 0008 potom doplní Deployment identifier (identifikátor nasazení) do názvu organizace. Na github.com GitHub blokuje název smazané organizace 90 dní. Pro GHE.com to není ověřené.
+**Výsledek (20. 10. 2026):** GHE.com název smazané organizace neuvolnil okamžitě ani po 7 dnech. ADR 0008 proto určuje, že názvy organizací instance obsahují Deployment identifier (identifikátor nasazení). Implementaci sledují #44 a #13. Test není potřeba opakovat.
+
+**Proč:** Teardown (odstranění instance) smaže organizace akcí a workloadů, lokální odstranění bootstrapu smaže organizaci platformy. Nové nasazení je vytvoří znovu. Pokud GitHub název blokuje, nové nasazení se stejným názvem selže. Na github.com GitHub blokuje název smazané organizace 90 dní.
 
 **Postup:**
 
@@ -1163,7 +1165,7 @@ Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. 
 
 **Ověření:** Zaznamenej, zda GitHub název přijal ihned, po 24 hodinách, nebo vůbec.
 
-**Kam patří výsledek:** komentář v #5. Větu „První test teardownu musí ověřit, jestli GitHub dovolí znovu použít název smazané organizace.“ v ADR 0008 potom nahradí PR s výsledkem. Pokud se název neuvolní, ADR určí, že název organizace obsahuje Deployment identifier (identifikátor nasazení).
+**Kam patří výsledek:** komentář v #5 a ADR 0008.
 
 **Odblokuje:** #13 spolu s #4 a #12.
 

@@ -322,7 +322,7 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 
 ## Názvy
 
-- `instance.name` má 2–8 znaků. Organizace se jmenují `{name}-platform`, `{name}-actions` a `{name}-workloads`.
+- `instance.name` má 2–8 znaků. Organizace se jmenují `{name}-{deployment}-platform`, `{name}-{deployment}-actions` a `{name}-{deployment}-workloads`; `{deployment}` je identifikátor nasazení podle ADR 0008. Bootstrap zatím vytváří `{name}-platform` bez identifikátoru nasazení (#44).
 - Prostředky v Azure používají zkratky typů prostředků podle CAF.
 - Identifikátor nasazení je jen v názvech podle ADR 0008.
 
