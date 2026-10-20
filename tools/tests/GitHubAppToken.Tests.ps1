@@ -1,4 +1,5 @@
 BeforeAll {
+    Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $issuer = Join-Path (Split-Path $PSScriptRoot -Parent) 'New-PlatformGitHubToken.ps1'
     $rsa = [Security.Cryptography.RSA]::Create(2048)
     $privateKey = $rsa.ExportRSAPrivateKeyPem()
@@ -20,7 +21,9 @@ Describe 'Enterprise App key and installation token isolation' {
         $actualPermissions = @{ members = 'read'; metadata = 'read' }
         $actualOrganizations = @('platform')
         $fakeRepositoryNames = @()
-        $actualOwner = @{ login = 'example'; type = 'enterprise' }
+        $ownerFields = @{ 'owner.login' = 'example'; 'owner.type' = 'enterprise' }
+        $malformedOwner = $null
+        $removedOwnerField = $null
         $repositorySelection = 'selected'
         $rulesetApp = @{
             appId = '101'; installationId = '201'; enterprise = 'example'
@@ -30,22 +33,34 @@ Describe 'Enterprise App key and installation token isolation' {
         Mock Invoke-RestMethod {
             param($Uri, $Method)
             if ($Uri -eq 'https://api.example.test/app') {
-                return @{ id = 101; owner = $actualOwner; permissions = $actualPermissions }
+                $app = Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set (@{ id = 101; permissions = $actualPermissions } + $ownerFields)
+                if ($removedOwnerField) { $app.owner.Remove($removedOwnerField) }
+                if ($malformedOwner) { $app.owner = $malformedOwner.Value }
+                return $app
             }
             if ($Uri -like 'https://api.example.test/app/installations`?*') {
                 return ,@($actualOrganizations | ForEach-Object {
-                    @{ id = $(if ($_ -eq 'workloads') { 202 } else { 201 }); account = @{ login = $_ }; target_type = 'Organization'; permissions = $actualPermissions; repository_selection = $repositorySelection; suspended_at = $null }
+                    (Get-GitHubApiFixture -Name apps/list-installations -Set @{
+                        '0.id' = $(if ($_ -eq 'workloads') { 202 } else { 201 }); '0.account.login' = $_; '0.account.type' = 'Organization'
+                        '0.target_type' = 'Organization'; '0.permissions' = $actualPermissions; '0.repository_selection' = $repositorySelection
+                        '0.suspended_at' = $null
+                    })[0]
                 })
             }
             if ($Uri -like '*/access_tokens') {
-                return @{ token = 'fake-installation-token'; permissions = $actualPermissions }
+                return Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{ token = 'fake-installation-token'; permissions = $actualPermissions }
             }
             if ($Uri -like '*/installation/repositories`?*') {
-                return @{ repositories = @($fakeRepositoryNames | ForEach-Object { @{ name = $_ } }) }
+                $repositories = @($fakeRepositoryNames | ForEach-Object {
+                    (Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{ 'repositories.0.name' = $_ }).repositories[0]
+                })
+                return Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{ total_count = $repositories.Count; repositories = $repositories }
             }
             if ($Uri -like '*/installation/token' -and $Method -eq 'DELETE') { return }
-            if ($Uri -like '*/orgs/platform/teams`?*') { return ,@(@{ id = 30; slug = 'platform' }) }
-            if ($Uri -like '*/orgs/platform/actions/permissions') { return @{ enabled_repositories = 'all' } }
+            if ($Uri -like '*/orgs/platform/teams`?*') { return Get-GitHubApiFixture -Name teams/list-teams -Set @{ '0.id' = 30; '0.slug' = 'platform' } }
+            if ($Uri -like '*/orgs/platform/actions/permissions') {
+                return Get-GitHubApiFixture -Name actions/get-github-actions-permissions-organization -Set @{ enabled_repositories = 'all' }
+            }
             if ($Uri -like '*/orgs/platform/code-security/configurations*') { return ,@() }
             throw "Unexpected GitHub API request: $Method $Uri"
         }
@@ -295,7 +310,7 @@ Describe 'Enterprise App key and installation token isolation' {
     }
 
     It 'rejects organization-owned Apps instead of treating them as enterprise-owned' {
-        $actualOwner = @{ login = 'example'; type = 'Organization' }
+        $ownerFields = @{ 'owner.login' = 'example'; 'owner.type' = 'Organization' }
 
         { & $issuer -Authorization -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
             Should -Throw '*not owned by the declared enterprise*'
@@ -303,13 +318,16 @@ Describe 'Enterprise App key and installation token isolation' {
     }
 
     It 'rejects an invalid enterprise owner: <Case>' -ForEach @(
-        @{ Case = 'another enterprise'; Owner = @{ login = 'another'; type = 'enterprise' } }
-        @{ Case = 'a user with the same login'; Owner = @{ login = 'example'; type = 'User' } }
-        @{ Case = 'a missing owner type'; Owner = @{ login = 'example' } }
-        @{ Case = 'a slug without a login'; Owner = @{ slug = 'example'; type = 'enterprise' } }
-        @{ Case = 'no owner'; Owner = $null }
+        @{ Case = 'another enterprise'; Fields = @{ 'owner.login' = 'another'; 'owner.type' = 'enterprise' }; Malformed = $null; RemoveField = $null }
+        @{ Case = 'a user with the same login'; Fields = @{ 'owner.login' = 'example'; 'owner.type' = 'User' }; Malformed = $null; RemoveField = $null }
+        @{ Case = 'a missing owner type'; Fields = $null; Malformed = $null; RemoveField = 'type' }
+        # Malformed owners that match no documented variant.
+        @{ Case = 'a slug without a login'; Fields = $null; Malformed = @{ Value = @{ slug = 'example'; type = 'enterprise' } }; RemoveField = $null }
+        @{ Case = 'no owner'; Fields = $null; Malformed = @{ Value = $null }; RemoveField = $null }
     ) {
-        $actualOwner = $Owner
+        if ($Fields) { $ownerFields = $Fields }
+        if ($Malformed) { $malformedOwner = $Malformed }
+        $removedOwnerField = $RemoveField
         { & $issuer -Authorization -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
             Should -Throw '*not owned by the declared enterprise*'
         Test-Path -LiteralPath $environmentPath | Should -BeFalse
@@ -365,12 +383,14 @@ Describe 'Enterprise App key and installation token isolation' {
         $repositorySelection = 'all'
         Mock Invoke-RestMethod {
             return ,@(
-                @{ id = 41; source_type = 'Organization'; source = 'platform' }
-                @{ id = 42; source_type = 'Enterprise'; source = 'example' }
+                (Get-GitHubApiFixture -Name repos/get-org-rulesets -Set @{ '0.id' = 41; '0.source_type' = 'Organization'; '0.source' = 'platform' })[0]
+                (Get-GitHubApiFixture -Name repos/get-org-rulesets -Set @{ '0.id' = 42; '0.source_type' = 'Enterprise'; '0.source' = 'example' })[0]
             )
         } -ParameterFilter { $Uri -like '*/orgs/platform/rulesets`?includes_parents=true*' }
         Mock Invoke-RestMethod {
-            return @{ id = 41; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 7; bypass_mode = 'pull_request' }) }
+            return Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{
+                id = 41; source = 'platform'; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 7; bypass_mode = 'pull_request' })
+            }
         } -ParameterFilter { $Uri -eq 'https://api.example.test/orgs/platform/rulesets/41' }
         $result = & $issuer -BootstrapApp $rulesetApp -PrivateKey $privateKey -ValidateOnly -Phase rulesetPlan `
             -ApiUrl https://api.example.test -EnvironmentPath $environmentPath -WarningVariable rulesetWarnings
@@ -414,7 +434,7 @@ Describe 'Enterprise App key and installation token isolation' {
         $actualPermissions = @{ organization_administration = 'write'; metadata = 'read' }
         $repositorySelection = 'all'
         Mock Invoke-RestMethod {
-            return ,@(@{ id = 61; source_type = 'Organization'; source = 'platform' })
+            return Get-GitHubApiFixture -Name repos/get-org-rulesets -Set @{ '0.id' = 61; '0.source_type' = 'Organization'; '0.source' = 'platform' }
         } -ParameterFilter { $Uri -like '*/orgs/platform/rulesets`?includes_parents=true*' }
         Mock Invoke-RestMethod { return @{ id = 61 } } -ParameterFilter {
             $Uri -eq 'https://api.example.test/orgs/platform/rulesets/61'
@@ -433,7 +453,7 @@ Describe 'Enterprise App key and installation token isolation' {
         $actualPermissions = @{ organization_administration = 'write'; metadata = 'read' }
         $repositorySelection = 'all'
         Mock Invoke-RestMethod {
-            return ,@(@{ id = 71; source_type = 'Organization'; source = 'platform' })
+            return Get-GitHubApiFixture -Name repos/get-org-rulesets -Set @{ '0.id' = 71; '0.source_type' = 'Organization'; '0.source' = 'platform' }
         } -ParameterFilter { $Uri -like '*/orgs/platform/rulesets`?includes_parents=true*' }
         Mock Invoke-RestMethod { throw 'Local ruleset detail unavailable' } -ParameterFilter {
             $Uri -eq 'https://api.example.test/orgs/platform/rulesets/71'

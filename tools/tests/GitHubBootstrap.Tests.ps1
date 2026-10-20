@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module powershell-yaml -RequiredVersion 0.4.12
+    Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $tools = Split-Path $PSScriptRoot -Parent
     $bootstrap = Join-Path $tools 'Invoke-GitHubBootstrap.ps1'
     $rsa = [Security.Cryptography.RSA]::Create(2048)
@@ -130,18 +131,24 @@ Describe 'GitHub bootstrap public interface' {
                     } } }
                 }
             }
-            elseif ($path -eq '/user') { $reply = @{ login = 'owner_example' } }
+            elseif ($path -eq '/user') { $reply = Get-GitHubApiFixture -Name users/get-authenticated-user.private-user -Set @{ login = 'owner_example' } }
             elseif ($path -eq '/app' -or $path -eq '/app/installations') {
                 $segment = $Headers.Authorization.Split(' ')[1].Split('.')[1].Replace('-', '+').Replace('_', '/')
                 $segment = $segment.PadRight($segment.Length + (4 - $segment.Length % 4) % 4, '=')
                 $appId = [string] ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($segment)) | ConvertFrom-Json -AsHashtable).iss
                 $appRecord = $cloud.apps[$appId]
                 if ($path -eq '/app') {
-                    $reply = @{ id = [int] $appId; slug = $appRecord.slug; owner = $cloud.appOwner; permissions = $appRecord.permissions }
+                    $reply = Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set @{
+                        id = [int] $appId; slug = $appRecord.slug; 'owner.login' = $cloud.appOwner.login; 'owner.type' = $cloud.appOwner.type
+                        permissions = $appRecord.permissions
+                    }
                 }
                 else {
-                    $reply = @(@{ id = [int] $appRecord.installationId; account = @{ login = 'demo-a1b2c3-platform' }; target_type = 'Organization'
-                        suspended_at = $null; permissions = $appRecord.permissions; repository_selection = $appRecord.selection })
+                    $reply = Get-GitHubApiFixture -Name apps/list-installations -Set @{
+                        '0.id' = [int] $appRecord.installationId; '0.account.login' = 'demo-a1b2c3-platform'; '0.account.type' = 'Organization'
+                        '0.target_type' = 'Organization'; '0.suspended_at' = $null; '0.permissions' = $appRecord.permissions
+                        '0.repository_selection' = $appRecord.selection
+                    }
                 }
             }
             elseif ($path -like '*/actions/workflows/bootstrap-acceptance.yml/dispatches') {
@@ -311,14 +318,22 @@ Describe 'GitHub bootstrap public interface' {
         $appTransport = {
             param([string] $Uri, [string] $Method = 'GET', [hashtable] $Headers)
             if ($Uri -like '*/installation/token' -and $Method -eq 'DELETE') { return }
-            if ($Uri -like '*/installation/repositories`?*') { return @{ repositories = @() } }
-            if ($Uri -like '*/orgs/demo-a1b2c3-platform/teams`?*') { return ,@(@{ id = 30; slug = 'platform' }) }
-            if ($Uri -like '*/orgs/demo-a1b2c3-platform/actions/permissions') { return @{ enabled_repositories = 'all' } }
+            if ($Uri -like '*/installation/repositories`?*') {
+                return Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{ total_count = 0; repositories = @() }
+            }
+            if ($Uri -like '*/orgs/demo-a1b2c3-platform/teams`?*') { return Get-GitHubApiFixture -Name teams/list-teams -Set @{ '0.id' = 30; '0.slug' = 'platform' } }
+            if ($Uri -like '*/orgs/demo-a1b2c3-platform/actions/permissions') {
+                return Get-GitHubApiFixture -Name actions/get-github-actions-permissions-organization -Set @{ enabled_repositories = 'all' }
+            }
             if ($Uri -like '*/orgs/demo-a1b2c3-platform/code-security/configurations*') { return ,@() }
             if ($Uri -like '*/orgs/demo-a1b2c3-platform/rulesets`?*') {
-                return ,@(@{ id = 7; source_type = 'Organization'; source = 'demo-a1b2c3-platform' })
+                return Get-GitHubApiFixture -Name repos/get-org-rulesets -Set @{ '0.id' = 7; '0.source_type' = 'Organization'; '0.source' = 'demo-a1b2c3-platform' }
             }
-            if ($Uri -like '*/orgs/demo-a1b2c3-platform/rulesets/7') { return @{ id = 7; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 123; bypass_mode = 'pull_request' }) } }
+            if ($Uri -like '*/orgs/demo-a1b2c3-platform/rulesets/7') {
+                return Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{
+                    id = 7; source = 'demo-a1b2c3-platform'; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 123; bypass_mode = 'pull_request' })
+                }
+            }
             $segment = $Headers.Authorization.Split(' ')[1].Split('.')[1].Replace('-', '+').Replace('_', '/')
             $segment = $segment.PadRight($segment.Length + (4 - $segment.Length % 4) % 4, '=')
             $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($segment)) | ConvertFrom-Json -AsHashtable
@@ -332,12 +347,20 @@ Describe 'GitHub bootstrap public interface' {
                 $selection = $cloud.apps[$appId]['selection']
                 if (-not $selection) { $selection = 'all' }
             }
-            if ($Uri -like '*/app') { return @{ id = [int] $appId; owner = $cloud.appOwner; permissions = $permissions } }
-            if ($Uri -like '*/app/installations`?*') {
-                return ,@(@{ id = $installationId; account = @{ login = 'demo-a1b2c3-platform' }; target_type = 'Organization'
-                    suspended_at = $null; permissions = $permissions; repository_selection = $selection })
+            if ($Uri -like '*/app') {
+                return Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set @{
+                    id = [int] $appId; 'owner.login' = $cloud.appOwner.login; 'owner.type' = $cloud.appOwner.type; permissions = $permissions
+                }
             }
-            if ($Uri -like '*/access_tokens') { return @{ token = 'installation-test'; permissions = $permissions } }
+            if ($Uri -like '*/app/installations`?*') {
+                return Get-GitHubApiFixture -Name apps/list-installations -Set @{
+                    '0.id' = $installationId; '0.account.login' = 'demo-a1b2c3-platform'; '0.account.type' = 'Organization'
+                    '0.target_type' = 'Organization'; '0.suspended_at' = $null; '0.permissions' = $permissions; '0.repository_selection' = $selection
+                }
+            }
+            if ($Uri -like '*/access_tokens') {
+                return Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{ token = 'installation-test'; permissions = $permissions }
+            }
             throw "Unexpected App request: $Method $Uri"
         }
         Mock Invoke-RestMethod $appTransport

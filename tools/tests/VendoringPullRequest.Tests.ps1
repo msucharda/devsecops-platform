@@ -1,4 +1,5 @@
 BeforeAll {
+    Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $publisher = Join-Path (Split-Path $PSScriptRoot -Parent) 'Publish-VendoringPullRequest.ps1'
     $gitExecutable = (Get-Command git -CommandType Application | Select-Object -First 1).Source
     function git {
@@ -37,7 +38,9 @@ Describe 'Vendoring diff and pull request publication' {
         Mock Invoke-RestMethod {
             param($Uri, $Method)
             if ($Uri -like '*/installation/repositories*') {
-                return @{ total_count = 1; repositories = @(@{ full_name = 'customer-actions/upstream-action' }) }
+                return Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{
+                    total_count = 1; 'repositories.0.full_name' = 'customer-actions/upstream-action'
+                }
             }
             if ($Uri -like '*/pulls' -and $Method -eq 'POST') { return @{ html_url = 'https://example.ghe.com/customer-actions/upstream-action/pull/1' } }
             throw "Unexpected publishing API: $Method $Uri"

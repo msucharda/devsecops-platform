@@ -1,5 +1,7 @@
 BeforeAll {
     Import-Module powershell-yaml -RequiredVersion 0.4.12
+    # Global so that mocks running inside InModuleScope InstanceSetup can reach the fixtures.
+    Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force -Global
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
     $modulesPath = Join-Path $PSScriptRoot 'fixtures/runner-modules'
     Import-Module (Join-Path $repoRoot 'tools/InstanceSetup.psm1') -Force
@@ -145,7 +147,7 @@ Describe 'Instance setup wizard' {
             $responses = [System.Collections.Generic.Queue[object]]::new()
             $responses.Enqueue('network')
             $responses.Enqueue((Get-TestResponse -StatusCode 429))
-            $responses.Enqueue((Get-TestResponse -Data @{ login = 'owner' }))
+            $responses.Enqueue((Get-TestResponse -Data (Get-GitHubApiFixture -Name users/get-authenticated-user.private-user -Set @{ login = 'owner' })))
             Mock Invoke-WebRequest -ModuleName InstanceSetup {
                 $next = $responses.Dequeue()
                 if ($next -eq 'network') { throw 'connection reset' }
@@ -475,7 +477,7 @@ Describe 'Instance setup wizard' {
                 Mock Invoke-SetupApi {
                     param($Setup, $Uri, $Method)
                     if ($Uri -like '*/user') {
-                        return @{ Status = 'Ok'; Data = @{ login = 'owner' } }
+                        return @{ Status = 'Ok'; Data = (Get-GitHubApiFixture -Name users/get-authenticated-user.private-user -Set @{ login = 'owner' }) }
                     }
                     if ($Existing -and $NeedsSignIn -and -not $Setup.Settings['testSignedIn']) {
                         return @{ Status = 'Forbidden'; Area = 'github'; Message = 'Resource protected by organization SAML enforcement.' }
@@ -526,7 +528,7 @@ Describe 'Instance setup wizard' {
                 }
                 Mock Invoke-SetupApi {
                     param($Uri, $Method)
-                    if ($Uri -like '*/user') { return @{ Status = 'Ok'; Data = @{ login = $User } } }
+                    if ($Uri -like '*/user') { return @{ Status = 'Ok'; Data = (Get-GitHubApiFixture -Name users/get-authenticated-user.private-user -Set @{ login = $User }) } }
                     if ($Uri -match '/orgs/[^/]+$') { return @{ Status = 'Ok'; Data = @{} } }
                     if ($Method -in @('POST', 'PUT')) { throw 'No resources may be written before sign-in succeeds.' }
                     return @{ Status = 'Missing'; Data = $null }
@@ -557,7 +559,7 @@ Describe 'Instance setup wizard' {
                 Mock Invoke-SetupGitHubLogin {}
                 Mock Invoke-SetupApi {
                     param($Uri)
-                    if ($Uri -like '*/user') { return @{ Status = 'Ok'; Data = @{ login = 'owner' } } }
+                    if ($Uri -like '*/user') { return @{ Status = 'Ok'; Data = (Get-GitHubApiFixture -Name users/get-authenticated-user.private-user -Set @{ login = 'owner' }) } }
                     if ($Uri.EndsWith($FailurePath)) {
                         return @{ Status = 'Forbidden'; Area = 'github'; Message = 'Resource protected by organization SAML enforcement.' }
                     }
@@ -703,16 +705,18 @@ Describe 'Instance setup wizard' {
                     if ($Uri -like '*/app') {
                         return @{
                             Status = 'Ok'
-                            Data = @{ id = 101; slug = $resolvedSlug; owner = @{ login = 'example'; type = 'enterprise' }; permissions = @{ members = 'write' } }
+                            Data = Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set @{
+                                id = 101; slug = $resolvedSlug; 'owner.login' = 'example'; 'owner.type' = 'enterprise'; permissions = @{ members = 'write' }
+                            }
                         }
                     }
                     if ($Uri -like '*/app/installations?*') {
                         return @{
                             Status = 'Ok'
-                            Data = @(@{
-                                id = 201; account = @{ login = 'probe-test' }; target_type = 'Organization'
-                                suspended_at = $null; repository_selection = 'all'; permissions = @{ members = 'write' }
-                            })
+                            Data = Get-GitHubApiFixture -Name apps/list-installations -Set @{
+                                '0.id' = 201; '0.account.login' = 'probe-test'; '0.account.type' = 'Organization'; '0.target_type' = 'Organization'
+                                '0.suspended_at' = $null; '0.repository_selection' = 'all'; '0.permissions' = @{ members = 'write' }
+                            }
                         }
                     }
                     throw "Unexpected API call: $Uri"
@@ -755,9 +759,8 @@ Describe 'Instance setup wizard' {
                 Mock Find-SetupAppKey {
                     @{
                         KeyPath = 'synthetic-key.pem'
-                        App = @{
-                            id = 101; slug = 'ref-probe-authorization'
-                            owner = @{ login = 'example'; type = 'enterprise' }
+                        App = Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set @{
+                            id = 101; slug = 'ref-probe-authorization'; 'owner.login' = 'example'; 'owner.type' = 'enterprise'
                             permissions = @{ members = 'read' }
                         }
                     }
@@ -766,10 +769,10 @@ Describe 'Instance setup wizard' {
                 Mock Invoke-SetupApi {
                     @{
                         Status = 'Ok'
-                        Data = @(@{
-                            id = 201; account = @{ login = 'probe-test' }; target_type = 'Organization'
-                            suspended_at = $null; repository_selection = 'all'; permissions = @{ members = 'read' }
-                        })
+                        Data = Get-GitHubApiFixture -Name apps/list-installations -Set @{
+                            '0.id' = 201; '0.account.login' = 'probe-test'; '0.account.type' = 'Organization'; '0.target_type' = 'Organization'
+                            '0.suspended_at' = $null; '0.repository_selection' = 'all'; '0.permissions' = @{ members = 'read' }
+                        }
                     }
                 }
                 $app = Get-SetupProbeApp -Setup $Setup -Role authorization -Permission @{ members = 'read' } -Selection none

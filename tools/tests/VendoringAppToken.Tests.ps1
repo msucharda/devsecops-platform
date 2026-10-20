@@ -1,4 +1,5 @@
 BeforeAll {
+    Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $issuer = Join-Path (Split-Path $PSScriptRoot -Parent) 'New-PlatformGitHubToken.ps1'
     $rsa = [Security.Cryptography.RSA]::Create(2048)
     $privateKey = $rsa.ExportRSAPrivateKeyPem()
@@ -21,14 +22,24 @@ Describe 'Vendoring App installation scope' {
         Mock Invoke-RestMethod {
             param($Uri, $Method)
             if ($Uri -eq 'https://api.example.test/app') {
-                return @{ id = 101; owner = @{ login = 'example'; type = 'enterprise' }; permissions = $actualPermissions }
+                return Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set @{
+                    id = 101; 'owner.login' = 'example'; 'owner.type' = 'enterprise'; permissions = $actualPermissions
+                }
             }
             if ($Uri -like '*/app/installations`?*') {
-                return ,@(@{ id = 201; account = @{ login = 'platform' }; target_type = 'Organization'; permissions = $actualPermissions; repository_selection = 'selected'; suspended_at = $null })
+                return Get-GitHubApiFixture -Name apps/list-installations -Set @{
+                    '0.id' = 201; '0.account.login' = 'platform'; '0.account.type' = 'Organization'; '0.target_type' = 'Organization'
+                    '0.permissions' = $actualPermissions; '0.repository_selection' = 'selected'; '0.suspended_at' = $null
+                }
             }
-            if ($Uri -like '*/access_tokens') { return @{ token = 'fake-installation-token'; permissions = $actualPermissions } }
+            if ($Uri -like '*/access_tokens') {
+                return Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{ token = 'fake-installation-token'; permissions = $actualPermissions }
+            }
             if ($Uri -like '*/installation/repositories`?*') {
-                return @{ repositories = @($fakeRepositoryNames | ForEach-Object { @{ name = $_ } }) }
+                $repositories = @($fakeRepositoryNames | ForEach-Object {
+                    (Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{ 'repositories.0.name' = $_ }).repositories[0]
+                })
+                return Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{ total_count = $repositories.Count; repositories = $repositories }
             }
             if ($Uri -like '*/installation/token' -and $Method -eq 'DELETE') { return }
             throw "Unexpected GitHub request: $Method $Uri"
