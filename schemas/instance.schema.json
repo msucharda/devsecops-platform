@@ -134,7 +134,12 @@
           "appId": { "$ref": "#/definitions/githubId" },
           "installationId": { "$ref": "#/definitions/githubId" },
           "enterprise": { "$ref": "module.schema.json#/definitions/moduleName" },
-          "permissions": { "$ref": "module.schema.json#/definitions/githubAppPermissions" },
+          "permissions": {
+            "oneOf": [
+              { "$ref": "module.schema.json#/definitions/githubAppPermissions" },
+              { "$ref": "module.schema.json#/definitions/githubAppScopedPermissions" }
+            ]
+          },
           "resources": { "$ref": "module.schema.json#/definitions/githubAppResources" }
         }
       }

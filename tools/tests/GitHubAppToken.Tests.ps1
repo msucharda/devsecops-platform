@@ -294,6 +294,90 @@ Describe 'Enterprise App key and installation token isolation' {
         }
     }
 
+    It 'issues an enterprise token without issuing organization tokens for missing target organizations' {
+        $actualOrganizations = @('platform')
+        $actualPermissions = @{ enterprise_organization_installations = 'write'; metadata = 'read' }
+        $repositorySelection = 'none'
+        Mock Invoke-RestMethod {
+            return ,@(@{
+                id = 201; account = @{ login = 'example'; type = 'Enterprise' }; target_type = 'Enterprise'
+                permissions = $actualPermissions; repository_selection = 'none'; suspended_at = $null
+            })
+        } -ParameterFilter { $Uri -like 'https://api.example.test/app/installations`?*' }
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ enterprise_organization_installations = 'write' }
+            resources = @{ enterprise = $true; organizations = @('platform') }
+        }
+
+        $result = & $issuer -BootstrapApp $app -Phase apply -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
+
+        $result.Verified | Should -BeTrue
+        $result.EnterpriseInstallationId | Should -Be '201'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and $Uri -eq 'https://api.example.test/app/installations/201/access_tokens'
+        }
+    }
+
+    It 'allows an enterprise plan without target organization installations and validates both permission scopes' {
+        Import-Module powershell-yaml -RequiredVersion 0.4.12
+        $actualPermissions = @{
+            enterprise_organization_installations = 'read'
+            members = 'read'
+            metadata = 'read'
+        }
+        $actualOrganizations = @('example')
+        Mock Invoke-RestMethod {
+            return ,@(@{
+                id = 201; account = @{ login = 'example' }; target_type = 'Enterprise'
+                permissions = @{ enterprise_organization_installations = 'read'; metadata = 'read' }
+                repository_selection = 'none'; suspended_at = $null
+            })
+        } -ParameterFilter { $Uri -like 'https://api.example.test/app/installations`?*' }
+        Mock Invoke-RestMethod {
+            return @{
+                token = 'fake-installation-token'
+                permissions = @{ enterprise_organization_installations = 'read'; metadata = 'read' }
+            }
+        } -ParameterFilter { $Uri -eq 'https://api.example.test/app/installations/201/access_tokens' }
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{
+                enterprise = @{ enterprise_organization_installations = 'read'; metadata = 'read' }
+                organization = @{ members = 'read'; metadata = 'read' }
+            }
+            resources = @{ enterprise = $true; organizations = @('actions', 'workloads'); repositories = @{} }
+        }
+
+        $result = & $issuer -BootstrapApp $app -Phase plan -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
+
+        $result.Verified | Should -BeTrue
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and $Uri -eq 'https://api.example.test/app/installations/201/access_tokens'
+        }
+    }
+
+    It 'rejects an enterprise installation that was not declared in resources' {
+        $actualOrganizations = @('example', 'platform')
+        Mock Invoke-RestMethod {
+            return ,@(
+                @{ id = 201; account = @{ login = 'example' }; target_type = 'Enterprise'; permissions = $actualPermissions; repository_selection = 'none'; suspended_at = $null }
+                @{ id = 202; account = @{ login = 'platform' }; target_type = 'Organization'; permissions = @{ members = 'read' }; repository_selection = 'none'; suspended_at = $null }
+            )
+        } -ParameterFilter { $Uri -like 'https://api.example.test/app/installations`?*' }
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ members = 'read' }
+            resources = @{ organizations = @('platform') }
+        }
+
+        { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+            Should -Throw '*enterprise installation is not declared*'
+    }
+
     It 'rejects organization-owned Apps instead of treating them as enterprise-owned' {
         $actualOwner = @{ login = 'example'; type = 'Organization' }
 

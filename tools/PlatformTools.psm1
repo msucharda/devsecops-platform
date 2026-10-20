@@ -213,9 +213,13 @@ function Get-PlatformAppScope {
         $parameters = $Instance['modules'][$Module]['parameters']
     }
     $scope = [ordered]@{}
-    foreach ($kind in @('organizations', 'repositories')) {
+    foreach ($kind in @('organizations', 'repositories', 'enterprise')) {
         if ($Declaration['resources'].Contains($kind)) {
             $parameter = $Declaration['resources'][$kind]
+            if ($kind -ceq 'enterprise' -and $parameter -eq $true) {
+                $scope[$kind] = $true
+                continue
+            }
             if (-not $parameters.Contains($parameter)) {
                 throw "Invalid instance configuration: $.modules.$Module.parameters.$parameter must declare GitHub App resources."
             }
@@ -405,8 +409,13 @@ function Get-PlatformInstance {
                     throw "Invalid instance configuration '$Path': $bindingPath.githubApp references unknown App '$app'."
                 }
                 $identity = $instance['githubApps'][$app]
-                if ($phase -eq 'plan' -and 'write' -cin @($identity['permissions'].PSBase.Values)) {
-                    throw "Invalid instance configuration '$Path': $bindingPath.githubApp must use a read-only App, not a narrowed token from a write-capable key."
+                if ($phase -eq 'plan') {
+                    $identityWritePermissions = @($identity['permissions'].PSBase.Values) |
+                        Where-Object { $_ -is [System.Collections.IDictionary] } |
+                        ForEach-Object { $_.PSBase.Values }
+                    if ('write' -cin @($identity['permissions'].PSBase.Values) -or 'write' -cin @($identityWritePermissions)) {
+                        throw "Invalid instance configuration '$Path': $bindingPath.githubApp must use a read-only App, not a narrowed token from a write-capable key."
+                    }
                 }
                 $expectedPermissions = if ($declaration) { $declaration['permissions'] } else { @{} }
                 if ((ConvertTo-PlatformCanonicalJson $identity['permissions']) -cne (ConvertTo-PlatformCanonicalJson $expectedPermissions)) {

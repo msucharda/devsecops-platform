@@ -119,10 +119,34 @@ function Assert-AppPermission {
     param([Parameter(Mandatory)][System.Collections.IDictionary] $Actual)
 
     $normalized = @{} + $Actual
-    if (-not $expected['permissions'].Contains('metadata') -and $normalized['metadata'] -ceq 'read') {
+    $permissionContract = if ($expected['permissions'].Contains('enterprise') -or $expected['permissions'].Contains('organization')) {
+        if ($script:installationScope -ceq 'App') {
+            $combined = @{}
+            foreach ($scopeName in @('enterprise', 'organization')) {
+                if ($expected['permissions'].Contains($scopeName)) {
+                    foreach ($permissionName in $expected['permissions'][$scopeName].PSBase.Keys) {
+                        $combined[$permissionName] = $expected['permissions'][$scopeName][$permissionName]
+                    }
+                }
+            }
+            $combined
+        }
+        elseif ($script:installationScope -ceq 'Enterprise') {
+            $expected['permissions']['enterprise']
+        }
+        else {
+            $expected['permissions']['organization']
+        }
+    } else {
+        $expected['permissions']
+    }
+    if (-not $permissionContract.Contains('metadata') -and $normalized['metadata'] -ceq 'read') {
         $normalized.Remove('metadata')
     }
-    if ((ConvertTo-PlatformCanonicalJson $normalized) -cne (ConvertTo-PlatformCanonicalJson $expected['permissions'])) {
+    if ($null -eq $permissionContract) {
+        throw 'The phase contract does not declare the GitHub App permissions for this installation scope.'
+    }
+    if ((ConvertTo-PlatformCanonicalJson $normalized) -cne (ConvertTo-PlatformCanonicalJson $permissionContract)) {
         throw 'Actual GitHub App permissions differ from the phase contract. Narrowing a write-capable App token does not isolate its private key.'
     }
 }
@@ -192,7 +216,10 @@ if (-not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https' -or (-not $ValidateOnly
     -not $expected['enterprise'] -or -not $PrivateKey) {
     throw 'GitHub App token issuance requires HTTPS API URL, environment output, enterprise ownership, App/installation IDs and the phase private key. PAT fallback is not supported.'
 }
-if (($Authorization -or (-not $VendoringRepository -and $Phase -eq 'plan') -or $ReadOnlySource) -and 'write' -cin @($expected['permissions'].PSBase.Values)) {
+if (($Authorization -or (-not $VendoringRepository -and $Phase -eq 'plan') -or $ReadOnlySource) -and
+    ('write' -cin @($expected['permissions'].PSBase.Values) -or
+     @($expected['permissions'].PSBase.Values | Where-Object { $_ -is [Collections.IDictionary] } |
+        ForEach-Object { $_.PSBase.Values }) -contains 'write')) {
     throw 'Read-only plan and authorization must not receive write-capable App keys.'
 }
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -220,6 +247,8 @@ try {
     if ([string] $app['id'] -cne $expected['appId'] -or -not (Test-PlatformGitHubAppOwner -Owner $app['owner'] -Enterprise $expected['enterprise'])) {
         throw 'GitHub App is not owned by the declared enterprise.'
     }
+    $scopedPermissions = $expected['permissions'].Contains('enterprise') -or $expected['permissions'].Contains('organization')
+    if ($scopedPermissions) { $script:installationScope = 'App' }
     Assert-AppPermission -Actual $app['permissions']
     $installations = [Collections.Generic.List[object]]::new()
     $page = 1
@@ -228,17 +257,65 @@ try {
         foreach ($installation in $batch) { $installations.Add($installation) }
         $page++
     } while ($batch.Count -eq 100)
-    $organizations = @($installations | ForEach-Object { $_['account']['login'] } | Sort-Object -CaseSensitive)
-    if ((ConvertTo-PlatformCanonicalJson $organizations) -cne
-        (ConvertTo-PlatformCanonicalJson @($expected['resources']['organizations'] | Sort-Object -CaseSensitive)) -or
-        $expected['installationId'] -cnotin @($installations | ForEach-Object { [string] $_['id'] })) {
-        throw 'Actual App installations differ from the declared target organizations or installation ID.'
+    $enterpriseDeclared = $expected['resources'].Contains('enterprise') -and $expected['resources']['enterprise'] -eq $true
+    $enterpriseInstallations = @($installations | Where-Object { $_['target_type'] -ceq 'Enterprise' })
+    if ($enterpriseDeclared -and $enterpriseInstallations.Count -ne 1) {
+        throw 'Enterprise installation is not declared or is not active.'
+    }
+    if (-not $enterpriseDeclared -and $enterpriseInstallations.Count -gt 0) {
+        throw 'Actual enterprise installation is not declared in the phase resources.'
+    }
+    $organizationInstallations = @($installations | Where-Object { $_['target_type'] -ceq 'Organization' })
+    $organizations = @($organizationInstallations | ForEach-Object { $_['account']['login'] } | Sort-Object -CaseSensitive)
+    $declaredOrganizations = @($expected['resources']['organizations'] | Sort-Object -CaseSensitive)
+    if (-not $enterpriseDeclared) {
+        if ((ConvertTo-PlatformCanonicalJson $organizations) -cne (ConvertTo-PlatformCanonicalJson $declaredOrganizations) -or
+            $expected['installationId'] -cnotin @($organizationInstallations | ForEach-Object { [string] $_['id'] })) {
+            throw 'Actual App installations differ from the declared target organizations or installation ID.'
+        }
+    }
+    else {
+        $enterpriseInstallation = $enterpriseInstallations[0]
+        if ([string] $enterpriseInstallation['id'] -cne $expected['installationId'] -or $enterpriseInstallation['suspended_at']) {
+            throw 'Enterprise installation differs from the declared installation ID or is suspended.'
+        }
+        $enterpriseContract = if ($scopedPermissions) { $expected['permissions']['enterprise'] } else { $expected['permissions'] }
+        if (-not $enterpriseContract) {
+            throw 'Enterprise installation permissions are not declared in the phase contract.'
+        }
+        $script:installationScope = 'Enterprise'
+        Assert-AppPermission -Actual $enterpriseInstallation['permissions']
+        foreach ($organization in $declaredOrganizations) {
+            if ($organizationInstallations.Count -eq 0 -or $organization -cnotin $organizations) {
+                continue
+            }
+        }
     }
     foreach ($installation in $installations) {
+        if ($installation['target_type'] -ceq 'Enterprise') {
+            $script:installationScope = 'Enterprise'
+            $enterprisePermissions = if ($scopedPermissions) {
+                $expected['permissions']['enterprise']
+            } else {
+                $expected['permissions']
+            }
+            $issued = Invoke-GitHubAppRequest -Path "/app/installations/$($installation['id'])/access_tokens" -Method POST `
+                -Token $jwt -Body @{ permissions = $enterprisePermissions }
+            if (-not $issued['token']) { throw 'GitHub did not issue an enterprise installation token.' }
+            $tokens['enterprise'] = $issued['token']
+            Send-GitHubAppTokenEvent -EventName Issued -Token $issued['token']
+            if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }
+            Assert-AppPermission -Actual $issued['permissions']
+            continue
+        }
         $organization = $installation['account']['login']
         if ($installation['target_type'] -cne 'Organization' -or $installation['suspended_at']) {
             throw "App installation for '$organization' is not an active organization installation."
         }
+        if ($enterpriseDeclared -and $organization -cnotin $declaredOrganizations) {
+            throw "App organization installation for '$organization' is outside the declared target organizations."
+        }
+        $script:installationScope = 'Organization'
         Assert-AppPermission -Actual $installation['permissions']
         $repositoryResourcesDeclared = $expected['resources'].Contains('repositories')
         $repositories = $expected['resources']['repositories']
@@ -248,7 +325,15 @@ try {
         if (-not $Authorization -and -not $noRepositoryAccess -and $installation['repository_selection'] -cne $selection) {
             throw "Actual App repository scope for '$organization' differs from the declared scope."
         }
-        $tokenRequest = @{ permissions = $expected['permissions'] }
+        $tokenPermissions = if ($scopedPermissions) {
+            $expected['permissions']['organization']
+        } else {
+            $expected['permissions']
+        }
+        if (-not $tokenPermissions) {
+            throw "Organization installation permissions are not declared for '$organization'."
+        }
+        $tokenRequest = @{ permissions = $tokenPermissions }
         if ($VendoringRepository) { $tokenRequest['repositories'] = @($repositories[$organization]) }
         $issued = Invoke-GitHubAppRequest -Path "/app/installations/$($installation['id'])/access_tokens" -Method POST `
             -Token $jwt -Body $tokenRequest
@@ -315,6 +400,7 @@ try {
         return [pscustomobject]@{
             AppId = $expected['appId']
             Installations = @($installations | ForEach-Object { [string] $_['id'] })
+            EnterpriseInstallationId = if ($enterpriseDeclared) { [string] $enterpriseInstallations[0]['id'] } else { $null }
             Verified = $true
             InheritedRulesetsNotDetailValidated = $inheritedRulesetsNotDetailValidated
             RevocationsVerified = $revocationsVerified
