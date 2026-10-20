@@ -102,6 +102,7 @@ if (Test-Path -LiteralPath $inventoryFile) {
         throw 'NoChanges requires an initialized inventory with initializationPending=false.'
     }
 }
+elseif ($NoChanges) { throw 'NoChanges requires an existing initialized bootstrap inventory.' }
 if (-not $inventory.Contains('declaredApps')) { $inventory['declaredApps'] = @{} }
 foreach ($alias in $instance['githubApps'].PSBase.Keys) {
     $appId = $instance['githubApps'][$alias]['appId']

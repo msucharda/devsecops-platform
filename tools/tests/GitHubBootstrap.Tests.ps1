@@ -348,11 +348,16 @@ Describe 'GitHub bootstrap public interface' {
     }
 
     It 'rejects missing GitHub resources before sending a mutation in no-change mode' -Tag 'NoChanges' {
+        @{
+            version = 1; repository = 'demo-platform/instance'; enterprise = 'example'; releaseVersion = '1.0.0'
+            initializationPending = $false; apps = @{}; resources = @()
+        } | ConvertTo-Json | Set-Content $inventory
+        $before = (Get-FileHash $inventory).Hash
         $arguments.NoChanges = $true
 
         { & $bootstrap @arguments } | Should -Throw '*NoChanges*POST*'
         $cloud.writes.Count | Should -Be 0
-        Test-Path -LiteralPath $inventory | Should -BeFalse
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
     }
 
     It 'rejects <Drift> before mutating the existing instance in no-change mode' -Tag 'NoChanges' -ForEach @(
@@ -448,6 +453,26 @@ Describe 'GitHub bootstrap public interface' {
         @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 0
         $cloud.writes.Count | Should -Be 0
         (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects absent inventory even when protected main matches the running release' -Tag 'NoChanges', 'HistoricalInventory' {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        Remove-Item -LiteralPath $inventory
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[string]]::new()
+        $arguments.NoChanges = $true
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation.Kind)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*NoChanges*existing initialized bootstrap inventory*'
+
+        $operations.Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        Test-Path -LiteralPath $inventory | Should -BeFalse
     }
 
     It 'rejects <State> inventory before issuing any validation token in no-change mode' -Tag 'NoChanges', 'HistoricalInventory' -ForEach @(
