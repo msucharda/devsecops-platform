@@ -121,6 +121,7 @@ function Get-PlatformModuleGraph {
                 if (-not $declaration.Contains('purpose') -or
                     $declaration.permissions.Count -ne 1 -or
                     $declaration.permissions['organization_administration'] -cne 'write' -or
+                    -not $declaration.resources.Contains('organizations') -or
                     $declaration.resources.Contains('repositories')) {
                     throw "Module '$name': rulesetPlan must declare the organization-rulesets-full-read exception with only organization_administration: write for target organizations."
                 }
@@ -213,7 +214,7 @@ function Get-PlatformAppScope {
         $parameters = $Instance['modules'][$Module]['parameters']
     }
     $scope = [ordered]@{}
-    foreach ($kind in @('organizations', 'repositories')) {
+    foreach ($kind in @('enterprise', 'organizations', 'repositories')) {
         if ($Declaration['resources'].Contains($kind)) {
             $parameter = $Declaration['resources'][$kind]
             if (-not $parameters.Contains($parameter)) {
@@ -224,12 +225,16 @@ function Get-PlatformAppScope {
     }
     $schema = Get-PlatformJsonSchema -Name module
     $resourceSchema = $schema.definitions.githubAppResources
-    $resourceSchema.definitions = @{ githubOrganization = $schema.definitions.githubOrganization }
+    $resourceSchema.definitions = @{
+        githubOrganization = $schema.definitions.githubOrganization
+        moduleName = $schema.definitions.moduleName
+    }
     $valid = Test-Json -Json (ConvertTo-Json -InputObject $scope -Depth 100) `
         -Schema (ConvertTo-Json -InputObject $resourceSchema -Depth 100) -ErrorAction SilentlyContinue
     if (-not $valid) {
         throw "Invalid instance configuration: $.modules.$Module.parameters has invalid GitHub App resource scope."
     }
+    if ($scope.Contains('enterprise')) { return $scope }
     $scope['organizations'] = @($scope['organizations'] | Sort-Object -CaseSensitive)
     if ($scope.Contains('repositories')) {
         foreach ($organization in @($scope['repositories'].PSBase.Keys)) {
@@ -347,7 +352,14 @@ function Get-PlatformInstance {
     $appContracts = @{}
     foreach ($alias in $instance['githubApps'].PSBase.Keys) {
         $app = $instance['githubApps'][$alias]
-        $app['resources']['organizations'] = @($app['resources']['organizations'] | Sort-Object -CaseSensitive)
+        if ($app['resources'].Contains('enterprise')) {
+            if ($app['resources']['enterprise'] -cne $app['enterprise']) {
+                throw "Invalid instance configuration '$Path': $.githubApps.$alias.resources.enterprise differs from the App's owning enterprise."
+            }
+        }
+        else {
+            $app['resources']['organizations'] = @($app['resources']['organizations'] | Sort-Object -CaseSensitive)
+        }
         if ($app['resources'].Contains('repositories')) {
             foreach ($organization in @($app['resources']['repositories'].PSBase.Keys)) {
                 if ($organization -cnotin $app['resources']['organizations']) {

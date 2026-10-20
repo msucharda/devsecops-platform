@@ -93,7 +93,11 @@ function Revoke-GitHubAppValidationToken {
         $reply = Invoke-WebRequest -Uri $uri -Method DELETE -Headers $headers -SkipHttpErrorCheck `
             -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
         if ($reply.StatusCode -ne 204) { throw 'Installation token revocation did not return HTTP 204; no retry.' }
-        $uri = "$($ApiUrl.TrimEnd('/'))/installation/repositories?per_page=1"
+        $proofPath = if ($enterpriseInstallation) {
+            "/enterprises/$($expected['enterprise'])/apps/installable_organizations?per_page=1"
+        }
+        else { '/installation/repositories?per_page=1' }
+        $uri = "$($ApiUrl.TrimEnd('/'))$proofPath"
         Assert-PlatformBootstrapRequest -Uri $uri -Method GET -Kind Read -RequestPolicy $requestPolicyCallback
         $reply = Invoke-WebRequest -Uri $uri -Method GET -Headers $headers -SkipHttpErrorCheck `
             -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
@@ -195,6 +199,11 @@ if (-not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https' -or (-not $ValidateOnly
 if (($Authorization -or (-not $VendoringRepository -and $Phase -eq 'plan') -or $ReadOnlySource) -and 'write' -cin @($expected['permissions'].PSBase.Values)) {
     throw 'Read-only plan and authorization must not receive write-capable App keys.'
 }
+$enterpriseInstallation = $expected['resources'].Contains('enterprise')
+if ($enterpriseInstallation -and ($Authorization -or $VendoringRepository -or $Phase -eq 'rulesetPlan' -or
+    $expected['resources'].Count -ne 1 -or $expected['resources']['enterprise'] -cne $expected['enterprise'])) {
+    throw 'Enterprise installation requires an exclusive, explicit scope matching the App owning enterprise.'
+}
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $header = ConvertTo-JwtSegment ([Text.Encoding]::UTF8.GetBytes('{"alg":"RS256","typ":"JWT"}'))
 $payload = ConvertTo-JwtSegment ([Text.Encoding]::UTF8.GetBytes(
@@ -228,16 +237,26 @@ try {
         foreach ($installation in $batch) { $installations.Add($installation) }
         $page++
     } while ($batch.Count -eq 100)
-    $organizations = @($installations | ForEach-Object { $_['account']['login'] } | Sort-Object -CaseSensitive)
-    if ((ConvertTo-PlatformCanonicalJson $organizations) -cne
-        (ConvertTo-PlatformCanonicalJson @($expected['resources']['organizations'] | Sort-Object -CaseSensitive)) -or
-        $expected['installationId'] -cnotin @($installations | ForEach-Object { [string] $_['id'] })) {
-        throw 'Actual App installations differ from the declared target organizations or installation ID.'
+    if ($enterpriseInstallation) {
+        if ($installations.Count -ne 1 -or [string] $installations[0]['id'] -cne $expected['installationId'] -or
+            $installations[0]['target_type'] -cne 'Enterprise' -or
+            $installations[0]['account']['slug'] -cne $expected['resources']['enterprise']) {
+            throw 'Actual App installations differ from the declared enterprise installation or installation ID.'
+        }
+    }
+    else {
+        $organizations = @($installations | ForEach-Object { $_['account']['login'] } | Sort-Object -CaseSensitive)
+        if ((ConvertTo-PlatformCanonicalJson $organizations) -cne
+            (ConvertTo-PlatformCanonicalJson @($expected['resources']['organizations'] | Sort-Object -CaseSensitive)) -or
+            $expected['installationId'] -cnotin @($installations | ForEach-Object { [string] $_['id'] })) {
+            throw 'Actual App installations differ from the declared target organizations or installation ID.'
+        }
     }
     foreach ($installation in $installations) {
-        $organization = $installation['account']['login']
-        if ($installation['target_type'] -cne 'Organization' -or $installation['suspended_at']) {
-            throw "App installation for '$organization' is not an active organization installation."
+        $organization = if ($enterpriseInstallation) { 'enterprise' } else { $installation['account']['login'] }
+        $targetType = if ($enterpriseInstallation) { 'Enterprise' } else { 'Organization' }
+        if ($installation['target_type'] -cne $targetType -or $installation['suspended_at']) {
+            throw "App installation for '$organization' is not an active $targetType installation."
         }
         Assert-AppPermission -Actual $installation['permissions']
         $repositoryResourcesDeclared = $expected['resources'].Contains('repositories')
@@ -245,10 +264,10 @@ try {
         $selected = $repositories -and $repositories.Contains($organization)
         $noRepositoryAccess = $repositoryResourcesDeclared -and $repositories.Count -eq 0
         $selection = if ($selected) { 'selected' } else { 'all' }
-        if (-not $Authorization -and -not $noRepositoryAccess -and $installation['repository_selection'] -cne $selection) {
+        if (-not $enterpriseInstallation -and -not $Authorization -and -not $noRepositoryAccess -and $installation['repository_selection'] -cne $selection) {
             throw "Actual App repository scope for '$organization' differs from the declared scope."
         }
-        $tokenRequest = @{ permissions = $expected['permissions'] }
+        $tokenRequest = if ($enterpriseInstallation) { $null } else { @{ permissions = $expected['permissions'] } }
         if ($VendoringRepository) { $tokenRequest['repositories'] = @($repositories[$organization]) }
         $issued = Invoke-GitHubAppRequest -Path "/app/installations/$($installation['id'])/access_tokens" -Method POST `
             -Token $jwt -Body $tokenRequest
@@ -257,7 +276,11 @@ try {
         Send-GitHubAppTokenEvent -EventName Issued -Token $issued['token']
         if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }
         Assert-AppPermission -Actual $issued['permissions']
-        if ($selected -or $Authorization -or $noRepositoryAccess) {
+        if ($ValidateOnly -and $enterpriseInstallation -and $expected['permissions'].Contains('enterprise_organization_installations')) {
+            $null = Invoke-GitHubAppRequest -Path "/enterprises/$($expected['enterprise'])/apps/installable_organizations?per_page=1" `
+                -Token $issued['token']
+        }
+        if (-not $enterpriseInstallation -and ($selected -or $Authorization -or $noRepositoryAccess)) {
             $actualRepositories = [Collections.Generic.List[string]]::new()
             $page = 1
             do {
@@ -277,7 +300,7 @@ try {
         if ($ValidateOnly -and $Authorization) {
             $null = Invoke-GitHubAppRequest -Path "/orgs/$organization/teams?per_page=1" -Token $issued['token']
         }
-        if ($ValidateOnly -and $expected['permissions'].Contains('organization_administration')) {
+        if ($ValidateOnly -and -not $enterpriseInstallation -and $expected['permissions'].Contains('organization_administration')) {
             foreach ($path in @('actions/permissions', 'code-security/configurations', 'code-security/configurations/defaults')) {
                 $null = Invoke-GitHubAppRequest -Path "/orgs/$organization/$path" -Token $issued['token']
             }

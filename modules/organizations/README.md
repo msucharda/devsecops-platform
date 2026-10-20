@@ -17,6 +17,8 @@ GitHub API používá installation tokeny enterprise-owned Apps podle ADR 0016. 
 
 Manifest musí deklarovat skutečná oprávnění a cílové prostředky. Enterprise oprávnění se nesmí automaticky rozšířit na ostatní moduly. Dostupnost vytváření organizací, instalací Apps a přiřazení rolí na GHE.com je podmínka nasazení; implementace nesmí přejít na PAT.
 
+[C3 runbook](../../docs/organizations-c3.md) připravuje živé ověření vytvoření organizace enterprise installation tokenem, minimálních oprávnění, explicitního ownera a smazání organizačním tokenem. **Stav: NEPROVEDENO.** Issuer zatím podporuje pouze oddělený enterprise-only scope; nepovoluje kombinované instalace ani chybějící deklarované organizace. Produkční topologie Apps a oprávnění pro vytvoření organizace zůstávají otevřené.
+
 Živé ověření C2 ze 13. 10. 2026 potvrdilo fallback s týmem organizace propojeným přes SCIM: token s `members: write` a `organization_custom_org_roles: read` přiřadil `security_manager`, uživatel zdědil roli nepřímo z přesného týmu a zůstal `member`, ne owner. U enterprise týmu API přijalo přiřazení, ale dědění se nepodařilo potvrdit. Podrobnosti a hranice důkazu jsou v [C2 runbooku](../../docs/reference-instance.md#c2-role-security-manager-pro-enterprise-tým-4).
 
 ## Teardown

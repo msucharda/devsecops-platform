@@ -123,8 +123,12 @@
         "resources": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["organizations"],
+          "oneOf": [
+            { "required": ["organizations"], "not": { "required": ["enterprise"] } },
+            { "required": ["enterprise"], "maxProperties": 1 }
+          ],
           "properties": {
+            "enterprise": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "organizations": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "repositories": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
           }
@@ -140,8 +144,12 @@
     "githubAppResources": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["organizations"],
+      "oneOf": [
+        { "required": ["organizations"], "not": { "required": ["enterprise"] } },
+        { "required": ["enterprise"], "maxProperties": 1 }
+      ],
       "properties": {
+        "enterprise": { "$ref": "#/definitions/moduleName" },
         "organizations": {
           "type": "array",
           "minItems": 1,

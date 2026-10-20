@@ -1175,6 +1175,8 @@ Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. 
 
 **Úklid:** Organizaci `probe5-<yyyymmdd>` smažeš ve fázi D.
 
+**Navazující C3 pro #13:** [Organizace přes enterprise installation token](organizations-c3.md) ověří vytvoření organizace App tokenem, minimální oprávnění, explicitního ownera, instalaci App a smazání. Toto ověření dosud neproběhlo. Jeho výsledek patří do runbooku nebo ADR, nikoli do uzavření #13.
+
 ### C4: Akce, které potřebuje Dependabot (#6)
 
 **Rozhodnutí:** Modul `enterprise-baseline` nesmí kvůli Dependabotu povolit žádnou externí akci. Dependabot version updates i security updates běží v dynamických workflow, která obcházejí kontroly Actions policy (politiky akcí) na úrovni repozitáře a organizace. Toto chování popisuje dokumentace [Dependabot on GitHub Actions runners](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-on-actions).
