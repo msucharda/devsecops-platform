@@ -467,7 +467,8 @@ function Invoke-SetupApi {
         [Parameter(Mandatory)][string] $Uri,
         [ValidateSet('GET', 'POST', 'PUT', 'PATCH', 'DELETE')][string] $Method = 'GET',
         $Body,
-        [string] $Token
+        [string] $Token,
+        [switch] $NoRetry
     )
 
     $address = $null
@@ -496,12 +497,13 @@ function Invoke-SetupApi {
         $arguments.ContentType = 'application/json'
     }
     $response = $null
-    for ($attempt = 1; $attempt -le 6; $attempt++) {
+    $attemptLimit = if ($NoRetry) { 1 } else { 6 }
+    for ($attempt = 1; $attempt -le $attemptLimit; $attempt++) {
         try {
             $response = Invoke-WebRequest @arguments
         }
         catch {
-            if ($attempt -eq 6) {
+            if ($attempt -eq $attemptLimit) {
                 Exit-SetupStage -Status Error -Area $area -Message "$Method $($address.GetLeftPart('Path')) failed: $($_.Exception.Message)" `
                     -Guidance @('Check the network connection, then choose [r].')
             }
@@ -509,7 +511,7 @@ function Invoke-SetupApi {
             Start-Sleep -Seconds 5
             continue
         }
-        if ([int] $response.StatusCode -in @(429, 500, 502, 503, 504) -and $attempt -lt 6) {
+        if ([int] $response.StatusCode -in @(429, 500, 502, 503, 504) -and $attempt -lt $attemptLimit) {
             Write-Verbose -Message "Retrying $Method $($address.GetLeftPart('Path')) after HTTP $($response.StatusCode)."
             Start-Sleep -Seconds 5
             continue
@@ -693,7 +695,7 @@ function Read-SetupState {
     if (-not (Test-Path -LiteralPath $Path)) { return $state }
     try {
         $loaded = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $Path -Raw) -AsHashtable -ErrorAction Stop
-        foreach ($key in @('confirmations', 'probe')) {
+        foreach ($key in @('confirmations', 'probe', 'acceptance')) {
             if ($loaded -is [System.Collections.IDictionary] -and $loaded[$key] -is [System.Collections.IDictionary]) { $state[$key] = $loaded[$key] }
         }
     }
@@ -1918,17 +1920,20 @@ function Get-SetupProbeApp {
     [OutputType([hashtable])]
     param(
         [Parameter(Mandatory)][hashtable] $Setup,
-        [Parameter(Mandatory)][ValidateSet('authorization', 'admin')][string] $Role,
+        [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9-]*$')][string] $Role,
         [Parameter(Mandatory)][System.Collections.IDictionary] $Permission,
-        [Parameter(Mandatory)][ValidateSet('selected', 'all', 'none')][string] $Selection
+        [Parameter(Mandatory)][ValidateSet('selected', 'all', 'none')][string] $Selection,
+        [string] $Organization,
+        [string] $AppName,
+        [System.Collections.IDictionary] $RegistrationState
     )
 
-    $probe = $Setup.State.probe
+    $probe = if ($null -ne $RegistrationState) { $RegistrationState } else { $Setup.State.probe }
     $githubHost = $Setup.Settings['githubHost']
     $enterprise = $Setup.Settings['enterprise']
     $api = "https://api.$githubHost"
-    $org = $probe['organization']
-    $appName = "$($Setup.Settings['name'])-probe-$Role"
+    $org = if ($Organization) { $Organization } else { $probe['organization'] }
+    if (-not $AppName) { $AppName = "$($Setup.Settings['name'])-probe-$Role" }
     $appsUrl = "https://$githubHost/enterprises/$enterprise/settings/apps"
     $appIdKey = "$($Role)AppId"
     if (-not $probe[$appIdKey]) {
@@ -2231,7 +2236,7 @@ function Invoke-StepProbeAdmin {
     $rulesetName = 'instance-setup-probe'
     $findingGuidance = @('Record the finding in issue #10. Do not switch to a PAT and do not extend the App permissions.')
     Show-SetupMessage -Message 'App B checks that App tokens read organization policies and rulesets including bypass actors.'
-    $app = Get-SetupProbeApp -Setup $Setup -Role admin -Selection all -Permission ([ordered]@{
+    $app = Get-SetupProbeApp -Setup $Setup -Role admin -Selection none -Permission ([ordered]@{
         organization_administration = 'write'; members = 'write'; organization_custom_org_roles = 'read'
     })
     $issued = [System.Collections.Generic.List[string]]::new()
@@ -2537,6 +2542,8 @@ function Invoke-StepPreflight {
 
 #region Wizard
 
+. (Join-Path $PSScriptRoot 'InstanceSetup.GitHub.ps1')
+
 $script:StagePlan = @(
     @{ Id = 'tools'; Step = 'A1'; Title = 'Command-line tools'; Handler = 'Tool'; Requires = @() }
     @{ Id = 'inputs'; Step = 'A1'; Title = 'Instance inputs'; Handler = 'Input'; Requires = @('tools') }
@@ -2647,10 +2654,16 @@ function Invoke-InstanceSetup {
         [Parameter(Mandatory)][string] $RepoPath,
         [Parameter(Mandatory)][string] $WorkPath,
         [Parameter(Mandatory)][string] $ModulesPath,
+        [switch] $GitHubAcceptance,
+        [string] $ReleasePath,
+        [string] $ReleaseVersion,
         [switch] $Reconfirm
     )
 
     $setup = Initialize-SetupContext -RepoPath $RepoPath -WorkPath $WorkPath -ModulesPath $ModulesPath -Reconfirm:$Reconfirm
+    if ($GitHubAcceptance) {
+        return Invoke-SetupGitHubAcceptance -Setup $setup -ReleasePath $ReleasePath -ReleaseVersion $ReleaseVersion
+    }
     Show-SetupMessage -Kind Title -Message 'Reference instance setup (phase A of docs/reference-instance.md)'
     Show-SetupMessage -Message 'Every step checks the current state first. The wizard changes nothing without your confirmation.'
     Show-SetupMessage -Message 'Steps without an API show what to do and ask for a confirmation. You can stop at any prompt; the next run resumes.'

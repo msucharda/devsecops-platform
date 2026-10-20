@@ -316,6 +316,42 @@ Describe 'Local Azure bootstrap' {
         @($cloud.writes).Count | Should -Be 0
     }
 
+    It 'rejects Azure drift before sending a write in no-change mode' -Tag 'NoChanges' {
+        $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $account = @($cloud.resources.Values | Where-Object { $_.id -match '/storageAccounts/[^/]+$' })[0]
+        $account.properties.publicNetworkAccess = 'Disabled'
+        $cloud.writes.Clear()
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath -NoChanges } |
+            Should -Throw '*NoChanges*PUT*'
+        $cloud.writes.Count | Should -Be 0
+        $account.properties.publicNetworkAccess | Should -Be 'Disabled'
+    }
+
+    It 'executes the real unchanged Azure bootstrap with only allowlisted read operations' -Tag 'NoChanges' {
+        $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[object]]::new()
+        $policy = { param($Operation) $operations.Add($Operation); return $Operation.Kind -ceq 'Read' }.GetNewClosure()
+
+        $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath -NoChanges -RequestPolicy $policy
+
+        $result.HasChanges | Should -BeFalse
+        $result.StorageAccountName | Should -Be 'stdemotfstate'
+        $cloud.writes.Count | Should -Be 0
+        @($operations | Where-Object Method -EQ 'POST').Count | Should -BeGreaterThan 0
+        @($operations | Where-Object Kind -NE 'Read').Count | Should -Be 0
+    }
+
+    It 'does not retry a rejected Azure read in no-change mode' -Tag 'NoChanges' {
+        $cloud.transientResponses.Enqueue((Get-TestResponse -StatusCode 503))
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath -NoChanges } | Should -Throw '*HTTP 503*'
+
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+        $cloud.writes.Count | Should -Be 0
+    }
+
     It 'fails explicitly when the provisioned backend still blocks public network access' {
         $cloud.disableStoragePublicNetwork = $true
 

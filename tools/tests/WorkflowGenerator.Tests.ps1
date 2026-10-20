@@ -25,6 +25,17 @@ BeforeAll {
 }
 
 Describe 'Deployment workflow generation' {
+    It 'schedules isolated nightly plans without opening the shared apply gate' {
+        $output = Join-Path $TestDrive 'nightly.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+
+        $workflow.on.schedule[0].cron | Should -Be '17 2 * * *'
+        $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.environments)[''enterprise-baseline'']) || fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
+        $workflow.jobs.ruleset_plan_enterprise_baseline.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline'']) || fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline''] }}'
+        $workflow.jobs.approve_apply.if | Should -Match "github.event_name != 'schedule'"
+    }
+
     It 'rejects write permissions in the ordinary plan before writing a workflow' {
         $modules = New-ModuleGraphFixture -ModuleName application -Change {
             param($manifest)
@@ -96,7 +107,7 @@ Describe 'Deployment workflow generation' {
         $upload = $job.steps | Where-Object { $_['uses'] -like 'actions/upload-artifact@*' }
         $upload.with.path | Should -Be './artifacts/module-outputs/application.json'
         $upload.with.'if-no-files-found' | Should -Be 'error'
-        $job.environment | Should -Be '${{ fromJSON(needs.select.outputs.environments)[''application''] }}'
+        $job.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.environments)[''application'']) || fromJSON(needs.select.outputs.environments)[''application''] }}'
     }
 
     It 'gates jobs on runtime selection and successful prerequisites without propagating unrelated skips' {
@@ -141,12 +152,12 @@ Describe 'Deployment workflow generation' {
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
         $job = $workflow.jobs.ruleset_plan_enterprise_baseline
 
-        $job.environment | Should -Be '${{ fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline''] }}'
+        $job.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline'']) || fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline''] }}'
         $job.needs | Should -Be @('authorize', 'select', 'module_service', 'module_enterprise_baseline')
         $job.if | Should -Match "contains.*enterprise-baseline.*needs.module_service.result == 'success'.*needs.module_enterprise_baseline.result == 'success'"
         ($job.steps | Where-Object { $_['name'] -eq 'Run module' }).run | Should -Match '-Action plan.*-Rulesets$'
         ($job.steps | Where-Object { $_['name'] -like 'Issue a phase*' }).run | Should -Match '-Phase rulesetPlan'
-        $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
+        $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.environments)[''enterprise-baseline'']) || fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
         $workflow.jobs.apply_enterprise_baseline.environment | Should -Be '${{ fromJSON(needs.select.outputs.applyEnvironments)[''enterprise-baseline''] }}'
         $workflow.jobs.plan_complete.needs | Should -Contain 'ruleset_plan_enterprise_baseline'
         ($workflow.jobs.apply_enterprise_baseline.steps | Where-Object { $_['name'] -like 'Apply the complete*' }).run | Should -Match '-Action apply.*-Rulesets$'

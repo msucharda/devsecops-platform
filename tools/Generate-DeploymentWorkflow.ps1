@@ -84,7 +84,11 @@ function Add-DeploymentJob {
     needs: [$($needs -join ', ')]
 "@
     $lines.Add('    if: ${{ ' + $condition + ' }}')
-    $lines.Add('    environment: ${{ fromJSON(needs.select.outputs.' + $environmentOutput + ')[''' + $name + '''] }}')
+    $environmentExpression = 'fromJSON(needs.select.outputs.' + $environmentOutput + ')[''' + $name + ''']'
+    if ($Phase -ne 'apply') {
+        $environmentExpression = 'github.event_name == ''schedule'' && format(''{0}-drift'', ' + $environmentExpression + ') || ' + $environmentExpression
+    }
+    $lines.Add('    environment: ${{ ' + $environmentExpression + ' }}')
     Add-WorkflowBlock @'
     permissions:
       contents: read
@@ -183,6 +187,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * *'
 permissions:
   contents: read
 concurrency:
@@ -307,7 +313,7 @@ Add-WorkflowBlock @'
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && github.event_name != 'schedule' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:

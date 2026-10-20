@@ -1,6 +1,6 @@
 # Příprava a akceptace referenční instance
 
-Začni průvodcem `tools/Start-InstanceSetup.ps1`. Průvodce provede fázi A a krok B1. Ověří tenant Entra ID, Azure a enterprise na GHE.com. Změny, které mají API, provede po tvém potvrzení. Kroky bez API popíše cestou v UI. Na výsledku fáze A stojí bootstrap ve fázi B i ověření chování API ve fázi C. Fáze D je akceptace přírůstku 1 po implementaci zbylých issues.
+Začni průvodcem `tools/Start-InstanceSetup.ps1`. Bez přepínačů provede fázi A a krok B1. Ověří tenant Entra ID, Azure a enterprise na GHE.com. Změny, které mají API, provede po tvém potvrzení. Kroky bez API popíše cestou v UI. Přepínač `-GitHubAcceptance` naváže na ověřené vstupy z #10 a provede [akceptaci GitHub části bootstrapu](#akceptace-github-části-bootstrapu-11). Fáze D je akceptace přírůstku 1 po implementaci zbylých issues.
 
 Postup provádí člen Platform team (platformní tým) na Reference instance (referenční instanci). Kroky mají tyto části:
 
@@ -408,7 +408,7 @@ Pokud API vrátí HTTP 403 s textem `Resource protected by organization SAML enf
 
 - Otevře předvyplněný formulář registrace enterprise-owned App: název `<name>-probe-authorization`, neaktivní webhook a oprávnění Members: Read-only. Registrace App nemá API.
 - Najde privátní klíč v `$work\keys` nebo mezi soubory `*.private-key.pem` staženými do `Downloads` za posledních 24 hodin. Klíč přesune do `$work\keys\probe-authorization.pem`.
-- Ověří, že App vlastní enterprise a má přesně požadovaná oprávnění. Otevře stránku instalace do probe organizace. App A má jen Members: Read-only; instalační UI proto ukazuje **No repositories — This App does not require access to your repositories**. Repozitáře nevybírej a oprávnění nerozšiřuj.
+- Ověří, že App vlastní enterprise a má přesně požadovaná oprávnění. Otevře stránku instalace do probe organizace. Obě Apps mají jen organizační oprávnění; instalační UI proto ukazuje **No repositories — This App does not require access to your repositories**. Repozitáře nevybírej a oprávnění nerozšiřuj.
 - Spustí `tools/New-PlatformGitHubToken.ps1 -Authorization` stejně jako workflow `deploy.yml`.
 - Nástroj ověří instalaci jen v probe organizaci, přesná oprávnění a prázdný seznam repozitářů dostupných autorizačnímu tokenu.
 
@@ -422,7 +422,7 @@ Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tok
 
 **Průvodce: App B (organizační API)**
 
-- Otevře předvyplněný formulář registrace App `<name>-probe-admin` s oprávněními Administration: Read and write, Members: Read and write a Custom organization roles: Read-only. Klíč uloží jako `$work\keys\probe-admin.pem`. Ověří instalaci do všech repozitářů organizace.
+- Otevře předvyplněný formulář registrace App `<name>-probe-admin` s oprávněními Administration: Read and write, Members: Read and write a Custom organization roles: Read-only. Klíč uloží jako `$work\keys\probe-admin.pem`. Ověří instalaci bez přístupu k repozitářům.
 - Tokenem `organization_administration: read` přečte politiku akcí a code security configurations. Plan modulu `enterprise-baseline` je čte se stejným oprávněním.
 - Zaznamená výsledek seznamu rulesetů s tokenem `read` do `setup-state.json` jako `probe.adminReadRulesets`. ADR 0016 počítá s tím, že rulesety vyžadují `write`.
 - Tokenem `write` vytvoří vypnutý ruleset `instance-setup-probe` s bypass aktérem Organization admin. Ověří, že detail rulesetu vrátí bypass aktéra `OrganizationAdmin`. Ruleset potom smaže.
@@ -434,7 +434,7 @@ Výsledky testů App A a App B průvodce uloží. Další běh testy neopakuje a
 
 1. V předvyplněném formuláři ponech ostatní oprávnění No access a zvol Create GitHub App.
 2. App settings → General → Private keys → Generate a private key. Prohlížeč uloží klíč do `Downloads`.
-3. Install App → organizace `probe-<yyyymmdd>`. App A instaluj bez přístupu k repozitářům (**No repositories**), App B do všech repozitářů.
+3. Install App → organizace `probe-<yyyymmdd>`. Obě Apps instaluj bez přístupu k repozitářům (**No repositories**).
 4. Po testu App A smaž App A: App settings → Advanced → Delete GitHub App. Workflow instance dostanou vlastní Apps v #11.
 
 App B a `$work\keys\probe-admin.pem` ponech pro C2 a C4. Smažeš je ve fázi D.
@@ -861,154 +861,267 @@ function Invoke-ProbeApi {
 
 ### C1: Vlastní role Entra pro app-only token (#3)
 
-**Co ověřuješ:** Microsoft Graph uzná vlastní roli Entra s akcí `microsoft.directory/servicePrincipals/appRoleAssignedTo/update` i pro app-only token. Role omezená na aplikaci GHE dovolí přiřadit app roli jen v této aplikaci.
+**Co ověřuješ:** Microsoft Graph uzná vlastní roli Entra se třemi akcemi pro app-only token: `microsoft.directory/servicePrincipals/appRoleAssignedTo/update`, `microsoft.directory/servicePrincipals/appRoleAssignedTo/read` a `microsoft.directory/servicePrincipals/standard/read`. Role se scope na service principal aplikace GHE musí dovolit přiřadit app roli jen v této aplikaci.
 
-**Proč:** Modul `emu-identity` přiřazuje skupiny Entra k app rolím v aplikaci GHE. Alternativní oprávnění `AppRoleAssignment.ReadWrite.All` platí pro všechny aplikace v tenantu, včetně Microsoft Graph. Identita s ním by si mohla přidělit libovolné application permission. ADR 0015 proto volí vlastní roli omezenou na jednu aplikaci. Věta v ADR 0015 zatím zní: „Přírůstek 1 ověří, že Microsoft Graph uzná vlastní roli i pro app-only token.“
+**Proč:** Modul `emu-identity` přiřazuje skupiny Entra k app rolím v aplikaci GHE. Alternativní oprávnění `AppRoleAssignment.ReadWrite.All` platí pro všechny aplikace v tenantu, včetně Microsoft Graph. Identita s ním by si mohla přidělit libovolné application permission. První běh C1 se samotnou update akcí selhal. Opakování s oběma read akcemi vrátilo očekávané HTTP 201 v GHE a HTTP 403 v jiné aplikaci při nulových Graph application permissions. Podrobnosti jsou v [ADR 0015](adr/0015-least-privilege-identity-per-module.md).
 
-**Potřebuješ:** A2 (licence P1), A4 (`$spId` a `$userRole`) a roli Privileged Role Administrator.
+**Potřebuješ:** A2 (licence P1), A4 (`$spId` a `$userRole`), aktivní roli Privileged Role Administrator a právo vytvořit testovací aplikace a bezpečnostní skupinu. Pokud je tenant dovoluje členům, nepotřebuješ další admin role. Token operátora získáš přes `$mgmtSub` z již přihlášeného účtu v cílovém tenantu. Všechny Graph operace níže používají explicitní token; nemění výchozí účet Azure CLI.
 
 **Postup:**
 
-1. Vytvoř skupinu, identitu pro test a druhou aplikaci pro negativní test:
+1. Vytvoř skupinu, identitu pro test a druhou aplikaci s platnou app rolí pro negativní test. Každý běh má vlastní názvy a pracovní adresář:
 
    ```powershell
-   $group3 = az ad group create --display-name "probe3-$name" --mail-nickname "probe3-$name" --query id -o tsv
-   $probeApp = az ad app create --display-name "probe3-$name-identity" --query appId -o tsv
-   $probeSp = az ad sp create --id $probeApp --query id -o tsv
-   $otherApp = az ad app create --display-name "probe3-$name-other" --query appId -o tsv
-   $otherSpId = az ad sp create --id $otherApp --query id -o tsv
+   $c1Name = "probe3-$([guid]::NewGuid().ToString('N'))"
+   $c1Work = Join-Path $work "c1\$c1Name"
+   $null = New-Item -ItemType Directory -Path $c1Work
+   $operatorAccess = az account get-access-token --subscription $mgmtSub --resource https://graph.microsoft.com/ -o json --only-show-errors | ConvertFrom-Json
+   if ($LASTEXITCODE -ne 0 -or $operatorAccess.tenant -ne $tenantId) { throw 'Cannot acquire a Graph token for the configured tenant.' }
+   $operatorToken = ConvertTo-SecureString $operatorAccess.accessToken -AsPlainText -Force
+   $operatorAccess = $null
+   $graph = 'https://graph.microsoft.com/v1.0'
+   $operatorRequest = @{ Authentication = 'Bearer'; Token = $operatorToken; ContentType = 'application/json'; MaximumRedirection = 0; TimeoutSec = 60 }
+   $group3 = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/groups" -Body (@{
+       displayName = "$c1Name-group"; mailNickname = "$c1Name-group"; mailEnabled = $false; securityEnabled = $true; groupTypes = @()
+   } | ConvertTo-Json)).id
+   $probeApplication = Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/applications" -Body (@{
+       displayName = "$c1Name-identity"; signInAudience = 'AzureADMyOrg'; requiredResourceAccess = @()
+   } | ConvertTo-Json)
+   $probeApp = $probeApplication.appId
+   $probeAppObjectId = $probeApplication.id
+   $probeSp = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/servicePrincipals" -Body (@{ appId = $probeApp } | ConvertTo-Json)).id
+   $otherRoleId = [guid]::NewGuid().ToString()
+   $otherApplication = Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/applications" -Body (@{
+       displayName = "$c1Name-other"; signInAudience = 'AzureADMyOrg'; requiredResourceAccess = @()
+       appRoles = @(@{
+           id = $otherRoleId; allowedMemberTypes = @('User'); displayName = 'Probe User'
+           description = 'Temporary C1 negative target.'; isEnabled = $true; value = 'Probe.User'
+       })
+   } | ConvertTo-Json -Depth 5)
+   $otherAppObjectId = $otherApplication.id
+   $otherSpId = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/servicePrincipals" -Body (@{ appId = $otherApplication.appId } | ConvertTo-Json)).id
    ```
 
 2. Vytvoř vlastní roli a přiřaď ji identitě se scope na aplikaci GHE:
 
    ```powershell
-   $roleBody = Join-Path $work 'probe3-role.json'
-   @{
-       displayName = "probe3-$name-app-role-assignment"
+   $roleBody = @{
+       displayName = "$c1Name-app-role-assignment"
        description = 'Verification 73: assign app roles in one enterprise application.'
        isEnabled = $true
-       rolePermissions = @(@{ allowedResourceActions = @('microsoft.directory/servicePrincipals/appRoleAssignedTo/update') })
-   } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $roleBody -Encoding utf8NoBOM
-   $roleDefinitionId = az rest --method post --url https://graph.microsoft.com/v1.0/roleManagement/directory/roleDefinitions --headers Content-Type=application/json --body "@$roleBody" --query id -o tsv
-
-   $assignmentBody = Join-Path $work 'probe3-role-assignment.json'
-   @{ principalId = $probeSp; roleDefinitionId = $roleDefinitionId; directoryScopeId = "/$spId" } | ConvertTo-Json | Set-Content -LiteralPath $assignmentBody -Encoding utf8NoBOM
-   $roleAssignmentId = az rest --method post --url https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments --headers Content-Type=application/json --body "@$assignmentBody" --query id -o tsv
+       rolePermissions = @(@{ allowedResourceActions = @(
+           'microsoft.directory/servicePrincipals/appRoleAssignedTo/update'
+           'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+           'microsoft.directory/servicePrincipals/standard/read'
+       ) })
+   }
+   $roleDefinitionId = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/roleManagement/directory/roleDefinitions" -Body ($roleBody | ConvertTo-Json -Depth 5)).id
+   $roleAssignmentId = (Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/roleManagement/directory/roleAssignments" -Body (@{
+       principalId = $probeSp; roleDefinitionId = $roleDefinitionId; directoryScopeId = "/$spId"
+   } | ConvertTo-Json)).id
+   @{
+       groupId = $group3; applicationId = $probeAppObjectId; principalId = $probeSp
+       otherApplicationId = $otherAppObjectId; otherPrincipalId = $otherSpId
+       roleDefinitionId = $roleDefinitionId; roleAssignmentId = $roleAssignmentId
+   } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $c1Work 'inventory.json') -Encoding utf8NoBOM
+   $permissionsBefore = Invoke-RestMethod @operatorRequest -Method Get -Uri "$graph/servicePrincipals/$probeSp/appRoleAssignments"
+   if (@($permissionsBefore.value).Count -ne 0 -or $permissionsBefore.'@odata.nextLink') { throw 'The test identity must have no application permissions.' }
    ```
 
-3. Vytvoř secret identity s platností 1 den a počkej 10 minut. Přiřazení role Entra se propaguje se zpožděním.
+3. Přidej secret identity s platností 1 den. Použij `addPassword`, ne reset všech credentials. Secret ani tokeny nevypisuj a neukládej na disk:
 
    ```powershell
-   $secret = az ad app credential reset --id $probeApp --end-date (Get-Date).AddDays(1).ToString('yyyy-MM-dd') --query password -o tsv
+   $credential = Invoke-RestMethod @operatorRequest -Method Post -Uri "$graph/applications/$probeAppObjectId/addPassword" `
+       -Body (@{ passwordCredential = @{ displayName = 'Temporary C1 credential'; endDateTime = [DateTimeOffset]::UtcNow.AddDays(1).ToString('o') } } | ConvertTo-Json -Depth 5)
+   $secret = $credential.secretText
+   $credential = $null
+   Start-Sleep -Seconds 600
    ```
 
-4. Přihlas se jako identita do odděleného profilu Azure CLI. Tvoje přihlášení zůstane beze změny.
+4. Získej app-only Graph token přes HTTPS. Secret tak nepředáš v argumentech procesu `az login`. Přihlášení Azure CLI ani `AZURE_CONFIG_DIR` se nezmění:
 
    ```powershell
-   $env:AZURE_CONFIG_DIR = Join-Path $work 'az-probe3'
-   az login --service-principal -u $probeApp -p $secret --tenant $tenantId --allow-no-subscriptions -o none
+   $appAccess = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/token" `
+       -ContentType 'application/x-www-form-urlencoded' -MaximumRedirection 0 -Body @{
+           client_id = $probeApp; client_secret = $secret
+           grant_type = 'client_credentials'; scope = 'https://graph.microsoft.com/.default'
+       }
+   $c1GraphToken = ConvertTo-SecureString $appAccess.access_token -AsPlainText -Force
+   $appAccess = $null
+   $secret = $null
    ```
 
-5. Pozitivní test: identita přiřadí skupině roli User v aplikaci GHE.
+5. Pozitivní test: identita přiřadí skupině roli User v aplikaci GHE. Zachyť HTTP stav i při chybě:
 
    ```powershell
-   $appRoleBody = Join-Path $work 'probe3-app-role.json'
-   @{ principalId = $group3; resourceId = $spId; appRoleId = $userRole } | ConvertTo-Json | Set-Content -LiteralPath $appRoleBody -Encoding utf8NoBOM
-   $appRoleAssignmentId = az rest --method post --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" --headers Content-Type=application/json --body "@$appRoleBody" --query id -o tsv
-   $appRoleAssignmentId
+   $positive = Invoke-WebRequest -Method Post -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" `
+       -Authentication Bearer -Token $c1GraphToken -ContentType 'application/json' -SkipHttpErrorCheck -MaximumRedirection 0 `
+       -Body (@{ principalId = $group3; resourceId = $spId; appRoleId = $userRole } | ConvertTo-Json)
+   $positiveBody = $positive.Content | ConvertFrom-Json -AsHashtable
+   $appRoleAssignmentId = if ($positive.StatusCode -eq 201) { $positiveBody['id'] } else { $null }
    ```
 
-6. Negativní test: identita nesmí přiřadit roli v jiné aplikaci.
+6. Negativní test: stejný app-only token nesmí přiřadit platnou roli v jiné aplikaci. Neplatná role by nerozlišila odmítnutí autorizace od chyby vstupu:
 
    ```powershell
-   @{ principalId = $group3; resourceId = $otherSpId; appRoleId = '00000000-0000-0000-0000-000000000000' } | ConvertTo-Json | Set-Content -LiteralPath $appRoleBody -Encoding utf8NoBOM
-   az rest --method post --url "https://graph.microsoft.com/v1.0/servicePrincipals/$otherSpId/appRoleAssignedTo" --headers Content-Type=application/json --body "@$appRoleBody"
+   $negative = Invoke-WebRequest -Method Post -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$otherSpId/appRoleAssignedTo" `
+       -Authentication Bearer -Token $c1GraphToken -ContentType 'application/json' -SkipHttpErrorCheck -MaximumRedirection 0 `
+       -Body (@{ principalId = $group3; resourceId = $otherSpId; appRoleId = $otherRoleId } | ConvertTo-Json)
+   $negativeBody = $negative.Content | ConvertFrom-Json -AsHashtable
+   $otherAssignmentId = if ($negative.StatusCode -eq 201) { $negativeBody['id'] } else { $null }
+   $c1Result = [ordered]@{
+       PositiveStatus = [int] $positive.StatusCode
+       PositiveErrorCode = if ($positiveBody['error']) { $positiveBody['error']['code'] } else { $null }
+       NegativeStatus = [int] $negative.StatusCode
+       NegativeErrorCode = if ($negativeBody['error']) { $negativeBody['error']['code'] } else { $null }
+   }
    ```
 
-7. Odhlas identitu a ověř, že nemá žádné application permissions:
+7. Odstraň app-only token z relace a ověř pod přihlášením operátora, že testovací identita stále nemá žádné application permissions. Ulož výsledek bez tokenů a ID:
 
    ```powershell
-   az logout
-   Remove-Item Env:AZURE_CONFIG_DIR
-   Remove-Item -Recurse -Force (Join-Path $work 'az-probe3')
-   Remove-Variable secret
-   az rest --url "https://graph.microsoft.com/v1.0/servicePrincipals/$probeSp/appRoleAssignments" --query "length(value)"
+   Remove-Variable c1GraphToken, secret
+   $permissions = Invoke-RestMethod @operatorRequest -Method Get -Uri "$graph/servicePrincipals/$probeSp/appRoleAssignments"
+   $c1Result.ApplicationPermissionCount = @($permissions.value).Count
+   $c1Result.AcceptancePassed = $c1Result.PositiveStatus -eq 201 -and $c1Result.NegativeStatus -eq 403 -and
+       $c1Result.NegativeErrorCode -ceq 'Authorization_RequestDenied' -and
+       $c1Result.ApplicationPermissionCount -eq 0 -and -not $permissions.'@odata.nextLink'
+   $c1Result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $c1Work 'result.json') -Encoding utf8NoBOM
+   [pscustomobject] $c1Result
    ```
 
-Pokud příkazy `az rest` pro vlastní roli selžou, vytvoř roli v UI: Entra admin center → Roles & admins → New custom role. Přiřaď ji v Enterprise applications → GitHub Enterprise Managed User (OIDC) → Roles and administrators.
+Pokud operace Graph pro vlastní roli selžou, vytvoř roli v UI: Entra admin center → Roles & admins → New custom role. Zahrň všechny tři akce a přiřaď ji testovací identitě v Enterprise applications → GitHub Enterprise Managed User (OIDC) → Roles and administrators.
 
 **Ověření:**
 
-- Pozitivní test vypíše ID přiřazení (HTTP 201).
+- Pozitivní test vrátí HTTP 201.
 - Negativní test skončí HTTP 403 `Authorization_RequestDenied`.
 - Identita má `0` application permissions. Úspěch tedy pochází z vlastní role.
 
-**Kam patří výsledek:** komentář v #3 s výsledky obou testů a HTTP stavy. Větu v ADR 0015 potom nahradí PR s výsledkem. Pokud pozitivní test selže, nepřecházej na `AppRoleAssignment.ReadWrite.All`. O náhradním řešení rozhoduje autor.
+**Kam patří výsledek:** komentář v #3 s výsledky obou testů a HTTP stavy. Výsledek zaznamenej také v ADR 0015 prostřednictvím PR. Pokud pozitivní test selže, nepřecházej na `AppRoleAssignment.ReadWrite.All`. O náhradním řešení rozhoduje autor.
 
 **Odblokuje:** #12 spolu s #11.
 
 **Úklid:**
 
 ```powershell
-az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo/$appRoleAssignmentId"
-az rest --method delete --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments/$roleAssignmentId"
-az rest --method delete --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleDefinitions/$roleDefinitionId"
-az ad app delete --id $probeApp
-az ad app delete --id $otherApp
-az ad group delete --group $group3
-Remove-Item (Join-Path $work 'probe3-*.json')
+if ($appRoleAssignmentId) {
+    Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/servicePrincipals/$spId/appRoleAssignedTo/$appRoleAssignmentId"
+}
+if ($otherAssignmentId) {
+    Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/servicePrincipals/$otherSpId/appRoleAssignedTo/$otherAssignmentId"
+}
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/roleManagement/directory/roleAssignments/$roleAssignmentId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/servicePrincipals/$probeSp"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/servicePrincipals/$otherSpId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/applications/$probeAppObjectId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/applications/$otherAppObjectId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/roleManagement/directory/roleDefinitions/$roleDefinitionId"
+Invoke-RestMethod @operatorRequest -Method Delete -Uri "$graph/groups/$group3"
+$operatorRequest = $null
+Remove-Variable operatorToken
+if (-not $c1Result.AcceptancePassed) { throw 'C1 failed; retain result.json and do not grant broader permissions.' }
 ```
+
+Úklid proveď i po neúspěšném testu a ověř, že testovací aplikace, service principals, role, přiřazení a skupina už neexistují. Při přerušení uchovej potvrzené identifikátory v `$c1Work` mimo checkout; nikdy podle nich nemaž původní aplikaci GHE. Výsledek a HTTP stavy zachovej jako evidence (důkazní záznam).
 
 ### C2: Role security manager pro enterprise tým (#4)
 
 **Co ověřuješ:** Instalační token GitHub App přiřadí organizační roli security manager enterprise týmu, který SCIM vytvořil ze skupiny Entra. Člen týmu získá práva security manageru, ale ne roli owner.
 
-**Proč:** Modul `organizations` dává Security team (security tým) roli security manager ve všech organizacích instance. Enterprise tým ze skupiny Entra drží členství na jednom místě. Není ověřené, že REST API organizačních rolí přijme enterprise tým a instalační token App podle ADR 0016. Pokud nepřijme, modul `organizations` přiřadí roli týmu organizace propojenému se skupinou Entra ID.
+**Proč:** Modul `organizations` dává Security team (security tým) roli security manager ve všech organizacích instance. Enterprise tým ze skupiny Entra drží členství na jednom místě. Nestačí, že REST API přijme přiřazení: musíš potvrdit i dědění role na členovi týmu. Pokud přiřazení nebo dědění nepotvrdíš, modul použije tým organizace propojený se stejnou skupinou Entra ID.
 
-**Potřebuješ:** A4 (`$userRole`), A9 (`$probeOrg` a `$adminApp`), pomocné funkce z úvodu fáze C a role User Administrator a Application Administrator.
+**Potřebuješ:** A4 (`$spId` a `$userRole`), A9 (`$probeOrg` a `$adminApp`), pomocné funkce z úvodu fáze C a aktivní role User Administrator a Application Administrator nebo Cloud Application Administrator. Výslovně aktivovaný Global Administrator je také dostačující. Pro Graph používej token z účtu v cílovém tenantu přes `$mgmtSub`, ne výchozí účet Azure CLI.
+
+**Rozdíl rolí:** `member` je základní členství v organizaci a musí zůstat zachované. `security_manager` je další organizační role. Člen týmu nemusí být maintainer ani organization owner.
 
 **Postup:**
 
 1. Vytvoř testovacího uživatele a skupinu a přiřaď skupině roli User v aplikaci GHE. Heslo nikdo nepotřebuje, proto ho hned zahodíš.
 
    ```powershell
-   $password = 'Aa1-' + [guid]::NewGuid().ToString('N')
-   $userId = az ad user create --display-name "probe4-$name" --user-principal-name "probe4-$name@$($upn.Split('@')[1])" --password $password --force-change-password-next-sign-in true --mail-nickname "probe4-$name" --query id -o tsv
-   Remove-Variable password
-   $group4 = az ad group create --display-name "probe4-$name" --mail-nickname "probe4-$name" --query id -o tsv
-   az ad group member add --group $group4 --member-id $userId
-   $group4Body = Join-Path $work 'probe4-app-role.json'
-   @{ principalId = $group4; resourceId = $spId; appRoleId = $userRole } | ConvertTo-Json | Set-Content -LiteralPath $group4Body -Encoding utf8NoBOM
-   $group4AssignmentId = az rest --method post --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo" --headers Content-Type=application/json --body "@$group4Body" --query id -o tsv
+   $c2Name = "probe4-$([guid]::NewGuid().ToString('N').Substring(0,12))"
+   $c2Work = Join-Path $work "c2\$c2Name"
+   $null = New-Item -ItemType Directory -Path $c2Work
+   $c2InventoryPath = Join-Path $c2Work 'inventory.json'
+   $c2Inventory = @{ name = $c2Name; groupName = "$c2Name-group"; userName = "$c2Name-user" }
+   $c2Inventory | ConvertTo-Json | Set-Content -LiteralPath $c2InventoryPath -Encoding utf8NoBOM
+   $c2Access = az account get-access-token --subscription $mgmtSub --resource https://graph.microsoft.com/ -o json --only-show-errors | ConvertFrom-Json
+   if ($LASTEXITCODE -ne 0 -or $c2Access.tenant -ne $tenantId) { throw 'Cannot acquire a Graph token for the configured tenant.' }
+   $c2OperatorToken = ConvertTo-SecureString $c2Access.accessToken -AsPlainText -Force
+   $c2Access = $null
+   $graph = 'https://graph.microsoft.com/v1.0'
+   $c2OperatorRequest = @{ Authentication = 'Bearer'; Token = $c2OperatorToken; ContentType = 'application/json'; MaximumRedirection = 0; TimeoutSec = 120 }
+   $initialDomains = @((Invoke-RestMethod @c2OperatorRequest -Uri "$graph/domains").value | Where-Object { $_.isInitial -and $_.isVerified })
+   if ($initialDomains.Count -ne 1) { throw 'A unique verified initial tenant domain is required.' }
+   $probeUserPrincipalName = "$c2Name-user@$($initialDomains[0].id)"
+   $password = 'Aa1!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+   try {
+       $userId = (Invoke-RestMethod @c2OperatorRequest -Method Post -Uri "$graph/users" -Body (@{
+           accountEnabled = $true; displayName = "$c2Name-user"; mailNickname = "$c2Name-user"
+           userPrincipalName = $probeUserPrincipalName
+           passwordProfile = @{ forceChangePasswordNextSignIn = $true; password = $password }
+       } | ConvertTo-Json -Depth 5)).id
+   }
+   finally { $password = $null }
+   $c2Inventory.userId = $userId
+   $c2Inventory | ConvertTo-Json | Set-Content -LiteralPath $c2InventoryPath -Encoding utf8NoBOM
+   $group4 = (Invoke-RestMethod @c2OperatorRequest -Method Post -Uri "$graph/groups" -Body (@{
+       displayName = "$c2Name-group"; mailNickname = "$c2Name-group"; mailEnabled = $false
+       securityEnabled = $true; groupTypes = @()
+   } | ConvertTo-Json)).id
+   $c2Inventory.groupId = $group4
+   $c2Inventory | ConvertTo-Json | Set-Content -LiteralPath $c2InventoryPath -Encoding utf8NoBOM
+   $null = Invoke-RestMethod @c2OperatorRequest -Method Post -Uri "$graph/groups/$group4/members/`$ref" -Body (@{
+       '@odata.id' = "$graph/directoryObjects/$userId"
+   } | ConvertTo-Json)
+   $group4AssignmentId = (Invoke-RestMethod @c2OperatorRequest -Method Post -Uri "$graph/servicePrincipals/$spId/appRoleAssignedTo" -Body (@{
+       principalId = $group4; resourceId = $spId; appRoleId = $userRole
+   } | ConvertTo-Json)).id
+   $c2Inventory.assignmentId = $group4AssignmentId
+   $c2Inventory | ConvertTo-Json | Set-Content -LiteralPath $c2InventoryPath -Encoding utf8NoBOM
    ```
 
-2. Entra admin center → Enterprise applications → GitHub Enterprise Managed User (OIDC) → Provisioning → Provision on demand → skupina `probe4-<name>` → uživatel `probe4-<name>`.
-3. Your enterprise → People → Enterprise teams → New enterprise team:
-   - název `probe4-<name>`,
-   - Identity provider group: `probe4-<name>`.
+   Heslo předáváš jen v HTTPS těle, ne v argumentech procesu. Při přerušení nejprve obnov inventář potvrzených ID a ověř prostředky podle unikátních názvů; neopakuj slepě vytváření.
 
-   Přidej enterprise tým do organizace `$probeOrg`. Tým vytváříš v UI, protože API enterprise týmů přijímá jen classic PAT.
+2. Entra admin center → Enterprise applications → GitHub Enterprise Managed User (OIDC) → Provisioning → Provision on demand → skupina `$c2Name-group` → uživatel `$c2Name-user`.
+
+   Terminál může použít `POST /servicePrincipals/{spId}/synchronization/jobs/{jobId}/provisionOnDemand` s předmětem `Group` a odkazem `links.members` na testovací `User`. Použij jediný aktivní job a odpovídající rule ze schématu. V živém běhu pole `key` obsahovalo název .NET typu, ne JSON výsledku; pole `value` obsahovalo JSON pole záznamů provisioningu. Ověř `sourceIdentity.id`, úspěšný export a `targetIdentity.id` pro oba vlastní objekty. Samotné HTTP 200 ani jeden úspěšný záznam nestačí.
+3. Your enterprise → People → Enterprise teams → New enterprise team:
+   - název `$c2Name`,
+   - Identity provider group: `$c2Name-group`.
+
+   Přidej enterprise tým pouze do organizace `$probeOrg` jako member, ne owner. Ruční přidání uživatele bez propojení skupiny není důkaz SCIM členství. Tým vytváříš v UI, protože API enterprise týmů přijímá jen classic PAT. Čtení propojení enterprise týmu přes organizační endpoint `/teams/{team_slug}/external-groups` v živém testu vrátilo HTTP 422; propojení proto potvrď v UI.
 4. Přiřaď roli tokenem App B a ověř výsledek:
 
    ```powershell
    $rolesToken = New-ProbeToken @adminApp -Permissions @{ members = 'write'; organization_custom_org_roles = 'read' }
    $securityManager = (Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles" -Token $rolesToken).roles | Where-Object name -eq 'security_manager'
-   $teamSlug = "ent:probe4-$name"
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/teams/$teamSlug/$($securityManager.id)" -Token $rolesToken -Method Put
-   (Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/$($securityManager.id)/teams" -Token $rolesToken).slug
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/$($securityManager.id)/users" -Token $rolesToken | Select-Object login, assignment
-   $probeLogin = '<login of probe4 user from the previous output>'
-   (Invoke-ProbeApi -Path "/orgs/$probeOrg/memberships/$probeLogin" -Token $rolesToken).role
+   $teamSlug = "ent:$c2Name"
+   $assigned = Invoke-WebRequest -Uri "$api/orgs/$probeOrg/organization-roles/teams/$teamSlug/$($securityManager.id)" `
+       -Method Put -Headers $headers -Authentication Bearer -Token $rolesToken -MaximumRedirection 0 -TimeoutSec 60
+   if ($assigned.StatusCode -ne 204) { throw 'Role assignment did not return HTTP 204.' }
+   $roleTeams = Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/$($securityManager.id)/teams?per_page=100" -Token $rolesToken
+   $roleUsers = Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/$($securityManager.id)/users?per_page=100" -Token $rolesToken
+   $probeLogin = '<login correlated to the sole member of the provisioned external group>'
+   $probeMembership = Invoke-ProbeApi -Path "/orgs/$probeOrg/memberships/$probeLogin" -Token $rolesToken
    ```
 
 **Ověření:**
 
-- `PUT` skončí bez chyby (HTTP 204).
-- Seznam týmů role obsahuje `ent:probe4-<name>`.
-- Seznam uživatelů role obsahuje testovacího uživatele.
-- Členství v organizaci vrátí `member`, ne `admin`. Role security manager tedy nedala roli owner.
+- `PUT` vrátí přesně HTTP 204.
+- Seznam týmů role obsahuje přesně vlastní tým s `type: enterprise` a slugem `ent:$c2Name`. Prefix `ent:` v cestě ponech doslova; jeho percent-encoded tvar `ent%3A` v živém čtení týmu vrátil HTTP 404.
+- Seznam uživatelů role obsahuje správného testovacího uživatele s `assignment: indirect` a vlastním týmem v `inherited_from`. Koreluj ID a e-mail člena provisionované skupiny, ne odhad normalizovaného loginu.
+- Členství v organizaci vrátí `member`, ne `admin`, před přiřazením i po něm.
+- Při prodlevě opakuj čtení nejdéle 60 sekund a vyřeš pagination. Prázdný seznam uživatelů nesmíš vykázat jako úspěšné dědění.
 
-**Kam patří výsledek:** komentář v #4 s oprávněními App (`members: write`, `organization_custom_org_roles: read`), HTTP stavy a výsledkem. Pokud API enterprise tým nepřijme, zapiš chybu. Modul `organizations` potom použije tým organizace propojený se skupinou Entra ID.
+**Pozorovaný výsledek 13. 10. 2026:** Token s `members: write` a `organization_custom_org_roles: read` přiřadil roli enterprise týmu s HTTP 204. Seznam přiřazených týmů obsahoval správné ID, slug i `type: enterprise`, ale seznam uživatelů role zůstal prázdný i po opakovaném čtení po dobu 60 sekund. Dědění práv enterprise týmu proto zůstalo nepotvrzené; tento výsledek sám o sobě nedokazuje absenci efektivních práv.
+
+Srovnávací test se stejnou SCIM skupinou, stejným uživatelem a stejnými oprávněními tokenu prošel pro tým organizace. API potvrdilo propojení skupiny, přiřazení HTTP 204, `assignment: indirect`, správný tým v `inherited_from` a členství `member` po přiřazení. Po odebrání role uživatel ze seznamu role zmizel. Toto je ověřená fallback varianta pro `organizations`; úspěšné HTTP 204 pro enterprise tým ji samo nenahrazuje.
+
+**Pozorovaný úklid 13. 10. 2026:** Oba testovací týmy po odstranění vrátily HTTP 404. On-demand provisioning potvrdil `Success` a akci `Disable` pro správného cílového uživatele. Po odebrání zdrojového členství API potvrdilo nulový počet členů cílové SCIM skupiny. Čtení přiřazení GHE User, skupiny a uživatele v Entra po odstranění vrátilo HTTP 404; původní aplikace GHE zůstala dostupná s HTTP 200. Cílový organizační záznam SCIM skupiny nejprve zůstal prázdný s HTTP 200. Po následujícím standardním SCIM cyklu vrátil HTTP 404; závěrečné čtení proběhlo ve 12:22 CEST. Všechny vydané instalační tokeny včetně tokenu závěrečné kontroly byly odvolané s HTTP 204. Znepřístupněný managed-user záznam není fyzické smazání účtu.
+
+**Kam patří výsledek:** komentář v #4 s oprávněními tokenu, HTTP stavy, důkazem dědění a stavem úklidu. Výsledek a inventář uchovej mimo zdrojový checkout, bez hesel, klíčů a tokenů. Dokud nepotvrdíš úklid a nezapíšeš komentář, akceptace issue není dokončená.
 
 **Odblokuje:** #13 spolu s #5 a #12.
 
@@ -1019,14 +1132,21 @@ Invoke-ProbeApi -Path "/orgs/$probeOrg/organization-roles/teams/$teamSlug/$($sec
 Invoke-ProbeApi -Path '/installation/token' -Token $rolesToken -Method Delete
 ```
 
-Smaž enterprise tým v UI: Your enterprise → People → Enterprise teams → `probe4-<name>` → Delete. Potom odstraň objekty v Entra ID:
+Odeber testovací přiřazení a odvolej každý vydaný token i po neúspěšném ověření. Srovnávací tým organizace odstraň jeho organizačním API a ověř HTTP 404; původní SCIM skupinu tím nesmaž.
+
+Smaž enterprise tým v UI: Your enterprise → People → Enterprise teams → `$c2Name` → Delete. Potom zakaž testovacího uživatele v Entra a proveď jeho on-demand deprovisioning; ověř úspěšné znepřístupnění v cíli.
+
+Před smazáním zdrojové skupiny odeber testovacího uživatele z jejího členství a proveď on-demand export skupiny s `links.members = @()`. Organizační API `/external-group/{group_id}` musí potvrdit správnou cílovou skupinu s nulovým počtem členů. Potom odstraň pouze potvrzené vlastní objekty explicitním tokenem:
 
 ```powershell
-az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignedTo/$group4AssignmentId"
-az ad group delete --group $group4
-az ad user delete --id $userId
-Remove-Item $group4Body
+Invoke-RestMethod @c2OperatorRequest -Method Delete -Uri "$graph/servicePrincipals/$spId/appRoleAssignedTo/$group4AssignmentId"
+Invoke-RestMethod @c2OperatorRequest -Method Delete -Uri "$graph/groups/$group4"
+Invoke-RestMethod @c2OperatorRequest -Method Delete -Uri "$graph/users/$userId"
+$c2OperatorRequest = $null
+Remove-Variable c2OperatorToken
 ```
+
+Ověř odstranění přiřazení, skupiny a uživatele z aktivního adresáře. Odděleně zaznamenej stav cílové SCIM skupiny po odstranění zdroje; prázdná skupina neznamená smazanou skupinu. Pokud cílový záznam zůstane prázdný, počkej na následující standardní SCIM cyklus a ověř HTTP 404. Ověřený job měl interval 40 minut. Cílený on-demand export již smazané zdrojové skupiny skončil `Failure`; není náhradou za potvrzené odstranění a nesmíš kvůli němu obnovit zdrojové objekty ani restartovat celou synchronizaci. SCIM deprovisioning může účet GitHubu ponechat jako znepřístupněný záznam; nevydávej ho za fyzické smazání. App B, její klíč, probe organizaci a původní aplikaci GHE zachovej pro další ověření.
 
 ### C3: Nové použití názvu smazané organizace (#5)
 
@@ -1051,96 +1171,162 @@ Remove-Item $group4Body
 
 ### C4: Akce, které potřebuje Dependabot (#6)
 
-**Co ověřuješ:** Jaká politika akcí v organizaci dovolí Dependabotu provést version updates i security updates. Výsledkem je seznam akcí pro specifikaci `enterprise-baseline`.
+**Rozhodnutí:** Modul `enterprise-baseline` nesmí kvůli Dependabotu povolit žádnou externí akci. Dependabot version updates i security updates běží v dynamických workflow, která obcházejí kontroly Actions policy (politiky akcí) na úrovni repozitáře a organizace. Toto chování popisuje dokumentace [Dependabot on GitHub Actions runners](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-on-actions).
 
-**Proč:** README `enterprise-baseline` povoluje jen akce z Actions organization (organizace akcí) a akce, které potřebuje Dependabot. Dokumentace GitHubu uvádí dvě tvrzení, která test musí rozhodnout:
+**Rozsah ověření:** Dependabot používal `Standard GitHub runner`. Ověření pokrylo interní workflow `dynamic/dependabot/dependabot-updates`. Pull request Dependabotu může spustit CI workflow repozitáře. Toto workflow politice akcí nadále podléhá.
 
-- Dependabot zapnutý v repozitáři běží na GitHub Actions vždy a obchází kontroly politiky akcí.
-- Při politice, která povoluje jen akce z enterprise, Dependabot neběží. Politika musí povolit akce vytvořené GitHubem, nebo vybrané akce.
+**Metoda:** Každá varianta použila nový privátní repozitář vytvořený až po změně politiky. Security updates a version updates se ověřily odděleně:
 
-Workflow spuštěná PR od Dependabotu, například CI, politice akcí podléhají vždy.
+1. Hodnota [`open-pull-requests-limit: 0`](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#open-pull-requests-limit) vypnula version updates. Security updates tento limit nepoužívají.
+2. Security fáze musela vytvořit security PR a její dynamické workflow muselo skončit `success`.
+3. Po změně limitu na `5` musel vzniknout samostatný version PR a jeho dynamické workflow muselo skončit `success`.
 
-**Potřebuješ:** A9 (`$probeOrg` a `$adminApp`) a pomocné funkce z úvodu fáze C. Enterprise politika akcí musí organizacím dovolit vlastní volbu.
+| Varianta | Actions policy | Security update | Version update | Výsledek |
+| --- | --- | --- | --- | --- |
+| A | `allowed_actions = local_only` | Security PR vznikl při limitu `0`; dynamické workflow skončilo `success`. | Po změně limitu na `5` vznikl samostatný version PR; dynamické workflow skončilo `success`. | Dependabot nepotřebuje GitHub-owned ani externí akce v allowlistu. |
+| B | Původní zděděná politika `selected`, která povoluje GitHub-owned actions | Vznikly dva security PR a dvě dynamická workflow skončila `success`. | Vznikl samostatný version PR; dynamické workflow skončilo `success`. | Kontrolní varianta potvrdila výsledek A. |
+| C | `selected` s jediným explicitním patternem | Neprovedeno. | Neprovedeno. | Varianta A je přísnější a již prokázala nulový externí allowlist. |
 
-**Postup:**
+**Pozorování:** Log dynamického workflow obsahoval `github/dependabot-action@*`. Tento pattern popisuje interní implementaci jobu; není požadavkem pro Actions allowlist. Pokusy změnit zděděnou konfiguraci `selected-actions` skončily HTTP 409 s tokenem App i s osobním OAuth tokenem. Konflikt neovlivňuje rozhodnutí, protože varianta A prošla s přísnější politikou `local_only`.
 
-1. Nejdřív ověř nastavení **Dependabot on Actions runners** v Organization settings → Code security → Global settings → Dependabot. Pokud je vypnuté, zapni ho a ověř, že je zapnuté ještě před testem. Pokud ho nemůžeš zapnout nebo ověřit, C4 zastav: výsledky politiky by nebyly průkazné.
+**Ověření úklidu:**
 
-   ```powershell
-   function Set-ProbeFile([string] $Repository, [string] $Path, [string] $Content) {
-       $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Content))
-       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/contents/$Path" -f message="Add $Path" -f content=$encoded --silent
-   }
-   function New-DependabotProbeRepository([string] $Repository) {
-       gh api --hostname $githubHost -X POST "orgs/$probeOrg/repos" -f name=$Repository -f visibility=private -F auto_init=true --silent
-       Set-ProbeFile $Repository 'requirements.txt' "requests==2.25.0`n"
-       Set-ProbeFile $Repository '.github/dependabot.yml' "version: 2`nupdates:`n  - package-ecosystem: pip`n    directory: /`n    schedule:`n      interval: daily`n"
-       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/vulnerability-alerts" --silent
-       gh api --hostname $githubHost -X PUT "repos/$probeOrg/$Repository/automated-security-fixes" --silent
-   }
-   ```
-
-   Každou variantu testuj v novém repozitáři. Repozitář založ až po nastavení její politiky; automatické security updates tak nemohou vytvořit PR před začátkem varianty. Použij názvy `dependabot-probe-a`, `dependabot-probe-b` a `dependabot-probe-c`.
-
-2. Připrav token:
-
-   ```powershell
-   $policyToken = New-ProbeToken @adminApp -Permissions @{ organization_administration = 'write' }
-   ```
-
-3. Proveď variantu A. Nejdřív nastav politiku a až potom vytvoř nový repozitář. Potom variantu vyhodnoť postupem „Vyhodnocení varianty“ pod tímto seznamem:
-
-   ```powershell
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'local_only' }
-   $policyChangedAt = [DateTimeOffset]::UtcNow
-   $Repository = 'dependabot-probe-a'
-   New-DependabotProbeRepository $Repository
-   ```
-
-4. Proveď variantu B a vyhodnoť ji. Nejdřív nastav obě části politiky a až potom vytvoř nový repozitář:
-
-   ```powershell
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions" -Token $policyToken -Method Put -Body @{ enabled_repositories = 'all'; allowed_actions = 'selected' }
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $true; verified_allowed = $false; patterns_allowed = @() }
-   $policyChangedAt = [DateTimeOffset]::UtcNow
-   $Repository = 'dependabot-probe-b'
-   New-DependabotProbeRepository $Repository
-   ```
-
-   Po vyhodnocení varianty B otevři v repozitáři `dependabot-probe-b` Actions → `dynamic/dependabot/dependabot-updates` → job → Set up job. Zapiš všechny akce z řádků `Download action repository`. Seznam použij ve variantě C.
-
-5. Proveď variantu C a vyhodnoť ji. Nahraď `<owner>/<action>@*` vzory akcí z varianty B:
-
-   ```powershell
-   Invoke-ProbeApi -Path "/orgs/$probeOrg/actions/permissions/selected-actions" -Token $policyToken -Method Put -Body @{ github_owned_allowed = $false; verified_allowed = $false; patterns_allowed = @('<owner>/<action>@*') }
-   $policyChangedAt = [DateTimeOffset]::UtcNow
-   $Repository = 'dependabot-probe-c'
-   New-DependabotProbeRepository $Repository
-   ```
-
-6. Po vyhodnocení varianty C odvolej token: `Invoke-ProbeApi -Path '/installation/token' -Token $policyToken -Method Delete`.
-
-**Vyhodnocení varianty:** Proveď ho po každé variantě, ještě před změnou politiky pro další variantu. Bloky A, B a C proto nespouštěj najednou.
-
-1. Spusť version update: Insights → Dependency graph → Dependabot → `requirements.txt` → Check for updates.
-2. Ověř security update: Security → Dependabot alerts → alert pro `requests`. Automated security fixes jsou zapnuté při vytvoření repozitáře. Vyhodnoť jen PR vytvořený po změně politiky.
-3. Zkontroluj běhy. Filtr vrátí jen běhy Dependabotu zahájené po změně politiky:
-
-   ```powershell
-   $since = $policyChangedAt.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
-   gh api --hostname $githubHost "repos/$probeOrg/$Repository/actions/runs?per_page=100" --jq ('.workflow_runs[] | select(.path == "dynamic/dependabot/dependabot-updates" and .created_at >= "' + $since + '") | [.event, .status, .conclusion, .created_at] | @tsv')
-   ```
-
-   Pokud filtr nevrátí žádný běh, zaznamenej to jako výsledek varianty. Běh ani PR jiné varianty nesmíš použít jako důkaz. Před vyhodnocením ověř, že Dependabot on Actions runners zůstává zapnutý.
-4. Zaznamenej výsledek běhů a to, zda vznikl nový PR.
-
-**Ověření:** Pro každou variantu zaznamenej výsledek pouze z jejího nového repozitáře a z běhů zahájených po změně politiky, včetně toho, zda `dynamic/dependabot/dependabot-updates` skončil `success` a zda vznikl nový PR. Varianta C musí projít, aby seznam akcí stačil pro `enterprise-baseline`.
-
-**Kam patří výsledek:** komentář v #6 s výsledkem všech tří variant a seznamem akcí. Seznam akcí s odkazem na dokumentaci potom doplní PR do README `enterprise-baseline`. Pokud Dependabot běží i ve variantě A, PR upraví také větu „Dependabot na Actions jinak nepoběží.“
+- Skript obnovil původní organizační Actions policy.
+- Kontrola potvrdila nezměněnou zděděnou konfiguraci `selected-actions`.
+- Skript odvolal všechny vydané installation tokeny App.
+- API po odstranění obou testovacích repozitářů vrací HTTP 404.
+- `gh auth status` po odstranění repozitářů potvrdil odebrání dočasného OAuth scope `delete_repo`.
+- Privátní evidence zůstává mimo zdrojový repozitář.
 
 **Odblokuje:** #18.
 
-**Úklid:** Repozitáře `dependabot-probe-a`, `dependabot-probe-b` a `dependabot-probe-c` zaniknou se smazáním organizace ve fázi D.
+## Akceptace GitHub části bootstrapu (#11)
+
+Akceptaci #11 proveď odděleně od nasazení produkčních modulů. Na #11 čeká #12, proto dokončený produkční `enterprise-baseline` nesmí být předpokladem akceptace bootstrapu. Průvodce použije schválený zdrojový kód a manifesty z `tools\acceptance\github\modules`: `bootstrap-probe` ověřuje izolaci state, `enterprise-baseline` deklaruje oddělené App credentials. Tyto manifesty neimplementují produkční moduly.
+
+Před spuštěním dokonči #10 a ukliď fixture prostředky podle fáze B a testovací organizace a Apps podle fáze C. Zachovej ověřený `$work\instance.yaml`. Přihlas se svým enterprise owner účtem přes `gh` a do správného tenantu přes `az`; PIM, MFA a rozšíření scopes potvrzuje člověk.
+
+```powershell
+.\tools\Start-InstanceSetup.ps1 -GitHubAcceptance `
+    -WorkPath $work `
+    -ReleasePath '<schvaleny-cisty-checkout-nebo-export>' `
+    -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
+```
+
+Průvodce musí běžet ze stejné verze zdrojového kódu jako `-ReleasePath`. Git checkout musí být čistý. U exportu předem ověř původ; verze ani SHA-256 samy původ nedokazují. Schvaluješ verzi kandidáta i SHA-256 zdroje. Kandidát není produkční Release (release). Průvodce jeho obsah zafixuje, při obnovení zkontroluje každý soubor a změnu kandidáta odmítne před provisioningem.
+
+Průvodce nemění původní konfiguraci z #10. Samostatně vygeneruje `$work\github-acceptance\instance.yaml`, spustí Azure bootstrap pro oba probe moduly a připraví GitHub prostředky s vypnutými Actions. Čtyři enterprise-owned Apps založíš v UI: `authorization` s `members: read`, `reader` s `organization_administration: read`, `writer` a `rulesets` s `organization_administration: write`. Všechny mají jen organizační oprávnění, oddělené identity, instalaci bez přístupu k repozitářům a instalaci pouze v organizaci platformy. Průvodce ověří vlastnictví, skutečná oprávnění a instalace.
+
+Klíče ponecháš v externím pracovním adresáři. U každého klíče zadáš skutečné datum vytvoření včetně časové zóny; průvodce nastaví rotaci nejpozději za 90 dní. Po souhlasu zveřejní kandidáta a konfiguraci, zapojí environment credentials a ověří opakovaný bootstrap s `HasChanges: false`.
+
+Při `AcceptanceOnly` průvodce ověří registraci všech publikovaných template workflow a **před** zapnutím Actions deaktivuje všechna aktivní workflow kromě `bootstrap-acceptance.yml`. Omezení zahrnuje `deploy.yml`, `vendor.yml`, budoucí template workflow i další již registrovaná workflow. Bootstrap jejich soubory neodstraňuje. Před deaktivací workflow vypne Actions i na inicializovaném repozitáři. Chybějící registrace, neznámý stav nebo nepotvrzená deaktivace musí běh zastavit bez zapnutí Actions. Při chybě kontroly na již inicializovaném repozitáři bootstrap vypne Actions. Pokud API odmítne i toto ochranné vypnutí, bootstrap vykáže původní i ochrannou chybu; nesmí tvrdit, že workflow izoloval. Nezměněný opakovaný běh nezapisuje žádné změny. Běžný režim tato omezení nezavádí.
+
+### Řízené opakování bez reconcile
+
+`WorkPath` veřejného průvodce označuje kořen ověřených vstupů #10. Průvodce čte přímo `$work\instance.yaml` a vlastní evidence #11 ukládá pod `$work\github-acceptance`. Adresář staršího kandidáta není náhradní vstup #10. Pokud se změnil schválený kandidát nebo skončil jednorázový execution guard, nepoužívej retry, nekopíruj acceptance konfiguraci za vstup #10 a nemaž původní guard. Obnova vyžaduje nový kandidát, chráněnou publikaci a samostatné schválení konkrétního běhu.
+
+Oba veřejné entrypointy `Invoke-Bootstrap.ps1` a `Invoke-GitHubBootstrap.ps1` podporují `-NoChanges`. Přepínač spouští skutečný bootstrap, nikoli `-Preflight`, a před odesláním každého reconcile requestu vyhodí chybu. Azure povolí pouze GET, přesný read-only GraphQL dotaz na enterprise owners a čtení předků subscriptions přes `getEntities`. GitHub povolí pouze GET a přesný read-only GraphQL dotaz na organizace enterprise. Drift nesmí způsobit PUT, PATCH, mutační POST ani ochranné vypnutí Actions uvnitř bootstrapu. Kontrolu požadovaného stavu Actions musí předem zajistit spouštějící člověk nebo samostatný controller. `-NoChanges` nemění lokální bootstrap inventory a při chybě HTTP neopakuje Azure request. Bez přepínače zůstává běžný provisioning zachovaný.
+
+GitHub `-NoChanges` vyžaduje existující inventory s dokončenou inicializací (`initializationPending=false`). Může navázat na její starší release, ale nesmí chybějící inventory nahradit novou historií. Před vydáním validačního App tokenu musí existovat `main`. Její `.platform-bootstrap.json` musí přesně odpovídat aktuálnímu schválenému release včetně úplné mapy SHA-256. Její `instance.yaml` musí odpovídat místní konfiguraci. Oba soubory bootstrap čte z jednoho commit SHA. Ověří požadovanou ochranu `main` a před validačními tokeny znovu ověří, že se `main` neposunula. Chybějící soubor, drift nebo nedokončená inicializace běh zastaví před tokeny. Bootstrap nepřepisuje historickou verzi, App identity, otisky klíčů, termíny rotace ani historii v inventory. Běžný provisioning nadále odmítne jinou verzi inventory před prvním API requestem.
+
+Tato možnost nepublikuje nový release ani neaktualizuje repozitář instance. Pokud chráněná `main` obsahuje starší kód, nejprve projdi samostatně schválenou publikací a lidským review a merge nového kandidáta. Neupravuj verzi inventory, neměň již zafixovaný kandidát a nevynechávej kontrolu markeru.
+
+### Ruční G7–G9 bez privátního controlleru
+
+Použij běžnou lidskou konzoli, původní identity a původní inventory. Pokud veřejný průvodce při změně kandidáta vyžaduje G3–G6, neobcházej jeho `sourceApproval`; následující veřejné entrypointy ho nemění. Před spuštěním člověk samostatně schválí konkrétní G7–G9 okno, nejvýše čtyři existující validační App tokeny a jeden G9 dispatch bez rerunu.
+
+```powershell
+$azure = & (Join-Path $release 'tools\Invoke-Bootstrap.ps1') `
+    -InstancePath $cfg -ModulesPath (Join-Path $release 'modules') -NoChanges
+if ($azure.HasChanges) { throw 'G7 Azure did not prove no changes.' }
+$github = & (Join-Path $release 'tools\Invoke-GitHubBootstrap.ps1') `
+    -InstancePath $cfg -AzureBootstrap $azure -ReleasePath $release -ReleaseVersion $version `
+    -InventoryPath $inventory -AppKeysPath $keys -AuthorizationApp authorization `
+    -AcceptanceOnly -NoChanges -VerifyTokenRevocation
+if ($github.HasChanges -or -not $github.CredentialsConfigured) {
+    throw 'G7 GitHub did not prove unchanged configured credentials.'
+}
+```
+
+Proměnné označují ověřený aktuální kandidát a externí soubory původní instance. Tyto příkazy jsou jen G7, nikoli souhlas s jejich spuštěním. Před GitHub G7 musí člověk ověřit původní Azure identitu skutečným Graph `/me`, GitHub actor, schválený merge commit, ochrany, environment reviewery a main-only policy. Azure profil nastaví jen procesovým `AZURE_CONFIG_DIR` v `try/finally`, bez změny globálního defaultu a bez automatického loginu.
+
+Actions zapni jen v samostatně schváleném acceptance okně mimo noční schedule. Předem musí být nulový počet neukončených běhů a všechna workflow kromě `bootstrap-acceptance.yml` vypnutá. Po zapnutí přečti skutečné repository i organization selected-actions policy a ověř povolení všech tří pinů použitých v acceptance workflow. Při odmítnutí nebo nejasném výsledku Actions vypni, policy neměň. GitHub G7 očekává zapnuté Actions; při vypnutých Actions jeho `NoChanges` správně odmítne PUT.
+
+G8 pouze přečte existující vypnutý `bootstrap-acceptance-probe` ruleset a jeho úplný lokální bypass detail. Chybějící probe nevytvářej. G9 spustí právě jeden `mode=apply` dispatch na schválené `main` s novým `evidence_id`. Skutečný platformní člověk schválí `approve-apply`, potom security člověk `enterprise-baseline-apply`. Ověř run attempt 1, přesnou revizi, obě schválení a čtyři výsledky artefaktů; zelený status nestačí. `mode=apply` ověřuje apply identitu čtením, nenasazuje moduly.
+
+Po úspěchu i chybě člověk vypne Actions a ověří nulový počet neukončených běhů a nezměněné ochrany. Při chybě nejprve zruší pouze svůj přesně identifikovaný aktivní běh. Připrav druhou konzoli pro cleanup při pádu první; žádný privátní helper není potřeba. Nejasné vydání nebo odvolání tokenu, neúspěšný readback či HTTP 409 znamenají STOP bez automatického opakování. `-VerifyTokenRevocation` musí potvrdit DELETE 204 a následný GET 401.
+
+Pro #11 zbývají G7–G9. Skutečný noční běh G10 a zbývající lidské důkazy G11 včetně praktické rotace klíče přebírá #42. Konfigurace nočních environmentů a pravidla rotace zůstávají v #11. Přesun kontrol neznamená jejich splnění; veřejný průvodce nadále může vracet `AcceptancePassed=false`.
+
+### Automatizovaný dohled nad veřejnými entrypointy
+
+Controller může oběma entrypointům předat `-RequestPolicy`. Callback před každým API requestem dostane `Uri`, `Method`, `Body` a `Kind`, nikdy authorization header. Musí vrátit právě jednu boolean hodnotu `true`; jiný výstup nebo výjimka request zastaví. Callback nesmí obejít zákaz reconcile v `-NoChanges`. Musí sám vynutit přesné cíle, schválený deadline, rozpočty a stav nezávislého watchdogu. Neznámý nebo nejasný výsledek mutace není důvod k opakování.
+
+Validační installation tokeny nejsou reconcile. GitHub bootstrap předává stejnou `RequestPolicy` i do issueru; jejich operace mají `Kind` `TokenIssue` a `TokenRevoke`. Pro dohled nad existujícími Apps controller předá `-TokenLifecycle` a `-VerifyTokenRevocation`. Issuer před prvním použitím vydaného tokenu vyžádá potvrzení události `Issued`. Před jedním odvoláním vyžádá `Revoking`, po něm `Revoked`. Událost drží token pouze v paměti a obsahuje jeho SHA-256, App ID, API URL a příznak `RevocationProofRequired`. Callback musí vrátit právě `true`; nesmí token ani argumenty callbacku logovat. Controller musí při `Issued` před potvrzením předat token nezávislému watchdogu a při `Revoking` koordinovat společný cleanup intent. Callback není sám watchdog.
+
+`-VerifyTokenRevocation` vyžaduje HTTP 204 pro DELETE a následné HTTP 401 při čtení repozitářů odvolaným tokenem. Bez obou odpovědí issuer nevrátí úspěšnou validaci. Odvolání se v jednom procesu pokusí nejvýše jednou pro každý token, včetně chybové cesty; timeout ani chyba callbacku nesmí spustit blind retry. Neobdrženou odpověď na issuance nelze zrekonstruovat z lokálního tokenu. Controller musí takovou nejasnost vykázat a zastavit další práci.
+
+Tyto parametry samy nezapínají Actions, neautorizují G7–G9 a nenahrazují chráněný controller. Ten musí před aktivací znovu ověřit původní identitu přes Graph `/me`, konkrétní source/candidate/publication pin, úplné prostředky a původní ochrany. Privátní Azure CLI profil nastaví pouze procesovým `AZURE_CONFIG_DIR` uvnitř `try/finally`; původně chybějící proměnnou ve `finally` odstraní, původně přítomnou obnoví přesně. Nesmí měnit globální Azure default. G9 nadále vyžaduje nový jednorázový budget, skutečná schválení platformního a security týmu, existující selected-actions policy pro přesné action pins a nezávislý cleanup při ukončení owner procesu.
+
+Kontrola přístupu týmu k repozitáři používá pro `GET /orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}` [media type `application/vnd.github.v3.repository+json`](https://docs.github.com/en/rest/teams/teams#check-team-permissions-for-a-repository). Bootstrap musí získat HTTP 200 s objektem `permissions` a boolean hodnotou `permissions.push`. HTTP 204 potvrzuje pouze přístup bez úrovně oprávnění; bootstrap jej nesmí považovat za důkaz `push` ani za důvod k zápisu. Prázdný nebo neúplný detail běh zastaví. Při `push: true` bootstrap oprávnění nemění. Při HTTP 404 nebo doloženém `push: false` běžný provisioning nastaví `push` a ověří nové oprávnění stejným GET; úspěšný PUT sám nestačí. Při schválení G6 bez reconcile oprávnění musí jeho scope guard tento PUT zablokovat. Chybějící `push` vyžaduje samostatné schválení provisioningu. Ostatní endpointy zachovávají původní hlavičky.
+
+Validace ruleset App v G6 načte seznam včetně zděděných enterprise rulesetů. Úplný detail a `bypass_actors` ověří jen u lokálních rulesetů, jejichž `source_type` je `Organization` a `source` odpovídá organizaci platformy. Zděděný ruleset musí mít `source_type: Enterprise` a `source` odpovídající deklarovanému enterprise. Průvodce uvede počet zděděných rulesetů bez ověřeného detailu; tento počet není důkazem jejich bypass konfigurace. Chybějící, neznámý nebo neshodný `source_type` či `source` G6 zastaví.
+
+Před G9 porovnej živé federated credentials se skutečným OIDC subject kontraktem repozitáře podle [bootstrapu](bootstrap.md#environmenty-noční-plan-a-teardown). V immutable režimu musí subject obsahovat přesné owner a repository IDs; název organizace a repozitáře nestačí. Pro acceptance konfiguraci musí zůstat osm vazeb: `bootstrap-probe` plan, plan-drift a apply; `enterprise-baseline` plan, plan-drift, ruleset-plan, ruleset-plan-drift a apply. Čtyři Azure identity zachovávají oddělení modulů a plan/apply. Gate environmenty nemají federated credentials; wrongSubject musí dál selhat výslovně jako `AADSTS700213`.
+
+Probe přijme pouze HTTP `400` nebo `401` s OAuth chybou `invalid_client` a jediným číselným kódem `700213`. Samotný HTTP status není důkazem izolace. Microsoft rozlišuje [neshodný subject `700213`](https://login.microsoftonline.com/error?code=700213), [neshodnou audience `700212`](https://login.microsoftonline.com/error?code=700212) a [nenalezenou federation vazbu `70021`](https://login.microsoftonline.com/error?code=70021), která může znamenat také nesprávný issuer. Poslední dva kódy ani obecnou login chybu probe nepřijme.
+
+Po token requestu probe zapíše do job logu a místního `evidence/result.federation.json` pouze HTTP status, číselné `error_codes`, známou OAuth chybu `error`, GUID `trace_id` a `correlation_id` a výsledek kontroly. Nezapíše assertion, access token, `error_description` ani raw response. Diagnostiku zachová i při selhání; transportní a neplatné JSON odpovědi skončí chybou bez raw výjimky. Při neúspěchu zkontroluj job log; úspěšný `result.json` nesmí vzniknout. Workflow kvůli diagnostice nepotřebuje změnu ani nové oprávnění.
+
+Workflow předá wrongSubject pouze client ID a tenant ID z variables stávajícího plan environmentu, při `schedule` z plan-drift environmentu. Přenos zajistí samostatný job `wrong_subject_identity` bez `Azure/login`, checkoutu, App klíčů a token permissions. `Azure/login` totiž maskuje client ID; GitHub pak může jeho job output potlačit jako možný secret. Metadata se nekódují ani neodmaskovávají. Samotný `wrong_subject` zůstává bez environmentu, aby testoval nesprávný OIDC subject, nikoli povolenou plan vazbu. Chybějící metadata kontrolu zastaví; nejsou důkazem odmítnutého subjectu.
+
+Při neshodě ponech Actions vypnuté a zachovej původní kandidát i neúspěšnou evidence. Lokální oprava vytvoří nový commit, kandidát a hash; nemění publikovaný kandidát ani živou důvěru. Samostatné schválení migrace musí určit osm starých a osm nových vazeb na stejných identitách, nový publication kandidát a nejvýše jeden nový G9 dispatch. Nesmí rozšířit issuer, audience, role, App permissions ani OAuth scopes. Změna subject mění i hashovaný název federated credential, proto samotné přepsání subject pod starým názvem veřejný bootstrap nepřijme. Migrace musí mít vlastní guard a readback; při nejasném zápisu nebo chybě musí zastavit bez automatického retry. G10 vyžaduje skutečný schedule nové schválené revize; G11 nadále vyžaduje lidské důkazy.
+
+| Krok | Průvodce ověří nebo vyžádá |
+|---|---|
+| G1–G2 | Ověřené předpoklady #10, schválení a izolovanou kopii kandidáta. |
+| G3–G4 | Souhlas s Azure a GitHub provisioningem; výstup odpovídá probe manifestům, nikoli fixture identitám z #10. |
+| G5–G6 | Ruční registraci čtyř Apps a klíčů, ověření credentials a zdrojů rulesetů, publikaci a ochranu `main`. Detail zděděných enterprise rulesetů zůstává nepokrytý. |
+| G7–G8 | Opakování obou bootstrapů beze změn a čtení skutečné bypass konfigurace vypnutého organizačního rulesetu. |
+| G9 | Běh z konkrétní `main`: API čtení, OIDC identity a state izolaci, nesprávný subject odmítnutý jako `AADSTS700213`. Apply identita pouze čte; nejdřív schvaluje platformní tým, pak security tým. |
+| G10 | Úspěšný skutečný `schedule` běh stejné revize v 02:17 UTC. Musí běžet plan a ruleset probe, nikoli apply. Ruční dispatch nestačí. |
+| G11 | Tvoje důkazy o review, PR původu, odmítnuté jiné větvi, obnovení po přerušení a rotaci klíče. |
+
+GitHub může scheduled run spustit později než v uvedený čas. Pokud G10 chybí, další kroky mohou získat důkazy, ale `AcceptancePassed` zůstane `false`. Průvodce stažené důkazy porovná s run ID, attempt, revizí a fingerprinty aktuálních klíčů. Každé stažení ukládá zvlášť; validované výsledky nahradí až po ověření všech požadovaných artefaktů. Chyba stažení ani vypršení sedmidenní retence nesmaže předchozí lokální důkazy, ale nedokončí nové ověření. Samotný zelený job nestačí.
+
+Kontrola izolace state nejdřív ověří čtení vlastního kontejneru `enterprise-baseline`. U čtení cizího `bootstrap-probe` zachytí nativní exit status Azure CLI hned po příkazu. Exit status `0` znamená chybu izolace, nikoli úspěch akceptace. Při nenulovém statusu provede ještě jeden přímý [List Blobs GET](https://learn.microsoft.com/en-us/rest/api/storageservices/list-blobs) s již získaným Storage tokenem ověřené phase identity. Cíl tvoří jen validovaný název účtu a pevná doména `blob.core.windows.net`; požadavek nepovoluje redirect ani retry a vrací nejvýše jeden záznam. Za důkaz odmítnutí oprávnění přijme pouze HTTP `403` a přesnou hlavičku [`x-ms-error-code: AuthorizationPermissionMismatch`](https://learn.microsoft.com/en-us/rest/api/storageservices/status-and-error-codes2). HTTP úspěch, jiný kód, chybějící nebo neplatná odpověď i síťová chyba kontrolu zastaví. Obecný `AuthorizationFailure` nestačí: [Azure CLI jej může spojit s omezením sítě](https://github.com/Azure/azure-cli/blob/dev/src/azure-cli/azure/cli/command_modules/storage/__init__.py). Text stderr ani lidská zpráva nejsou důkazem oprávnění.
+
+Každý zahájený negativní state probe zapíše `result.state-isolation.json` vedle `result.json` a stejný diagnostický JSON do logu. Záznam obsahuje jen verzi, fázi, klasifikaci výsledku, nativní exit status, HTTP status a známý strojový kód z pevného seznamu. Neznámé kódy nahradí `unrecognized`; neukládá stderr, response body, zprávy výjimek, tokeny ani klíče. Acceptance workflow nahraje pouze tyto dva deklarované soubory i při chybě a zachová sedmidenní retenci. Chyba před zahájením probe nemusí diagnostický soubor vytvořit. Samotná diagnostika nedokazuje úspěšnou fázi: `result.json` vznikne až po všech kontrolách a průvodce nadále vyžaduje skutečné důkazy všech požadovaných fází. Po úspěšné fázi script vrátí exit status `0`, aby očekávané nativní odmítnutí nezpůsobilo chybu celého `pwsh` kroku.
+
+Pro test rotace nejdřív vytvoř nový klíč jedné acceptance App. Zachovej starý klíč a nahraď její PEM v `$work\github-acceptance\keys\probe-<alias>.pem`. Spusť stejný příkaz; průvodce vyžádá skutečné datum, nahraje nový klíč a ověří nový běh. **Teprve potom** odvolej starý klíč v enterprise App settings. G11 se ptá na odvolání každého konkrétního App ID a fingerprintu. Nezaznamená hromadné odvolání na základě obecného potvrzení.
+
+Po přerušení spusť stejný příkaz se stejným `$work`, zdrojem a verzí. Průvodce znovu ověří prostředky a zachová rozpracovaný workflow run i pod `-Reconfirm`. Po nejasném výsledku dispatch requestu nejdřív hledá jeho unikátní identifikátor. Další dispatch vyžaduje potvrzení, že předchozí běh neexistuje. Neúspěšný běh oprav a znovu spusť v GitHubu jako další attempt. Po běhu průvodce nabídne odebrání scopes, které sám dočasně přidal.
+
+| Soubor v `$work\github-acceptance` | Účel |
+|---|---|
+| `release\`, `instance.yaml`, `setup-state.json` | Zafixovaný kandidát, samostatná konfigurace a stav obnovení. Případné `release-preparing\` dokončí další běh. |
+| `keys\`, `keys.json` | Privátní klíče, skutečná data vytvoření a termíny rotace. Nesmějí do zdrojového repozitáře ani do issue. |
+| `azure-bootstrap.json`, `bootstrap-resources.json` | Výstupy a inventory včetně prostředků, Apps a historie klíčů pro pozdější odstranění. |
+| `evidence\<runId>-<attempt>\`, `acceptance.json` | Stažené důkazy a lokální výsledek včetně ručních potvrzení; obsahují data instance. |
+| `issue-11-summary.md` | Redigovaný návrh komentáře bez cloudových identifikátorů a credentials. Před zveřejněním ho zkontroluj. |
+
+Průvodce nic nemaže, neposílá komentář a neuzavírá #11. Ponechá i vypnutý probe ruleset v inventory. `AcceptancePassed: true` vyžaduje `Ok` všech 11 kroků; přeskočení, odmítnutí, chyba nebo chybějící noční běh akceptaci nedokončí. Před produkčním nasazením musíš probe konfiguraci nahradit schváleným release přes PR a ověřit skutečné API operace, drift a nasazení produkčních modulů.
+
+Před uzavřením #11 ověř na skutečné GHE.com instanci:
+
+| Kontrola | Požadovaný výsledek |
+|---|---|
+| Příprava a opakování | `-ResourcesOnly` připraví organizaci, repozitář a týmy s vypnutými Actions. Přerušení další běh dokončí se stejným inventory. Druhý dokončený běh vrátí `HasChanges: false`. |
+| Vendoring a review | Repozitář obsahuje zafixovaný schválený acceptance kandidát a jeho konfiguraci. Přímý push do `main` neprojde. PR měnící App oprávnění neprojde bez platformního CODEOWNER a security review. GHE.com skutečně vynucuje beta `required_reviewers`, ne jen vrací přijatý request. |
+| Enterprise-owned Apps | Žádná ze čtyř Apps nemá přístup k repozitářům. Klíče běžného planu nemohou vydat write token. Běžný plan, apply a ruleset plan používají oddělené App identity a deklarované instalace. Zkušební tokeny po ověření již neplatí. |
+| Rozsah API | #11 ověřuje credential kontrakty, token issuer a read-only probe API. Potvrzení produkčního `githubAppAvailabilityVerified` musí později vycházet ze skutečných operací produkčních modulů. Probe čtení nenahrazuje custom patterns ani vytváření a změny prostředků. |
+| API rulesetů | Ruleset credential načte lokální organizační ruleset včetně kolekce `bypass_actors`; G8 použije vypnutý probe s neprázdnou bypass konfigurací. Nedostupný lokální detail zastaví bootstrap bez PAT nebo rozšíření oprávnění. Seznam zděděných enterprise rulesetů nedokazuje jejich detail ani bypass konfiguraci. |
+| Environmenty | PR plan platformního autora nečeká na review. `approve-apply` vyžaduje platformní tým a apply `enterprise-baseline` ještě security tým. Noční běžný a ruleset plan používají odlišné environmenty bez reviewerů, jen z `main`. |
+| Azure OIDC | Plan se přihlásí jen ze svých plan a drift environmentů. Apply se přihlásí jen ze svého apply environmentu. Jiný modul, fáze nebo gate environment nemá odpovídající subject. |
+| Teardown | `approve-teardown-platform` a `teardown` nemají secrets, variables ani federated credentials. V #22 musí druhý gate záviset na prvním; uvedení dvou reviewerů v jediném environmentu by obě schválení nevynutilo. |
+| Rotace | Platformní tým eviduje termín nejvýše 90 dní po vytvoření klíče. Nový klíč funguje ve všech dotčených environment jobech před odvoláním starého. Inventory eviduje odvolání a odstranění ručně založených Apps. |
+
+Výsledek včetně data a konkrétních neprovedených kontrol zapiš do #11. Neuváděj enterprise slug, identifikátory tenantu, subscriptions, Apps, instalací ani obsah credentials. Offline testy ani odkazy na veřejnou dokumentaci nenahrazují toto ověření.
 
 ## Fáze D: akceptace přírůstku 1
 

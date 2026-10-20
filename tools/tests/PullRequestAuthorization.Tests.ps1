@@ -132,12 +132,15 @@ Describe 'Deployment authorization' {
                 -Ref refs/heads/feature -Sha ('c' * 40) } | Should -Throw '*protected main*'
     }
 
-    It 'runs plan for reviewed imports after they merge to immutable main' {
+    It 'authorizes immutable main for reviewed imports and nightly plans: <Event>' -ForEach @(
+        @{ Event = 'push' }
+        @{ Event = 'schedule' }
+    ) {
         $path = Join-Path $TestDrive 'merge.json'
         '{}' | Set-Content -LiteralPath $path
         Mock Invoke-RestMethod { throw 'Main must not require PR membership lookup.' }
 
-        $result = & $authorize -EventPath $path -EventName push -Repository platform/instance `
+        $result = & $authorize -EventPath $path -EventName $Event -Repository platform/instance `
             -Ref refs/heads/main -Sha ('c' * 40)
 
         $result.Allowed | Should -BeTrue

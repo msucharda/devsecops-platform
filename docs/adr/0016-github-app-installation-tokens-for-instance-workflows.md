@@ -19,9 +19,11 @@ Plan používá oprávnění ke čtení. GitHub App permission mapování ověř
 | Čtení code security configurations, jejich defaults a připojených repozitářů | `read` |
 | Čtení Actions permissions a custom patterns | `read` |
 | Změny těchto nastavení | `write` |
-| Seznam a detail organizačních rulesetů, včetně bypass aktérů | `write` |
+| Seznam organizačních rulesetů a detail lokálních organizačních rulesetů, včetně bypass aktérů | `write` |
 
 Pro rulesety přijímáme výjimku: samostatný plan job smí použít `Organization Administration: write` pro dané organizace. Toto oprávnění umožňuje také změny Actions policy a code security configurations; nejde o token omezený na čtení rulesetů. Privátní klíč ani token tohoto jobu nesmějí dostat ostatní plan joby. Oddělení musí platit také při noční detekci driftu.
+
+Seznam organizačních rulesetů může obsahovat zděděné enterprise rulesety. Organizační endpoint poskytuje úplný detail pouze pro lokální ruleset se `source_type: Organization` a `source` odpovídajícím cílové organizaci. Token issuer musí odmítnout chybějící, neznámou nebo neshodnou dvojici `source_type` a `source`. U zděděného rulesetu smí přijmout pouze `source_type: Enterprise` a deklarovaný enterprise jako `source`; počet těchto rulesetů musí vrátit a vypsat jako neověřený detail. Tento výsledek nedokazuje bypass konfiguraci zděděného enterprise rulesetu. Akceptace #11 ověří úplný detail lokálního rulesetu samostatným probe v G8.
 
 PR plan běží automaticky jen pro PR oprávněných členů platformního týmu v repozitáři instance. Platí to i pro ruleset job s širšími oprávněními, bez dalšího schválení security týmem. Tím výslovně důvěřujeme těmto autorům i s pravomocí měnit organizační nastavení. PR z forků, od jiných autorů nebo vytvořené App nesmějí přihlašovací údaje automaticky získat. Autorizace musí předcházet předání přihlašovacích údajů a nesmí záviset na kontrole, kterou může neautorizovaný PR změnit.
 

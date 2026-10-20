@@ -31,11 +31,61 @@ function Get-PlatformYaml {
     return $documents[0]
 }
 
+function Get-PlatformJsonSchema {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param([Parameter(Mandatory)][ValidateSet('instance', 'module')][string] $Name)
+
+    $schemas = @{
+        module = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/module.schema.json') -Raw -ErrorAction Stop |
+            ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    }
+    if ($Name -ceq 'instance') {
+        $schemas['instance'] = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/instance.schema.json') -Raw -ErrorAction Stop |
+            ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        if ($schemas['instance'].definitions.Contains('platformModuleSchema')) {
+            throw 'The instance schema uses the reserved platformModuleSchema definition.'
+        }
+    }
+    $rewrite = {
+        param($Value, [string] $Source)
+        if ($Value -is [System.Collections.IDictionary]) {
+            foreach ($keyword in @('$id', '$anchor', '$dynamicRef', '$recursiveRef')) {
+                if ($Value.Contains($keyword)) { throw "Unsupported schema keyword '$keyword' in the local $Source schema." }
+            }
+            if ($Value.Contains('$ref')) {
+                $reference = $Value['$ref']
+                if ($reference -isnot [string] -or $reference -cnotmatch '^(module\.schema\.json)?#/definitions/([A-Za-z][A-Za-z0-9]*)$') {
+                    throw "Unsupported schema reference in the local $Source schema."
+                }
+                $target = if ($Matches[1]) { 'module' } else { $Source }
+                $definition = $Matches[2]
+                if (-not $schemas[$target].definitions.Contains($definition)) {
+                    throw "Missing schema definition '$definition' in the local $target schema."
+                }
+                $prefix = if ($Name -ceq 'instance' -and $target -ceq 'module') { '#/definitions/platformModuleSchema' } else { '#' }
+                $Value['$ref'] = "$prefix/definitions/$definition"
+            }
+            foreach ($key in @($Value.PSBase.Keys)) { & $rewrite $Value[$key] $Source }
+        }
+        elseif ($Value -is [System.Collections.IList]) {
+            foreach ($item in $Value) { & $rewrite $item $Source }
+        }
+    }
+    foreach ($source in @($schemas.Keys)) { & $rewrite $schemas[$source] $source }
+    if ($Name -ceq 'instance') {
+        # Rebase the sibling's own references as well as references from the instance schema.
+        $schemas['instance'].definitions['platformModuleSchema'] = $schemas['module']
+    }
+    return $schemas[$Name]
+}
+
 function Get-PlatformModuleGraph {
     [CmdletBinding()]
     [OutputType([System.Collections.IDictionary])]
     param([Parameter(Mandatory)][string] $ModulesPath)
 
+    $schema = ConvertTo-Json -InputObject (Get-PlatformJsonSchema -Name module) -Depth 100
     $modules = [ordered]@{}
     $directories = @(Get-ChildItem -LiteralPath $ModulesPath -Directory -ErrorAction Stop)
     [string[]] $names = @($directories | ForEach-Object { $_.Name })
@@ -48,7 +98,7 @@ function Get-PlatformModuleGraph {
         $manifest = Get-PlatformYaml -Path $manifestPath
         try {
             $valid = Test-Json -Json (ConvertTo-Json -InputObject $manifest -Depth 100 -Compress) `
-                -SchemaFile (Join-Path $PSScriptRoot '../schemas/module.schema.json') -ErrorAction Stop
+                -Schema $schema -ErrorAction Stop
         }
         catch {
             throw "Invalid module manifest '$manifestPath': $($_.Exception.Message)"
@@ -172,7 +222,7 @@ function Get-PlatformAppScope {
             $scope[$kind] = $parameters[$parameter]
         }
     }
-    $schema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/module.schema.json') -Raw | ConvertFrom-Json -AsHashtable
+    $schema = Get-PlatformJsonSchema -Name module
     $resourceSchema = $schema.definitions.githubAppResources
     $resourceSchema.definitions = @{ githubOrganization = $schema.definitions.githubOrganization }
     $valid = Test-Json -Json (ConvertTo-Json -InputObject $scope -Depth 100) `
@@ -197,7 +247,8 @@ function Get-PlatformInstance {
     [OutputType([System.Collections.IDictionary])]
     param(
         [Parameter(Mandatory)][string] $Path,
-        [Parameter(Mandatory)][System.Collections.IDictionary] $Modules
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Modules,
+        [switch] $AllowUnboundApps
     )
 
     $instance = Get-PlatformYaml -Path $Path
@@ -207,8 +258,7 @@ function Get-PlatformInstance {
         }
     }
     if ($instance['modules'] -is [System.Collections.IDictionary]) {
-        $manifestSchema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/module.schema.json') -Raw |
-            ConvertFrom-Json -AsHashtable
+        $manifestSchema = Get-PlatformJsonSchema -Name module
         $nameSchema = ConvertTo-Json -InputObject $manifestSchema['definitions']['moduleName'] -Compress
         foreach ($name in $instance['modules'].PSBase.Keys) {
             if (-not (Test-Json -Json (ConvertTo-Json -InputObject $name -Compress) -Schema $nameSchema -ErrorAction SilentlyContinue)) {
@@ -216,20 +266,36 @@ function Get-PlatformInstance {
             }
         }
     }
+    $schema = Get-PlatformJsonSchema -Name instance
+    $schemaJson = ConvertTo-Json -InputObject $schema -Depth 100
+    $instanceJson = ConvertTo-Json -InputObject $instance -Depth 100 -Compress
     $validationErrors = @()
-    $valid = Test-Json -Json (ConvertTo-Json -InputObject $instance -Depth 100 -Compress) `
-        -SchemaFile (Join-Path $PSScriptRoot '../schemas/instance.schema.json') `
+    $valid = Test-Json -Json $instanceJson -Schema $schemaJson `
         -ErrorAction SilentlyContinue -ErrorVariable validationErrors
     if (-not $valid) {
-        $messages = foreach ($errorRecord in $validationErrors) {
+        $messages = @(foreach ($errorRecord in $validationErrors) {
             $errorRecord.Exception.Message -replace "at '(/[^']*)'", {
                 "at '$" + $_.Groups[1].Value.TrimEnd('/').Replace('/', '.') + "'"
+            }
+        })
+        if ($messages.Count -eq 0) {
+            # PowerShell 7.6 can reject nested data without emitting its validation errors.
+            $options = [Json.Schema.EvaluationOptions]::new()
+            $options.OutputFormat = [Json.Schema.OutputFormat]::List
+            $evaluation = [Json.Schema.JsonSchema]::FromText($schemaJson).Evaluate(
+                [System.Text.Json.Nodes.JsonNode]::Parse($instanceJson), $options)
+            $messages = @(foreach ($result in @($evaluation) + @($evaluation.Details)) {
+                if ($result.HasErrors) {
+                    $location = '$' + $result.InstanceLocation.ToString().Replace('/', '.')
+                    foreach ($message in $result.Errors.Values) { "$message at '$location'" }
+                }
+            })
+            if ($messages.Count -eq 0) {
+                throw "Invalid instance configuration '$Path': Test-Json rejected the data without diagnostic details."
             }
         }
         throw "Invalid instance configuration '$Path': $($messages -join '; ')"
     }
-    $schema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/instance.schema.json') -Raw |
-        ConvertFrom-Json -AsHashtable
     $checkParameter = {
         param($Value, [string] $ParameterPath)
         if ($Value -is [System.Collections.IDictionary]) {
@@ -309,21 +375,28 @@ function Get-PlatformInstance {
             $binding = $instance['credentials'][$name][$phase]
             $bindingPath = "$.credentials.$name.$phase"
             $environment = $binding['environment']
-            if ($environment -in @('approve-apply', 'pr-authorization')) {
+            if ($environment -in @('approve-apply', 'pr-authorization', 'approve-teardown-platform', 'teardown')) {
                 throw "Invalid instance configuration '$Path': $bindingPath.environment is reserved for a workflow gate."
             }
             $explicit = $name -cin $configuredModules
-            if ($environmentBindings.ContainsKey($environment)) {
-                $previous = $environmentBindings[$environment]
-                $invalidPath = if ($explicit -or -not $previous['explicit']) { $bindingPath } else { $previous['path'] }
-                throw "Invalid instance configuration '$Path': $invalidPath.environment shares an environment with another module or phase."
+            $environmentNames = @($environment)
+            if ($phase -ne 'apply') { $environmentNames += "$environment-drift" }
+            foreach ($environmentName in $environmentNames) {
+                if ($environmentName.Length -gt 255) {
+                    throw "Invalid instance configuration '$Path': $bindingPath.environment exceeds 255 characters including the drift suffix."
+                }
+                if ($environmentBindings.ContainsKey($environmentName)) {
+                    $previous = $environmentBindings[$environmentName]
+                    $invalidPath = if ($explicit -or -not $previous['explicit']) { $bindingPath } else { $previous['path'] }
+                    throw "Invalid instance configuration '$Path': $invalidPath.environment shares an environment with another module or phase."
+                }
+                $environmentBindings[$environmentName] = @{ path = $bindingPath; explicit = $explicit }
             }
-            $environmentBindings[$environment] = @{ path = $bindingPath; explicit = $explicit }
             $declaration = $Modules[$name].permissions.githubApp[$phase]
             if ($phase -eq 'rulesetPlan' -and -not $declaration) {
                 throw "Invalid instance configuration '$Path': $bindingPath requires a declared ruleset exception."
             }
-            if ($declaration -and $name -cin $selected -and -not $binding.Contains('githubApp')) {
+            if ($declaration -and $name -cin $selected -and -not $binding.Contains('githubApp') -and -not $AllowUnboundApps) {
                 throw "Invalid instance configuration '$Path': $bindingPath.githubApp is required by the module manifest."
             }
             if ($binding.Contains('githubApp')) {
@@ -341,6 +414,10 @@ function Get-PlatformInstance {
                 }
                 if ($declaration -and $name -cin $selected) {
                     $resources = Get-PlatformAppScope -Instance $instance -Module $name -Declaration $declaration
+                    if (-not $resources.Contains('repositories') -and $identity['resources'].Contains('repositories') -and
+                        $identity['resources']['repositories'].Count -eq 0) {
+                        $resources['repositories'] = @{}
+                    }
                     if ((ConvertTo-PlatformCanonicalJson $resources) -cne (ConvertTo-PlatformCanonicalJson $identity['resources'])) {
                         throw "Invalid instance configuration '$Path': $bindingPath.githubApp resources differ from the module's target resources."
                     }
@@ -423,4 +500,27 @@ function Assert-PlatformManualPrerequisite {
     }
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner
+function Assert-PlatformBootstrapRequest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Uri,
+        [Parameter(Mandatory)][string] $Method,
+        [System.Collections.IDictionary] $Body,
+        [switch] $NoChanges,
+        [switch] $ReadOnlyPost,
+        [ValidateSet('Read', 'Reconcile', 'TokenIssue', 'TokenRevoke')][string] $Kind = 'Read',
+        [scriptblock] $RequestPolicy
+    )
+
+    if ($NoChanges -and $Method -cne 'GET' -and -not ($Method -ceq 'POST' -and $ReadOnlyPost)) {
+        throw "NoChanges refuses $Method '$Uri' before sending the request."
+    }
+    if ($RequestPolicy) {
+        $decision = @(& $RequestPolicy ([pscustomobject]@{ Uri = $Uri; Method = $Method; Body = $Body; Kind = $Kind }))
+        if ($decision.Count -ne 1 -or $decision[0] -isnot [bool] -or -not $decision[0]) {
+            throw "The bootstrap request policy did not authorize $Method '$Uri'."
+        }
+    }
+}
+
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest

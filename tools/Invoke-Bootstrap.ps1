@@ -4,14 +4,19 @@
 param(
     [Parameter(Mandatory)][string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
+    [Parameter(DontShow)][switch] $AllowUnboundApps,
     # Read-only report used by Test-BootstrapPrerequisites.ps1; stops before the first change.
-    [Parameter(DontShow)][switch] $Preflight
+    [Parameter(DontShow)][switch] $Preflight,
+    [switch] $NoChanges,
+    [scriptblock] $RequestPolicy
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
+if ($NoChanges -and $Preflight) { throw 'NoChanges executes the real bootstrap; it cannot be combined with Preflight.' }
+$requestPolicyCallback = $RequestPolicy
 $checkResults = [System.Collections.Generic.List[object]]::new()
 $checkTitles = @{}
 $checkWarnings = [System.Collections.Generic.List[string]]::new()
@@ -121,11 +126,19 @@ function Invoke-BootstrapRequest {
         SkipHttpErrorCheck = $true
         MaximumRedirection = 0
         TimeoutSec = 60
+        MaximumRetryCount = 0
     }
     if ($Body) {
         $arguments.Body = ConvertTo-Json -InputObject $Body -Depth 100 -Compress
     }
-    for ($attempt = 0; $attempt -lt 12; $attempt++) {
+    $attemptLimit = if ($NoChanges) { 1 } else { 12 }
+    for ($attempt = 0; $attempt -lt $attemptLimit; $attempt++) {
+        $readOnlyPost = $Method -ceq 'POST' -and (
+            ($Uri -ceq "https://$githubApi/graphql" -and $Body -and $Body['query'] -ceq $ownerQuery) -or
+            ($address.Host -ceq 'management.azure.com' -and $address.AbsolutePath -ceq '/providers/Microsoft.Management/getEntities' -and -not $Body))
+        $kind = if ($Method -ceq 'GET' -or $readOnlyPost) { 'Read' } else { 'Reconcile' }
+        Assert-PlatformBootstrapRequest -Uri $Uri -Method $Method -Body $Body -NoChanges:$NoChanges `
+            -ReadOnlyPost:$readOnlyPost -Kind $kind -RequestPolicy $requestPolicyCallback
         $response = Invoke-WebRequest @arguments
         if ($response.StatusCode -eq 404 -and $AllowNotFound -and $Method -eq 'GET') {
             return $null
@@ -146,7 +159,7 @@ function Invoke-BootstrapRequest {
         if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) { return $data }
         $replicating = $WaitForPrincipal -and $data.Contains('error') -and
             $data['error']['code'] -in @('PrincipalNotFound', 'Request_ResourceNotFound', 'ResourceNotFound')
-        if ($attempt -lt 11 -and ($replicating -or $transientResponse)) {
+        if ($attempt -lt ($attemptLimit - 1) -and ($replicating -or $transientResponse)) {
             Write-Verbose "Retrying $Method '$Uri' after HTTP $($response.StatusCode)."
             Start-Sleep -Seconds 5
             continue
@@ -326,7 +339,7 @@ function Get-BootstrapIdentityGrant {
 }
 
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
-$instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
+$instance = Get-PlatformInstance -Path $InstancePath -Modules $modules -AllowUnboundApps:$AllowUnboundApps
 if (-not $Preflight) {
     Assert-PlatformManualPrerequisite -Instance $instance
 }

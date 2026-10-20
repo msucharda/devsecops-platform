@@ -1,0 +1,9 @@
+name: bootstrap-probe
+description: Acceptance-only state isolation target; not a production module.
+prerequisites: []
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp: {}
+  adminPat: []
