@@ -10,7 +10,11 @@ param(
     [string] $AuthorizationApp,
     [string] $AppKeysPath,
     [switch] $AcceptanceOnly,
-    [switch] $ResourcesOnly
+    [switch] $ResourcesOnly,
+    [switch] $NoChanges,
+    [scriptblock] $RequestPolicy,
+    [scriptblock] $TokenLifecycle,
+    [switch] $VerifyTokenRevocation
 )
 
 Set-StrictMode -Version Latest
@@ -113,6 +117,7 @@ function Save-GitHubBootstrapInventory {
     [CmdletBinding()]
     param()
 
+    if ($NoChanges) { return }
     $content = (ConvertTo-PlatformCanonicalJson $inventory) + "`n"
     if (-not (Test-Path -LiteralPath $inventoryFile) -or [IO.File]::ReadAllText($inventoryFile) -cne $content) {
         $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($inventoryFile))
@@ -151,6 +156,11 @@ function Invoke-GitHubBootstrapApi {
     $isTeamRepositoryPermissionRead = $Method -eq 'GET' -and $Path -match '^/orgs/[^/]+/teams/[^/]+/repos/[^/]+/[^/]+$'
     if ($isTeamRepositoryPermissionRead) { $arguments.Headers.Accept = 'application/vnd.github.v3.repository+json' }
     if ($Body) { $arguments.Body = ConvertTo-Json -InputObject $Body -Depth 100 -Compress }
+    $arguments.MaximumRetryCount = 0
+    $readOnlyPost = $Path -ceq '/graphql' -and $Method -ceq 'POST' -and $Body -and $Body['query'] -ceq $enterpriseQuery
+    $kind = if ($Method -ceq 'GET' -or $readOnlyPost) { 'Read' } else { 'Reconcile' }
+    Assert-PlatformBootstrapRequest -Uri $arguments.Uri -Method $Method -Body $Body -NoChanges:$NoChanges `
+        -ReadOnlyPost:$readOnlyPost -Kind $kind -RequestPolicy $RequestPolicy
     $response = Invoke-WebRequest @arguments
     if ($AllowNotFound -and $Method -eq 'GET' -and $response.StatusCode -eq 404) { return $null }
     if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
@@ -321,6 +331,9 @@ function Invoke-GitHubBootstrapAzure {
         SkipHttpErrorCheck = $true; MaximumRedirection = 0; TimeoutSec = 60
     }
     if ($Body) { $arguments.Body = ConvertTo-Json -InputObject $Body -Depth 100 -Compress }
+    $arguments.MaximumRetryCount = 0
+    Assert-PlatformBootstrapRequest -Uri $arguments.Uri -Method $Method -Body $Body -NoChanges:$NoChanges `
+        -Kind $(if ($Method -ceq 'GET') { 'Read' } else { 'Reconcile' }) -RequestPolicy $RequestPolicy
     $response = Invoke-WebRequest @arguments
     if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
         throw "Azure federation $Method $Path failed (HTTP $($response.StatusCode)). $($response.Content)"
@@ -717,7 +730,8 @@ if (-not $ResourcesOnly) {
         $privateKey = Get-Content -LiteralPath $keyPath -Raw
         $result = & (Join-Path $PSScriptRoot 'New-PlatformGitHubToken.ps1') -BootstrapApp $app `
             -PrivateKey $privateKey -Phase $(if ($binding['phase'] -eq 'authorization') { 'plan' } else { $binding['phase'] }) `
-            -Authorization:($binding['phase'] -eq 'authorization') -ValidateOnly -ApiUrl $api
+            -Authorization:($binding['phase'] -eq 'authorization') -ValidateOnly -ApiUrl $api `
+            -RequestPolicy $RequestPolicy -TokenLifecycle $TokenLifecycle -VerifyRevocation:$VerifyTokenRevocation
         if (-not $result.Verified) { throw "App '$alias' verification did not complete." }
         $rsa = [Security.Cryptography.RSA]::Create()
         try {
@@ -771,6 +785,7 @@ if (-not $ResourcesOnly) {
         $secrets = @(Get-GitHubBootstrapCollection -Path "$path/secrets" -Property 'secrets')
         if (-not @($secrets | Where-Object { $_['name'] -ceq 'PLATFORM_APP_PRIVATE_KEY' }).Count -or
             $fingerprint.Count -ne 1 -or $fingerprint[0]['value'] -cne $verified['fingerprint']) {
+            if ($NoChanges) { throw "NoChanges refuses to encrypt or upload a changed App key for '$environment'." }
             $publicKey = Invoke-GitHubBootstrapApi -Path "$path/secrets/public-key"
             # gh uses libsodium sealed boxes; the private key is stdin, never a process argument or file.
             $encrypted = ($verified['key'] | & gh secret set PLATFORM_APP_PRIVATE_KEY --repo "https://$($connection['githubHost'])/$repository" `
@@ -804,7 +819,7 @@ if (-not $ResourcesOnly) {
                 }
                 if ($workflow['path'] -ceq $acceptancePath) { continue }
                 if ($workflow['state'] -ceq 'active') {
-                    if (-not $isolationAttempted) {
+                    if (-not $isolationAttempted -and -not $NoChanges) {
                         $isolationAttempted = $true
                         Disable-GitHubBootstrapActionExecution
                     }
@@ -827,7 +842,7 @@ if (-not $ResourcesOnly) {
         }
         catch {
             $failure = $_
-            if (-not $isolationAttempted) {
+            if (-not $isolationAttempted -and -not $NoChanges) {
                 try { Disable-GitHubBootstrapActionExecution }
                 catch {
                     throw "Acceptance workflow isolation failed: $failure Repository Actions isolation also failed: $_"

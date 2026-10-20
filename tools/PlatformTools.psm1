@@ -500,4 +500,27 @@ function Assert-PlatformManualPrerequisite {
     }
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner
+function Assert-PlatformBootstrapRequest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Uri,
+        [Parameter(Mandatory)][string] $Method,
+        [System.Collections.IDictionary] $Body,
+        [switch] $NoChanges,
+        [switch] $ReadOnlyPost,
+        [ValidateSet('Read', 'Reconcile', 'TokenIssue', 'TokenRevoke')][string] $Kind = 'Read',
+        [scriptblock] $RequestPolicy
+    )
+
+    if ($NoChanges -and $Method -cne 'GET' -and -not ($Method -ceq 'POST' -and $ReadOnlyPost)) {
+        throw "NoChanges refuses $Method '$Uri' before sending the request."
+    }
+    if ($RequestPolicy) {
+        $decision = @(& $RequestPolicy ([pscustomobject]@{ Uri = $Uri; Method = $Method; Body = $Body; Kind = $Kind }))
+        if ($decision.Count -ne 1 -or $decision[0] -isnot [bool] -or -not $decision[0]) {
+            throw "The bootstrap request policy did not authorize $Method '$Uri'."
+        }
+    }
+}
+
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest

@@ -12,12 +12,19 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$')][string] $VendoringRepository,
     [switch] $ReadOnlySource,
     [string] $EnvironmentPath = $env:GITHUB_ENV,
-    [string] $ApiUrl = $env:GITHUB_API_URL
+    [string] $ApiUrl = $env:GITHUB_API_URL,
+    [scriptblock] $RequestPolicy,
+    [scriptblock] $TokenLifecycle,
+    [switch] $VerifyRevocation
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
+if (($TokenLifecycle -or $VerifyRevocation) -and -not $ValidateOnly) {
+    throw 'Token lifecycle supervision and revocation proof require ValidateOnly.'
+}
+$requestPolicyCallback = $RequestPolicy
 
 function Invoke-GitHubAppRequest {
     [CmdletBinding()]
@@ -38,7 +45,10 @@ function Invoke-GitHubAppRequest {
         }
         MaximumRedirection = 0
         TimeoutSec = 60
+        MaximumRetryCount = 0
     }
+    $kind = if ($Method -ceq 'POST') { 'TokenIssue' } elseif ($Method -ceq 'DELETE') { 'TokenRevoke' } else { 'Read' }
+    Assert-PlatformBootstrapRequest -Uri $arguments.Uri -Method $Method -Body $Body -Kind $kind -RequestPolicy $requestPolicyCallback
     if ($Body) {
         $arguments.Body = ConvertTo-Json -InputObject $Body -Depth 100 -Compress
         $arguments.ContentType = 'application/json'
@@ -52,6 +62,48 @@ function Invoke-GitHubAppRequest {
     catch {
         throw "GitHub App API $Method $Path failed. Verify GHE.com API availability and declared permissions. $($_.Exception.Message)"
     }
+}
+
+function Send-GitHubAppTokenEvent {
+    [CmdletBinding()]
+    param([string] $EventName, [string] $Token)
+
+    if ($TokenLifecycle) {
+        $decision = @(& $TokenLifecycle ([pscustomobject]@{
+            Event = $EventName; Token = $Token; ApiUrl = $ApiUrl; AppId = $expected['appId']
+            RevocationProofRequired = [bool] $VerifyRevocation
+            TokenSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Token))).ToLowerInvariant()
+        }))
+        if ($decision.Count -ne 1 -or $decision[0] -isnot [bool] -or -not $decision[0]) {
+            throw "The token lifecycle supervisor did not acknowledge '$EventName'."
+        }
+    }
+}
+
+function Revoke-GitHubAppValidationToken {
+    [CmdletBinding()]
+    param([string] $Token)
+
+    if (-not $revocationAttempts.Add($Token)) { throw 'Token revocation was already attempted; no blind retry.' }
+    Send-GitHubAppTokenEvent -EventName Revoking -Token $Token
+    if ($VerifyRevocation) {
+        $uri = "$($ApiUrl.TrimEnd('/'))/installation/token"
+        Assert-PlatformBootstrapRequest -Uri $uri -Method DELETE -Kind TokenRevoke -RequestPolicy $requestPolicyCallback
+        $headers = @{ Authorization = "Bearer $Token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
+        $reply = Invoke-WebRequest -Uri $uri -Method DELETE -Headers $headers -SkipHttpErrorCheck `
+            -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
+        if ($reply.StatusCode -ne 204) { throw 'Installation token revocation did not return HTTP 204; no retry.' }
+        $uri = "$($ApiUrl.TrimEnd('/'))/installation/repositories?per_page=1"
+        Assert-PlatformBootstrapRequest -Uri $uri -Method GET -Kind Read -RequestPolicy $requestPolicyCallback
+        $reply = Invoke-WebRequest -Uri $uri -Method GET -Headers $headers -SkipHttpErrorCheck `
+            -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
+        if ($reply.StatusCode -ne 401) { throw 'A revoked installation token was not rejected with HTTP 401; stop.' }
+        $script:revocationsVerified++
+    }
+    else {
+        $null = Invoke-GitHubAppRequest -Path '/installation/token' -Method DELETE -Token $Token
+    }
+    Send-GitHubAppTokenEvent -EventName Revoked -Token $Token
 }
 
 function ConvertTo-JwtSegment {
@@ -160,6 +212,8 @@ finally {
 $jwt = "$unsigned.$(ConvertTo-JwtSegment $signature)"
 if (-not $ValidateOnly) { Write-Information "::add-mask::$jwt" -InformationAction Continue }
 $tokens = @{}
+$revocationAttempts = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+$revocationsVerified = 0
 $inheritedRulesetsNotDetailValidated = 0
 try {
     $app = Invoke-GitHubAppRequest -Path '/app' -Token $jwt
@@ -200,6 +254,7 @@ try {
             -Token $jwt -Body $tokenRequest
         if (-not $issued['token']) { throw "GitHub did not issue an installation token for '$organization'." }
         $tokens[$organization] = $issued['token']
+        Send-GitHubAppTokenEvent -EventName Issued -Token $issued['token']
         if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }
         Assert-AppPermission -Actual $issued['permissions']
         if ($selected -or $Authorization -or $noRepositoryAccess) {
@@ -254,7 +309,7 @@ try {
             Write-Warning "$inheritedRulesetsNotDetailValidated inherited enterprise $rulesetNoun not detail-validated; only local organization rulesets were checked for complete bypass configuration."
         }
         foreach ($token in $tokens.PSBase.Values) {
-            $null = Invoke-GitHubAppRequest -Path '/installation/token' -Method DELETE -Token $token
+            Revoke-GitHubAppValidationToken -Token $token
         }
         $tokens.Clear()
         return [pscustomobject]@{
@@ -262,6 +317,7 @@ try {
             Installations = @($installations | ForEach-Object { [string] $_['id'] })
             Verified = $true
             InheritedRulesetsNotDetailValidated = $inheritedRulesetsNotDetailValidated
+            RevocationsVerified = $revocationsVerified
         }
     }
     $json = ConvertTo-Json -InputObject $tokens -Depth 100 -Compress
@@ -275,7 +331,8 @@ try {
 catch {
     $failure = $_
     foreach ($token in $tokens.PSBase.Values) {
-        try { $null = Invoke-GitHubAppRequest -Path '/installation/token' -Method DELETE -Token $token }
+        if ($revocationAttempts.Contains($token)) { continue }
+        try { Revoke-GitHubAppValidationToken -Token $token }
         catch { Write-Warning "Failed to revoke an installation token after issuance failed: $($_.Exception.Message)" }
     }
     throw $failure

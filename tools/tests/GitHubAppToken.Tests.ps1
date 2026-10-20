@@ -65,6 +65,71 @@ Describe 'Enterprise App key and installation token isolation' {
         }
     }
 
+    It 'registers validation tokens before use and confirms revocation rejection without exposing the token' -Tag 'Resume' {
+        $events = [Collections.Generic.List[string]]::new()
+        $lifecycle = {
+            param($LifecycleEvent)
+            $events.Add($LifecycleEvent.Event)
+            $LifecycleEvent.Token | Should -BeExactly 'fake-installation-token'
+            $LifecycleEvent.RevocationProofRequired | Should -BeTrue
+            return $true
+        }.GetNewClosure()
+        Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = $(if ($Method -eq 'DELETE') { 204 } else { 401 }) } }
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ members = 'read' }
+            resources = @{ organizations = @('platform'); repositories = @{} }
+        }
+
+        $result = & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -TokenLifecycle $lifecycle -VerifyRevocation
+
+        $result.Verified | Should -BeTrue
+        $result.RevocationsVerified | Should -Be 1
+        @($events) | Should -Be @('Issued', 'Revoking', 'Revoked')
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/installation/repositories*' }
+    }
+
+    It 'revokes a captured token when its supervisor rejects registration' -Tag 'Resume' {
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ members = 'read' }; resources = @{ organizations = @('platform'); repositories = @{} }
+        }
+        $lifecycle = { param($LifecycleEvent) if ($LifecycleEvent.Event -ceq 'Issued') { throw 'Supervisor registration failed.' }; return $true }
+
+        { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -TokenLifecycle $lifecycle } | Should -Throw '*Supervisor registration failed*'
+
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'does not retry an ambiguous validation-token revocation' -Tag 'Resume' {
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ members = 'read' }; resources = @{ organizations = @('platform'); repositories = @{} }
+        }
+        Mock Invoke-WebRequest { throw 'Simulated response loss.' }
+
+        { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -VerifyRevocation } | Should -Throw '*Simulated response loss*'
+
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'rejects a successful revocation response without a subsequent HTTP 401 proof' -Tag 'Resume' {
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ members = 'read' }; resources = @{ organizations = @('platform'); repositories = @{} }
+        }
+        Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = $(if ($Method -eq 'DELETE') { 204 } else { 200 }) } }
+
+        { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test -VerifyRevocation } | Should -Throw '*not rejected*HTTP 401*'
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
     It 'issues a read-only module token map with <Selection> repository selection' -ForEach @(
         @{ Selection = 'all' }
         @{ Selection = 'selected' }

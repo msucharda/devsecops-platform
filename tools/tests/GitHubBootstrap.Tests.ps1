@@ -347,6 +347,107 @@ Describe 'GitHub bootstrap public interface' {
         Test-Path -LiteralPath $inventory | Should -BeTrue
     }
 
+    It 'rejects missing GitHub resources before sending a mutation in no-change mode' -Tag 'NoChanges' {
+        $arguments.NoChanges = $true
+
+        { & $bootstrap @arguments } | Should -Throw '*NoChanges*POST*'
+        $cloud.writes.Count | Should -Be 0
+        Test-Path -LiteralPath $inventory | Should -BeFalse
+    }
+
+    It 'rejects <Drift> before mutating the existing instance in no-change mode' -Tag 'NoChanges' -ForEach @(
+        @{ Drift = 'environment'; Method = 'PUT' }
+        @{ Drift = 'variable'; Method = 'PATCH' }
+        @{ Drift = 'federation'; Method = 'PUT' }
+    ) {
+        $null = & $bootstrap @arguments
+        switch ($Drift) {
+            environment { $cloud.environments['/repos/demo-platform/instance/environments/approve-apply'].can_admins_bypass = $true }
+            variable { $cloud.variables['/repos/demo-platform/instance/environments/application-plan/variables/AZURE_CLIENT_ID'] = 'wrong-client' }
+            federation {
+                $fid = @($cloud.resources.Keys | Where-Object { $_ -like '*/federatedIdentityCredentials/*' })[0]
+                $cloud.resources.Remove($fid)
+            }
+        }
+        $before = (Get-FileHash $inventory).Hash
+        $cloud.writes.Clear()
+        $arguments.NoChanges = $true
+
+        { & $bootstrap @arguments } | Should -Throw "*NoChanges*$Method*"
+
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'keeps the recorded inventory unchanged on a successful no-change repeat' -Tag 'NoChanges' {
+        $null = & $bootstrap @arguments
+        $before = (Get-FileHash $inventory).Hash
+        $cloud.writes.Clear()
+        $arguments.NoChanges = $true
+
+        $result = & $bootstrap @arguments
+
+        $result.HasChanges | Should -BeFalse
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'supervises credential validation and verifies revocation during the actual no-change GitHub repeat' -Tag 'NoChanges' {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $before = (Get-FileHash $inventory).Hash
+        $cloud.writes.Clear()
+        $events = [Collections.Generic.List[string]]::new()
+        $operations = [Collections.Generic.List[string]]::new()
+        $arguments.NoChanges = $true
+        $arguments.VerifyTokenRevocation = $true
+        $arguments.TokenLifecycle = {
+            param($LifecycleEvent)
+            $events.Add($LifecycleEvent.Event)
+            return $true
+        }.GetNewClosure()
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation.Kind)
+            return $Operation.Kind -cne 'Reconcile'
+        }.GetNewClosure()
+        Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = 204 } } -ParameterFilter {
+            $Method -eq 'DELETE' -and $Uri -like '*/installation/token'
+        }
+        Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = 401 } } -ParameterFilter {
+            $Method -eq 'GET' -and $Uri -like '*/installation/repositories*'
+        }
+
+        $result = & $bootstrap @arguments
+
+        $result.HasChanges | Should -BeFalse
+        $result.CredentialsConfigured | Should -BeTrue
+        @($events) | Should -Be @('Issued', 'Revoking', 'Revoked')
+        @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 1
+        @($operations | Where-Object { $_ -ceq 'TokenRevoke' }).Count | Should -Be 1
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'leaves protective Actions containment to the controller after no-change workflow isolation fails' -Tag 'NoChanges' {
+        @{ kind = 'github-bootstrap-acceptance' } | ConvertTo-Json | Set-Content (Join-Path $release 'bootstrap-acceptance.json')
+        $arguments.ResourcesOnly = $false
+        $arguments.AcceptanceOnly = $true
+        Copy-Item -LiteralPath (Join-Path $tools 'acceptance/github/bootstrap-acceptance.yml') `
+            -Destination (Join-Path $release 'templates/instance/.github/workflows/bootstrap-acceptance.yml')
+        $null = & $bootstrap @arguments
+        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state = 'active'
+        $cloud.writes.Clear()
+        $arguments.NoChanges = $true
+
+        try { $null = & $bootstrap @arguments; throw 'Expected no-change rejection.' }
+        catch {
+            $_.Exception.Message | Should -Match '^NoChanges refuses PUT'
+            $_.Exception.Message | Should -Not -Match 'Repository Actions isolation also failed'
+        }
+        $cloud.writes.Count | Should -Be 0
+    }
+
     It 'binds each Azure phase only to its protected environments and keeps both teardown gates credential-free' {
         & $bootstrap @arguments | Out-Null
 
