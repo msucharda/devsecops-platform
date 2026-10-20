@@ -93,6 +93,11 @@ jobs:
         run: |
           terraform -chdir="$TF_ROOT" init -backend=false -input=false
           terraform -chdir="$TF_ROOT" validate
+      - name: Terraform test
+        run: |
+          if [ -d "$TF_ROOT/tests" ]; then
+            terraform -chdir="$TF_ROOT" test
+          fi
       - name: TFLint
         run: |
           tflint --chdir="$TF_ROOT" --init

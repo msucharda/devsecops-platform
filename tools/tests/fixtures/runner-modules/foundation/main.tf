@@ -34,3 +34,7 @@ output "primary_region" {
 output "prerequisite_count" {
   value = length(var.prerequisites)
 }
+
+output "entra_application" {
+  value = try(var.instance.entra.enterpriseApplicationObjectId, "none")
+}

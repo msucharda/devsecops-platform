@@ -137,7 +137,7 @@ $arguments = @{
 
 ### Příprava registrace Apps
 
-`-ResourcesOnly` vytvoří `{name}-platform`, soukromý repozitář `instance`, týmy `platform` a `security`, environmenty a OIDC vazby. Spouštějící managed user musí být enterprise owner; při inicializaci ho bootstrap přidá do obou týmů. Toto členství nahradí propojení se skupinami Entra ID v `emu-identity`. Po publikaci instance bootstrap přímé členství znovu neobnovuje.
+`-ResourcesOnly` vytvoří `{name}-platform`, soukromý repozitář `instance`, týmy `platform` a `security`, environmenty a OIDC vazby. Spouštějící managed user musí být enterprise owner; při inicializaci ho bootstrap přidá do obou týmů. Toto členství nahradí propojení se skupinami Entra ID. Propojení provede platformní tým v ručním kroku `link-organization-teams` modulu `emu-identity`. Po publikaci instance bootstrap přímé členství znovu neobnovuje.
 
 Repozitář zatím obsahuje jen inicializační commit GitHubu, bez workflow instance, a má vypnuté Actions. Bootstrap uloží `initializationPending=true` před požadavkem na vytvoření repozitáře. Pokud GitHub repozitář vytvoří, ale odpověď se ztratí, další běh se stejným inventory převezme tento repozitář, vypne Actions a načte jeho seed commit; neposílá další create request. Pokud vypnutí Actions selže, další běh ho zopakuje před pokračováním inicializace. Výsledek má `CredentialsConfigured: false`; příprava není dokončený bootstrap. V této fázi může chybět alias App u vybraného modulu. Plná validace a dokončení ho vyžadují. Po vzniku organizace může GitHub vyžadovat nové SSO přihlášení a obnovení `gh auth login`; skript vrátí chybu a další běh pokračuje se stejným inventory. U již dokončené instance `-ResourcesOnly` nevypíná Actions ani neodstraňuje credentials.
 
@@ -212,7 +212,17 @@ Každý vybraný modul včetně předpokladů má vlastní kontejner a dvě iden
 
 Manifest deklaruje Azure role názvem, absolutním ARM scope a volitelnou `phase`. Výchozí fáze je `apply`. Graph oprávnění zapsané jako řetězec patří jen apply; objekt `permission` a `phase` deklaruje fázi výslovně. Bootstrap planu nepřiděluje oprávnění apply a neodvozuje z nich širší oprávnění. Plan přijme Azure role obsahující jen `*/read` a Graph názvy s operací `Read` nebo `ReadBasic`; zápisová oprávnění odmítne.
 
-Bootstrap před první změnou vyhodnotí oprávnění všech vybraných modulů. Odmítne neexistující role a Graph application permissions, neověřené subscriptions a scope na vlastních prostředcích bootstrapu. Zápisová role na management subscription nebo nadřazené management group by umožnila změnit state backend; bootstrap ji odmítne. Manifest musí zvolit scope mimo bootstrap. `emu-identity` nesmí dostat `AppRoleAssignment.ReadWrite.All`. Vlastní roli Entra se scope na service principal aplikace GHE dodá #12 podle ověřené kombinace tří akcí v [ADR 0015](adr/0015-least-privilege-identity-per-module.md). Entra akce nepatří do pole Graph application permissions; pro přiřazování app rolí v GHE test C1 ověřil scoped roli bez těchto application permissions.
+Bootstrap před první změnou vyhodnotí oprávnění všech vybraných modulů. Odmítne neexistující role a Graph application permissions, neověřené subscriptions a scope na vlastních prostředcích bootstrapu. Zápisová role na management subscription nebo nadřazené management group by umožnila změnit state backend; bootstrap ji odmítne. Manifest musí zvolit scope mimo bootstrap. `emu-identity` nesmí dostat `AppRoleAssignment.ReadWrite.All`. Entra akce nepatří do pole Graph application permissions; pro přiřazování app rolí v GHE test C1 ověřil scoped roli bez těchto application permissions.
+
+Manifest deklaruje vlastní role Entra v poli `entraDirectoryRoles`, nejvýše jednu pro každou fázi. Bootstrap je zpracuje takto:
+
+- Před první změnou odmítne roli planu s akcí, která nekončí `/read`.
+- Najde definici role `platform-<instance>-<module>-<phase>`. Odmítne built-in roli se stejným názvem a více definic se stejným názvem.
+- Chybějící definici vytvoří. Rozdílné akce nebo vypnutou definici opraví v existující definici.
+- Roli přiřadí identitě dané fáze jen se scope `/<enterpriseApplicationObjectId>`.
+- Odmítne každé jiné přiřazení role Entra u identity modulu. Nadbytečné přiřazení neodstraňuje.
+
+Modul `emu-identity` používá pro apply akce `appRoleAssignedTo/update`, `appRoleAssignedTo/read` a `standard/read` podle [ADR 0015](adr/0015-least-privilege-identity-per-module.md). Plan dostane jen obě read akce. Vytvoření vlastní role a jejího přiřazení vyžaduje u bootstrap uživatele roli Privileged Role Administrator nebo Global Administrator a licenci Entra ID P1.
 
 Bootstrap odmítne také read-only roli, jejíž `dataActions` umožňují čtení blobů na scope zahrnujícím state backend. Širší čtení by zpřístupnilo state ostatních modulů i bez oprávnění k zápisu. Při vyhodnocení wildcard oprávnění respektuje `notDataActions` v každém permission setu. Read-only role bez přístupu ke state a datová oprávnění na scope mimo bootstrap zůstávají povolené.
 
