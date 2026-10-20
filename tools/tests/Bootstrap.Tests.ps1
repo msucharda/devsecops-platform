@@ -59,6 +59,8 @@ Describe 'Local Azure bootstrap' {
             paginateAncestors = $false
             hideRoleAssignments = $false
             roleAssignmentFailureScope = ''
+            directoryRoleDefinitions = [System.Collections.Generic.List[object]]::new()
+            directoryRoleAssignments = [System.Collections.Generic.List[object]]::new()
         }
         Mock Start-Sleep {}
         Mock gh { $global:LASTEXITCODE = 0; 'gho_test' }
@@ -152,8 +154,43 @@ Describe 'Local Azure bootstrap' {
                     value = @(@{ id = 'graph-sp'; appRoles = @(
                         @{ id = 'group-create'; value = 'Group.Create'; isEnabled = $true; allowedMemberTypes = @('Application') }
                         @{ id = 'group-read'; value = 'Group.Read.All'; isEnabled = $true; allowedMemberTypes = @('Application') }
+                        @{ id = 'user-read'; value = 'User.Read.All'; isEnabled = $true; allowedMemberTypes = @('Application') }
                     ) })
                 }
+            }
+            if ($Uri.Host -eq 'graph.microsoft.com' -and $Uri.AbsolutePath -match '^/v1\.0/roleManagement/directory/roleDefinitions(/([^/]+))?$') {
+                $definitionId = $Matches[2]
+                if ($Method -eq 'GET') {
+                    $query = [uri]::UnescapeDataString($Uri.Query)
+                    if ($query -notmatch "displayName eq '([^']+)'") { throw "Invalid directory role lookup: $Uri" }
+                    $displayName = $Matches[1]
+                    return Get-TestResponse -Data @{ value = @($cloud.directoryRoleDefinitions | Where-Object { $_.displayName -eq $displayName }) }
+                }
+                $data = ConvertFrom-Json -InputObject $Body -AsHashtable
+                if ($Method -eq 'POST') {
+                    $data.id = [guid]::NewGuid().ToString()
+                    $data.isBuiltIn = $false
+                    $cloud.directoryRoleDefinitions.Add($data)
+                }
+                elseif ($Method -eq 'PATCH') {
+                    $definition = @($cloud.directoryRoleDefinitions | Where-Object { $_.id -eq $definitionId })[0]
+                    foreach ($key in $data.Keys) { $definition[$key] = $data[$key] }
+                }
+                $cloud.writes.Add(@{ uri = $Uri.AbsoluteUri; method = $Method; data = $data })
+                return Get-TestResponse -StatusCode ($(if ($Method -eq 'POST') { 201 } else { 204 })) -Data $data
+            }
+            if ($Uri.Host -eq 'graph.microsoft.com' -and $Uri.AbsolutePath -eq '/v1.0/roleManagement/directory/roleAssignments') {
+                if ($Method -eq 'GET') {
+                    $query = [uri]::UnescapeDataString($Uri.Query)
+                    if ($query -notmatch "principalId eq '([^']+)'") { throw "Invalid directory role assignment lookup: $Uri" }
+                    $principal = $Matches[1]
+                    return Get-TestResponse -Data @{ value = @($cloud.directoryRoleAssignments | Where-Object { $_.principalId -eq $principal }) }
+                }
+                $data = ConvertFrom-Json -InputObject $Body -AsHashtable
+                $data.id = [guid]::NewGuid().ToString()
+                $cloud.directoryRoleAssignments.Add($data)
+                $cloud.writes.Add(@{ uri = $Uri.AbsoluteUri; method = $Method; data = $data })
+                return Get-TestResponse -StatusCode 201 -Data $data
             }
             if ($Uri -match '/servicePrincipals/([^/]+)/appRoleAssignments$') {
                 $principal = $Matches[1]
@@ -416,6 +453,154 @@ Describe 'Local Azure bootstrap' {
         $cloud.writes.Count | Should -Be $writesBefore
         (ConvertTo-Json -InputObject $second.Modules -Depth 10) | Should -BeExactly (ConvertTo-Json -InputObject $first.Modules -Depth 10)
         [IO.File]::ReadAllText($instancePath) | Should -BeExactly $configurationBefore
+    }
+
+    Context 'Entra directory roles scoped to the enterprise application' {
+        BeforeEach {
+            $foundationPath = Join-Path $modulesPath 'foundation/module.yaml'
+            $foundation = ConvertFrom-Yaml (Get-Content -LiteralPath $foundationPath -Raw)
+            $foundation.permissions.entraDirectoryRoles = @(
+                @{ phase = 'apply'; scope = 'enterpriseApplication'; actions = @(
+                    'microsoft.directory/servicePrincipals/appRoleAssignedTo/update'
+                    'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+                    'microsoft.directory/servicePrincipals/standard/read'
+                ) }
+                @{ phase = 'plan'; scope = 'enterpriseApplication'; actions = @(
+                    'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+                    'microsoft.directory/servicePrincipals/standard/read'
+                ) }
+            )
+            ConvertTo-Yaml $foundation | Set-Content -LiteralPath $foundationPath
+            $instance.modules = @{ foundation = @{} }
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        }
+
+        It 'creates a custom role per phase and assigns it only at the enterprise application scope' {
+            $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+            $result.HasChanges | Should -BeTrue
+            $definitions = @($cloud.directoryRoleDefinitions | Sort-Object displayName)
+            @($definitions.displayName) | Should -Be @('platform-demo-foundation-apply', 'platform-demo-foundation-plan')
+            foreach ($definition in $definitions) {
+                $definition.isEnabled | Should -BeTrue
+                @($definition.rolePermissions).Count | Should -Be 1
+            }
+            @($definitions[0].rolePermissions[0].allowedResourceActions | Sort-Object) | Should -Be @(
+                'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+                'microsoft.directory/servicePrincipals/appRoleAssignedTo/update'
+                'microsoft.directory/servicePrincipals/standard/read'
+            )
+            @($definitions[1].rolePermissions[0].allowedResourceActions | Sort-Object) | Should -Be @(
+                'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+                'microsoft.directory/servicePrincipals/standard/read'
+            )
+            $module = $result.Modules[0]
+            foreach ($phase in @('Plan', 'Apply')) {
+                $definition = @($definitions | Where-Object displayName -EQ "platform-demo-foundation-$($phase.ToLowerInvariant())")[0]
+                $assignments = @($cloud.directoryRoleAssignments | Where-Object principalId -EQ $module.$phase.PrincipalId)
+                $assignments.Count | Should -Be 1
+                $assignments[0].roleDefinitionId | Should -Be $definition.id
+                $assignments[0].directoryScopeId | Should -Be '/33333333-3333-3333-3333-333333333333'
+            }
+        }
+
+        It 'performs no directory changes on a repeated run' {
+            $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+            $writesBefore = $cloud.writes.Count
+
+            $second = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+            $second.HasChanges | Should -BeFalse
+            $cloud.writes.Count | Should -Be $writesBefore
+            $cloud.directoryRoleDefinitions.Count | Should -Be 2
+            $cloud.directoryRoleAssignments.Count | Should -Be 2
+        }
+
+        It 'restores drifted role actions without recreating the role' {
+            $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+            $plan = @($cloud.directoryRoleDefinitions | Where-Object displayName -EQ 'platform-demo-foundation-plan')[0]
+            $plan.rolePermissions = @(@{ allowedResourceActions = @('microsoft.directory/servicePrincipals/appRoleAssignedTo/update') })
+            $cloud.writes.Clear()
+
+            $repair = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+            $repair.HasChanges | Should -BeTrue
+            @($cloud.writes).Count | Should -Be 1
+            $cloud.writes[0].method | Should -Be 'PATCH'
+            $cloud.writes[0].uri | Should -BeLike "*/roleDefinitions/$($plan.id)"
+            @($plan.rolePermissions[0].allowedResourceActions | Sort-Object) | Should -Be @(
+                'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+                'microsoft.directory/servicePrincipals/standard/read'
+            )
+        }
+
+        It 'rejects a write action in the plan role before any change' {
+            $foundation.permissions.entraDirectoryRoles[1].actions = @('microsoft.directory/servicePrincipals/appRoleAssignedTo/update')
+            ConvertTo-Yaml $foundation | Set-Content -LiteralPath $foundationPath
+
+            { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+                Should -Throw "*plan Entra directory role*not read-only*"
+            $cloud.writes.Count | Should -Be 0
+        }
+
+        It 'refuses to adopt a built-in role with the platform role name' {
+            $cloud.directoryRoleDefinitions.Add(@{
+                id = 'built-in'; displayName = 'platform-demo-foundation-plan'; isBuiltIn = $true; isEnabled = $true
+                rolePermissions = @(@{ allowedResourceActions = @('microsoft.directory/servicePrincipals/standard/read') })
+            })
+
+            { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+                Should -Throw "*platform-demo-foundation-plan*built-in*"
+            $cloud.writes.Count | Should -Be 0
+        }
+
+        It 'rejects an unexpected directory role of a module identity' {
+            $first = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+            $cloud.directoryRoleAssignments.Add(@{
+                id = 'unexpected'; principalId = $first.Modules[0].Plan.PrincipalId
+                roleDefinitionId = '62e90394-69f5-4237-9190-012177145e10'; directoryScopeId = '/'
+            })
+            $writesBefore = $cloud.writes.Count
+
+            { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+                Should -Throw "*foundation/plan*unexpected Entra directory role*"
+            $cloud.writes.Count | Should -Be $writesBefore
+        }
+
+        It 'refuses a missing directory role in no-change mode before sending a write' -Tag 'NoChanges' {
+            $null = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+            $cloud.directoryRoleAssignments.Clear()
+            $cloud.writes.Clear()
+
+            { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath -NoChanges } |
+                Should -Throw '*NoChanges*POST*roleAssignments*'
+            $cloud.writes.Count | Should -Be 0
+        }
+    }
+
+    It 'provisions the released emu-identity manifest with read-only plan access and no tenant-wide assignment write' {
+        $source = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/emu-identity/module.yaml'
+        $null = New-Item -ItemType Directory -Path (Join-Path $modulesPath 'emu-identity')
+        Copy-Item -LiteralPath $source -Destination (Join-Path $modulesPath 'emu-identity/module.yaml')
+        $instance.modules = @{ 'emu-identity' = @{} }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+
+        $module = $result.Modules[0]
+        $module.Name | Should -Be 'emu-identity'
+        $planGrants = @($cloud.writes | Where-Object { $_.data.Contains('principalId') -and $_.data.principalId -eq $module.Plan.PrincipalId -and $_.data.Contains('appRoleId') })
+        @($planGrants.data.appRoleId | Sort-Object) | Should -Be @('group-read', 'user-read')
+        $applyGrants = @($cloud.writes | Where-Object { $_.data.Contains('principalId') -and $_.data.principalId -eq $module.Apply.PrincipalId -and $_.data.Contains('appRoleId') })
+        @($applyGrants.data.appRoleId | Sort-Object) | Should -Be @('group-create', 'user-read')
+        $definitions = @($cloud.directoryRoleDefinitions | Sort-Object displayName)
+        @($definitions.displayName) | Should -Be @('platform-demo-emu-identity-apply', 'platform-demo-emu-identity-plan')
+        @($definitions[1].rolePermissions[0].allowedResourceActions | Where-Object { $_ -notlike '*/read' }) | Should -BeNullOrEmpty
+        @($definitions[0].rolePermissions[0].allowedResourceActions | Where-Object { $_ -notlike '*/read' }) |
+            Should -Be @('microsoft.directory/servicePrincipals/appRoleAssignedTo/update')
+        @($cloud.directoryRoleAssignments.directoryScopeId | Sort-Object -Unique) | Should -Be @('/33333333-3333-3333-3333-333333333333')
+        @($cloud.writes | Where-Object { $_.uri -like '*/providers/Microsoft.Authorization/roleAssignments/*' -and $_.uri -notlike '*/containers/*' }) |
+            Should -BeNullOrEmpty
     }
 
     It 'rejects a conditional <Phase> state grant before changing existing bootstrap resources' -ForEach @(

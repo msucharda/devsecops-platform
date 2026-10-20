@@ -8,6 +8,8 @@ Modul `emu-identity` nepoužívá `AppRoleAssignment.ReadWrite.All`, protože s 
 - `microsoft.directory/servicePrincipals/appRoleAssignedTo/read`
 - `microsoft.directory/servicePrincipals/standard/read`
 
+Identita apply má navíc `User.Read.All` pro vyhledání členů podle UPN. Identita planu má `Group.Read.All`, `User.Read.All` a vlastní roli jen s oběma read akcemi. Bootstrap vytvoří obě vlastní role a přiřadí je se scope na service principal aplikace GHE.
+
 ## Considered Options
 
 - Jedna dvojice identit pro všechny moduly, jako v ALZ acceleratoru. Zamítnuto: Identita pro apply by měla oprávnění Graph i roli Owner na management group.

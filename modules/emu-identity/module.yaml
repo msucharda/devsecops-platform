@@ -1,0 +1,55 @@
+name: emu-identity
+description: Entra ID groups of the platform, security and Copilot teams and their app roles in the GHE enterprise application.
+prerequisites: []
+manualSteps:
+  - id: remove-direct-enterprise-owner
+    owner: platform
+    description: >-
+      After the first apply and a successful SCIM cycle, remove the direct Enterprise Owner app role
+      assignment of the first enterprise owner in the GHE enterprise application. The owner keeps
+      the role only through the platform team group.
+    limitations:
+      plan: The module plan does not read user app role assignments; it cannot show whether the direct assignment remains.
+      drift: A direct assignment added again later is not detected; bootstrap requires it only before the first apply.
+      teardown: Teardown does not restore the direct assignment; restore it manually before local bootstrap teardown.
+  - id: link-organization-teams
+    owner: platform
+    description: >-
+      After SCIM provisions the platform and security team groups, link the platform and security
+      teams of the platform organization to these groups in the organization team settings.
+    limitations:
+      plan: The module has no GitHub access; the plan does not show the team links.
+      drift: A removed or changed team link is not detected.
+      teardown: Teardown does not remove the team links; they disappear with the platform organization.
+  - id: copilot-enterprise-team
+    owner: platform
+    description: >-
+      After SCIM provisions the Copilot users group, create an enterprise team in the enterprise
+      settings, link it to the group and assign it a Copilot license.
+    limitations:
+      plan: The module has no GitHub access; the plan does not show the enterprise team or its license.
+      drift: A removed enterprise team, group link or Copilot license is not detected.
+      teardown: Teardown does not remove the enterprise team or the license assignment; remove them manually.
+permissions:
+  azure: []
+  microsoftGraph:
+    - Group.Create
+    - User.Read.All
+    - permission: Group.Read.All
+      phase: plan
+    - permission: User.Read.All
+      phase: plan
+  entraDirectoryRoles:
+    - phase: apply
+      scope: enterpriseApplication
+      actions:
+        - microsoft.directory/servicePrincipals/appRoleAssignedTo/update
+        - microsoft.directory/servicePrincipals/appRoleAssignedTo/read
+        - microsoft.directory/servicePrincipals/standard/read
+    - phase: plan
+      scope: enterpriseApplication
+      actions:
+        - microsoft.directory/servicePrincipals/appRoleAssignedTo/read
+        - microsoft.directory/servicePrincipals/standard/read
+  githubApp: {}
+  adminPat: []
