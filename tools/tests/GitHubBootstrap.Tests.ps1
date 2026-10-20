@@ -35,7 +35,7 @@ Describe 'GitHub bootstrap public interface' {
         }
         $instance.githubApps = @{ authorization = @{
             appId = '101'; installationId = '201'; enterprise = 'example'
-            permissions = @{ members = 'read' }; resources = @{ organizations = @('demo-platform'); repositories = @{} }
+            permissions = @{ members = 'read' }; resources = @{ organizations = @('demo-a1b2c3-platform'); repositories = @{} }
         } }
         $instancePath = Join-Path $casePath 'instance.yaml'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
@@ -73,8 +73,13 @@ Describe 'GitHub bootstrap public interface' {
             appPermissions = @{ members = 'read'; metadata = 'read' }
             apps = @{}
             teamRepositoryResponses = @{}
-            oidcSettings = @{ use_default = $true; use_immutable_subject = $false; sub_claim_prefix = 'repo:demo-platform/instance' }
+            oidcSettings = @{ use_default = $true; use_immutable_subject = $false; sub_claim_prefix = 'repo:demo-a1b2c3-platform/instance' }
             defaultBranch = 'main'; failPath = ''; rejectSecurityReview = $false
+            takenOrganizations = @()
+        }
+        $deploymentIdentifiers = [Collections.Generic.Queue[string]]::new()
+        Mock New-PlatformDeploymentIdentifier {
+            if ($deploymentIdentifiers.Count) { $deploymentIdentifiers.Dequeue() } else { 'a1b2c3' }
         }
         foreach ($module in $azure.Modules) {
             foreach ($phase in @('plan', 'apply')) {
@@ -107,13 +112,21 @@ Describe 'GitHub bootstrap public interface' {
             }
             if ($path -eq '/graphql') {
                 if ($data.query -like '*createEnterpriseOrganization*') {
-                    $cloud.resources['/orgs/demo-platform'] = @{ login = 'demo-platform'; id = 10 }
-                    $reply = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = 'demo-platform' } } } }
+                    $login = $data.variables.input.login
+                    if ($login -cin $cloud.takenOrganizations) {
+                        $reply = @{ errors = @(@{ message = "The name '$login' is already taken." }) }
+                    }
+                    else {
+                        $cloud.resources["/orgs/$login"] = @{ login = $login; id = 10 }
+                        $cloud.takenOrganizations += $login
+                        $reply = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = $login } } } }
+                    }
                 }
                 else {
                     $reply = @{ data = @{ viewer = @{ login = 'owner_example' }; enterprise = @{
                         id = 'enterprise-node'; viewerIsAdmin = $true
-                        organizations = @{ nodes = @(@{ login = 'demo-platform' }); pageInfo = @{ hasNextPage = $false } }
+                        organizations = @{ nodes = @($cloud.resources.Keys | Where-Object { $_ -cmatch '^/orgs/[^/]+$' } |
+                            ForEach-Object { @{ login = $_.Substring(6) } }); pageInfo = @{ hasNextPage = $false } }
                     } } }
                 }
             }
@@ -127,17 +140,17 @@ Describe 'GitHub bootstrap public interface' {
                     $reply = @{ id = [int] $appId; slug = $appRecord.slug; owner = $cloud.appOwner; permissions = $appRecord.permissions }
                 }
                 else {
-                    $reply = @(@{ id = [int] $appRecord.installationId; account = @{ login = 'demo-platform' }; target_type = 'Organization'
+                    $reply = @(@{ id = [int] $appRecord.installationId; account = @{ login = 'demo-a1b2c3-platform' }; target_type = 'Organization'
                         suspended_at = $null; permissions = $appRecord.permissions; repository_selection = $appRecord.selection })
                 }
             }
             elseif ($path -like '*/actions/workflows/bootstrap-acceptance.yml/dispatches') {
                 $runId = if ($cloud.ContainsKey('nextRun')) { $cloud.nextRun } else { 80 }
                 $cloud.nextRun = $runId + 10
-                $cloud.resources['/repos/demo-platform/instance/actions/workflows/bootstrap-acceptance.yml/runs'] = @{
+                $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/bootstrap-acceptance.yml/runs'] = @{
                     workflow_runs = @(@{ id = $runId; display_title = "Bootstrap acceptance $($data.inputs.evidence_id)" })
                 }
-                $cloud.resources["/repos/demo-platform/instance/actions/runs/$runId"] = @{
+                $cloud.resources["/repos/demo-a1b2c3-platform/instance/actions/runs/$runId"] = @{
                     id = $runId; display_title = "Bootstrap acceptance $($data.inputs.evidence_id)"
                     head_sha = 'commit-sha'; head_branch = 'main'; run_attempt = 1
                     status = 'completed'; conclusion = 'success'; event = 'workflow_dispatch'
@@ -151,31 +164,31 @@ Describe 'GitHub bootstrap public interface' {
             elseif ($path -like '*/actions/workflows/bootstrap-acceptance.yml/runs' -and $Uri.Query -like '*event=schedule*') {
                 $reply = @{ workflow_runs = @($cloud.scheduledRuns) }
             }
-            elseif ($path -eq '/orgs/demo-platform/repos' -and $Method -eq 'POST') {
+            elseif ($path -eq '/orgs/demo-a1b2c3-platform/repos' -and $Method -eq 'POST') {
                 if ($cloud['loseRepositoryCreateResponse']) {
                     $cloud.repositoryCreateInventory = Get-Content -LiteralPath $cloud.inventoryPath -Raw | ConvertFrom-Json -AsHashtable
                 }
-                $cloud.resources['/repos/demo-platform/instance'] = @{
-                    id = 20; name = 'instance'; full_name = 'demo-platform/instance'
-                    owner = @{ id = 10; login = 'demo-platform'; type = 'Organization' }
+                $cloud.resources['/repos/demo-a1b2c3-platform/instance'] = @{
+                    id = 20; name = 'instance'; full_name = 'demo-a1b2c3-platform/instance'
+                    owner = @{ id = 10; login = 'demo-a1b2c3-platform'; type = 'Organization' }
                     private = $true; default_branch = $cloud.defaultBranch; description = $data.description
                 }
-                $cloud.resources['/repos/demo-platform/instance/actions/permissions'] = @{ enabled = $true }
-                $reply = $cloud.resources['/repos/demo-platform/instance']
+                $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'] = @{ enabled = $true }
+                $reply = $cloud.resources['/repos/demo-a1b2c3-platform/instance']
                 if ($data.auto_init) {
-                    $cloud.resources["/repos/demo-platform/instance/git/ref/heads/$($cloud.defaultBranch)"] = @{ object = @{ sha = 'seed-sha' } }
+                    $cloud.resources["/repos/demo-a1b2c3-platform/instance/git/ref/heads/$($cloud.defaultBranch)"] = @{ object = @{ sha = 'seed-sha' } }
                 }
                 if ($cloud['loseRepositoryCreateResponse']) {
                     $cloud.loseRepositoryCreateResponse = $false
                     return [pscustomobject]@{ StatusCode = 503; Content = '{"message":"Repository created, response interrupted."}' }
                 }
             }
-            elseif ($path -eq '/repos/demo-platform/instance/actions/oidc/customization/sub' -and $Method -eq 'GET') {
+            elseif ($path -eq '/repos/demo-a1b2c3-platform/instance/actions/oidc/customization/sub' -and $Method -eq 'GET') {
                 $reply = $cloud.oidcSettings
             }
-            elseif ($path -eq '/orgs/demo-platform/teams' -and $Method -eq 'POST') {
+            elseif ($path -eq '/orgs/demo-a1b2c3-platform/teams' -and $Method -eq 'POST') {
                 $reply = @{ id = $(if ($data.name -eq 'platform') { 30 } else { 31 }); slug = $data.name; description = $data.description }
-                $cloud.resources["/orgs/demo-platform/teams/$($data.name)"] = $reply
+                $cloud.resources["/orgs/demo-a1b2c3-platform/teams/$($data.name)"] = $reply
             }
             elseif ($path -like '*/git/blobs' -and $Method -eq 'POST') {
                 $sha = [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Convert]::FromBase64String($data.content))).ToLowerInvariant()
@@ -191,9 +204,9 @@ Describe 'GitHub bootstrap public interface' {
                 $reply = @{ sha = 'commit-sha' }
             }
             elseif ($path -like '*/git/refs' -and $Method -eq 'POST') {
-                $cloud.resources['/repos/demo-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = $data.sha } }
+                $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = $data.sha } }
                 foreach ($file in $cloud.tree | Where-Object path -Match '^\.github/workflows/[^/]+\.ya?ml$') {
-                    $workflowPath = "/repos/demo-platform/instance/actions/workflows/$($file.path.Split('/')[-1])"
+                    $workflowPath = "/repos/demo-a1b2c3-platform/instance/actions/workflows/$($file.path.Split('/')[-1])"
                     if (-not $cloud.resources.ContainsKey($workflowPath)) {
                         $cloud.resources[$workflowPath] = @{ state = 'active' }
                     }
@@ -201,9 +214,9 @@ Describe 'GitHub bootstrap public interface' {
                 $reply = @{ ref = $data.ref }
             }
             elseif ($path -like '*/git/refs/heads/main' -and $Method -eq 'PATCH') {
-                $cloud.resources['/repos/demo-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = $data.sha } }
+                $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = $data.sha } }
                 foreach ($file in $cloud.tree | Where-Object path -Match '^\.github/workflows/[^/]+\.ya?ml$') {
-                    $workflowPath = "/repos/demo-platform/instance/actions/workflows/$($file.path.Split('/')[-1])"
+                    $workflowPath = "/repos/demo-a1b2c3-platform/instance/actions/workflows/$($file.path.Split('/')[-1])"
                     if (-not $cloud.resources.ContainsKey($workflowPath)) {
                         $cloud.resources[$workflowPath] = @{ state = 'active' }
                     }
@@ -299,13 +312,13 @@ Describe 'GitHub bootstrap public interface' {
             param([string] $Uri, [string] $Method = 'GET', [hashtable] $Headers)
             if ($Uri -like '*/installation/token' -and $Method -eq 'DELETE') { return }
             if ($Uri -like '*/installation/repositories`?*') { return @{ repositories = @() } }
-            if ($Uri -like '*/orgs/demo-platform/teams`?*') { return ,@(@{ id = 30; slug = 'platform' }) }
-            if ($Uri -like '*/orgs/demo-platform/actions/permissions') { return @{ enabled_repositories = 'all' } }
-            if ($Uri -like '*/orgs/demo-platform/code-security/configurations*') { return ,@() }
-            if ($Uri -like '*/orgs/demo-platform/rulesets`?*') {
-                return ,@(@{ id = 7; source_type = 'Organization'; source = 'demo-platform' })
+            if ($Uri -like '*/orgs/demo-a1b2c3-platform/teams`?*') { return ,@(@{ id = 30; slug = 'platform' }) }
+            if ($Uri -like '*/orgs/demo-a1b2c3-platform/actions/permissions') { return @{ enabled_repositories = 'all' } }
+            if ($Uri -like '*/orgs/demo-a1b2c3-platform/code-security/configurations*') { return ,@() }
+            if ($Uri -like '*/orgs/demo-a1b2c3-platform/rulesets`?*') {
+                return ,@(@{ id = 7; source_type = 'Organization'; source = 'demo-a1b2c3-platform' })
             }
-            if ($Uri -like '*/orgs/demo-platform/rulesets/7') { return @{ id = 7; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 123; bypass_mode = 'pull_request' }) } }
+            if ($Uri -like '*/orgs/demo-a1b2c3-platform/rulesets/7') { return @{ id = 7; bypass_actors = @(@{ actor_type = 'Team'; actor_id = 123; bypass_mode = 'pull_request' }) } }
             $segment = $Headers.Authorization.Split(' ')[1].Split('.')[1].Replace('-', '+').Replace('_', '/')
             $segment = $segment.PadRight($segment.Length + (4 - $segment.Length % 4) % 4, '=')
             $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($segment)) | ConvertFrom-Json -AsHashtable
@@ -321,7 +334,7 @@ Describe 'GitHub bootstrap public interface' {
             }
             if ($Uri -like '*/app') { return @{ id = [int] $appId; owner = $cloud.appOwner; permissions = $permissions } }
             if ($Uri -like '*/app/installations`?*') {
-                return ,@(@{ id = $installationId; account = @{ login = 'demo-platform' }; target_type = 'Organization'
+                return ,@(@{ id = $installationId; account = @{ login = 'demo-a1b2c3-platform' }; target_type = 'Organization'
                     suspended_at = $null; permissions = $permissions; repository_selection = $selection })
             }
             if ($Uri -like '*/access_tokens') { return @{ token = 'installation-test'; permissions = $permissions } }
@@ -339,14 +352,14 @@ Describe 'GitHub bootstrap public interface' {
         $arguments.ResourcesOnly = $false
         $result = & $bootstrap @arguments
 
-        $result.Repository | Should -Be 'demo-platform/instance'
+        $result.Repository | Should -Be 'demo-a1b2c3-platform/instance'
         $result.CredentialsConfigured | Should -BeTrue
-        $cloud.resources['/orgs/demo-platform/teams/platform/memberships/owner_example'].state | Should -Be 'active'
-        $cloud.resources['/orgs/demo-platform/teams/security/memberships/owner_example'].state | Should -Be 'active'
+        $cloud.resources['/orgs/demo-a1b2c3-platform/teams/platform/memberships/owner_example'].state | Should -Be 'active'
+        $cloud.resources['/orgs/demo-a1b2c3-platform/teams/security/memberships/owner_example'].state | Should -Be 'active'
         $cloud.tree.path | Should -Contain 'platform/schemas/instance.schema.json'
         $codeowners = $cloud.tree | Where-Object { $_.path -eq '.github/CODEOWNERS' }
-        [Text.Encoding]::UTF8.GetString($cloud.blobs[$codeowners.sha]) | Should -Be "* @demo-platform/platform`n"
-        $rules = $cloud.resources['/repos/demo-platform/instance/rulesets/60']
+        [Text.Encoding]::UTF8.GetString($cloud.blobs[$codeowners.sha]) | Should -Be "* @demo-a1b2c3-platform/platform`n"
+        $rules = $cloud.resources['/repos/demo-a1b2c3-platform/instance/rulesets/60']
         $rules.enforcement | Should -Be 'active'
         $rules.bypass_actors.Count | Should -Be 0
         $cloud.commit.parents | Should -Be @('seed-sha')
@@ -354,9 +367,94 @@ Describe 'GitHub bootstrap public interface' {
         Test-Path -LiteralPath $inventory | Should -BeTrue
     }
 
-    It 'rejects missing GitHub resources before sending a mutation in no-change mode' -Tag 'NoChanges' {
+    It 'records a deployment identifier at first organization creation and reuses it on repeat' -Tag 'DeploymentIdentifier' {
+        $first = & $bootstrap @arguments
+        $deploymentIdentifiers.Enqueue('zzzzzz')
+
+        $second = & $bootstrap @arguments
+
+        $first.Organization | Should -BeExactly 'demo-a1b2c3-platform'
+        $second.Organization | Should -BeExactly 'demo-a1b2c3-platform'
+        $second.Repository | Should -BeExactly 'demo-a1b2c3-platform/instance'
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.deploymentIdentifier | Should -BeExactly 'a1b2c3'
+        $record.repository | Should -BeExactly 'demo-a1b2c3-platform/instance'
+        @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' }).Count | Should -Be 1
+        Should -Invoke New-PlatformDeploymentIdentifier -Times 1 -Exactly
+    }
+
+    It 'reuses the recorded deployment identifier when organization creation did not complete' -Tag 'DeploymentIdentifier' {
+        $cloud.takenOrganizations = @('demo-a1b2c3-platform')
+        { & $bootstrap @arguments } | Should -Throw '*already taken*'
+        (Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable).deploymentIdentifier | Should -BeExactly 'a1b2c3'
+        $cloud.takenOrganizations = @()
+        $deploymentIdentifiers.Enqueue('zzzzzz')
+
+        $result = & $bootstrap @arguments
+
+        $result.Organization | Should -BeExactly 'demo-a1b2c3-platform'
+        Should -Invoke New-PlatformDeploymentIdentifier -Times 1 -Exactly
+    }
+
+    It 'refuses to recreate a deleted organization under its recorded deployment identifier' -Tag 'DeploymentIdentifier' {
+        $null = & $bootstrap @arguments
+        $cloud.resources.Remove('/orgs/demo-a1b2c3-platform')
+        $cloud.writes.Clear()
+
+        { & $bootstrap @arguments } | Should -Throw '*demo-a1b2c3-platform*no longer exists*new inventory*'
+        @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' }).Count | Should -Be 0
+    }
+
+    It 'uses a new deployment identifier for a new deployment after the platform organization was deleted' -Tag 'DeploymentIdentifier' {
+        $null = & $bootstrap @arguments
+        foreach ($path in @($cloud.resources.Keys | Where-Object { $_ -like '*/demo-a1b2c3-platform*' })) { $cloud.resources.Remove($path) }
+        Remove-Item -LiteralPath $inventory
+        $deploymentIdentifiers.Enqueue('d4e5f6')
+        $cloud.failPath = '/orgs/demo-d4e5f6-platform/repos'
+
+        { & $bootstrap @arguments } | Should -Throw '*Injected interruption*'
+
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.deploymentIdentifier | Should -BeExactly 'd4e5f6'
+        $record.repository | Should -BeExactly 'demo-d4e5f6-platform/instance'
+        $record.resources | Should -Contain '/orgs/demo-d4e5f6-platform'
+        $created = @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' })
+        $created.body.variables.input.login | Should -Be @('demo-a1b2c3-platform', 'demo-d4e5f6-platform')
+    }
+
+    It 'keeps the organization name of an inventory recorded before deployment identifiers' -Tag 'DeploymentIdentifier' {
         @{
             version = 1; repository = 'demo-platform/instance'; enterprise = 'example'; releaseVersion = '1.0.0'
+            apps = @{}; resources = @()
+        } | ConvertTo-Json | Set-Content $inventory
+        $cloud.failPath = '/orgs/demo-platform/repos'
+
+        { & $bootstrap @arguments } | Should -Throw '*Injected interruption*'
+
+        $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.repository | Should -BeExactly 'demo-platform/instance'
+        $record.resources | Should -Contain '/orgs/demo-platform'
+        $record.Contains('deploymentIdentifier') | Should -BeFalse
+        @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' }).body.variables.input.login |
+            Should -BeExactly 'demo-platform'
+        Should -Invoke New-PlatformDeploymentIdentifier -Times 0 -Exactly
+    }
+
+    It 'rejects an inventory whose <Case> does not match its organization' -Tag 'DeploymentIdentifier' -TestCases @(
+        @{ Case = 'deployment identifier'; Record = @{ repository = 'demo-a1b2c3-platform/instance'; deploymentIdentifier = 'zzzzzz' } }
+        @{ Case = 'legacy repository'; Record = @{ repository = 'other-platform/instance' } }
+        @{ Case = 'identifier format'; Record = @{ repository = 'demo-A1B2C3-platform/instance'; deploymentIdentifier = 'A1B2C3' } }
+    ) {
+        (@{ version = 1; enterprise = 'example'; releaseVersion = '1.0.0'; apps = @{}; resources = @() } + $Record) |
+            ConvertTo-Json | Set-Content $inventory
+
+        { & $bootstrap @arguments } | Should -Throw '*inventory*'
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'rejects missing GitHub resources before sending a mutation in no-change mode' -Tag 'NoChanges' {
+        @{
+            version = 1; repository = 'demo-a1b2c3-platform/instance'; deploymentIdentifier = 'a1b2c3'; enterprise = 'example'; releaseVersion = '1.0.0'
             initializationPending = $false; apps = @{}; resources = @()
         } | ConvertTo-Json | Set-Content $inventory
         $before = (Get-FileHash $inventory).Hash
@@ -375,8 +473,8 @@ Describe 'GitHub bootstrap public interface' {
         $arguments.ResourcesOnly = $false
         $null = & $bootstrap @arguments
         switch ($Drift) {
-            environment { $cloud.environments['/repos/demo-platform/instance/environments/approve-apply'].can_admins_bypass = $true }
-            variable { $cloud.variables['/repos/demo-platform/instance/environments/application-plan/variables/AZURE_CLIENT_ID'] = 'wrong-client' }
+            environment { $cloud.environments['/repos/demo-a1b2c3-platform/instance/environments/approve-apply'].can_admins_bypass = $true }
+            variable { $cloud.variables['/repos/demo-a1b2c3-platform/instance/environments/application-plan/variables/AZURE_CLIENT_ID'] = 'wrong-client' }
             federation {
                 $fid = @($cloud.resources.Keys | Where-Object { $_ -like '*/federatedIdentityCredentials/*' })[0]
                 $cloud.resources.Remove($fid)
@@ -445,7 +543,7 @@ Describe 'GitHub bootstrap public interface' {
         $record.releaseVersion = '0.9.0'
         $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
         $before = (Get-FileHash $inventory).Hash
-        $cloud.resources.Remove('/repos/demo-platform/instance/git/ref/heads/main')
+        $cloud.resources.Remove('/repos/demo-a1b2c3-platform/instance/git/ref/heads/main')
         $cloud.writes.Clear()
         $operations = [Collections.Generic.List[string]]::new()
         $arguments.NoChanges = $true
@@ -516,7 +614,7 @@ Describe 'GitHub bootstrap public interface' {
         $record.releaseVersion = '0.9.0'
         $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
         $before = (Get-FileHash $inventory).Hash
-        $cloud.resources['/repos/demo-platform/instance/rulesets/60'].enforcement = 'disabled'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/rulesets/60'].enforcement = 'disabled'
         $cloud.writes.Clear()
         $operations = [Collections.Generic.List[string]]::new()
         $arguments.NoChanges = $true
@@ -549,7 +647,7 @@ Describe 'GitHub bootstrap public interface' {
             return $true
         }.GetNewClosure()
         Mock Invoke-WebRequest {
-            $cloud.resources['/repos/demo-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = 'changed-commit' } }
+            $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = 'changed-commit' } }
             $blob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
             [pscustomobject]@{ StatusCode = 200; Content = (@{
                 content = [Convert]::ToBase64String($cloud.blobs[$blob.sha])
@@ -597,16 +695,16 @@ Describe 'GitHub bootstrap public interface' {
                 $remoteConfig.instance.name = 'another-instance'
                 $cloud.blobs[$configBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Yaml $remoteConfig))
             }
-            'missing protection' { $cloud.resources.Remove('/repos/demo-platform/instance/rulesets/60') }
+            'missing protection' { $cloud.resources.Remove('/repos/demo-a1b2c3-platform/instance/rulesets/60') }
             'main bypass' {
-                $cloud.resources['/repos/demo-platform/instance/rulesets/60'].bypass_actors = @(@{ actor_type = 'OrganizationAdmin'; bypass_mode = 'always' })
+                $cloud.resources['/repos/demo-a1b2c3-platform/instance/rulesets/60'].bypass_actors = @(@{ actor_type = 'OrganizationAdmin'; bypass_mode = 'always' })
             }
             'security reviewers' {
-                ($cloud.resources['/repos/demo-platform/instance/rulesets/60'].rules |
+                ($cloud.resources['/repos/demo-a1b2c3-platform/instance/rulesets/60'].rules |
                     Where-Object { $_.type -ceq 'pull_request' }).parameters.required_reviewers = @()
             }
             'main-only policy' {
-                $cloud.resources['/repos/demo-platform/instance/rulesets/60'].conditions.ref_name.include = @('~ALL')
+                $cloud.resources['/repos/demo-a1b2c3-platform/instance/rulesets/60'].conditions.ref_name.include = @('~ALL')
             }
         }
         $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes(($remoteMarker | ConvertTo-Json -Depth 100))
@@ -673,7 +771,7 @@ Describe 'GitHub bootstrap public interface' {
         Copy-Item -LiteralPath (Join-Path $tools 'acceptance/github/bootstrap-acceptance.yml') `
             -Destination (Join-Path $release 'templates/instance/.github/workflows/bootstrap-acceptance.yml')
         $null = & $bootstrap @arguments
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state = 'active'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml'].state = 'active'
         $cloud.writes.Clear()
         $arguments.NoChanges = $true
 
@@ -688,19 +786,19 @@ Describe 'GitHub bootstrap public interface' {
     It 'binds each Azure phase only to its protected environments and keeps both teardown gates credential-free' {
         & $bootstrap @arguments | Out-Null
 
-        $plan = $cloud.environments['/repos/demo-platform/instance/environments/application-plan']
-        $drift = $cloud.environments['/repos/demo-platform/instance/environments/application-plan-drift']
+        $plan = $cloud.environments['/repos/demo-a1b2c3-platform/instance/environments/application-plan']
+        $drift = $cloud.environments['/repos/demo-a1b2c3-platform/instance/environments/application-plan-drift']
         @($plan.protection_rules | Where-Object { $_.type -eq 'required_reviewers' }).Count | Should -Be 0
         @($drift.protection_rules | Where-Object { $_.type -eq 'required_reviewers' }).Count | Should -Be 0
-        $cloud.branchRules['/repos/demo-platform/instance/environments/application-plan-drift/deployment-branch-policies'][0].name | Should -Be 'main'
+        $cloud.branchRules['/repos/demo-a1b2c3-platform/instance/environments/application-plan-drift/deployment-branch-policies'][0].name | Should -Be 'main'
         $federation = @($cloud.resources.Values | Where-Object { $_.Contains('properties') -and $_.properties.Contains('subject') })
-        $federation.properties.subject | Should -Contain 'repo:demo-platform/instance:environment:application-plan'
-        $federation.properties.subject | Should -Contain 'repo:demo-platform/instance:environment:application-plan-drift'
-        $federation.properties.subject | Should -Contain 'repo:demo-platform/instance:environment:application-apply'
+        $federation.properties.subject | Should -Contain 'repo:demo-a1b2c3-platform/instance:environment:application-plan'
+        $federation.properties.subject | Should -Contain 'repo:demo-a1b2c3-platform/instance:environment:application-plan-drift'
+        $federation.properties.subject | Should -Contain 'repo:demo-a1b2c3-platform/instance:environment:application-apply'
         @($federation | Where-Object { $_.properties.issuer -ne 'https://token.actions.example.ghe.com' }).Count | Should -Be 0
-        $teardown = $cloud.environments['/repos/demo-platform/instance/environments/teardown']
+        $teardown = $cloud.environments['/repos/demo-a1b2c3-platform/instance/environments/teardown']
         ($teardown.protection_rules | Where-Object { $_.type -eq 'required_reviewers' }).reviewers[0].reviewer.id | Should -Be 31
-        $platformGate = $cloud.environments['/repos/demo-platform/instance/environments/approve-teardown-platform']
+        $platformGate = $cloud.environments['/repos/demo-a1b2c3-platform/instance/environments/approve-teardown-platform']
         ($platformGate.protection_rules | Where-Object { $_.type -eq 'required_reviewers' }).reviewers[0].reviewer.id | Should -Be 30
         @($federation | Where-Object { $_.properties.subject -like '*teardown*' }).Count | Should -Be 0
         @($cloud.variables.Keys | Where-Object { $_ -like '*teardown*' }).Count | Should -Be 0
@@ -719,7 +817,7 @@ Describe 'GitHub bootstrap public interface' {
     }
     It 'binds immutable OIDC subjects to the exact repository IDs and each phase without widening trust' {
         $cloud.oidcSettings = @{
-            use_default = $true; use_immutable_subject = $true; sub_claim_prefix = 'repo:demo-platform@10/instance@20'
+            use_default = $true; use_immutable_subject = $true; sub_claim_prefix = 'repo:demo-a1b2c3-platform@10/instance@20'
         }
         & $bootstrap @arguments | Out-Null
         $planPath = $azure.Modules[0].Plan.ResourceId
@@ -729,10 +827,10 @@ Describe 'GitHub bootstrap public interface' {
         $apply = @($cloud.resources.Keys | Where-Object { $_.StartsWith("$applyPath/federatedIdentityCredentials/") } |
             ForEach-Object { $cloud.resources[$_].properties.subject })
         $plan | Should -HaveCount 2
-        $plan | Should -Contain 'repo:demo-platform@10/instance@20:environment:application-plan'
-        $plan | Should -Contain 'repo:demo-platform@10/instance@20:environment:application-plan-drift'
+        $plan | Should -Contain 'repo:demo-a1b2c3-platform@10/instance@20:environment:application-plan'
+        $plan | Should -Contain 'repo:demo-a1b2c3-platform@10/instance@20:environment:application-plan-drift'
         $apply | Should -HaveCount 1
-        $apply[0] | Should -BeExactly 'repo:demo-platform@10/instance@20:environment:application-apply'
+        $apply[0] | Should -BeExactly 'repo:demo-a1b2c3-platform@10/instance@20:environment:application-apply'
         @($plan + $apply | Where-Object { $_ -like '*approve-*' -or $_ -like '*teardown*' -or $_ -like '*foundation*' }) | Should -HaveCount 0
         $cloud.writes.Clear()
         (& $bootstrap @arguments).HasChanges | Should -BeFalse
@@ -750,13 +848,13 @@ Describe 'GitHub bootstrap public interface' {
             MissingMode { $cloud.oidcSettings.Remove('use_immutable_subject') }
             StringMode { $cloud.oidcSettings.use_immutable_subject = 'true' }
             CustomTemplate { $cloud.oidcSettings.use_default = $false }
-            PrefixIds { $cloud.oidcSettings.sub_claim_prefix = 'repo:demo-platform@10/instance@999' }
+            PrefixIds { $cloud.oidcSettings.sub_claim_prefix = 'repo:demo-a1b2c3-platform@10/instance@999' }
             MissingPrefix { $cloud.oidcSettings.Remove('sub_claim_prefix') }
-            MissingOwnerId { $cloud.resources['/repos/demo-platform/instance'].owner.Remove('id') }
-            MissingOwner { $cloud.resources['/repos/demo-platform/instance'].Remove('owner') }
-            StringOwnerId { $cloud.resources['/repos/demo-platform/instance'].owner.id = '10' }
-            DifferentOwner { $cloud.resources['/repos/demo-platform/instance'].owner.login = 'other-platform' }
-            ZeroRepositoryId { $cloud.resources['/repos/demo-platform/instance'].id = 0 }
+            MissingOwnerId { $cloud.resources['/repos/demo-a1b2c3-platform/instance'].owner.Remove('id') }
+            MissingOwner { $cloud.resources['/repos/demo-a1b2c3-platform/instance'].Remove('owner') }
+            StringOwnerId { $cloud.resources['/repos/demo-a1b2c3-platform/instance'].owner.id = '10' }
+            DifferentOwner { $cloud.resources['/repos/demo-a1b2c3-platform/instance'].owner.login = 'other-platform' }
+            ZeroRepositoryId { $cloud.resources['/repos/demo-a1b2c3-platform/instance'].id = 0 }
         }
         { & $bootstrap @arguments } | Should -Throw '*OIDC*'
         @($cloud.writes | Where-Object { $_.path -like '*/federatedIdentityCredentials*' }) | Should -HaveCount 0
@@ -767,7 +865,7 @@ Describe 'GitHub bootstrap public interface' {
         & $bootstrap @arguments | Out-Null
         $cloud.writes.Clear()
         $cloud.oidcSettings = @{
-            use_default = $true; use_immutable_subject = $true; sub_claim_prefix = 'repo:demo-platform@10/instance@20'
+            use_default = $true; use_immutable_subject = $true; sub_claim_prefix = 'repo:demo-a1b2c3-platform@10/instance@20'
         }
         { & $bootstrap @arguments } | Should -Throw '*unexpected federated credential*approved access change*'
         @($cloud.writes | Where-Object { $_.path -like '*/federatedIdentityCredentials*' }) | Should -HaveCount 0
@@ -807,7 +905,7 @@ Describe 'GitHub bootstrap public interface' {
         param($Code, $Content)
         & $bootstrap @arguments | Out-Null
         $cloud.writes.Clear()
-        $cloud.teamRepositoryResponses['/orgs/demo-platform/teams/platform/repos/demo-platform/instance'] = @{
+        $cloud.teamRepositoryResponses['/orgs/demo-a1b2c3-platform/teams/platform/repos/demo-a1b2c3-platform/instance'] = @{
             StatusCode = $Code; Content = $Content
         }
 
@@ -819,7 +917,7 @@ Describe 'GitHub bootstrap public interface' {
     It 'reports invalid JSON in a team permission detail without a permission write' -Tag 'TeamPermissions' {
         & $bootstrap @arguments | Out-Null
         $cloud.writes.Clear()
-        $cloud.teamRepositoryResponses['/orgs/demo-platform/teams/platform/repos/demo-platform/instance'] = @{
+        $cloud.teamRepositoryResponses['/orgs/demo-a1b2c3-platform/teams/platform/repos/demo-a1b2c3-platform/instance'] = @{
             StatusCode = 200; Content = '{"permissions":'
         }
 
@@ -835,7 +933,7 @@ Describe 'GitHub bootstrap public interface' {
         param($Access)
         & $bootstrap @arguments | Out-Null
         $cloud.writes.Clear()
-        $accessPath = '/orgs/demo-platform/teams/platform/repos/demo-platform/instance'
+        $accessPath = '/orgs/demo-a1b2c3-platform/teams/platform/repos/demo-a1b2c3-platform/instance'
         if ($Access -eq 'missing') { $cloud.resources.Remove($accessPath) }
         else { $cloud.resources[$accessPath].permission = $Access }
 
@@ -853,7 +951,7 @@ Describe 'GitHub bootstrap public interface' {
     It 'reports a failed team permission update without retrying or claiming success' -Tag 'TeamPermissions' {
         & $bootstrap @arguments | Out-Null
         $cloud.writes.Clear()
-        $accessPath = '/orgs/demo-platform/teams/platform/repos/demo-platform/instance'
+        $accessPath = '/orgs/demo-a1b2c3-platform/teams/platform/repos/demo-a1b2c3-platform/instance'
         $cloud.resources[$accessPath].permission = 'pull'
         $cloud.failPath = $accessPath
 
@@ -866,7 +964,7 @@ Describe 'GitHub bootstrap public interface' {
     It 'does not claim push access when a successful permission update is not confirmed' -Tag 'TeamPermissions' {
         & $bootstrap @arguments | Out-Null
         $cloud.writes.Clear()
-        $accessPath = '/orgs/demo-platform/teams/platform/repos/demo-platform/instance'
+        $accessPath = '/orgs/demo-a1b2c3-platform/teams/platform/repos/demo-a1b2c3-platform/instance'
         $cloud.teamRepositoryResponses[$accessPath] = @{
             StatusCode = 200; Content = '{"permissions":{"push":false}}'
         }
@@ -879,7 +977,7 @@ Describe 'GitHub bootstrap public interface' {
     It 'verifies the authorization App before uploading an encrypted key and records its rotation deadline' {
         $instance.githubApps = @{ authorization = @{
             appId = '101'; installationId = '201'; enterprise = 'example'
-            permissions = @{ members = 'read' }; resources = @{ organizations = @('demo-platform'); repositories = @{} }
+            permissions = @{ members = 'read' }; resources = @{ organizations = @('demo-a1b2c3-platform'); repositories = @{} }
         } }
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
         $keyPath = Join-Path $casePath 'authorization.pem'
@@ -896,7 +994,7 @@ Describe 'GitHub bootstrap public interface' {
         $result = & $bootstrap @arguments
 
         $result.CredentialsConfigured | Should -BeTrue
-        $cloud.secrets['/repos/demo-platform/instance/environments/pr-authorization/secrets/PLATFORM_APP_PRIVATE_KEY'].encrypted_value | Should -Be 'encrypted-key'
+        $cloud.secrets['/repos/demo-a1b2c3-platform/instance/environments/pr-authorization/secrets/PLATFORM_APP_PRIVATE_KEY'].encrypted_value | Should -Be 'encrypted-key'
         @($cloud.secrets.Keys).Count | Should -Be 1
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
         $record.apps.authorization.owner | Should -Be 'platform'
@@ -961,9 +1059,9 @@ Describe 'GitHub bootstrap public interface' {
         @{ Immutable = $false }, @{ Immutable = $true }
     ) {
         param($Immutable)
-        $subjectPrefix = if ($Immutable) { 'repo:demo-platform@10/instance@20' } else { 'repo:demo-platform/instance' }
+        $subjectPrefix = if ($Immutable) { 'repo:demo-a1b2c3-platform@10/instance@20' } else { 'repo:demo-a1b2c3-platform/instance' }
         $cloud.oidcSettings = @{ use_default = $true; use_immutable_subject = $Immutable; sub_claim_prefix = $subjectPrefix }
-        $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @('demo-platform') } } }
+        $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @('demo-a1b2c3-platform') } } }
         $instance.credentials = @{ 'enterprise-baseline' = @{
             plan = @{ environment = 'enterprise-baseline-plan'; githubApp = 'reader' }
             apply = @{ environment = 'enterprise-baseline-apply'; githubApp = 'writer' }
@@ -974,7 +1072,7 @@ Describe 'GitHub bootstrap public interface' {
         foreach ($alias in @('reader', 'writer', 'rulesets')) {
             $permissions = @{ organization_administration = $(if ($alias -eq 'reader') { 'read' } else { 'write' }) }
             $app = @{ appId = [string] $index; installationId = [string] ($index + 100); enterprise = 'example'
-                permissions = $permissions; resources = @{ organizations = @('demo-platform') } }
+                permissions = $permissions; resources = @{ organizations = @('demo-a1b2c3-platform') } }
             $instance.githubApps[$alias] = $app
             $cloud.apps[[string] $index] = $app
             $keyManifest[$alias] = @{} + $keyManifest.authorization
@@ -1002,7 +1100,7 @@ Describe 'GitHub bootstrap public interface' {
         $result = & $bootstrap @arguments
 
         $result.CredentialsConfigured | Should -BeTrue
-        $prefix = '/repos/demo-platform/instance/environments'
+        $prefix = '/repos/demo-a1b2c3-platform/instance/environments'
         $cloud.variables["$prefix/enterprise-baseline-plan/variables/PLATFORM_APP_ID"] | Should -Be '102'
         $cloud.variables["$prefix/enterprise-baseline-plan-drift/variables/PLATFORM_APP_ID"] | Should -Be '102'
         $cloud.variables["$prefix/enterprise-baseline-ruleset-plan/variables/PLATFORM_APP_ID"] | Should -Be '104'
@@ -1030,13 +1128,13 @@ Describe 'GitHub bootstrap public interface' {
     }
 
     It 'does not publish keys or initial main when an App is owned by a workload organization' {
-        $cloud.appOwner = @{ login = 'demo-platform'; type = 'Organization' }
+        $cloud.appOwner = @{ login = 'demo-a1b2c3-platform'; type = 'Organization' }
         $arguments.ResourcesOnly = $false
 
         { & $bootstrap @arguments } | Should -Throw '*not owned by the declared enterprise*'
         $cloud.secrets.Count | Should -Be 0
         $cloud.commit | Should -BeNullOrEmpty
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeFalse
     }
 
     It 'rejects a write-capable authorization key without narrowing its token permissions' {
@@ -1054,12 +1152,12 @@ Describe 'GitHub bootstrap public interface' {
         $result.CredentialsConfigured | Should -BeFalse
         $cloud.commit | Should -BeNullOrEmpty
         $cloud.secrets.Count | Should -Be 0
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeFalse
     }
 
     It 'resumes an interrupted secret upload without replacing the seeded release' {
         $arguments.ResourcesOnly = $false
-        $cloud.failPath = '/repos/demo-platform/instance/environments/pr-authorization/secrets/PLATFORM_APP_PRIVATE_KEY'
+        $cloud.failPath = '/repos/demo-a1b2c3-platform/instance/environments/pr-authorization/secrets/PLATFORM_APP_PRIVATE_KEY'
 
         { & $bootstrap @arguments } | Should -Throw '*HTTP 503*'
         $initialCommit = ConvertTo-Json -InputObject $cloud.commit -Compress
@@ -1076,7 +1174,7 @@ Describe 'GitHub bootstrap public interface' {
 
         { & $bootstrap @arguments } | Should -Throw '*did not enforce*security-team*'
         $cloud.secrets.Count | Should -Be 0
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeFalse
     }
 
     It 'creates protected main even when the organization initializes repositories on master' {
@@ -1086,8 +1184,8 @@ Describe 'GitHub bootstrap public interface' {
         $result = & $bootstrap @arguments
 
         $result.CredentialsConfigured | Should -BeTrue
-        $cloud.resources['/repos/demo-platform/instance'].default_branch | Should -Be 'main'
-        $cloud.resources['/repos/demo-platform/instance/git/ref/heads/main'].object.sha | Should -Be 'commit-sha'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance'].default_branch | Should -Be 'main'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'].object.sha | Should -Be 'commit-sha'
         $cloud.writes.Clear()
         (& $bootstrap @arguments).HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
@@ -1096,7 +1194,7 @@ Describe 'GitHub bootstrap public interface' {
     It 'accepts the Azure script result object without requiring a separate serialized file' {
         $arguments.AzureBootstrap = [pscustomobject] $azure
 
-        (& $bootstrap @arguments).Repository | Should -Be 'demo-platform/instance'
+        (& $bootstrap @arguments).Repository | Should -Be 'demo-a1b2c3-platform/instance'
     }
 
     It 'rejects inventory inside the running source checkout even when the release is elsewhere' {
@@ -1125,11 +1223,11 @@ Describe 'GitHub bootstrap public interface' {
         & $bootstrap @arguments | Out-Null
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
 
-        $record.resources | Should -Contain '/orgs/demo-platform'
-        $record.resources | Should -Contain '/repos/demo-platform/instance'
-        $record.resources | Should -Contain '/orgs/demo-platform/teams/platform'
-        $record.resources | Should -Contain '/repos/demo-platform/instance/environments/application-plan'
-        $record.resources | Should -Contain '/repos/demo-platform/instance/rulesets/60'
+        $record.resources | Should -Contain '/orgs/demo-a1b2c3-platform'
+        $record.resources | Should -Contain '/repos/demo-a1b2c3-platform/instance'
+        $record.resources | Should -Contain '/orgs/demo-a1b2c3-platform/teams/platform'
+        $record.resources | Should -Contain '/repos/demo-a1b2c3-platform/instance/environments/application-plan'
+        $record.resources | Should -Contain '/repos/demo-a1b2c3-platform/instance/rulesets/60'
         @($record.resources | Where-Object { $_ -eq '/graphql' -or $_ -like '*/git/*' -or $_.Contains('?') }).Count | Should -Be 0
     }
 
@@ -1149,7 +1247,7 @@ Describe 'GitHub bootstrap public interface' {
         $instance.githubApps.authorization.appId = '999'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
         $arguments.ResourcesOnly = $false
-        $cloud.appOwner = @{ login = 'demo-platform'; type = 'Organization' }
+        $cloud.appOwner = @{ login = 'demo-a1b2c3-platform'; type = 'Organization' }
 
         { & $bootstrap @arguments } | Should -Throw '*not owned by the declared enterprise*'
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
@@ -1170,15 +1268,15 @@ Describe 'GitHub bootstrap public interface' {
         $pending = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
         $pending.initializationPending | Should -BeTrue
         $pending['seedCommit'] | Should -BeNullOrEmpty
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeTrue
         $cloud.writes.Clear()
 
         $result = & $bootstrap @arguments
 
         $result.CredentialsConfigured | Should -BeTrue
-        @($cloud.writes | Where-Object { $_.path -ceq '/orgs/demo-platform/repos' }).Count | Should -Be 0
+        @($cloud.writes | Where-Object { $_.path -ceq '/orgs/demo-a1b2c3-platform/repos' }).Count | Should -Be 0
         $cloud.commit.parents | Should -Be @('seed-sha')
-        @($cloud.writes)[0].path | Should -Be '/repos/demo-platform/instance/actions/permissions'
+        @($cloud.writes)[0].path | Should -Be '/repos/demo-a1b2c3-platform/instance/actions/permissions'
         @($cloud.writes)[0].body.enabled | Should -BeFalse
         $completed = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
         $completed.seedCommit | Should -Be 'seed-sha'
@@ -1189,28 +1287,28 @@ Describe 'GitHub bootstrap public interface' {
     }
 
     It 'disables Actions on retry when repository creation succeeded but disabling was interrupted' {
-        $cloud.failPath = '/repos/demo-platform/instance/actions/permissions'
+        $cloud.failPath = '/repos/demo-a1b2c3-platform/instance/actions/permissions'
 
         { & $bootstrap @arguments } | Should -Throw '*HTTP 503*'
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeTrue
         $result = & $bootstrap @arguments
 
         $result.CredentialsConfigured | Should -BeFalse
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeFalse
         $cloud.commit | Should -BeNullOrEmpty
     }
 
     It 'does not restore bootstrap memberships after initialized teams have been synchronized' {
         $arguments.ResourcesOnly = $false
         & $bootstrap @arguments | Out-Null
-        $cloud.resources.Remove('/orgs/demo-platform/teams/platform/memberships/owner_example')
-        $cloud.resources.Remove('/orgs/demo-platform/teams/security/memberships/owner_example')
+        $cloud.resources.Remove('/orgs/demo-a1b2c3-platform/teams/platform/memberships/owner_example')
+        $cloud.resources.Remove('/orgs/demo-a1b2c3-platform/teams/security/memberships/owner_example')
         $cloud.writes.Clear()
 
         (& $bootstrap @arguments).HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
-        $cloud.resources.ContainsKey('/orgs/demo-platform/teams/platform/memberships/owner_example') | Should -BeFalse
-        $cloud.resources.ContainsKey('/orgs/demo-platform/teams/security/memberships/owner_example') | Should -BeFalse
+        $cloud.resources.ContainsKey('/orgs/demo-a1b2c3-platform/teams/platform/memberships/owner_example') | Should -BeFalse
+        $cloud.resources.ContainsKey('/orgs/demo-a1b2c3-platform/teams/security/memberships/owner_example') | Should -BeFalse
     }
 
     It 'activates only acceptance and disables every other workflow before enabling Actions' {
@@ -1218,18 +1316,18 @@ Describe 'GitHub bootstrap public interface' {
         Copy-Item (Join-Path $tools 'acceptance/github/bootstrap-acceptance.yml') `
             -Destination (Join-Path $release 'templates/instance/.github/workflows/bootstrap-acceptance.yml')
         'name: Future' | Set-Content (Join-Path $release 'templates/instance/.github/workflows/future.yml')
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/custom.yml'] = @{ state = 'active' }
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/custom.yml'] = @{ state = 'active' }
         $arguments.ResourcesOnly = $false
         $arguments.AcceptanceOnly = $true
 
         $result = & $bootstrap @arguments
 
         $result.CredentialsConfigured | Should -BeTrue
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/bootstrap-acceptance.yml'].state | Should -Be 'active'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/bootstrap-acceptance.yml'].state | Should -Be 'active'
         $paths = @($cloud.writes.path)
         $enabled = @($cloud.writes | Where-Object { $_.path -like '*/actions/permissions' -and $_.body.enabled })[0]
         foreach ($name in @('deploy.yml', 'vendor.yml', 'future.yml', 'custom.yml')) {
-            $path = "/repos/demo-platform/instance/actions/workflows/$name"
+            $path = "/repos/demo-a1b2c3-platform/instance/actions/workflows/$name"
             $cloud.resources[$path].state | Should -Be 'disabled_manually'
             if ($name -cne 'custom.yml') { $cloud.tree.path | Should -Contain ".github/workflows/$name" }
             $disabled = [Array]::IndexOf($paths, "$path/disable")
@@ -1247,10 +1345,10 @@ Describe 'GitHub bootstrap public interface' {
 
         $result.CredentialsConfigured | Should -BeTrue
         foreach ($name in @('deploy.yml', 'vendor.yml', 'future.yml')) {
-            $cloud.resources["/repos/demo-platform/instance/actions/workflows/$name"].state | Should -Be 'active'
+            $cloud.resources["/repos/demo-a1b2c3-platform/instance/actions/workflows/$name"].state | Should -Be 'active'
             $cloud.tree.path | Should -Contain ".github/workflows/$name"
         }
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeTrue
         @($cloud.writes | Where-Object path -Like '*/actions/workflows/*/disable').Count | Should -Be 0
     }
 
@@ -1265,14 +1363,14 @@ Describe 'GitHub bootstrap public interface' {
 
         (& $bootstrap @arguments).HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state = 'active'
-        $cloud.failPath = '/repos/demo-platform/instance/actions/workflows/vendor.yml/disable'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml'].state = 'active'
+        $cloud.failPath = '/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml/disable'
 
         { & $bootstrap @arguments } | Should -Throw '*HTTP 503*'
 
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
         @($cloud.writes | Where-Object { $_.path -like '*/actions/permissions' -and $_.body.enabled }).Count | Should -Be 0
     }
 
@@ -1288,11 +1386,11 @@ Describe 'GitHub bootstrap public interface' {
         $arguments.ResourcesOnly = $false
         $arguments.AcceptanceOnly = $true
         if ($Failure -ceq 'disable') {
-            $cloud.failPath = '/repos/demo-platform/instance/actions/workflows/vendor.yml/disable'
+            $cloud.failPath = '/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml/disable'
             $errorMessage = '*HTTP 503*'
         }
         elseif ($Failure -ceq 'unconfirmed') {
-            $cloud.unconfirmedDisable = '/repos/demo-platform/instance/actions/workflows/vendor.yml/disable'
+            $cloud.unconfirmedDisable = '/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml/disable'
             $errorMessage = '*was not disabled*'
         }
         else {
@@ -1302,8 +1400,8 @@ Describe 'GitHub bootstrap public interface' {
 
         { & $bootstrap @arguments } | Should -Throw $errorMessage
 
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeFalse
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeFalse
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
         @($cloud.writes | Where-Object { $_.path -like '*/actions/permissions' -and $_.body.enabled }).Count | Should -Be 0
     }
 
@@ -1315,14 +1413,14 @@ Describe 'GitHub bootstrap public interface' {
         $arguments.AcceptanceOnly = $true
         & $bootstrap @arguments | Out-Null
         $cloud.writes.Clear()
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state = 'active'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml'].state = 'active'
         $cloud.unregisteredWorkflow = '.github/workflows/vendor.yml'
-        $cloud.failPath = '/repos/demo-platform/instance/actions/permissions'
+        $cloud.failPath = '/repos/demo-a1b2c3-platform/instance/actions/permissions'
 
         { & $bootstrap @arguments } | Should -Throw '*not uniquely registered*Repository Actions isolation also failed*HTTP 503*'
 
-        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/vendor.yml'].state | Should -Be 'active'
         $cloud.writes.Count | Should -Be 0
     }
 
@@ -1363,11 +1461,11 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         }
         @{ acceptance = @{ apps = $registration }; confirmations = @{}; probe = @{} } |
             ConvertTo-Json -Depth 20 | Set-Content (Join-Path $casePath 'github-acceptance/setup-state.json')
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'] = @{ state = 'active' }
-        $cloud.resources['/repos/demo-platform/instance/actions/runs/80'] = @{
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/deploy.yml'] = @{ state = 'active' }
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/runs/80'] = @{
             id = 80; head_sha = 'commit-sha'; run_attempt = 1; status = 'completed'; conclusion = 'success'; event = 'workflow_dispatch'
         }
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/bootstrap-acceptance.yml/runs'] = @{ workflow_runs = @() }
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/bootstrap-acceptance.yml/runs'] = @{ workflow_runs = @() }
         $cloud.scheduledRuns = @()
         $cloud.loseDispatchResponse = $true
         $cloud.dispatchRecovery = $false
@@ -1381,13 +1479,14 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
             '{"tenant":"11111111-1111-1111-1111-111111111111","accessToken":"azure-test"}'
         }
         Mock Write-Host -ModuleName InstanceSetup {}
+        Mock New-PlatformDeploymentIdentifier -ModuleName InstanceSetup { 'a1b2c3' }
         Mock Read-Host -ModuleName InstanceSetup {
             if ($Prompt -like 'Actual creation*') { return [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString('o') }
             if ($Prompt -like 'What next*') {
                 if ($cloud.dispatchRecovery -and -not $cloud.retryUsed) { $cloud.retryUsed = $true; return 'r' }
                 return 's'
             }
-            if ($Prompt -like 'Local evidence*') { return 'https://example.ghe.com/demo-platform/instance/pull/9 observed the specified check' }
+            if ($Prompt -like 'Local evidence*') { return 'https://example.ghe.com/demo-a1b2c3-platform/instance/pull/9 observed the specified check' }
             return 'y'
         }
         $ghTransport = {
@@ -1431,8 +1530,8 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         foreach ($alias in @('authorization', 'reader', 'writer', 'rulesets')) {
             $acceptanceInstance.githubApps[$alias].resources.repositories.Count | Should -Be 0
         }
-        (Get-Content $result.SummaryPath -Raw) | Should -Not -Match 'example.ghe.com|11111111|installation-test|demo-platform'
-        $cloud.resources['/repos/demo-platform/instance/actions/workflows/deploy.yml'].state | Should -Be 'disabled_manually'
+        (Get-Content $result.SummaryPath -Raw) | Should -Not -Match 'example.ghe.com|11111111|installation-test|demo-a1b2c3-platform'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/deploy.yml'].state | Should -Be 'disabled_manually'
 
         $resumed = & (Join-Path $sourceRoot 'tools/Start-InstanceSetup.ps1') -WorkPath $casePath -GitHubAcceptance `
             -ReleasePath $release -ReleaseVersion '0.0.0-bootstrap.11' -Reconfirm -PassThru
@@ -1444,7 +1543,7 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         $replacement.Dispose()
         $cloud.scheduledRuns = @(@{ id = 85; head_sha = 'commit-sha'; head_branch = 'main'; run_attempt = 1
             status = 'completed'; conclusion = 'success'; event = 'schedule'; created_at = [DateTimeOffset]::UtcNow.ToString('o') })
-        $cloud.resources['/repos/demo-platform/instance/actions/runs/85/attempts/1/jobs'] = @{ jobs = @(
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/runs/85/attempts/1/jobs'] = @{ jobs = @(
             @{ name = 'authorize'; conclusion = 'success' }, @{ name = 'probe-plan'; conclusion = 'success' }
             @{ name = 'probe-rulesetPlan'; conclusion = 'success' }, @{ name = 'wrong_subject'; conclusion = 'success' }
             @{ name = 'approve_apply'; conclusion = 'skipped' }, @{ name = 'apply-probe'; conclusion = 'skipped' }

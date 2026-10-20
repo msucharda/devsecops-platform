@@ -17,7 +17,6 @@ $diagnosticPath = [IO.Path]::ChangeExtension([IO.Path]::GetFullPath($ResultPath)
 if (Test-Path -LiteralPath $diagnosticPath) { Remove-Item -LiteralPath $diagnosticPath }
 $federationPath = [IO.Path]::ChangeExtension([IO.Path]::GetFullPath($ResultPath), 'federation.json')
 if (Test-Path -LiteralPath $federationPath) { Remove-Item -LiteralPath $federationPath }
-$organization = "$($instance['instance']['name'])-platform"
 $checks = [ordered]@{}
 $keyFingerprint = ''
 
@@ -105,6 +104,11 @@ if ($Phase -eq 'wrongSubject') {
 }
 else {
     if (-not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https') { throw 'Acceptance requires the HTTPS GHE.com API URL.' }
+    # The workflow runs in the instance repository, so its owner is the platform organization.
+    $organization = [string] $env:GITHUB_REPOSITORY_OWNER
+    if ($organization -cnotmatch "^$([regex]::Escape($instance['instance']['name']))(-[a-z0-9]{6})?-platform$") {
+        throw 'The repository owner is not the platform organization of this instance.'
+    }
     $tokens = ConvertFrom-Json -InputObject $env:PLATFORM_GITHUB_TOKENS -AsHashtable
     $token = $tokens[$organization]
     if (-not $token -or $tokens.Count -ne 1) { throw 'The acceptance token must be scoped only to the platform organization.' }

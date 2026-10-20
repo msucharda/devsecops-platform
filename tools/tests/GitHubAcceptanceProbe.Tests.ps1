@@ -8,10 +8,11 @@ Describe 'Live bootstrap acceptance probe public interface' {
         $saved = @{}
         foreach ($name in @('PLATFORM_GITHUB_TOKENS', 'PLATFORM_APP_PRIVATE_KEY', 'AZURE_CLIENT_ID', 'AZURE_TENANT_ID',
             'PLATFORM_STATE_STORAGE_ACCOUNT', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
-            'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN')) {
+            'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'GITHUB_REPOSITORY_OWNER')) {
             $saved[$name] = [Environment]::GetEnvironmentVariable($name)
         }
-        $env:PLATFORM_GITHUB_TOKENS = '{"demo-platform":"trial-token"}'
+        $env:GITHUB_REPOSITORY_OWNER = 'demo-a1b2c3-platform'
+        $env:PLATFORM_GITHUB_TOKENS = '{"demo-a1b2c3-platform":"trial-token"}'
         $config = @{ instance = @{ name = 'demo' }; bootstrap = @{ tenantId = '11111111-1111-1111-1111-111111111111' } }
         $path = Join-Path $TestDrive 'instance.yaml'
         ConvertTo-Yaml $config | Set-Content $path
@@ -30,6 +31,28 @@ Describe 'Live bootstrap acceptance probe public interface' {
             Should -Throw '*Policy API unavailable*'
         Test-Path $output | Should -BeFalse
         Should -Invoke az -Times 0 -Exactly
+    }
+
+    It 'probes the platform organization named by the repository owner <Owner>' -Tag 'DeploymentIdentifier' -TestCases @(
+        @{ Owner = 'demo-a1b2c3-platform' }, @{ Owner = 'demo-platform' }
+    ) {
+        $env:GITHUB_REPOSITORY_OWNER = $Owner
+        $env:PLATFORM_GITHUB_TOKENS = "{`"$Owner`":`"trial-token`"}"
+
+        { & $probe -InstancePath $path -Phase plan -ApiUrl 'https://api.example.ghe.com' -ResultPath $output } |
+            Should -Throw '*Policy API unavailable*'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -ceq "https://api.example.ghe.com/orgs/$Owner/actions/permissions" }
+    }
+
+    It 'rejects a repository owner <Owner> that is not the platform organization of the instance' -Tag 'DeploymentIdentifier' -TestCases @(
+        @{ Owner = 'other-a1b2c3-platform' }, @{ Owner = 'demo-a1b2c3-workloads' }, @{ Owner = 'demo-A1B2C3-platform' }, @{ Owner = '' }
+    ) {
+        $env:GITHUB_REPOSITORY_OWNER = $Owner
+        $env:PLATFORM_GITHUB_TOKENS = "{`"$Owner`":`"trial-token`"}"
+
+        { & $probe -InstancePath $path -Phase plan -ApiUrl 'https://api.example.ghe.com' -ResultPath $output } |
+            Should -Throw '*not the platform organization*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
     }
 
     It 'records the actual phase identity and key only after all live checks succeed for <Phase>' -TestCases @(

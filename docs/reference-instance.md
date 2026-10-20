@@ -66,7 +66,7 @@ Role může mít jeden člověk, nebo kroky provede několik administrátorů. B
 
 ## Repozitář instance a konfigurace instance
 
-Instance repository (repozitář instance) je repozitář v organizaci platformy `<name>-platform` na GHE.com. Obsahuje:
+Instance repository (repozitář instance) je repozitář v organizaci platformy na GHE.com. Nové nasazení má organizaci platformy `<name>-<deployment>-platform`; `<deployment>` je Deployment identifier (identifikátor nasazení) z bootstrap inventory. Instance, jejíž inventory vzniklo před zavedením identifikátoru, zachová `<name>-platform` bez migrace ([runbook bootstrapu](bootstrap.md#příprava-registrace-apps)). Obsahuje:
 
 - `platform/`: vendorovaný release zdrojového repozitáře,
 - `instance.yaml`: Instance configuration (konfiguraci instance),

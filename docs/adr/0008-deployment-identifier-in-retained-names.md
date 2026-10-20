@@ -4,7 +4,7 @@ Azure prostředky a organizace GitHubu, jejichž název zůstává po smazání 
 
 ## Organizace GitHubu
 
-Organizace instance mají názvy `{name}-{deployment}-platform`, `{name}-{deployment}-actions` a `{name}-{deployment}-workloads`. `{name}` je `instance.name`, `{deployment}` je identifikátor nasazení. Teardown smaže organizace akcí a workloadů. Lokální odstranění bootstrapu smaže organizaci platformy (#22). Nové vytvoření organizace po jejím smazání musí použít nový identifikátor nasazení. Formát identifikátoru a jeho uložení určí implementace (#44, #13).
+Organizace instance mají názvy `{name}-{deployment}-platform`, `{name}-{deployment}-actions` a `{name}-{deployment}-workloads`. `{name}` je `instance.name`, `{deployment}` je identifikátor nasazení. Teardown smaže organizace akcí a workloadů. Lokální odstranění bootstrapu smaže organizaci platformy (#22). Nové vytvoření organizace po jejím smazání musí použít nový identifikátor nasazení. Formát identifikátoru a jeho uložení určí implementace (#44, #13). Bootstrap vytvoří 6 náhodných znaků `[a-z0-9]` a uloží je v bootstrap inventory (`docs/bootstrap.md`).
 
 Ověření 75 (#5) na referenční enterprise na GHE.com:
 

@@ -67,6 +67,22 @@ function Get-SetupAcceptanceBootstrapArgument {
     }
 }
 
+function Get-SetupAcceptanceOrganization {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][hashtable] $Setup)
+
+    $inventoryPath = (Get-SetupAcceptanceBootstrapArgument -Setup $Setup)['InventoryPath']
+    if (-not (Test-Path -LiteralPath $inventoryPath)) { throw 'Complete G4 GitHub preparation before using the platform organization.' }
+    $repository = [string] (Get-Content -LiteralPath $inventoryPath -Raw | ConvertFrom-Json -AsHashtable)['repository']
+    $organization = $repository.Split('/')[0]
+    if ($repository -cne "$organization/instance" -or
+        $organization -cnotmatch "^$([regex]::Escape($Setup.Settings['name']))(-[a-z0-9]{6})?-platform$") {
+        throw 'The acceptance bootstrap inventory does not name the platform organization of this instance.'
+    }
+    return $organization
+}
+
 function Invoke-StepAcceptanceResource {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable] $Setup)
@@ -91,7 +107,8 @@ function Invoke-StepAcceptanceApp {
     $config = Get-PlatformYaml -Path $Setup.InstancePath
     $state = $Setup.State['acceptance']
     if (-not $state.Contains('apps')) { $state['apps'] = @{} }
-    $organization = "$($Setup.Settings['name'])-platform"
+    $organization = Get-SetupAcceptanceOrganization -Setup $Setup
+    $config['modules']['enterprise-baseline']['parameters'] = @{ target_organizations = @($organization) }
     $appSetup = $Setup.Clone()
     $appSetup.WorkPath = $directory
     $null = [IO.Directory]::CreateDirectory((Join-Path $directory 'keys'))
@@ -195,7 +212,7 @@ function Invoke-StepAcceptanceRuleset {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable] $Setup)
 
-    $organization = "$($Setup.Settings['name'])-platform"
+    $organization = Get-SetupAcceptanceOrganization -Setup $Setup
     $api = "https://api.$($Setup.Settings['githubHost'])"
     $rules = @(Get-SetupAcceptanceList -Setup $Setup -Uri "$api/orgs/$organization/rulesets")
     $probeRules = @($rules | Where-Object { $_['name'] -ceq 'bootstrap-acceptance-probe' })
@@ -535,8 +552,8 @@ function Invoke-StepAcceptanceRelease {
     $Setup.InstancePath = Join-Path $acceptance['directory'] 'instance.yaml'
     if (-not (Test-Path $Setup.InstancePath)) {
         $config = Copy-SetupData $acceptance['sourceConfiguration']
-        $organization = "$($config['instance']['name'])-platform"
-        $config['modules'] = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @($organization) } } }
+        # G5 adds target_organizations after G4 records the platform organization name in the inventory.
+        $config['modules'] = @{ 'enterprise-baseline' = @{ parameters = @{} } }
         $config['credentials'] = @{
             'enterprise-baseline' = @{
                 plan = @{ environment = 'enterprise-baseline-plan' }
