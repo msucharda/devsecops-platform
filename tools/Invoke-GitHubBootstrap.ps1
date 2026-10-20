@@ -83,15 +83,21 @@ if ($LASTEXITCODE -ne 0 -or $oauth -cnotmatch '^gho_[A-Za-z0-9_]+$') {
 }
 $api = "https://api.$($connection['githubHost'])"
 $changed = [Collections.Generic.List[string]]::new()
-$organization = "$($instance['instance']['name'])-platform"
-$repository = "$organization/instance"
 $ownership = "Platform instance $($instance['instance']['name']); bootstrap-owned."
-$inventory = @{
-    version = 1; repository = $repository; enterprise = $connection['enterprise']
-    releaseVersion = $ReleaseVersion; apps = @{}; resources = @()
-}
 if (Test-Path -LiteralPath $inventoryFile) {
     $inventory = Get-Content -LiteralPath $inventoryFile -Raw | ConvertFrom-Json -AsHashtable
+    if ($inventory.Contains('deploymentIdentifier')) {
+        try {
+            $organization = Get-PlatformOrganizationName -InstanceName $instance['instance']['name'] `
+                -DeploymentIdentifier ([string]$inventory['deploymentIdentifier']) -Kind platform
+        }
+        catch { throw "The bootstrap inventory has an invalid deployment identifier. $($_.Exception.Message)" }
+    }
+    else {
+        # Inventories recorded before deployment identifiers keep their original organization name.
+        $organization = "$($instance['instance']['name'])-platform"
+    }
+    $repository = "$organization/instance"
     if ($inventory['repository'] -cne $repository -or $inventory['enterprise'] -cne $connection['enterprise']) {
         throw 'The bootstrap inventory belongs to another instance.'
     }
@@ -103,6 +109,16 @@ if (Test-Path -LiteralPath $inventoryFile) {
     }
 }
 elseif ($NoChanges) { throw 'NoChanges requires an existing initialized bootstrap inventory.' }
+else {
+    $deploymentIdentifier = Get-RandomPlatformDeploymentIdentifier
+    $organization = Get-PlatformOrganizationName -InstanceName $instance['instance']['name'] `
+        -DeploymentIdentifier $deploymentIdentifier -Kind platform
+    $repository = "$organization/instance"
+    $inventory = @{
+        version = 1; repository = $repository; enterprise = $connection['enterprise']
+        deploymentIdentifier = $deploymentIdentifier; releaseVersion = $ReleaseVersion; apps = @{}; resources = @()
+    }
+}
 if (-not $inventory.Contains('declaredApps')) { $inventory['declaredApps'] = @{} }
 foreach ($alias in $instance['githubApps'].PSBase.Keys) {
     $appId = $instance['githubApps'][$alias]['appId']
@@ -391,7 +407,11 @@ do {
 } while ($enterprise['organizations']['pageInfo']['hasNextPage'])
 $org = Invoke-GitHubBootstrapApi -Path "/orgs/$organization" -AllowNotFound
 if ($org -and -not $belongs) { throw "Organization '$organization' belongs to another enterprise; refusing to adopt it." }
+if (-not $org -and "/orgs/$organization" -cin @($inventory['resources'])) {
+    throw "Organization '$organization' no longer exists. GHE.com keeps deleted organization names; start a new deployment with a new inventory."
+}
 if (-not $org) {
+    Save-GitHubBootstrapInventory
     $created = Invoke-GitHubBootstrapApi -Path '/graphql' -Method POST -Body @{
         query = 'mutation($input:CreateEnterpriseOrganizationInput!){createEnterpriseOrganization(input:$input){organization{login}}}'
         variables = @{ input = @{
@@ -878,6 +898,6 @@ if (-not $ResourcesOnly) {
 }
 Save-GitHubBootstrapInventory
 [pscustomobject]@{
-    Repository = $repository; ReleaseVersion = $ReleaseVersion
+    Organization = $organization; Repository = $repository; ReleaseVersion = $ReleaseVersion
     InventoryPath = $inventoryFile; CredentialsConfigured = $configured; HasChanges = $changed.Count -gt 0
 }

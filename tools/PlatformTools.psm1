@@ -523,4 +523,28 @@ function Assert-PlatformBootstrapRequest {
     }
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest
+function Get-RandomPlatformDeploymentIdentifier {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+
+    $alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    -join (1..6 | ForEach-Object { $alphabet[[Security.Cryptography.RandomNumberGenerator]::GetInt32($alphabet.Length)] })
+}
+
+function Get-PlatformOrganizationName {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][string] $InstanceName,
+        [Parameter(Mandatory)][string] $DeploymentIdentifier,
+        [Parameter(Mandatory)][ValidateSet('platform', 'actions', 'workloads')][string] $Kind
+    )
+
+    if ($InstanceName -cnotmatch '^[a-z][a-z0-9]{1,7}$' -or $DeploymentIdentifier -cnotmatch '^[a-z0-9]{6}$') {
+        throw 'Organization names require instance.name with 2-8 lowercase alphanumeric characters and a deployment identifier with 6 lowercase alphanumeric characters.'
+    }
+    "$InstanceName-$DeploymentIdentifier-$Kind"
+}
+
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName

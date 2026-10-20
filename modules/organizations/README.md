@@ -6,7 +6,7 @@ Předpoklady: `emu-identity`.
 
 ## Organizace a role
 
-- Organizace mají názvy `{name}-{deployment}-actions` a `{name}-{deployment}-workloads`. `{deployment}` je identifikátor nasazení podle ADR 0008, protože GHE.com název smazané organizace neuvolní ani do 7 dní.
+- Organizace mají názvy `{name}-{deployment}-actions` a `{name}-{deployment}-workloads`. `{deployment}` je identifikátor nasazení podle ADR 0008, protože GHE.com název smazané organizace neuvolní ani do 7 dní. Bootstrap ho uloží v inventory a použije v názvu organizace platformy `{name}-{deployment}-platform`. Funkce `Get-PlatformOrganizationName` v `tools/PlatformTools.psm1` skládá všechny tři názvy.
 - Organization owners patří jen do platformního týmu.
 - Security tým má roli security manager ve všech třech organizacích instance. Pokud ověření nepotvrdí přiřazení enterprise týmu i dědění role na jeho členech, roli získá tým organizace propojený se stejnou skupinou Entra ID. Samotné úspěšné přiřazení HTTP 204 nestačí.
 - Workload týmy mají nejvýše `Maintain` na svých repozitářích, ne repository `Admin`, organization owner ani organizační role pro změnu kontrol.
