@@ -901,12 +901,12 @@ function Invoke-SetupRoleAssignment {
     $assignmentName = [guid]::new([byte[]] $hash[0..15]).ToString()
     $assignmentUri = "$script:Arm$Scope/providers/Microsoft.Authorization/roleAssignments/$assignmentName`?api-version=2022-04-01"
     $assignmentBody = @{ properties = @{ principalId = $principalId; principalType = 'User'; roleDefinitionId = $roleDefinitionId } }
-    $response = Wait-SetupCondition -TimeoutSeconds 300 -IntervalSeconds 10 -Activity 'Waiting for elevated access to take effect' -Condition {
+    $response = Wait-SetupCondition -TimeoutSeconds 600 -IntervalSeconds 10 -Activity 'Waiting for elevated access to take effect' -Condition {
         $assignmentAttempt = Invoke-SetupApi -Setup $Setup -Uri $assignmentUri -Method PUT -Body $assignmentBody
         if ($assignmentAttempt.Status -ne 'Forbidden') { $assignmentAttempt }
     }
     if (-not $response) {
-        Exit-SetupStage -Status Forbidden -Area azure -Message "Elevated access did not allow the role assignment at $Scope within 5 minutes." `
+        Exit-SetupStage -Status Forbidden -Area azure -Message "Elevated access did not allow the role assignment at $Scope within 10 minutes." `
             -Guidance @('Choose [r] to try again.')
     }
     if ($response.Code -eq 409) { return }
@@ -1215,7 +1215,7 @@ function Invoke-StepAzureOwner {
     Invoke-SetupElevatedAction -Setup $Setup -Purpose 'Assigning Owner on the subscriptions' -AdminGuidance $adminGuidance -Action {
         foreach ($ownerScope in $ownerGaps) { Invoke-SetupRoleAssignment -Setup $Setup -Scope $ownerScope -RoleId $script:RoleOwner }
     }
-    $effective = Wait-SetupCondition -TimeoutSeconds 300 -IntervalSeconds 15 -Activity 'Waiting for the Owner role to take effect' -Condition {
+    $effective = Wait-SetupCondition -TimeoutSeconds 600 -IntervalSeconds 15 -Activity 'Waiting for the Owner role to take effect' -Condition {
         if (@(Get-SetupOwnerGap -Setup $Setup).Count -eq 0) { $true }
     }
     if (-not $effective) {
@@ -1584,14 +1584,84 @@ function Invoke-SetupProvisionOnDemand {
         Show-SetupGuidance -Line @($portal)
         return
     }
-    $body = @{ parameters = @(@{ ruleId = $rules[0]['id']; subjects = @(@{ objectId = $Setup.Facts.Me; objectTypeName = 'User' }) }) }
+    $userRules = @($rules | Where-Object {
+            $_ -is [System.Collections.IDictionary] -and @($_['objectMappings'] | Where-Object {
+                    $_ -is [System.Collections.IDictionary] -and $_['enabled'] -ne $false -and $_['sourceObjectName'] -eq 'User'
+                }).Count -gt 0
+        })
+    if ($userRules.Count -eq 0) {
+        Show-SetupMessage -Kind Warning -Message 'The SCIM schema has no enabled rule for users.'
+        Show-SetupGuidance -Line @($portal)
+        return
+    }
+    $body = @{ parameters = @(@{ ruleId = $userRules[0]['id']; subjects = @(@{ objectId = $Setup.Facts.Me; objectTypeName = 'User' }) }) }
     $response = Invoke-SetupApi -Setup $Setup -Method POST -Uri "$script:Graph/servicePrincipals/$spId/synchronization/jobs/$jobId/provisionOnDemand" -Body $body
-    if ($response.Status -eq 'Ok') {
+    if ($response.Status -ne 'Ok') {
+        Show-SetupMessage -Kind Warning -Message "Provision on demand failed. $($response.Message)"
+        Show-SetupGuidance -Line @($portal)
+        return
+    }
+    $result = Get-SetupProvisionResult -Data $response.Data -ObjectId $Setup.Facts.Me
+    if ($result.Status -eq 'Success') {
         Show-SetupMessage -Kind Ok -Message 'Provision on demand finished. Your EMU account exists in GitHub.'
         return
     }
-    Show-SetupMessage -Kind Warning -Message "Provision on demand failed. $($response.Message)"
+    if ($result.Status -eq 'Skipped' -and $result.ErrorCode -eq 'RedundantExport') {
+        Show-SetupMessage -Kind Ok -Message 'Provision on demand skipped the export: your EMU account in GitHub already matches Entra ID.'
+        return
+    }
+    if (-not $result.Status) {
+        Show-SetupMessage -Kind Warning -Message 'Cannot read the provisioning result. Check it in the portal:'
+    }
+    else {
+        $reason = (@($result.ErrorCode, $result.ErrorMessage) | Where-Object { $_ }) -join ': '
+        $message = "Provision on demand returned $($result.Status). $reason"
+        Show-SetupMessage -Kind Warning -Message $message.TrimEnd()
+    }
     Show-SetupGuidance -Line @($portal)
+}
+
+function Get-SetupProvisionResult {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [AllowNull()] $Data,
+        [Parameter(Mandatory)][string] $ObjectId
+    )
+
+    # Graph documents key and value as JSON strings. The live service returned a .NET type name in key and a JSON array
+    # of provisioning records in value, so only records for the requested user with a target identity count as success.
+    $result = @{ Status = $null; ErrorCode = $null; ErrorMessage = $null }
+    if ($Data -isnot [System.Collections.IDictionary]) { return $result }
+    $parse = {
+        param($Text)
+        if ($Text -isnot [string]) { return }
+        try { ConvertFrom-Json -InputObject $Text -AsHashtable -NoEnumerate -ErrorAction Stop } catch { $null = $_ }
+    }
+    $summary = & $parse $Data['key']
+    if ($summary -isnot [System.Collections.IDictionary]) { $summary = @{} }
+    $parsedValue = & $parse $Data['value']
+    $records = @(@($parsedValue) | Where-Object { $_ -is [System.Collections.IDictionary] })
+    $identified = @($records | Where-Object { $_['sourceIdentity'] -is [System.Collections.IDictionary] -and $_['sourceIdentity']['id'] })
+    if ($identified.Count -gt 0) { $records = @($identified | Where-Object { $_['sourceIdentity']['id'] -eq $ObjectId }) }
+    if ($records.Count -eq 0) { return $result }
+    $statusOf = { param($Record) if ($Record['statusInfo'] -is [System.Collections.IDictionary]) { [string] $Record['statusInfo']['status'] } }
+    $failed = @($records | Where-Object { (& $statusOf $_) -eq 'Failure' })
+    $exported = @($records | Where-Object {
+            (& $statusOf $_) -eq 'Success' -and $_['targetIdentity'] -is [System.Collections.IDictionary] -and $_['targetIdentity']['id']
+        })
+    $record = if ($failed.Count -gt 0) { $failed[0] } elseif ($exported.Count -gt 0) { $exported[0] } else { $records[0] }
+    $status = & $statusOf $record
+    if ($status -eq 'Success' -and $exported.Count -eq 0) { return $result }
+    $result.Status = if ($status) { $status } elseif ($summary['result']) { [string] $summary['result'] }
+    $info = if ($record['statusInfo'] -is [System.Collections.IDictionary]) { $record['statusInfo'] } else { @{} }
+    $details = if ($summary['details'] -is [System.Collections.IDictionary]) { $summary['details'] } else { @{} }
+    $skipReason = @($record['provisioningSteps'] | Where-Object {
+            $_ -is [System.Collections.IDictionary] -and $_['status'] -eq 'Skipped' -and $_['details'] -is [System.Collections.IDictionary]
+        } | ForEach-Object { $_['details']['SkipReason'] } | Where-Object { $_ }) | Select-Object -First 1
+    $result.ErrorCode = @($info['errorCode'], $skipReason, $details['errorCode']) | Where-Object { $_ } | Select-Object -First 1
+    $result.ErrorMessage = @($info['reason'], $details['errorMessage']) | Where-Object { $_ } | Select-Object -First 1
+    return $result
 }
 
 function Invoke-StepOwnerAssignment {
@@ -2098,6 +2168,21 @@ function Invoke-StepProbeOrg {
     $orgResponse = Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org"
     $null = Assert-SetupResponse -Response $orgResponse -Action "Reading the organization $org" -AllowMissing
     $orgMissing = $orgResponse.Status -eq 'Missing'
+    if ($orgMissing -and $probe['organization'] -and $probe['organizationSignInPending']) {
+        Exit-SetupStage -Status Error -Area github -Message "The organization $org was created but is not readable yet." -Guidance @('Wait a minute, then choose [r].')
+    }
+    if ($orgMissing -and $probe['organization']) {
+        $stored = [string] $probe['organization']
+        Show-SetupMessage -Kind Warning -Message "The probe organization $stored from setup-state.json no longer exists. GitHub keeps the name of a deleted organization blocked (ADR 0008)."
+        $suggested = "probe-$((Get-Date).ToString('yyyyMMdd'))"
+        if ($suggested -eq $stored) { $suggested = "probe-$((Get-Date).ToString('yyyyMMddHHmm'))" }
+        $validateName = {
+            param($text)
+            if ($text -eq $stored) { "$stored is the name of the deleted organization. Enter another name." }
+            elseif ($text.Length -gt 39 -or $text -cnotmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { 'Use lowercase letters, digits and single hyphens, at most 39 characters.' }
+        }.GetNewClosure()
+        $org = Read-SetupValue -Prompt 'Name of the new probe organization' -Default $suggested -Validate $validateName
+    }
     $repoMissing = $orgMissing -or $null -eq (Assert-SetupResponse -Response (Invoke-SetupApi -Setup $Setup -Uri "$api/repos/$org/instance-probe") -Action 'Reading the probe repository' -AllowMissing)
     $teamMissing = $orgMissing -or $null -eq (Assert-SetupResponse -Response (Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org/teams/platform-probe") -Action 'Reading the probe team' -AllowMissing)
     $membership = if ($teamMissing) { $null } else {

@@ -243,7 +243,7 @@ Role Owner a Management Group Reader průvodce přiřazuje přes elevaci Global 
 1. Ověří aktivní roli Global Administrator. Bez ní vypíše příkaz `az role assignment create`, který spustí jiný Global Administrator.
 2. Po potvrzení zapne elevaci. Elevace dá roli User Access Administrator na kořeni `/`.
 3. Přiřadí roli a elevaci hned odebere, i když přiřazení selže. Elevaci, která existovala před spuštěním průvodce, odebere po potvrzení.
-4. Na účinnost role čeká nejdéle 5 minut u role Owner a 10 minut u role Management Group Reader.
+4. Na účinnost role čeká nejdéle 10 minut.
 
 **Tvoje akce:** Pokud nemáš roli Global Administrator, aktivuj ji v PIM a zvol `[l]`. Jinak předej vypsaný příkaz Global Administratorovi.
 
@@ -289,8 +289,7 @@ Příznaky: `enterpriseScim`, `enterpriseOwner`. Dílčí kroky: `SCIM provision
 
 - Přečte SCIM job aplikace. Job v quarantine ohlásí s důvodem. Neaktivní job po potvrzení spustí a na stav `Active` čeká nejdéle 2 minuty.
 - Ověří přímé přiřazení app role Enterprise Owner tvému uživateli. Chybějící přiřazení po potvrzení vytvoří.
-- Po novém přiřazení nabídne Provision on demand. Plánovaný cyklus SCIM běží každých 40 minut. Provision on demand založí účet hned.
-
+- Po novém přiřazení nabídne Provision on demand. Plánovaný cyklus SCIM běží každých 40 minut. Provision on demand založí účet hned. Průvodce použije první povolené pravidlo pro uživatele ze SCIM schématu. Úspěch ohlásí jen u záznamu pro tvůj uživatelský objekt s cílovou identitou v GitHubu, nebo při výsledku `Skipped` s důvodem `RedundantExport`. Jiný nebo nečitelný výsledek ohlásí jako varování a odkáže na Provision on demand v portálu.
 **Tvoje akce:** Pokud SCIM job chybí, nastav provisioning v UI:
 
 1. Jako setup user vytvoř classic PAT se scope `scim:enterprise` a bez expirace. Entra ID token pro SCIM sám neobnoví. Expirace by zastavila provisioning.
@@ -397,6 +396,7 @@ Příznak: `githubAppAvailabilityVerified`. Dílčí kroky: `Probe organization`
 
 - Po potvrzení vytvoří organizaci `probe-<yyyymmdd>` s tebou jako owner, private repozitář `instance-probe`, tým `platform-probe` a tvoje členství v týmu. Dočasně přidá scopes `admin:enterprise`, `admin:org` a `repo`.
 - Název organizace uloží do `setup-state.json`. Další běh použije stejnou organizaci.
+- Pokud uložená organizace už neexistuje, průvodce vyžádá nový název. GitHub blokuje název smazané organizace (ADR 0008). Průvodce proto starý název odmítne.
 
 - Po vytvoření organizace vyžádá nové přihlášení GitHub CLI, ještě před vytvořením repozitáře a týmu. Otevři organizaci v prohlížeči, dokonči případné SSO a přihlas CLI jako stejný spravovaný uživatel. OAuth token musí získat přístup k nové organizaci. Průvodce po přihlášení znovu ověří účet a potřebné scopes.
 
@@ -483,17 +483,21 @@ Průvodce zapíše do konfigurace tyto hodnoty:
 | `githubApps`, `credentials` | Prázdné, nebo hodnoty z existující konfigurace | Apps a environmenty vytvoří #11. |
 | `teardown.allowed` | `false`, nebo hodnota z existující konfigurace | Runner odmítne teardown. |
 
-**Postup:** Načti proměnné relace podle sekce Konvence relace. Potom spusť negativní test:
+**Postup:** Načti proměnné relace podle sekce Konvence relace. Potom spusť negativní test. Resource group `rg-$name-bootstrap` může existovat z dřívějšího běhu C1. Test proto porovná seznam prostředků v resource group před bootstrapem a po něm.
 
 ```powershell
 $negative = Join-Path $work 'instance-negative.yaml'
+$bootstrapRg = "rg-$name-bootstrap"
 (Get-Content -Raw $cfg) -replace 'patMaxLifetime90Days: true', 'patMaxLifetime90Days: false' | Set-Content -LiteralPath $negative -Encoding utf8NoBOM -NoNewline
+if (-not (Select-String -LiteralPath $negative -Pattern 'patMaxLifetime90Days: false' -Quiet)) { throw 'The negative configuration does not contain patMaxLifetime90Days: false.' }
+$before = if ((az group exists -n $bootstrapRg) -eq 'true') { az resource list -g $bootstrapRg --query '[].id' -o tsv | Sort-Object }
 try {
     .\tools\Invoke-Bootstrap.ps1 -InstancePath $negative -ModulesPath $modulesPath
     'unexpected: bootstrap succeeded'
 }
 catch { $_.Exception.Message }
-az group exists -n "rg-$name-bootstrap"
+$after = if ((az group exists -n $bootstrapRg) -eq 'true') { az resource list -g $bootstrapRg --query '[].id' -o tsv | Sort-Object }
+if (Compare-Object @($before) @($after)) { 'unexpected: resources changed' } else { 'state unchanged' }
 Remove-Item $negative
 ```
 
@@ -501,7 +505,7 @@ Remove-Item $negative
 
 - Dílčí kroky `Instance configuration` a `Bootstrap preflight` mají v souhrnu průvodce stav `Ok`.
 - Negativní test vypíše `Bootstrap requires manual prerequisite confirmations: $.manualPrerequisites.patMaxLifetime90Days.`
-- `az group exists` vrátí `false`.
+- Negativní test vypíše `state unchanged`. Bootstrap kontroluje ruční předpoklady před první změnou v cloudu, proto se seznam prostředků nezmění.
 
 ### B2: Přihlášení před během
 
