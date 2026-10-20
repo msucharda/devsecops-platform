@@ -15,6 +15,8 @@ $instance = Get-PlatformYaml -Path $InstancePath
 if (Test-Path -LiteralPath $ResultPath) { Remove-Item -LiteralPath $ResultPath }
 $diagnosticPath = [IO.Path]::ChangeExtension([IO.Path]::GetFullPath($ResultPath), 'state-isolation.json')
 if (Test-Path -LiteralPath $diagnosticPath) { Remove-Item -LiteralPath $diagnosticPath }
+$federationPath = [IO.Path]::ChangeExtension([IO.Path]::GetFullPath($ResultPath), 'federation.json')
+if (Test-Path -LiteralPath $federationPath) { Remove-Item -LiteralPath $federationPath }
 $organization = "$($instance['instance']['name'])-platform"
 $checks = [ordered]@{}
 $keyFingerprint = ''
@@ -43,14 +45,61 @@ if ($Phase -eq 'wrongSubject') {
         -Headers @{ Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" } -MaximumRedirection 0 -TimeoutSec 60
     if (-not $oidc.value) { throw 'GitHub did not return an OIDC assertion.' }
     Write-Information "::add-mask::$($oidc.value)" -InformationAction Continue
-    $response = Invoke-WebRequest -Uri "https://login.microsoftonline.com/$env:AZURE_TENANT_ID/oauth2/v2.0/token" `
-        -Method POST -ContentType 'application/x-www-form-urlencoded' -Body @{
-            client_id = $env:AZURE_CLIENT_ID; grant_type = 'client_credentials'; scope = 'https://management.azure.com/.default'
-            client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'; client_assertion = $oidc.value
-        } -SkipHttpErrorCheck -MaximumRedirection 0 -TimeoutSec 60
-    $errorBody = ConvertFrom-Json -InputObject $response.Content -AsHashtable
-    if ($response.StatusCode -ne 400 -or 700213 -notin $errorBody['error_codes']) {
-        throw 'The wrong-subject probe did not fail specifically with AADSTS700213. Do not treat a generic login failure as isolation proof.'
+    $federation = [ordered]@{
+        version = 1; phase = $Phase; outcome = 'UnrecognizedFailure'; httpStatus = $null
+        error_codes = @(); error = 'not-observed'; trace_id = $null; correlation_id = $null
+    }
+    try {
+        try {
+            $response = Invoke-WebRequest -Uri "https://login.microsoftonline.com/$env:AZURE_TENANT_ID/oauth2/v2.0/token" `
+                -Method POST -ContentType 'application/x-www-form-urlencoded' -Body @{
+                    client_id = $env:AZURE_CLIENT_ID; grant_type = 'client_credentials'; scope = 'https://management.azure.com/.default'
+                    client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'; client_assertion = $oidc.value
+                } -SkipHttpErrorCheck -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
+        }
+        catch {
+            $federation.outcome = 'TransportFailure'
+            throw 'The wrong-subject token request failed. See the federation diagnostic.'
+        }
+        if (-not $response -or -not $response.PSObject.Properties['StatusCode'] -or
+            $response.StatusCode -isnot [int] -or $response.StatusCode -lt 100 -or $response.StatusCode -gt 599) {
+            $federation.outcome = 'InvalidResponse'
+            throw 'The wrong-subject response has no valid HTTP status. See the federation diagnostic.'
+        }
+        $federation.httpStatus = $response.StatusCode
+        try { $errorBody = ConvertFrom-Json -InputObject $response.Content -AsHashtable -ErrorAction Stop }
+        catch {
+            $federation.outcome = 'InvalidResponse'
+            throw 'The wrong-subject response is not a JSON object. See the federation diagnostic.'
+        }
+        if ($errorBody -isnot [Collections.IDictionary]) {
+            $federation.outcome = 'InvalidResponse'
+            throw 'The wrong-subject response is not a JSON object. See the federation diagnostic.'
+        }
+        $codes = $errorBody['error_codes']
+        if ($codes -is [Collections.IList] -and $codes.Count -le 16 -and
+            -not @($codes | Where-Object { ($_ -isnot [int] -and $_ -isnot [long]) -or $_ -lt 0 -or $_ -gt 999999999 }).Count) {
+            $federation.error_codes = @($codes)
+        }
+        $knownErrors = @('invalid_client', 'invalid_request', 'invalid_grant', 'invalid_scope', 'unauthorized_client',
+            'unsupported_grant_type', 'server_error', 'temporarily_unavailable', 'access_denied')
+        $federation.error = if ($errorBody['error'] -cin $knownErrors) { $errorBody['error'] } else { 'unrecognized' }
+        foreach ($name in @('trace_id', 'correlation_id')) {
+            if ($errorBody[$name] -is [string] -and $errorBody[$name] -cmatch '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$') {
+                $federation[$name] = $errorBody[$name]
+            }
+        }
+        if ($response.StatusCode -notin @(400, 401) -or $federation.error -cne 'invalid_client' -or
+            $federation.error_codes.Count -ne 1 -or $federation.error_codes[0] -ne 700213) {
+            throw 'The wrong-subject probe did not fail specifically with AADSTS700213. Do not treat a generic login failure as isolation proof.'
+        }
+        $federation.outcome = 'SubjectRejected'
+    }
+    finally {
+        $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($federationPath))
+        $federationJson = ConvertTo-Json $federation -Compress
+        [IO.File]::WriteAllText($federationPath, $federationJson + "`n", [Text.UTF8Encoding]::new($false))
+        Write-Information "Federation diagnostic: $federationJson" -InformationAction Continue
     }
     $checks['wrongSubjectRejected'] = $true
 }

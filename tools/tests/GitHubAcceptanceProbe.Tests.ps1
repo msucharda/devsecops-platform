@@ -279,10 +279,95 @@ Describe 'Live bootstrap acceptance probe public interface' {
         }
     }
 
-    It 'accepts only the exact Entra wrong-subject rejection, not another login failure (<Code>)' -TestCases @(
-        @{ Code = 700213; Accepted = $true }, @{ Code = 700016; Accepted = $false }
+    It 'preserves only safe structured Entra diagnostics when wrong-subject rejection is unrecognized' {
+        $env:AZURE_CLIENT_ID = '44444444-4444-4444-4444-444444444444'
+        $env:AZURE_TENANT_ID = '11111111-1111-1111-1111-111111111111'
+        $env:ACTIONS_ID_TOKEN_REQUEST_URL = 'https://pipelines.actions.githubusercontent.com/oidctoken'
+        $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN = 'runner-test-token'
+        Mock Invoke-RestMethod { @{ value = 'assertion-must-not-be-preserved' } }
+        Mock Write-Information {} -ParameterFilter { $MessageData -like '::add-mask::*' }
+        $errorContent = ConvertTo-Json @{
+            error = 'invalid_client'; error_codes = @(700016)
+            trace_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            correlation_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+            error_description = 'sensitive-output-must-not-be-preserved'
+            access_token = 'access-token-must-not-be-preserved'
+        }
+        Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = 400; Content = $errorContent } }
+        Set-Content $output '{"passed":true}'
+
+        { & $probe -InstancePath $path -Phase wrongSubject -ResultPath $output } |
+            Should -Throw '*wrong-subject*'
+
+        Test-Path $output | Should -BeFalse
+        $raw = Get-Content (Join-Path $TestDrive 'result.federation.json') -Raw
+        $diagnostic = ConvertFrom-Json $raw -AsHashtable
+        $diagnostic.httpStatus | Should -Be 400
+        $diagnostic.error_codes | Should -Be @(700016)
+        $diagnostic.error | Should -Be 'invalid_client'
+        $diagnostic.trace_id | Should -Be 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        $diagnostic.correlation_id | Should -Be 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+        $diagnostic.outcome | Should -Be 'UnrecognizedFailure'
+        $raw | Should -Not -Match 'must-not-be-preserved|assertion|access_token|error_description'
+    }
+
+    It 'fails closed with safe federation evidence for <Case>' -TestCases @(
+        @{ Case = 'a token transport exception'; Transport = $true; Status = 400; Content = '{}'; Outcome = 'TransportFailure' }
+        @{ Case = 'a non-JSON response'; Transport = $false; Status = 400; Content = 'sensitive-output-must-not-be-preserved'; Outcome = 'InvalidResponse' }
+        @{ Case = 'a JSON array'; Transport = $false; Status = 400; Content = '["sensitive-output-must-not-be-preserved"]'; Outcome = 'InvalidResponse' }
+        @{ Case = 'a malformed HTTP status'; Transport = $false; Status = 'sensitive-output-must-not-be-preserved'; Content = '{}'; Outcome = 'InvalidResponse' }
+        @{ Case = 'an unexpected access token'; Transport = $false; Status = 200; Content = '{"access_token":"sensitive-output-must-not-be-preserved"}'; Outcome = 'UnrecognizedFailure' }
+        @{ Case = 'untrusted diagnostic strings'; Transport = $false; Status = 401; Content = '{"error":"sensitive-output-must-not-be-preserved","error_codes":["sensitive-output-must-not-be-preserved"],"trace_id":"sensitive-output-must-not-be-preserved","correlation_id":"sensitive-output-must-not-be-preserved"}'; Outcome = 'UnrecognizedFailure' }
     ) {
-        param($Code, $Accepted)
+        param($Case, $Transport, $Status, $Content, $Outcome)
+        $env:AZURE_CLIENT_ID = '44444444-4444-4444-4444-444444444444'
+        $env:AZURE_TENANT_ID = '11111111-1111-1111-1111-111111111111'
+        $env:ACTIONS_ID_TOKEN_REQUEST_URL = 'https://pipelines.actions.githubusercontent.com/oidctoken'
+        $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN = 'runner-test-token'
+        Mock Invoke-RestMethod { @{ value = 'assertion-must-not-be-preserved' } }
+        Mock Write-Information {} -ParameterFilter { $MessageData -like '::add-mask::*' }
+        $transportFailure = $Transport
+        $responseFixture = [pscustomobject]@{ StatusCode = $Status; Content = $Content }
+        Mock Invoke-WebRequest {
+            if ($transportFailure) { throw 'sensitive-output-must-not-be-preserved' }
+            $responseFixture
+        }
+        $federationPath = Join-Path $TestDrive 'result.federation.json'
+        Set-Content $federationPath '{"outcome":"SubjectRejected"}'
+        Set-Content $output '{"passed":true}'
+
+        $message = try { & $probe -InstancePath $path -Phase wrongSubject -ResultPath $output }
+            catch { $_.Exception.Message }
+
+        $message | Should -Match 'wrong-subject' -Because $Case
+        $message | Should -Not -Match 'must-not-be-preserved'
+        Test-Path $output | Should -BeFalse
+        $raw = Get-Content $federationPath -Raw
+        ($raw | ConvertFrom-Json).outcome | Should -Be $Outcome
+        $raw.Length | Should -BeLessThan 1024
+        $raw | Should -Not -Match 'must-not-be-preserved|assertion|access_token|error_description'
+    }
+
+    It 'accepts only the exact Entra wrong-subject rejection, not another login failure (<Status>/<Code>)' -TestCases @(
+        @{ Status = 400; Code = 700213; Accepted = $true }
+        @{ Status = 401; Code = 700213; Accepted = $true }
+        @{ Status = 400; Code = 700016; Accepted = $false }
+        @{ Status = 401; Code = 70021; Accepted = $false }
+        @{ Status = 400; Code = 70021; Accepted = $false }
+        @{ Status = 401; Code = 700212; Accepted = $false }
+        @{ Status = 401; Code = 700211; Accepted = $false }
+        @{ Status = 401; Code = 700024; Accepted = $false }
+        @{ Status = 200; Code = 700213; Accepted = $false }
+        @{ Status = 302; Code = 700213; Accepted = $false }
+        @{ Status = 403; Code = 700213; Accepted = $false }
+        @{ Status = 500; Code = 700213; Accepted = $false }
+        @{ Status = 401; Code = @(700213, 700016); Accepted = $false }
+        @{ Status = 401; Code = '700213'; Accepted = $false }
+        @{ Status = 401; Code = $null; Accepted = $false }
+        @{ Status = 401; Code = 700213; OAuthError = 'invalid_request'; Accepted = $false }
+        @{ Status = 401; Code = 700213; OAuthError = $null; Accepted = $false }
+    ) {
+        param($Status, $Code, $Accepted, $OAuthError = 'invalid_client')
         $env:AZURE_CLIENT_ID = '44444444-4444-4444-4444-444444444444'
         $env:AZURE_TENANT_ID = '11111111-1111-1111-1111-111111111111'
         $env:ACTIONS_ID_TOKEN_REQUEST_URL = 'https://pipelines.actions.githubusercontent.com/oidctoken?api-version=2.0'
@@ -291,10 +376,14 @@ Describe 'Live bootstrap acceptance probe public interface' {
             '{"sub":"repo:demo-platform@10/instance@20:ref:refs/heads/main","aud":"api://AzureADTokenExchange"}')).TrimEnd('=').Replace('+', '-').Replace('/', '_')
         $assertion = "header.$subjectPayload.signature"
         Mock Invoke-RestMethod { @{ value = $assertion } }
-        $errorContent = ConvertTo-Json @{ error_codes = @($Code) }
-        Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = 400; Content = $errorContent } }
+        Mock Write-Information {} -ParameterFilter { $MessageData -like '::add-mask::*' }
+        $errorContent = ConvertTo-Json @{ error = $OAuthError; error_codes = @($Code) }
+        Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = $Status; Content = $errorContent } }
         if ($Accepted) {
             (& $probe -InstancePath $path -Phase wrongSubject -ResultPath $output).checks.wrongSubjectRejected | Should -BeTrue
+            $diagnostic = Get-Content (Join-Path $TestDrive 'result.federation.json') -Raw | ConvertFrom-Json
+            $diagnostic.httpStatus | Should -Be $Status
+            $diagnostic.outcome | Should -Be 'SubjectRejected'
             Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
                 $Uri -like '*audience=api%3A%2F%2FAzureADTokenExchange' -and $Headers.Authorization -eq 'Bearer runner-test-token'
             }
@@ -307,7 +396,8 @@ Describe 'Live bootstrap acceptance probe public interface' {
         }
         Should -Invoke az -Times 0 -Exactly
         Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
-            $Body.client_assertion -ceq $assertion -and $Body.scope -ceq 'https://management.azure.com/.default'
+            $Body.client_assertion -ceq $assertion -and $Body.scope -ceq 'https://management.azure.com/.default' -and
+            $MaximumRetryCount -eq 0 -and $MaximumRedirection -eq 0 -and $SkipHttpErrorCheck
         }
     }
 }
