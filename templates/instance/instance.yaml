@@ -23,6 +23,7 @@ manualPrerequisites:
   subscriptions: false
   licenses: false
   privateInternalForksDisabled: false
+  repositoryManagementPoliciesEnforced: false
   emuUserNamespacesRestricted: false
   fineGrainedPatApprovalRequired: false
   patMaxLifetime90Days: false

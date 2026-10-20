@@ -144,6 +144,14 @@ function Get-PlatformModuleGraph {
                 throw "Module '$name' has duplicate manual step '$($step.id)'."
             }
         }
+        if ($manifest.Contains('manualPrerequisites')) {
+            [string[]] $knownPrerequisites = @(Get-PlatformManualPrerequisiteName)
+            foreach ($prerequisite in $manifest.manualPrerequisites) {
+                if ($prerequisite -cnotin $knownPrerequisites) {
+                    throw "Module '$name' references unknown manual prerequisite '$prerequisite'."
+                }
+            }
+        }
         [string[]] $prerequisites = @($manifest.prerequisites)
         [System.Array]::Sort($prerequisites, [System.StringComparer]::Ordinal)
         $manifest.prerequisites = $prerequisites
@@ -485,28 +493,46 @@ function Get-PlatformModuleSelection {
     return ,$names
 }
 
-function Get-PlatformManualPrerequisite {
+function Get-PlatformManualPrerequisiteName {
     [CmdletBinding()]
-    [OutputType([pscustomobject])]
-    param([Parameter(Mandatory)][System.Collections.IDictionary] $Instance)
+    [OutputType([string])]
+    param()
 
     $schema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/instance.schema.json') -Raw |
         ConvertFrom-Json -AsHashtable
-    foreach ($name in $schema['properties']['manualPrerequisites']['properties'].PSBase.Keys) {
+    $schema['properties']['manualPrerequisites']['properties'].PSBase.Keys
+}
+
+function Get-PlatformManualPrerequisite {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Instance,
+        [string[]] $Name
+    )
+
+    $names = if ($PSBoundParameters.ContainsKey('Name')) { $Name } else { Get-PlatformManualPrerequisiteName }
+    foreach ($prerequisite in $names) {
         [pscustomobject]@{
-            Name = $name
-            Confirmed = $Instance['manualPrerequisites'].Contains($name) -and [bool] $Instance['manualPrerequisites'][$name]
+            Name = $prerequisite
+            Confirmed = $Instance['manualPrerequisites'].Contains($prerequisite) -and $Instance['manualPrerequisites'][$prerequisite] -is [bool] -and $Instance['manualPrerequisites'][$prerequisite]
         }
     }
 }
 
 function Assert-PlatformManualPrerequisite {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][System.Collections.IDictionary] $Instance)
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Instance,
+        [string[]] $Name,
+        [string] $Subject = 'Bootstrap'
+    )
 
-    $missing = @(Get-PlatformManualPrerequisite -Instance $Instance | Where-Object { -not $_.Confirmed } | ForEach-Object { $_.Name })
+    $arguments = @{ Instance = $Instance }
+    if ($PSBoundParameters.ContainsKey('Name')) { $arguments.Name = $Name }
+    $missing = @(Get-PlatformManualPrerequisite @arguments | Where-Object { -not $_.Confirmed } | ForEach-Object { $_.Name })
     if ($missing.Count -gt 0) {
-        throw "Bootstrap requires manual prerequisite confirmations: $(($missing | ForEach-Object { '$.manualPrerequisites.' + $_ }) -join ', ')."
+        throw "$Subject requires manual prerequisite confirmations: $(($missing | ForEach-Object { '$.manualPrerequisites.' + $_ }) -join ', ')."
     }
 }
 

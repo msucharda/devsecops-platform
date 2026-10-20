@@ -25,6 +25,28 @@ BeforeAll {
 }
 
 Describe 'Deployment workflow generation' {
+    It 'loads the released enterprise-baseline manifest with phase-separated App access and enterprise prerequisites' {
+        Import-Module (Join-Path $toolsPath 'PlatformTools.psm1') -Force
+        $released = Join-Path (Split-Path $toolsPath -Parent) 'modules'
+
+        $manifest = (Get-PlatformModuleGraph -ModulesPath $released)['enterprise-baseline']
+
+        $manifest.permissions.githubApp.plan.permissions.Keys | Should -Be @('organization_administration')
+        $manifest.permissions.githubApp.plan.permissions.organization_administration | Should -Be 'read'
+        $manifest.permissions.githubApp.apply.permissions.organization_administration | Should -Be 'write'
+        $manifest.permissions.githubApp.rulesetPlan.purpose | Should -Be 'organization-rulesets-full-read'
+        foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
+            $manifest.permissions.githubApp[$phase].resources.organizations | Should -Be 'target_organizations'
+        }
+        @($manifest.permissions.adminPat) | Should -BeNullOrEmpty
+        @($manifest.permissions.azure) | Should -BeNullOrEmpty
+        @($manifest.permissions.microsoftGraph) | Should -BeNullOrEmpty
+        @($manifest.manualPrerequisites | Sort-Object) | Should -Be @(
+            'emuUserNamespacesRestricted', 'fineGrainedPatApprovalRequired', 'patMaxLifetime90Days',
+            'privateInternalForksDisabled', 'repositoryManagementPoliciesEnforced')
+        Test-Path -LiteralPath (Join-Path $released 'enterprise-baseline/rulesets/versions.tf') | Should -BeTrue
+    }
+
     It 'schedules isolated nightly plans without opening the shared apply gate' {
         $output = Join-Path $TestDrive 'nightly.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output
@@ -290,6 +312,20 @@ Describe 'Deployment workflow generation' {
             'sequence' { $yaml = "-`n" + (($yaml -split "`n" | ForEach-Object { "  $_" }) -join "`n") }
         }
         $yaml | Set-Content -LiteralPath $manifestPath
+
+        { & $generator -ModulesPath $modules -OutputPath (Join-Path $modules 'invalid.yml') } |
+            Should -Throw $Error
+    }
+
+    It 'rejects manual prerequisite <Case> in a manifest' -ForEach @(
+        @{ Case = 'names unknown to the instance schema'; Value = @('repositoryCreationDisabled'); Error = '*application*unknown manual prerequisite*repositoryCreationDisabled*' }
+        @{ Case = 'duplicates'; Value = @('licenses', 'licenses'); Error = '*application*' }
+        @{ Case = 'a non-list value'; Value = 'licenses'; Error = '*application*' }
+    ) {
+        $modules = New-ModuleGraphFixture -ModuleName application -Change {
+            param($manifest)
+            $manifest.manualPrerequisites = $Value
+        }
 
         { & $generator -ModulesPath $modules -OutputPath (Join-Path $modules 'invalid.yml') } |
             Should -Throw $Error

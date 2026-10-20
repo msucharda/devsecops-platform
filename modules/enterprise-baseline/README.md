@@ -2,19 +2,44 @@
 
 Modul nastaví automatizované kontroly v organizacích instance podle ADR 0016. Název modulu zachováváme. Enterprise kontroly, které App-only automatizace nepokrývá, jsou povinné ruční předpoklady, ne Terraform prostředky modulu.
 
-Předpoklady: `actions-catalog`.
+Předpoklady: `actions-catalog`. Manifest ho zatím nedeklaruje; doplní ho politika akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)).
+
+## Stav implementace
+
+[#17](https://github.com/msucharda/devsecops-platform/issues/17) implementuje organizační oprávnění a ruční enterprise předpoklady. Politika akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)), code security ([#19](https://github.com/msucharda/devsecops-platform/issues/19)) a rulesety ([#20](https://github.com/msucharda/devsecops-platform/issues/20)) zatím implementované nejsou. Ruleset root `rulesets/` je prázdný; existuje kvůli oddělenému ruleset jobu v manifestu.
+
+## Spravovaná organizační nastavení
+
+Modul pro každou organizaci z `target_organizations` volá `PATCH /orgs/{org}` ([dokumentace](https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/orgs#update-an-organization), API verze `2026-03-10`) a nastaví:
+
+| Pole | Hodnota | Výchozí hodnota GitHubu |
+|---|---|---|
+| `default_repository_permission` | `none` | `read` |
+| `members_can_create_repositories` | `false` | `true` |
+| `members_can_create_private_repositories` | `false` | `true` |
+| `members_can_create_internal_repositories` | `false` | `true` |
+| `members_can_fork_private_repositories` | `false` | `false` |
+
+- Modul nespravuje zakládání public repozitářů. EMU organizace public repozitáře nemají.
+- Modul používá provider `Mastercard/restapi`, ne `github_organization_settings` providera `integrations/github`. Ten vyžaduje `billing_email`, posílá všechna pole organizace a potřebuje provider pro každou organizaci.
+- Provider dostane installation token jobu z proměnné `REST_API_BEARER`. Runner ji nastaví z `GITHUB_TOKEN` a po běhu obnoví.
+- Create, update i destroy jsou `PATCH` existující organizace. Přerušený běh proto další apply bezpečně zopakuje.
+- Postcondition po čtení `GET /orgs/{org}` ([dokumentace](https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/orgs#get-an-organization)) vyžaduje spravované hodnoty. Chybějící pole je chyba, ne shoda. Plan tak zachytí drift spravovaných polí.
+- Check `enterprise_repository_management_policies` čte `members_can_change_repo_visibility` a `members_can_delete_repositories`. API organizace tato pole nenastaví; vynucuje je předpoklad `repositoryManagementPoliciesEnforced`. Nesoulad nebo chybějící pole check hlásí jako varování, ne chybu.
 
 ## Ruční enterprise předpoklady
 
-Platformní tým před bootstrapem nastaví a potvrdí:
+Manifest deklaruje `manualPrerequisites`. Runner před plan a apply vyžaduje `true` pro každý příznak v `instance.yaml`; chybějící nebo nepravdivá hodnota ho zastaví před Terraformem. Destroy potvrzení nevyžaduje. Souhrn jobu označí potvrzení jako ruční deklaraci, ne ověření.
 
-- Repozitáře zakládá jen platforma. Členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat.
-- Forky privátních a internal repozitářů jsou zakázané.
-- EMU user namespaces nesmějí obsahovat repozitáře, které obejdou organizační kontroly.
-- Fine-grained PAT vyžaduje schválení. Maximální platnost PAT je 90 dní.
-- O omezení classic PAT zatím není rozhodnuto.
+| Příznak | Kontrola |
+|---|---|
+| `privateInternalForksDisabled` | Forky privátních a internal repozitářů jsou zakázané. |
+| `repositoryManagementPoliciesEnforced` | Členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat nebo přenášet. |
+| `emuUserNamespacesRestricted` | EMU user namespaces nesmějí obsahovat repozitáře, které obejdou organizační kontroly. |
+| `fineGrainedPatApprovalRequired` | Fine-grained PAT vyžaduje schválení. |
+| `patMaxLifetime90Days` | Maximální platnost PAT je 90 dní. |
 
-Teardown tyto předpoklady zachová. Jejich ruční potvrzení není důkaz automatického planu ani detekce driftu.
+Platformní tým příznaky nastaví před bootstrapem. O omezení classic PAT zatím není rozhodnuto. Teardown tyto předpoklady zachová. Jejich ruční potvrzení není důkaz automatického planu ani detekce driftu.
 
 ## Organizační oprávnění
 
@@ -55,7 +80,7 @@ Seznam patterns je v `instance.yaml`. Výchozí seznam je prázdný.
 
 ## Teardown
 
-Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu a smaže organizační rulesety, configurations a custom patterns. Ruční enterprise předpoklady nemění. Případné ruční operace uvádí manifest včetně omezení odstranění.
+Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu a smaže organizační rulesety, configurations a custom patterns. Ruční enterprise předpoklady nemění. Případné ruční operace uvádí manifest včetně omezení odstranění. Destroy organizačních nastavení pošle `PATCH` jen se spravovanými poli a výchozími hodnotami z tabulky výše.
 
 ## Identita
 

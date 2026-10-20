@@ -16,6 +16,7 @@ manualPrerequisites:
   subscriptions: true
   licenses: true
   privateInternalForksDisabled: true
+  repositoryManagementPoliciesEnforced: true
   emuUserNamespacesRestricted: true
   fineGrainedPatApprovalRequired: true
   patMaxLifetime90Days: true

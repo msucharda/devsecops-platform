@@ -893,6 +893,7 @@ Describe 'Local Azure bootstrap' {
         @{ Name = 'subscriptions' }
         @{ Name = 'licenses' }
         @{ Name = 'privateInternalForksDisabled' }
+        @{ Name = 'repositoryManagementPoliciesEnforced' }
         @{ Name = 'emuUserNamespacesRestricted' }
         @{ Name = 'fineGrainedPatApprovalRequired' }
         @{ Name = 'patMaxLifetime90Days' }
@@ -1137,7 +1138,7 @@ Describe 'Local Azure bootstrap' {
         It 'reports every check without changing either cloud' {
             $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
 
-            $rows.Count | Should -Be 28
+            $rows.Count | Should -Be 29
             @($rows | Where-Object Status -EQ 'Pass').Count | Should -Be 17
             @($rows | Where-Object Status -NotIn @('Pass', 'Confirmed')) | Should -BeNullOrEmpty
             $rows.Check | Should -Contain 'State backend names'

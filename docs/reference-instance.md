@@ -337,7 +337,7 @@ Příznak: část `enterpriseOwner`. Dílčí kroky: `GitHub CLI sign-in`, `Ente
 
 ### A7: Politiky enterprise
 
-Příznaky: `privateInternalForksDisabled`, `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired`, `patMaxLifetime90Days`. Dílčí krok: `Enterprise policies`.
+Příznaky: `privateInternalForksDisabled`, `repositoryManagementPoliciesEnforced`, `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired`, `patMaxLifetime90Days`. Dílčí krok: `Enterprise policies`.
 
 **Proč:** Moduly platformy spravují GitHub jen instalačními tokeny App. Enterprise kontroly, které App-only automatizace nepokrývá, jsou proto ruční předpoklady (ADR 0016). Bez nich může člen enterprise obejít Controls (kontroly) organizací. Může například zkopírovat kód do forku nebo do repozitáře mimo organizace platformy.
 
@@ -346,6 +346,7 @@ Požadované politiky:
 | Příznak | Cesta v UI | Nastavení | Proč |
 |---|---|---|---|
 | `privateInternalForksDisabled` | Your enterprise → Policies → Member privileges → Repository forking | Zakaž forky private a internal repozitářů. | Fork přenese kód mimo kontroly původní organizace. |
+| `repositoryManagementPoliciesEnforced` | Your enterprise → Policies → Member privileges → Repository creation, Repository visibility change, Repository deletion and transfer | Zakaž členům zakládat repozitáře, měnit jejich viditelnost a mazat nebo přenášet repozitáře. | Repozitáře zakládá jen platforma. API organizace změnu viditelnosti a mazání nenastaví, proto je vynucuje enterprise. |
 | `emuUserNamespacesRestricted` | Your enterprise → Policies → Member privileges → Repository creation | Zapni **Block the creation of user namespace repositories**. | Repozitář v user namespace leží mimo organizace platformy a jejich rulesety. |
 | `fineGrainedPatApprovalRequired` | Your enterprise → Policies → Personal access tokens → Fine-grained tokens | Zapni **Require organizations to use the approval flow**. | Členové organizací musí získat schválení fine-grained PAT pro přístup k organizacím enterprise. Administrátoři organizací nesmí schvalování vypnout. |
 | `patMaxLifetime90Days` | Your enterprise → Policies → Personal access tokens → záložky Fine-grained tokens a Tokens (classic) | Na obou záložkách zapni **Set maximum lifetimes for personal access tokens** s hodnotou 90 dní. | Krátká platnost zkrátí dobu, po kterou lze zneužít odcizený PAT. |
@@ -354,21 +355,17 @@ U maximální platnosti PAT zapni **Exempt administrators**. Dokumentace GitHubu
 
 Omezení classic PAT nenastavuj. O něm zatím není rozhodnuto.
 
-README `enterprise-baseline` vyžaduje ještě jednu enterprise kontrolu: členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat. Bootstrap pro ni nemá příznak. Politiky jsou ve stejné sekci Member privileges:
-
-- Repository creation: členové nesmí zakládat repozitáře.
-- Repository visibility change: členové nesmí měnit viditelnost.
-- Repository deletion and transfer: členové nesmí mazat ani přenášet repozitáře.
+Modul `enterprise-baseline` vyžaduje příznaky této sekce před každým plan a apply. Plan ani detekce driftu enterprise politiky nečtou.
 
 **Průvodce:**
 
 - Přes GraphQL přečte politiky forků, zakládání, změny viditelnosti a mazání repozitářů. Politiku, která nemá hodnotu `DISABLED`, po potvrzení nastaví na `DISABLED`. Pro čtení a změnu dočasně přidá scope `admin:enterprise`.
-- Příznak `privateInternalForksDisabled` nastaví, když všechny 4 politiky mají hodnotu `DISABLED`.
+- Příznaky `privateInternalForksDisabled` a `repositoryManagementPoliciesEnforced` nastaví, když všechny 4 politiky mají hodnotu `DISABLED`. Pokud změnu odmítneš, oba příznaky zůstanou `false`.
 - Politiky PAT a omezení user namespace nemají API. Průvodce pro každý příznak ukáže cestu v UI a vyžádá potvrzení.
 
 Výstup `AUTOMATIC` označuje kontrolu nebo změnu přes API. Po ověření průvodce vypíše všechny 4 politiky jako `DISABLED`; v UI je nemusíš nastavovat znovu. Výstup `USER ACTION` označuje ruční kontrolu, kterou musíš provést před potvrzením. Zákaz repozitářů v user namespace je samostatný checkbox, nikoli jedna ze 4 politik nastavených přes API. Najdeš ho v **Member privileges**, ne v editoru **Repositories → Policies → New policy**. Ostatní nastavení neměň.
 
-**Tvoje akce:** Nastav v UI politiky příznaků `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired` a `patMaxLifetime90Days` podle tabulky. Výsledek politik zakládání, viditelnosti a mazání repozitářů zapiš do komentáře v #10.
+**Tvoje akce:** Nastav v UI politiky příznaků `emuUserNamespacesRestricted`, `fineGrainedPatApprovalRequired` a `patMaxLifetime90Days` podle tabulky.
 
 **Ověření:** Každá politika ukazuje hodnotu vynucenou na úrovni enterprise. Organizace ji nemohou změnit.
 

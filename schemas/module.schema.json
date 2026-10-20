@@ -12,6 +12,12 @@
       "uniqueItems": true,
       "items": { "$ref": "#/definitions/moduleName" }
     },
+    "manualPrerequisites": {
+      "description": "Instance manual prerequisite names the module plan and apply require. The runner reports them as declarations only.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" }
+    },
     "manualSteps": {
       "type": "array",
       "uniqueItems": true,
