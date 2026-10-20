@@ -4,7 +4,7 @@ BeforeAll {
 
 Describe 'Deployment identifier' {
     It 'generates six lowercase alphanumeric characters' {
-        $identifiers = 1..50 | ForEach-Object { New-PlatformDeploymentIdentifier }
+        $identifiers = 1..50 | ForEach-Object { Get-RandomPlatformDeploymentIdentifier }
 
         $identifiers | ForEach-Object { $_ | Should -MatchExactly '^[a-z0-9]{6}$' }
         @($identifiers | Sort-Object -Unique).Count | Should -BeGreaterThan 45

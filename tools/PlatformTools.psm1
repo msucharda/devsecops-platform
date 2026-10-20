@@ -523,7 +523,7 @@ function Assert-PlatformBootstrapRequest {
     }
 }
 
-function New-PlatformDeploymentIdentifier {
+function Get-RandomPlatformDeploymentIdentifier {
     [CmdletBinding()]
     [OutputType([string])]
     param()
@@ -546,4 +546,4 @@ function Get-PlatformOrganizationName {
     "$InstanceName-$DeploymentIdentifier-$Kind"
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, New-PlatformDeploymentIdentifier, Get-PlatformOrganizationName
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName

@@ -78,7 +78,7 @@ Describe 'GitHub bootstrap public interface' {
             takenOrganizations = @()
         }
         $deploymentIdentifiers = [Collections.Generic.Queue[string]]::new()
-        Mock New-PlatformDeploymentIdentifier {
+        Mock Get-RandomPlatformDeploymentIdentifier {
             if ($deploymentIdentifiers.Count) { $deploymentIdentifiers.Dequeue() } else { 'a1b2c3' }
         }
         foreach ($module in $azure.Modules) {
@@ -380,7 +380,7 @@ Describe 'GitHub bootstrap public interface' {
         $record.deploymentIdentifier | Should -BeExactly 'a1b2c3'
         $record.repository | Should -BeExactly 'demo-a1b2c3-platform/instance'
         @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' }).Count | Should -Be 1
-        Should -Invoke New-PlatformDeploymentIdentifier -Times 1 -Exactly
+        Should -Invoke Get-RandomPlatformDeploymentIdentifier -Times 1 -Exactly
     }
 
     It 'reuses the recorded deployment identifier when organization creation did not complete' -Tag 'DeploymentIdentifier' {
@@ -393,7 +393,7 @@ Describe 'GitHub bootstrap public interface' {
         $result = & $bootstrap @arguments
 
         $result.Organization | Should -BeExactly 'demo-a1b2c3-platform'
-        Should -Invoke New-PlatformDeploymentIdentifier -Times 1 -Exactly
+        Should -Invoke Get-RandomPlatformDeploymentIdentifier -Times 1 -Exactly
     }
 
     It 'refuses to recreate a deleted organization under its recorded deployment identifier' -Tag 'DeploymentIdentifier' {
@@ -437,7 +437,7 @@ Describe 'GitHub bootstrap public interface' {
         $record.Contains('deploymentIdentifier') | Should -BeFalse
         @($cloud.writes | Where-Object { $_.body.query -like '*createEnterpriseOrganization*' }).body.variables.input.login |
             Should -BeExactly 'demo-platform'
-        Should -Invoke New-PlatformDeploymentIdentifier -Times 0 -Exactly
+        Should -Invoke Get-RandomPlatformDeploymentIdentifier -Times 0 -Exactly
     }
 
     It 'rejects an inventory whose <Case> does not match its organization' -Tag 'DeploymentIdentifier' -TestCases @(
@@ -1479,7 +1479,7 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
             '{"tenant":"11111111-1111-1111-1111-111111111111","accessToken":"azure-test"}'
         }
         Mock Write-Host -ModuleName InstanceSetup {}
-        Mock New-PlatformDeploymentIdentifier -ModuleName InstanceSetup { 'a1b2c3' }
+        Mock Get-RandomPlatformDeploymentIdentifier -ModuleName InstanceSetup { 'a1b2c3' }
         Mock Read-Host -ModuleName InstanceSetup {
             if ($Prompt -like 'Actual creation*') { return [DateTimeOffset]::UtcNow.AddMinutes(-1).ToString('o') }
             if ($Prompt -like 'What next*') {

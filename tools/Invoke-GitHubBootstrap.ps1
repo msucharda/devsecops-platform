@@ -110,7 +110,7 @@ if (Test-Path -LiteralPath $inventoryFile) {
 }
 elseif ($NoChanges) { throw 'NoChanges requires an existing initialized bootstrap inventory.' }
 else {
-    $deploymentIdentifier = New-PlatformDeploymentIdentifier
+    $deploymentIdentifier = Get-RandomPlatformDeploymentIdentifier
     $organization = Get-PlatformOrganizationName -InstanceName $instance['instance']['name'] `
         -DeploymentIdentifier $deploymentIdentifier -Kind platform
     $repository = "$organization/instance"
