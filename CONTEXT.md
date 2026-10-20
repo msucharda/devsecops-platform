@@ -61,7 +61,7 @@ Podmínka instance, kterou platforma neumí vytvořit: tenant Entra ID, enterpri
 _Avoid_: předpoklad bez upřesnění, požadavek
 
 **Deployment identifier** (identifikátor nasazení):
-Krátký řetězec, který vznikne při nasazení instance. Je jen v názvech prostředků, jejichž název zůstává po smazání blokovaný.
+Krátký řetězec, který vznikne při nasazení instance. Je jen v názvech Azure prostředků a organizací GitHubu, jejichž název zůstává po smazání blokovaný.
 _Avoid_: suffix, salt
 
 **Primary region** (primární region):
