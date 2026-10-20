@@ -346,11 +346,22 @@ function Invoke-SetupAzureLogin {
     param([Parameter(Mandatory)][hashtable] $Setup)
 
     $tenantId = $Setup.Settings['tenantId']
-    Show-SetupMessage -Kind Action -Message "Signing in to Azure tenant $tenantId. Choose your bootstrap account in the browser."
+    $account = $Setup.Facts.Upn
+    if ($account) {
+        Show-SetupMessage -Kind Action -Message "Signing $account out of Azure CLI and in again to tenant $tenantId, so that Azure CLI issues new tokens. Choose your bootstrap account in the browser."
+    }
+    else {
+        Show-SetupMessage -Kind Action -Message "Signing in to Azure tenant $tenantId. Choose your bootstrap account in the browser."
+    }
     # The interactive subscription picker of newer Azure CLI versions would wait for hidden input.
     $previousExperience = $env:AZURE_CORE_LOGIN_EXPERIENCE_V2
     $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'
     try {
+        if ($account) {
+            # az login renews only the token for management.core.windows.net. Cached tokens for Graph and
+            # management.azure.com would keep the directory roles from before a PIM activation until they expire.
+            & az logout --username $account --only-show-errors 2>&1 | Out-Null
+        }
         & az login --tenant $tenantId --only-show-errors | Out-Null
         $exitCode = $LASTEXITCODE
     }
@@ -359,6 +370,42 @@ function Invoke-SetupAzureLogin {
     }
     $Setup.AzureTokens.Clear()
     if ($exitCode -ne 0) { Exit-SetupStage -Status Error -Area azure -Message 'az login failed.' }
+}
+
+function Get-SetupTokenClaim {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string] $Token)
+
+    $parts = $Token.Split('.')
+    if ($parts.Count -ne 3) { return $null }
+    try {
+        $payload = $parts[1].Replace('-', '+').Replace('_', '/')
+        $payload += '=' * ((4 - $payload.Length % 4) % 4)
+        $claims = ConvertFrom-Json -InputObject ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload))) -AsHashtable -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+    if ($claims -isnot [System.Collections.IDictionary]) { return $null }
+    return $claims
+}
+
+function Format-SetupAzureTokenDetail {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string] $Token)
+
+    # Only the issue time and the directory role claim are shown, never the token.
+    $claims = Get-SetupTokenClaim -Token $Token
+    $issuedAt = 0L
+    if ($null -eq $claims -or -not [long]::TryParse([string] $claims['iat'], [ref] $issuedAt)) { return 'Azure token details are not readable.' }
+    $issued = [DateTimeOffset]::FromUnixTimeSeconds($issuedAt)
+    $age = [int] [Math]::Floor(([DateTimeOffset]::UtcNow - $issued).TotalMinutes)
+    $roles = if (-not $claims.Contains('wids')) { 'it has no wids claim' }
+    elseif (@($claims['wids']) -contains $script:RoleGlobalAdministrator) { 'its wids claim includes Global Administrator' }
+    else { 'its wids claim does not include Global Administrator' }
+    return "Azure token issued at $($issued.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')) ($age min ago); $roles."
 }
 
 function Get-SetupGitHubToken {
@@ -541,6 +588,7 @@ function Invoke-SetupApi {
         elseif ($data -is [System.Collections.IDictionary] -and $data['message']) { [string] $data['message'] }
         else { $content.Substring(0, [Math]::Min(300, $content.Length)) }
         $message = "HTTP $code from $Method $($address.GetLeftPart('Path')): $reason"
+        if ($status -eq 'Forbidden' -and $area -eq 'azure') { $message += " $(Format-SetupAzureTokenDetail -Token $Token)" }
     }
     $headers = @{}
     if ($response.PSObject.Properties['Headers'] -and $null -ne $response.Headers) {
@@ -705,11 +753,30 @@ function Read-SetupState {
     return $state
 }
 
+function ConvertTo-SetupSortedValue {
+    [CmdletBinding()]
+    param([AllowNull()] $Value)
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $keys = [string[]] @($Value.Keys)
+        [Array]::Sort($keys, [System.StringComparer]::Ordinal)
+        $sorted = [ordered]@{}
+        foreach ($key in $keys) { $sorted[$key] = ConvertTo-SetupSortedValue -Value $Value[$key] }
+        return $sorted
+    }
+    if ($Value -is [System.Collections.IList]) {
+        return , @(foreach ($item in $Value) { ConvertTo-SetupSortedValue -Value $item })
+    }
+    return $Value
+}
+
 function Save-SetupState {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable] $Setup)
 
-    $json = ConvertTo-Json -InputObject $Setup.State -Depth 10
+    # Hashtable order changes between processes; sorted keys keep an unchanged state byte-identical.
+    $json = ConvertTo-Json -InputObject (ConvertTo-SetupSortedValue -Value $Setup.State) -Depth 10
+    if ((Test-Path -LiteralPath $Setup.StatePath -PathType Leaf) -and [System.IO.File]::ReadAllText($Setup.StatePath) -ceq $json) { return }
     [System.IO.File]::WriteAllText($Setup.StatePath, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -831,6 +898,14 @@ function Invoke-SetupElevationRevoke {
         }
         $assignments = @($assignments | Where-Object { $_ })
         if ($ExpectAssignment -and $assignments.Count -eq 0) { throw 'The elevated access assignment was not found.' }
+        if ($assignments.Count -eq 0) {
+            Show-SetupMessage -Kind Warning -Message 'No elevated access assignment was found. Azure can show a new assignment with a delay.'
+            Show-SetupGuidance -Line @(
+                'Check it: Entra admin center > Identity > Overview > Properties >',
+                'Access management for Azure resources = No.'
+            )
+            return
+        }
         foreach ($assignment in $assignments) {
             $response = Invoke-SetupApi -Setup $Setup -Uri "$script:Arm$($assignment['id'])?api-version=2022-04-01" -Method DELETE
             $null = Assert-SetupResponse -Response $response -Action 'Removing elevated access'
@@ -868,22 +943,37 @@ function Invoke-SetupElevatedAction {
         Exit-SetupStage -Status Missing -Message "$Purpose was declined." -Guidance (@('Ask a Global Administrator to run:') + $AdminGuidance)
     }
     $existing = @(Get-SetupRootAccess -Setup $Setup)
-    $elevated = $false
+    # Unclear covers a failed or interrupted request that may have reached Azure; Rejected means Azure created no elevation.
+    $elevation = if ($existing.Count -gt 0) { 'Existing' } else { 'Unclear' }
     try {
-        if ($existing.Count -eq 0) {
+        if ($elevation -eq 'Unclear') {
             $response = Invoke-SetupApi -Setup $Setup -Uri "$script:Arm/providers/Microsoft.Authorization/elevateAccess?api-version=2016-07-01" -Method POST
+            if ($response.Status -eq 'Forbidden') {
+                $elevation = 'Rejected'
+                $null = Assert-SetupResponse -Response $response -Action 'Elevating access' -Guidance @(
+                    'Azure denied the elevation. Elevation needs an Azure token issued after the Global Administrator activation.',
+                    'If the token details above show no Global Administrator in wids, choose [l]. The wizard signs you out of Azure CLI and in again to get new tokens.'
+                )
+            }
             $null = Assert-SetupResponse -Response $response -Action 'Elevating access'
-            $elevated = $true
+            $elevation = 'Active'
             Show-SetupMessage -Kind Ok -Message 'Elevated access is active.'
         }
         & $Action
     }
     finally {
-        $revoke = $elevated
-        if (-not $elevated) {
-            $revoke = Confirm-SetupAction -Prompt 'Elevated access existed before the wizard started. Remove it now?' -DefaultYes
+        switch ($elevation) {
+            'Active' { Invoke-SetupElevationRevoke -Setup $Setup -ExpectAssignment }
+            'Unclear' {
+                Show-SetupMessage -Kind Warning -Message 'The elevation request ended with an unclear result. The wizard removes any elevated access it finds.'
+                Invoke-SetupElevationRevoke -Setup $Setup
+            }
+            'Existing' {
+                if (Confirm-SetupAction -Prompt 'Elevated access existed before the wizard started. Remove it now?' -DefaultYes) {
+                    Invoke-SetupElevationRevoke -Setup $Setup
+                }
+            }
         }
-        if ($revoke) { Invoke-SetupElevationRevoke -Setup $Setup -ExpectAssignment:$elevated }
     }
 }
 
@@ -2098,6 +2188,46 @@ function Get-SetupProbeApp {
     return @{ AppId = $appId; Slug = [string] $app['slug']; KeyPath = $key.KeyPath; InstallationId = [string] $installation['id']; Jwt = $jwt; SettingsUrl = $appSettings }
 }
 
+function Request-SetupProbeAppDeletion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable] $Setup,
+        [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9-]*$')][string] $Role,
+        [Parameter(Mandatory)][string] $Label
+    )
+
+    $probe = $Setup.State.probe
+    $appIdKey = "$($Role)AppId"
+    $appId = [string] $probe[$appIdKey]
+    if (-not $appId) { return }
+    $githubHost = $Setup.Settings['githubHost']
+    $appName = "$($Setup.Settings['name'])-probe-$Role"
+    $settingsUrl = "https://$githubHost/enterprises/$($Setup.Settings['enterprise'])/settings/apps/$appName/advanced"
+    $keyPath = Join-Path $Setup.WorkPath "keys/probe-$Role.pem"
+    Request-SetupManualStep -Message "Delete $Label ($appName). It is not needed anymore." -Url $settingsUrl -Guidance @(
+        "Danger zone > Delete GitHub App, then confirm with the App name $appName."
+    )
+    if (Test-Path -LiteralPath $keyPath -PathType Leaf) {
+        # GitHub rejects the JWT of a deleted App; the key stays until the rejection confirms the deletion.
+        $response = Invoke-SetupApi -Setup $Setup -Uri "https://api.$githubHost/app" -Token (ConvertTo-SetupAppJwt -AppId $appId -KeyPath $keyPath)
+        if ($response.Status -eq 'Ok') {
+            Exit-SetupStage -Status Missing -Message "$Label ($appName) still exists: GitHub accepts its private key." -Guidance @(
+                "${settingsUrl}: Danger zone > Delete GitHub App, then choose [r]."
+            )
+        }
+        if ($response.Code -notin @(401, 404)) {
+            Exit-SetupStage -Status Error -Area github -Message "Checking the deletion of $Label failed. $($response.Message)" -Guidance @('Choose [r] to check again.')
+        }
+        Remove-Item -LiteralPath $keyPath -Force
+        Show-SetupMessage -Kind Ok -Message "$Label is deleted: GitHub rejects its private key with HTTP $($response.Code). The wizard deleted the key."
+    }
+    else {
+        Show-SetupMessage -Kind Warning -Message "The private key $keyPath is missing. The wizard cannot verify the deletion of $Label and relies on your confirmation."
+    }
+    $probe.Remove($appIdKey)
+    Save-SetupState -Setup $Setup
+}
+
 function Get-SetupInstallationToken {
     [CmdletBinding()]
     [OutputType([string])]
@@ -2256,7 +2386,19 @@ function Invoke-StepProbeAuthorization {
     param([Parameter(Mandatory)][hashtable] $Setup)
 
     $probe = $Setup.State.probe
-    if ($probe['authorizationPassed'] -and -not $Setup.Reconfirm) { return "The authorization token probe passed on $($probe['authorizationPassed'])." }
+    $passed = "The authorization token probe passed on $($probe['authorizationPassed'])."
+    $skipProbe = $probe['authorizationPassed'] -and (-not $Setup.Reconfirm -or $Setup.Facts.AuthorizationProbePassed)
+    if ($probe['authorizationPassed'] -and $probe['authorizationAppId']) {
+        # A passed probe left App A behind; -Reconfirm repeats the probe only after its deletion.
+        Request-SetupProbeAppDeletion -Setup $Setup -Role authorization -Label 'App A'
+        if ($skipProbe) { return "$passed App A is deleted." }
+    }
+    elseif ($skipProbe) { return $passed }
+    if ($probe['authorizationPassed']) {
+        # -Reconfirm repeats the probe; a retry must not treat the replacement App A as the leftover of a passed probe.
+        $probe.Remove('authorizationPassed')
+        Save-SetupState -Setup $Setup
+    }
     $githubHost = $Setup.Settings['githubHost']
     $api = "https://api.$githubHost"
     $org = $probe['organization']
@@ -2309,14 +2451,11 @@ function Invoke-StepProbeAuthorization {
         Remove-Item -LiteralPath $envFile -Force -ErrorAction SilentlyContinue
     }
     $probe['authorizationPassed'] = (Get-Date).ToString('o')
-    $probe.Remove('authorizationAppId')
+    $Setup.Facts.AuthorizationProbePassed = $true
     Save-SetupState -Setup $Setup
-    Remove-Item -LiteralPath $app.KeyPath -Force
     Show-SetupMessage -Kind Ok -Message 'The token tool issued the authorization token, the token read your active membership and returned 401 after revocation.'
-    Show-SetupMessage -Kind Action -Message "Delete App A. It is not needed anymore; the wizard already deleted its private key."
-    Show-SetupGuidance -Line @("$($app.SettingsUrl)/advanced > Delete GitHub App.")
-    if (Confirm-SetupAction -Prompt 'Open the page in your browser?' -DefaultYes) { Start-Process -FilePath "$($app.SettingsUrl)/advanced" }
-    return 'The authorization token probe passed.'
+    Request-SetupProbeAppDeletion -Setup $Setup -Role authorization -Label 'App A'
+    return 'The authorization token probe passed and App A is deleted.'
 }
 
 function Invoke-StepProbeAdmin {
@@ -2696,7 +2835,7 @@ function Initialize-SetupContext {
         AddedScopes = [System.Collections.Generic.List[string]]::new()
         Facts = @{
             Me = $null; Upn = $null; OwnerRoleId = $null; UserRoleId = $null; OidcModeVerified = $false
-            ScimJobId = $null; Login = $null; EnterpriseId = $null; ForksDisabled = $false
+            ScimJobId = $null; Login = $null; EnterpriseId = $null; ForksDisabled = $false; AuthorizationProbePassed = $false
         }
     }
 }

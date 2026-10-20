@@ -114,9 +114,13 @@ Pokud dílčí krok selže, průvodce vypíše příčinu a opravu a nabídne vo
 | `[s]` | Přeskočí dílčí krok. Průvodce přeskočí i dílčí kroky, které na něm závisí. |
 | `[q]` | Ukončí průvodce. |
 
+Volba `[l]` pro Azure CLI nejdřív odhlásí tvůj účet příkazem `az logout --username <upn>` a potom spustí `az login --tenant <tenantId>`. Důvod: `az login` vydá nový access token jen pro `https://management.core.windows.net/`. Tokeny pro Azure Resource Manager a Microsoft Graph Azure CLI vrací z cache až do jejich vypršení, tedy bez role nově aktivované v PIM. Odhlášení odebere z profilu Azure CLI i subscriptions tohoto účtu v ostatních tenantech. Obnoví je `az login` do daného tenantu. Pokud průvodce tvůj účet ještě nezná, spustí jen `az login`.
+
+Chyba HTTP 403 z Azure uvede čas vydání tokenu Azure (claim `iat`) a to, zda claim `wids` obsahuje roli Global Administrator. Samotný token průvodce nevypíše. Token vydaný před aktivací role v PIM roli neobsahuje. V tom případě zvol `[l]`.
+
 Souhrn na konci uvádí stav každého dílčího kroku a první dílčí krok, který musíš opravit. Krok je splněný, když všechny jeho dílčí kroky mají stav `Ok`.
 
-Průvodce můžeš kdykoli ukončit a spustit znovu. Nový běh znovu ověří všechny dílčí kroky přes API. Vstupy nabídne z `$work\session.ps1` a `$work\instance.yaml`. Potvrzení kroků bez API a výsledky testů GitHub Apps z kroku A9 drží `$work\setup-state.json`. Příznak s hodnotou `true` v existujícím `instance.yaml` průvodce převezme jako potvrzení kroku bez API.
+Průvodce můžeš kdykoli ukončit a spustit znovu. Nový běh znovu ověří všechny dílčí kroky přes API. Vstupy nabídne z `$work\session.ps1` a `$work\instance.yaml`. Potvrzení kroků bez API a výsledky testů GitHub Apps z kroku A9 drží `$work\setup-state.json`. Průvodce soubor zapisuje se seřazenými klíči. Pokud se stav nezměnil, soubor nepřepíše. Příznak s hodnotou `true` v existujícím `instance.yaml` průvodce převezme jako potvrzení kroku bez API.
 
 Průvodce přidá do přihlášení `gh` scope, až když ho dílčí krok potřebuje. Scopes `admin:enterprise`, `admin:org` a `repo` jsou dočasné. Na konci průvodce nabídne jejich odebrání. Scope `read:enterprise` zůstane, protože ho potřebuje bootstrap.
 
@@ -241,9 +245,13 @@ Příznak: `subscriptions`. Dílčí kroky: `Subscriptions and region`, `Owner r
 Role Owner a Management Group Reader průvodce přiřazuje přes elevaci Global Administratora:
 
 1. Ověří aktivní roli Global Administrator. Bez ní vypíše příkaz `az role assignment create`, který spustí jiný Global Administrator.
-2. Po potvrzení zapne elevaci. Elevace dá roli User Access Administrator na kořeni `/`.
-3. Přiřadí roli a elevaci hned odebere, i když přiřazení selže. Elevaci, která existovala před spuštěním průvodce, odebere po potvrzení.
+2. Pokud elevace už existuje, nezapíná ji znovu. Jinak po potvrzení zapne elevaci. Elevace dá roli User Access Administrator na kořeni `/`.
+   - Pokud Azure elevaci odmítne s HTTP 403, elevace nevznikla. Průvodce nic neodebírá a vypíše chybu s údaji o tokenu Azure.
+   - Pokud požadavek na elevaci skončí jinou chybou nebo ho přerušíš (Ctrl+C), výsledek není jasný. Průvodce odebere každou elevaci, kterou najde, a vypíše chybu.
+3. Přiřadí roli a elevaci hned odebere, i když přiřazení selže. Elevaci, která existovala před spuštěním průvodce, odebere po potvrzení. Na to se průvodce ptá jen tehdy, když elevaci před zapnutím našel.
 4. Na účinnost role čeká nejdéle 10 minut.
+
+Pokud průvodce elevaci k odebrání nenajde, vypíše varování. Azure může nové přiřazení ukázat se zpožděním. Zkontroluj v Entra admin center → Identity → Overview → Properties, že **Access management for Azure resources** má hodnotu **No**.
 
 **Tvoje akce:** Pokud nemáš roli Global Administrator, aktivuj ji v PIM a zvol `[l]`. Jinak předej vypsaný příkaz Global Administratorovi.
 
@@ -414,7 +422,7 @@ Pokud API vrátí HTTP 403 s textem `Resource protected by organization SAML enf
 
 - Tokenem přečte tvoje členství v `platform-probe`. Workflow tak ověřuje, že autor PR patří do platformního týmu, než předá přihlašovací údaje.
 - Token odvolá nástrojem `tools/Remove-PlatformGitHubToken.ps1` a ověří, že odvolaný token vrátí HTTP 401.
-- Smaže klíč App A a otevře stránku pro smazání App A.
+- Otevře stránku pro smazání App A a čeká na tvoje potvrzení. Potom ověří smazání: `GET /app` s privátním klíčem App A musí vrátit HTTP 401 nebo 404. Teprve potom smaže klíč App A a App ID ze `setup-state.json`. Pokud GitHub klíč stále přijímá, dílčí krok skončí stavem `Missing`. Pokud klíč chybí, průvodce smazání neověří a spolehne se na tvoje potvrzení.
 
 Enterprise-owned znamená vlastnictví registrace, nikoli zapnutí oprávnění v sekci Enterprise permissions. Registraci otevři přes **Your enterprise → Settings → GitHub Apps → New GitHub App**. Průvodce i vydávání tokenů ověřují ve výsledku `GET /app` vlastníka s `owner.type` rovnou `enterprise` a `owner.login` odpovídající enterprise. Stejný `login` u vlastníka typu `User` nebo `Organization` nestačí.
 
@@ -428,14 +436,14 @@ Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tok
 - Tokenem `write` vytvoří vypnutý ruleset `instance-setup-probe` s bypass aktérem Organization admin. Ověří, že detail rulesetu vrátí bypass aktéra `OrganizationAdmin`. Ruleset potom smaže.
 - Tokeny odvolá. App ID a installation ID zapíše do `session.ps1` jako `$adminApp`.
 
-Výsledky testů App A a App B průvodce uloží. Další běh testy neopakuje a organizaci pro test nevyžaduje. Parametr `-Reconfirm` testy zopakuje; App A pro opakování musíš zaregistrovat znovu.
+Výsledky testů App A a App B průvodce uloží. Další běh testy neopakuje a organizaci pro test nevyžaduje. Pokud smazání App A ještě není potvrzené, průvodce si ho vyžádá při dalším pokusu i v dalším běhu. Parametr `-Reconfirm` testy zopakuje. Nepotvrzené smazání App A průvodce nejdřív dokončí a teprve potom test App A zopakuje. Před opakováním smaže uložený výsledek testu App A. Pokud opakování selže, další běh test spustí i bez `-Reconfirm`. App A pro opakování musíš zaregistrovat znovu. Test, který prošel ve stejném běhu, průvodce při dalším pokusu neopakuje.
 
 **Tvoje akce:**
 
 1. V předvyplněném formuláři ponech ostatní oprávnění No access a zvol Create GitHub App.
 2. App settings → General → Private keys → Generate a private key. Prohlížeč uloží klíč do `Downloads`.
 3. Install App → organizace `probe-<yyyymmdd>`. Obě Apps instaluj bez přístupu k repozitářům (**No repositories**).
-4. Po testu App A smaž App A: App settings → Advanced → Delete GitHub App. Workflow instance dostanou vlastní Apps v #11.
+4. Po testu App A smaž App A: App settings → Advanced → Delete GitHub App. Smazání potvrď průvodci. Workflow instance dostanou vlastní Apps v #11.
 
 App B a `$work\keys\probe-admin.pem` ponech pro C2 a C4. Smažeš je ve fázi D.
 
