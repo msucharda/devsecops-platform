@@ -152,6 +152,9 @@ Describe 'GitHub bootstrap public interface' {
                 $reply = @{ workflow_runs = @($cloud.scheduledRuns) }
             }
             elseif ($path -eq '/orgs/demo-platform/repos' -and $Method -eq 'POST') {
+                if ($cloud['loseRepositoryCreateResponse']) {
+                    $cloud.repositoryCreateInventory = Get-Content -LiteralPath $cloud.inventoryPath -Raw | ConvertFrom-Json -AsHashtable
+                }
                 $cloud.resources['/repos/demo-platform/instance'] = @{
                     id = 20; name = 'instance'; full_name = 'demo-platform/instance'
                     owner = @{ id = 10; login = 'demo-platform'; type = 'Organization' }
@@ -161,6 +164,10 @@ Describe 'GitHub bootstrap public interface' {
                 $reply = $cloud.resources['/repos/demo-platform/instance']
                 if ($data.auto_init) {
                     $cloud.resources["/repos/demo-platform/instance/git/ref/heads/$($cloud.defaultBranch)"] = @{ object = @{ sha = 'seed-sha' } }
+                }
+                if ($cloud['loseRepositoryCreateResponse']) {
+                    $cloud.loseRepositoryCreateResponse = $false
+                    return [pscustomobject]@{ StatusCode = 503; Content = '{"message":"Repository created, response interrupted."}' }
                 }
             }
             elseif ($path -eq '/repos/demo-platform/instance/actions/oidc/customization/sub' -and $Method -eq 'GET') {
@@ -900,6 +907,46 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Count | Should -Be 0
     }
 
+    It 'preserves original key dates and existing history across successive rotations and an unchanged repeat' -Tag 'KeyRotationHistory' {
+        $arguments.ResourcesOnly = $false
+        & $bootstrap @arguments | Out-Null
+        $keyManifest = Get-Content -LiteralPath $keysPath -Raw | ConvertFrom-Json -AsHashtable
+        $previousHistory = @()
+        foreach ($rotation in 1..2) {
+            $before = (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).apps.authorization
+            $replacement = [Security.Cryptography.RSA]::Create(2048)
+            try { $replacement.ExportRSAPrivateKeyPem() | Set-Content -LiteralPath $keyPath }
+            finally { $replacement.Dispose() }
+            $keyManifest.authorization.createdAt = [DateTimeOffset]::UtcNow.ToString('o')
+            $keyManifest.authorization.rotateBy = [DateTimeOffset]::UtcNow.AddDays(90 - $rotation).ToString('o')
+            $keyManifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $keysPath
+
+            (& $bootstrap @arguments).CredentialsConfigured | Should -BeTrue
+
+            $after = (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).apps.authorization
+            $after.fingerprint | Should -Not -Be $before.fingerprint
+            $after.previousKeys.Count | Should -Be $rotation
+            $retired = $after.previousKeys[-1]
+            $retired.appId | Should -Be $before.appId
+            $retired.fingerprint | Should -Be $before.fingerprint
+            $retired.createdAt | Should -Be $before.createdAt
+            $retired.rotateBy | Should -Be $before.rotateBy
+            $retired.revocationRequired | Should -BeTrue
+            if ($rotation -eq 2) {
+                ($after.previousKeys[0] | ConvertTo-Json -Compress) | Should -Be $previousHistory
+            }
+            $previousHistory = $after.previousKeys[0] | ConvertTo-Json -Compress
+        }
+        $beforeRepeat = $after | ConvertTo-Json -Depth 100 -Compress
+        $cloud.writes.Clear()
+
+        (& $bootstrap @arguments).HasChanges | Should -BeFalse
+
+        $afterRepeat = (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).apps.authorization
+        ($afterRepeat | ConvertTo-Json -Depth 100 -Compress) | Should -BeExactly $beforeRepeat
+        $cloud.writes.Count | Should -Be 0
+    }
+
     It 'rejects a normal environment that collides with another phase nightly environment before any write' {
         $instance.credentials = @{
             application = @{ plan = @{ environment = 'application-plan' }; apply = @{ environment = 'foundation-plan-drift' } }
@@ -1109,6 +1156,35 @@ Describe 'GitHub bootstrap public interface' {
         $record.declaredApps.authorization.appId | Should -Be '999'
         $record.declaredApps.authorization.previousAppIds | Should -Contain '101'
         $record.declaredApps.authorization.removalRequired | Should -BeTrue
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'persists initialization intent before repository creation and resumes after its response is lost' -Tag 'InitializationRecovery' {
+        $arguments.ResourcesOnly = $false
+        $cloud.inventoryPath = $inventory
+        $cloud.loseRepositoryCreateResponse = $true
+
+        { & $bootstrap @arguments } | Should -Throw '*HTTP 503*'
+
+        $cloud.repositoryCreateInventory.initializationPending | Should -BeTrue
+        $pending = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $pending.initializationPending | Should -BeTrue
+        $pending['seedCommit'] | Should -BeNullOrEmpty
+        $cloud.resources['/repos/demo-platform/instance/actions/permissions'].enabled | Should -BeTrue
+        $cloud.writes.Clear()
+
+        $result = & $bootstrap @arguments
+
+        $result.CredentialsConfigured | Should -BeTrue
+        @($cloud.writes | Where-Object { $_.path -ceq '/orgs/demo-platform/repos' }).Count | Should -Be 0
+        $cloud.commit.parents | Should -Be @('seed-sha')
+        @($cloud.writes)[0].path | Should -Be '/repos/demo-platform/instance/actions/permissions'
+        @($cloud.writes)[0].body.enabled | Should -BeFalse
+        $completed = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $completed.seedCommit | Should -Be 'seed-sha'
+        $completed.initializationPending | Should -BeFalse
+        $cloud.writes.Clear()
+        (& $bootstrap @arguments).HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
     }
 

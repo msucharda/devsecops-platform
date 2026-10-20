@@ -408,6 +408,7 @@ Register-GitHubBootstrapResource -Path "/orgs/$organization"
 $repo = Invoke-GitHubBootstrapApi -Path "/repos/$repository" -AllowNotFound
 if (-not $repo) {
     $inventory['initializationPending'] = $true
+    Save-GitHubBootstrapInventory
     $repo = Invoke-GitHubBootstrapApi -Path "/orgs/$organization/repos" -Method POST -Body @{
         name = 'instance'; private = $true; auto_init = $true; description = $ownership
     }
@@ -774,7 +775,9 @@ if (-not $ResourcesOnly) {
             $history = @()
             if ($inventory['apps'].Contains($alias)) {
                 $history = @($inventory['apps'][$alias]['previousKeys']) + @(@{
-                    appId = $inventory['apps'][$alias]['appId']; fingerprint = $inventory['apps'][$alias]['fingerprint']; revocationRequired = $true
+                    appId = $inventory['apps'][$alias]['appId']; fingerprint = $inventory['apps'][$alias]['fingerprint']
+                    createdAt = $inventory['apps'][$alias]['createdAt']; rotateBy = $inventory['apps'][$alias]['rotateBy']
+                    revocationRequired = $true
                 })
             }
             $inventory['apps'][$alias] = @{
