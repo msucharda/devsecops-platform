@@ -135,6 +135,7 @@ Pravidla platí pro každého agenta v repozitáři, včetně subagentů.
 - Token-intensive krok spusť přes subagenta typu `task`: běh testů, lint, build, generátor s `-Check`, čtení CI logů. Subagent vrátí stručný výsledek. Při selhání vrátí úplný výstup chyb.
 - Rešerši v kódu a dokumentaci přes víc souborů spusť přes subagenta typu `explore`.
 - Krátký cílený příkaz smí agent spustit přímo.
+- Subagent, kterému byl krok přidělen, ho provede přímo a dál ho nedeleguje.
 - Důvod: každé volání modelu znovu načte celý kontext, v průměru asi 120 000 tokenů. Výstup modelu tvoří méně než 1 % tokenů. Výstupy testů a CI logy kontext nafukují a zvyšují počet kompakcí (compaction). Zdroj: data o spotřebě tokenů za 3 dny.
 
 ### Odolnost vůči kompakci
