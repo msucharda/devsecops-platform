@@ -103,6 +103,8 @@ BeforeAll {
                 description = 'Platform instance demo; bootstrap-owned.'
             }
             Organization = Get-GitHubApiFixture -Name orgs/get -Set @{ login = $organization }
+            User = Get-GitHubApiFixture -Name users/get-authenticated-user.private-user -Set @{ id = 4242; login = 'lead_contoso' }
+            ActionsEnabled = $true
             ActiveRuns = @{ in_progress = 0; queued = 0; requested = 0; waiting = 0; pending = 0 }
             Runs = @{
                 'teardown.yml' = Get-TestRunList -Workflow 'teardown.yml' -CreatedAt ([datetime]'2026-05-02T10:00:00Z')
@@ -137,12 +139,22 @@ BeforeAll {
     }
 
     function Invoke-TestApi {
-        param([hashtable] $World, [string] $Uri, [string] $Method)
+        param([hashtable] $World, [string] $Uri, [string] $Method, [string] $Body)
 
         $address = [uri] $Uri
         $path = [uri]::UnescapeDataString($address.AbsolutePath)
         $query = [uri]::UnescapeDataString($address.Query)
         if ($address.Host -ceq 'api.contoso.ghe.com') {
+            if ($path -ceq '/user' -and $Method -ceq 'GET') { return Get-TestResponse -Data $World.User }
+            if ($path -ceq "/repos/$repository/actions/permissions") {
+                if (-not $World.Repository) { return Get-TestNotFound }
+                if ($Method -ceq 'PUT') {
+                    if ((ConvertFrom-Json $Body -AsHashtable)['enabled'] -ne $false) { throw "Unexpected Actions permissions $Body" }
+                    $World.ActionsEnabled = $false
+                    return Get-TestResponse -StatusCode 204
+                }
+                return Get-TestResponse -Data (Get-GitHubApiFixture -Name actions/get-github-actions-permissions-repository -Set @{ enabled = $World.ActionsEnabled })
+            }
             if ($path -ceq "/repos/$repository") {
                 if (-not $World.Repository) { return Get-TestNotFound }
                 if ($Method -ceq 'DELETE') { $World.Repository = $null; return Get-TestResponse -StatusCode 204 }
@@ -308,6 +320,7 @@ Describe 'Bootstrap removal' {
         $requests = [System.Collections.Generic.List[object]]::new()
         $failure = @{ At = 0; After = $false; Count = 0 }
         $token = @{ tenant = $tenantId; accessToken = 'azure-token' }
+        $azureLogin = $token
 
         Mock Start-Sleep {}
         $ghLogin = @{ Token = 'gho_testtoken'; Exit = 0 }
@@ -316,13 +329,15 @@ Describe 'Bootstrap removal' {
         Mock Invoke-WebRequest {
             # The cmdlet binds -Method to the WebRequestMethod enum (Delete); compare as the upper-case HTTP verb.
             $Method = ([string] $Method).ToUpperInvariant()
-            $requests.Add([pscustomobject]@{ Uri = [string] $Uri; Method = $Method; Headers = $Headers })
+            $requests.Add([pscustomobject]@{ Uri = [string] $Uri; Method = $Method; Headers = $Headers; Body = $Body })
             if ($requests.Count -gt 200) { throw 'Request limit exceeded.' }
+            $expectedToken = if (([uri] $Uri).Host -ceq 'api.contoso.ghe.com') { $ghLogin.Token } else { $azureLogin['accessToken'] }
+            if ($Headers['Authorization'] -cne ('Bearer ' + $expectedToken)) { throw "Unexpected Authorization header for $Uri" }
             if ($Method -cne 'GET') {
                 $failure.Count++
                 if ($failure.Count -eq $failure.At -and -not $failure.After) { throw 'Simulated interruption before the request.' }
             }
-            $response = Invoke-TestApi -World $world -Uri $Uri -Method $Method
+            $response = Invoke-TestApi -World $world -Uri $Uri -Method $Method -Body $Body
             if ($Method -cne 'GET' -and $failure.Count -eq $failure.At -and $failure.After) { throw 'Simulated interruption after the request.' }
             return $response
         }
@@ -355,7 +370,13 @@ Describe 'Bootstrap removal' {
             [array]::IndexOf($deletes, "/v1.0/roleManagement/directory/roleAssignments/dra-apply") |
                 Should -BeLessThan ([array]::IndexOf($deletes, "/v1.0/roleManagement/directory/roleDefinitions/$applyRoleId"))
             $deletes | Should -Not -Contain "$storageAccountId/blobServices/default/containers/emu-identity/providers/Microsoft.Authorization/roleAssignments/ra-state"
-            @($requests | Where-Object { $_.Method -cnotin @('GET', 'DELETE') }) | Should -BeNullOrEmpty
+            $mutations = @($requests | Where-Object Method -cne 'GET')
+            $mutations[0].Method | Should -Be 'PUT'
+            $mutations[0].Uri | Should -Be "https://api.contoso.ghe.com/repos/$repository/actions/permissions"
+            (ConvertFrom-Json $mutations[0].Body -AsHashtable)['enabled'] | Should -BeFalse
+            $mutations[1].Uri | Should -BeLike "*/repos/$repository"
+            @($mutations | Where-Object { $_.Method -cnotin @('GET', 'DELETE') }) | Should -HaveCount 1
+            (& $readInventory).removal.githubUserId | Should -Be 4242
             $github = @($requests | Where-Object { ([uri] $_.Uri).Host -ceq 'api.contoso.ghe.com' })
             @($github | Where-Object { $_.Headers['X-GitHub-Api-Version'] -cne '2026-03-10' }) | Should -BeNullOrEmpty
             @($requests | Where-Object { $_.Uri -like "*$managementGroupScope/providers/Microsoft.Authorization/roleAssignments?*" }) | Should -Not -BeNullOrEmpty
@@ -414,7 +435,7 @@ Describe 'Bootstrap removal' {
 
     Context 'resumes after an interruption' {
         It 'at <Label> mutating request <At>' -ForEach @(
-            foreach ($at in 1..11) {
+            foreach ($at in 1..12) {
                 @{ At = $at; After = $false; Label = 'before' }
                 @{ At = $at; After = $true; Label = 'after' }
             }
@@ -448,8 +469,8 @@ Describe 'Bootstrap removal' {
         }
 
         It 'and refuses Azure resources of a replacement deployment after an interruption at <Label>' -ForEach @(
-            @{ Label = 'the repository deletion'; At = 1 }
-            @{ Label = 'the organization deletion'; At = 2 }
+            @{ Label = 'the repository deletion'; At = 2 }
+            @{ Label = 'the organization deletion'; At = 3 }
         ) {
             $failure.At = $At
             { & $run } | Should -Throw '*Simulated interruption*'
@@ -464,7 +485,7 @@ Describe 'Bootstrap removal' {
 
         It 'covers every mutating request of a full run' {
             $null = & $run
-            $failure.Count | Should -Be 11
+            $failure.Count | Should -Be 12
         }
 
         It 'when the resource group is still being deleted' {
@@ -482,8 +503,8 @@ Describe 'Bootstrap removal' {
 
     Context 'binds Azure resources to the inventory' {
         BeforeEach {
-            # The tenth mutating request deletes the state lock; the run stops before it.
-            $failure.At = 10
+            # The eleventh mutating request deletes the state lock; the run stops before it.
+            $failure.At = 11
             { & $run } | Should -Throw '*Simulated interruption*'
             (& $readInventory).removal.steps['state-lock'] | Should -Be 'started'
             $failure.At = 0
@@ -812,7 +833,7 @@ Describe 'Bootstrap removal' {
             Mock Invoke-WebRequest {
                 $Method = ([string] $Method).ToUpperInvariant()
                 $requests.Add([pscustomobject]@{ Uri = [string] $Uri; Method = $Method })
-                $response = Invoke-TestApi -World $world -Uri $Uri -Method $Method
+                $response = Invoke-TestApi -World $world -Uri $Uri -Method $Method -Body $Body
                 if ($world.OrganizationDeleting -and $Method -ceq 'GET' -and $Uri -like '*/orgs/*') {
                     return Get-TestResponse -Data (Get-GitHubApiFixture -Name orgs/get -Set @{ login = 'Demo-abc123-platform' })
                 }
@@ -875,7 +896,7 @@ Describe 'Bootstrap removal' {
                     $list = Get-MicrosoftApiFixture -Name arm/role-assignments-list-for-scope
                     return Get-TestResponse -Data $list
                 }
-                Invoke-TestApi -World $world -Uri $Uri -Method $Method
+                Invoke-TestApi -World $world -Uri $Uri -Method $Method -Body $Body
             }
 
             { & $run } | Should -Throw '*does not belong to principal*'
@@ -907,7 +928,7 @@ Describe 'Bootstrap removal' {
                         $list['value'] = @($world.RoleDefinitions[0])
                         return Get-TestResponse -Data $list
                     }
-                    Invoke-TestApi -World $world -Uri $Uri -Method $Method
+                    Invoke-TestApi -World $world -Uri $Uri -Method $Method -Body $Body
                 }
             }
 
@@ -930,7 +951,7 @@ Describe 'Bootstrap removal' {
                     $list = Get-MicrosoftApiFixture -Name graph/rbacapplication-list-roleassignments -Set @{ 'value.0.roleDefinitionId' = 'ffffffff-0000-0000-0000-000000000001' }
                     return Get-TestResponse -Data $list
                 }
-                Invoke-TestApi -World $world -Uri $Uri -Method $Method
+                Invoke-TestApi -World $world -Uri $Uri -Method $Method -Body $Body
             }
 
             { & $run } | Should -Throw '*does not belong to Entra directory role*'
@@ -938,15 +959,190 @@ Describe 'Bootstrap removal' {
         }
     }
 
+    Context 'binds the removal to the GitHub user' {
+        It 'with the <Variant> variant of the authenticated user' -ForEach @(
+            @{ Variant = 'private-user' }, @{ Variant = 'public-user' }
+        ) {
+            $world.User = Get-GitHubApiFixture -Name "users/get-authenticated-user.$Variant" -Set @{ id = 4242; login = 'lead_contoso' }
+
+            $null = & $run
+
+            & $assertRemoved
+            (& $readInventory).removal.githubUserId | Should -Be 4242
+        }
+
+        It 'and resumes when only the login of the same user changed' {
+            $failure.At = 2
+            { & $run } | Should -Throw '*Simulated interruption*'
+            $failure.At = 0
+            $world.User.login = 'lead2_contoso'
+
+            $null = & $run
+
+            & $assertRemoved
+        }
+
+        It 'and refuses to resume as another user' {
+            $failure.At = 2
+            { & $run } | Should -Throw '*Simulated interruption*'
+            $failure.At = 0
+            $world.User.id = 4343
+            $requests.Clear()
+
+            { & $run } | Should -Throw '*started with GitHub user ID 4242*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+            $world.Repository | Should -Not -BeNullOrEmpty
+        }
+
+        It 'and refuses to resume when the inventory does not record the user' {
+            $failure.At = 2
+            { & $run } | Should -Throw '*Simulated interruption*'
+            $failure.At = 0
+            $stored = & $readInventory
+            $stored.removal.Remove('githubUserId')
+            ConvertTo-Json -InputObject $stored -Depth 20 | Set-Content -LiteralPath $inventoryPath
+            $requests.Clear()
+
+            { & $run } | Should -Throw '*does not record the GitHub user*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+        }
+
+        It 'and binds the current user when no removal step started' {
+            $inventory.removal = @{ steps = @{}; completed = $false; githubUserId = 1 }
+            & $writeInventory
+
+            $null = & $run
+
+            & $assertRemoved
+            (& $readInventory).removal.githubUserId | Should -Be 4242
+        }
+
+        It 'and refuses an inventory with an invalid user record <Label>' -ForEach @(
+            @{ Label = 'of zero'; Value = 0 }
+            @{ Label = 'that is negative'; Value = -1 }
+            @{ Label = 'that is a string'; Value = '4242' }
+        ) {
+            $inventory.removal = @{ steps = @{}; completed = $false; githubUserId = $Value }
+            & $writeInventory
+
+            { & $run } | Should -Throw '*invalid removal record*'
+            $requests.Count | Should -Be 0
+        }
+
+        It 'and refuses when GitHub returns a user <Label>' -ForEach @(
+            @{ Label = 'with ID zero'; Field = 'id'; Value = 0 }
+            @{ Label = 'with a string ID'; Field = 'id'; Value = '4242' }
+            @{ Label = 'without an ID'; Field = 'id'; Value = $null }
+            @{ Label = 'with an empty login'; Field = 'login'; Value = '' }
+            @{ Label = 'without a login'; Field = 'login'; Value = $null }
+        ) {
+            # Intentionally invalid response: the documented schema requires a positive integer id and a login.
+            $world.User[$Field] = $Value
+
+            { & $run } | Should -Throw '*did not return the authenticated user*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+            (& $readInventory).Contains('removal') | Should -BeFalse
+        }
+    }
+
+    Context 'refuses an unrecorded resource' {
+        It 'when the <Label> exists although the inventory does not record it' -ForEach @(
+            @{ Label = 'repository'; Name = 'Repository' }
+            @{ Label = 'organization'; Name = 'Organization' }
+        ) {
+            $Resource = if ($Label -ceq 'repository') { "/repos/$repository" } else { "/orgs/$organization" }
+            $inventory.resources = @($inventory.resources | Where-Object { $_ -cne $Resource })
+            & $writeInventory
+
+            { & $run } | Should -Throw "*$Name '*' exists although the bootstrap inventory does not record it*"
+            @($requests | Where-Object { $_.Method -cne 'GET' -and $_.Uri -like "*$Resource" }) | Should -BeNullOrEmpty
+            $world.Organization | Should -Not -BeNullOrEmpty
+            (& $readInventory).removal.steps[$Label] | Should -BeNullOrEmpty
+        }
+
+        It 'and removes the rest when the unrecorded organization does not exist' {
+            $inventory.resources = @("/repos/$repository")
+            $world.Organization = $null
+            & $writeInventory
+
+            $null = & $run
+
+            & $assertRemoved
+            @($requests | Where-Object { $_.Method -cne 'GET' -and $_.Uri -like '*/orgs/*' }) | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'keeps workflows from starting before the repository deletion' {
+        BeforeEach {
+            $startRunOnDisable = {
+                Mock Invoke-WebRequest {
+                    $Method = ([string] $Method).ToUpperInvariant()
+                    $requests.Add([pscustomobject]@{ Uri = [string] $Uri; Method = $Method; Body = $Body })
+                    $response = Invoke-TestApi -World $world -Uri $Uri -Method $Method -Body $Body
+                    if ($Method -ceq 'PUT') { $world.ActiveRuns['queued'] = 1 }
+                    return $response
+                }
+            }
+        }
+
+        It 'and refuses the deletion when a run started before Actions were disabled' {
+            . $startRunOnDisable
+
+            { & $run } | Should -Throw "*status 'queued' are not finished*stay disabled*"
+            @($requests | Where-Object Method -ceq 'DELETE') | Should -BeNullOrEmpty
+            $world.ActionsEnabled | Should -BeFalse
+            (& $readInventory).removal.steps['repository'] | Should -Be 'started'
+        }
+
+        It 'and resumes after the run finished' {
+            . $startRunOnDisable
+            { & $run } | Should -Throw '*stay disabled*'
+            $world.ActiveRuns['queued'] = 0
+
+            $null = & $run
+
+            & $assertRemoved
+        }
+
+        It 'and does not change Actions that are already disabled' {
+            $world.ActionsEnabled = $false
+
+            $null = & $run
+
+            & $assertRemoved
+            @($requests | Where-Object Method -ceq 'PUT') | Should -BeNullOrEmpty
+        }
+
+        It 'and refuses the deletion when GitHub does not confirm disabled Actions' {
+            Mock Invoke-WebRequest {
+                $Method = ([string] $Method).ToUpperInvariant()
+                $requests.Add([pscustomobject]@{ Uri = [string] $Uri; Method = $Method; Body = $Body })
+                if ($Method -ceq 'PUT') { return Get-TestResponse -StatusCode 204 }
+                Invoke-TestApi -World $world -Uri $Uri -Method $Method -Body $Body
+            }
+
+            { & $run } | Should -Throw '*did not confirm that Actions are disabled*'
+            @($requests | Where-Object Method -ceq 'DELETE') | Should -BeNullOrEmpty
+        }
+
+        It 'and refuses the deletion when GitHub returns invalid Actions permissions' {
+            # Intentionally invalid response: the documented schema requires a boolean enabled.
+            $world.ActionsEnabled = 'false'
+
+            { & $run } | Should -Throw '*did not return the Actions permissions*'
+            @($requests | Where-Object { $_.Method -cnotin @('GET') }) | Should -BeNullOrEmpty
+        }
+    }
+
     Context 'request policy' {
-        It 'receives every request and stops the run when it refuses a deletion' {
+        It 'receives every request and stops the run when it refuses a remote change' {
             $seen = [System.Collections.Generic.List[object]]::new()
             $policy = { param($request) $seen.Add($request); $request.Method -ceq 'GET' }
 
             { & $removeScript -InstancePath $instancePath -InventoryPath $inventoryPath -ModulesPath $modulesPath `
-                -ConfirmInstanceName demo -RequestPolicy $policy -Confirm:$false } | Should -Throw '*did not authorize DELETE*'
+                -ConfirmInstanceName demo -RequestPolicy $policy -Confirm:$false } | Should -Throw '*did not authorize PUT*'
             @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
-            @($seen | Where-Object Method -ceq 'DELETE')[0].Kind | Should -Be 'Reconcile'
+            @($seen | Where-Object Method -cne 'GET')[0].Kind | Should -Be 'Reconcile'
         }
     }
 }

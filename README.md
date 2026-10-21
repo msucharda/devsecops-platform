@@ -368,7 +368,7 @@ Generátor `tools/Generate-TeardownWorkflow.ps1` vytvoří `.github/workflows/te
 3. Environment `approve-teardown-platform` vyžaduje schválení platformním týmem. Potom environment `teardown` vyžaduje schválení security týmem.
 4. Job `enterprise_owner` v plan environmentu `emu-identity` ověří přes Graph přímé přiřazení Enterprise Owner. Pokud chybí, skončí chybou s popisem ručního kroku.
 5. Joby `outputs_<module>` načtou ze state výstupy modulů, na kterých závisí jiné moduly.
-6. Joby `destroy_<module>` běží v apply environmentu modulu v obráceném pořadí předpokladů. Každý job použije installation token App modulu pro apply, ne PAT. Modul s ruleset rootem odstraní nejdřív ruleset root. Opakovaný destroy modulu s prázdným state skončí bez změny.
+6. Joby `destroy_<module>` běží v apply environmentu modulu v obráceném pořadí předpokladů. Destroy `emu-identity` běží jako poslední, až po úspěchu nebo přeskočení destroy ostatních modulů, protože odstraní týmy, jejichž schválení vyžadují apply environmenty ostatních modulů. Každý job použije installation token App modulu pro apply, ne PAT. Modul s ruleset rootem odstraní nejdřív ruleset root. Opakovaný destroy modulu s prázdným state skončí bez změny a nevyžaduje výstupy předpokladů.
 
 Workflow neodstraní `bootstrap`. Organizační politiky, rulesety, code security configurations a custom patterns odstraní destroy modulů, které je spravují.
 
@@ -381,13 +381,16 @@ Skript spusť až po úspěšném workflow `teardown`. Potřebuje inventory `boo
 ```
 
 - Skript odmítne `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` a jiný GitHub token než OAuth token (`gho_`). Odmítne inventory uvnitř source checkoutu.
+- Před prvním krokem zapíše do inventory ID přihlášeného uživatele GitHub (`GET /user`). Obnovený běh jiného uživatele odmítne, protože GitHub skrývá prostředky bez přístupu odpovědí 404. Inventory se zahájenými kroky bez ID uživatele odmítne.
 - Před smazáním repozitáře ověří, že poslední běh `teardown.yml` na `main` skončil úspěchem a v repozitáři neběží ani nečeká žádný workflow run. Ověří také, že se po startu posledního pokusu teardownu nezměnil žádný běh `deploy.yml` na žádné větvi. Porovnává `updated_at`, protože opakovaný běh (rerun) zachová `created_at` původního běhu. Apps proto zůstanou, dokud běží workflow, která je potřebují.
+- Potom zapíše krok `started`, vypne GitHub Actions v repozitáři instance a kontrolu zopakuje. Nový workflow run proto nemůže začít mezi kontrolou a smazáním. Pokud druhá kontrola selže, Actions zůstanou vypnuté; před novým spuštěním workflow `teardown` je zapni.
+- Prostředek GitHubu, který inventory neeviduje, skript ověří podle deterministického názvu. Bootstrap vytváří organizaci a repozitář před jejich zápisem do inventory. Existující neevidovaný prostředek zastaví běh: spusť znovu bootstrap se stejným inventory, nebo ověř vlastnictví a smaž ho ručně.
 - Skript odstraní v tomto pořadí: repozitář instance, organizaci platformy, Azure role assignments identit modulů mimo resource group bootstrapu, vlastní Entra directory roles a jejich přiřazení, lock state storage a resource group bootstrapu s identitami a state backendem.
 - Před každým smazáním ověří vlastnictví: popis a viditelnost repozitáře, záznam organizace v inventory, ownership tags v Azure a název, popis a příznak `isBuiltIn` directory role. Nesouhlas nebo nečitelná odpověď zastaví běh bez smazání.
 - Smazání organizace a resource group probíhá asynchronně. Skript čeká, dokud API nevrátí 404; jinak krok zůstane `started` a další běh čekání obnoví.
 - Před prvním smazáním skript zapíše do inventory `principalId` managed identit v resource group bootstrapu. Nové nasazení vytvoří identity s novými `principalId`. Každý další krok v Azure, včetně obnoveného běhu, proto ověří shodu s uloženou sadou a jinou sadu odmítne. Během mazání resource group smí identity jen ubývat.
 - Před každým vzdáleným smazáním skript zapíše do inventory stav kroku `started`, po něm `done`. Po přerušení oprav příčinu a spusť stejný příkaz; skript dokončí rozpracovaný krok a hotové kroky přeskočí. Chybějící prostředek, jehož odstranění nezačalo, zastaví běh; rozhodnutí patří platformnímu týmu.
-- `-WhatIf` vypíše cíl bez změny.
+- `-WhatIf` vypíše cíl bez změny. Potvrzení `-Confirm` se týká celého odstranění; jednotlivé kroky se znovu nepotvrzují.
 
 Skript vrátí ruční kroky, které API nepokrývá. Při akceptaci je musíš potvrdit:
 

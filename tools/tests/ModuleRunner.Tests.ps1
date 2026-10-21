@@ -529,11 +529,25 @@ terraform {
         $null = & $runner -Module application -Action destroy @arguments 6>$null
         $null = & $runner -Module foundation -Action destroy @arguments 6>$null
         $null = & $runner -Module foundation -Action output @arguments 6>$null
+        # The teardown job of a repeated run has no artifact of the already destroyed prerequisite.
+        Remove-Item -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json')
 
         $result = & $runner -Module application -Action destroy @arguments 6>$null
 
         $result.HasChanges | Should -BeFalse
         (Get-Content -LiteralPath $result.OutputsPath -Raw).Trim() | Should -Be '{}'
+    }
+
+    It 'requires prerequisite outputs to destroy a dependent with remaining resources' {
+        $instance.modules = @{ application = @{} }
+        $instance.teardown = @{ allowed = $true }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $null = & $runner -Module foundation -Action apply @arguments 6>$null
+        $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
+        $null = & $runner -Module application -Action apply @arguments 6>$null
+        Remove-Item -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json')
+
+        { & $runner -Module application -Action destroy @arguments 6>$null } | Should -Throw "*Missing prerequisite outputs for 'foundation'*"
     }
 
     It 'still destroys a dependent with remaining resources rather than skipping it' {

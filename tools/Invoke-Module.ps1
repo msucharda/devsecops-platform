@@ -287,25 +287,31 @@ $prerequisites = @($modules[$Module]['prerequisites'])
 if ($Action -eq 'output') {
     $prerequisites = @()
 }
-foreach ($prerequisite in $prerequisites) {
-    if (-not $PrerequisiteOutputsPath) {
-        throw "Missing prerequisite outputs for '$prerequisite': supply -PrerequisiteOutputsPath."
+function Import-ModulePrerequisiteOutput {
+    param([string[]] $Name, [string] $Path, [System.Collections.IDictionary] $Target)
+
+    foreach ($prerequisite in $Name) {
+        if (-not $Path) {
+            throw "Missing prerequisite outputs for '$prerequisite': supply -PrerequisiteOutputsPath."
+        }
+        $file = Join-Path $Path "$prerequisite.json"
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw "Missing prerequisite outputs for '$prerequisite': '$file'."
+        }
+        try {
+            $values = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        }
+        catch {
+            throw "Invalid prerequisite outputs for '$prerequisite' in '$file': expected a JSON object."
+        }
+        if ($values -isnot [System.Collections.IDictionary]) {
+            throw "Invalid prerequisite outputs for '$prerequisite' in '$file': expected a JSON object."
+        }
+        $Target[$prerequisite] = $values
     }
-    $file = Join-Path $PrerequisiteOutputsPath "$prerequisite.json"
-    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
-        throw "Missing prerequisite outputs for '$prerequisite': '$file'."
-    }
-    try {
-        $values = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-    }
-    catch {
-        throw "Invalid prerequisite outputs for '$prerequisite' in '$file': expected a JSON object."
-    }
-    if ($values -isnot [System.Collections.IDictionary]) {
-        throw "Invalid prerequisite outputs for '$prerequisite' in '$file': expected a JSON object."
-    }
-    $variables['prerequisites'][$prerequisite] = $values
 }
+# A destroy of an empty state needs no prerequisite outputs; it loads them only after the state check.
+if ($Action -ne 'destroy') { Import-ModulePrerequisiteOutput -Name $prerequisites -Path $PrerequisiteOutputsPath -Target $variables['prerequisites'] }
 
 $usesRestProvider = @(Get-ChildItem -LiteralPath $moduleRoot -Filter '*.tf' -File |
     Select-String -Pattern 'source\s*=\s*"(registry\.terraform\.io/)?mastercard/restapi"').Count -gt 0
@@ -331,8 +337,6 @@ try {
     $env:TF_WORKSPACE = 'default'
     # The REST provider reads its bearer from the environment; only the job's installation token may reach it.
     $env:REST_API_BEARER = $env:GITHUB_TOKEN
-    $variableFile = Join-Path $temporaryDirectory 'inputs.tfvars.json'
-    [IO.File]::WriteAllText($variableFile, (ConvertTo-Json -InputObject $variables -Depth 100), [Text.UTF8Encoding]::new($false))
     $null = Invoke-ModuleTerraform -Arguments (@('init', '-input=false', '-no-color', '-reconfigure') + $backendArguments)
     $backendMetadataPath = Join-Path $env:TF_DATA_DIR 'terraform.tfstate'
     if (-not (Test-Path -LiteralPath $backendMetadataPath -PathType Leaf)) {
@@ -361,6 +365,9 @@ try {
             ManualSteps = $manualStates.ToArray()
         }
     }
+    if ($Action -eq 'destroy') { Import-ModulePrerequisiteOutput -Name $prerequisites -Path $PrerequisiteOutputsPath -Target $variables['prerequisites'] }
+    $variableFile = Join-Path $temporaryDirectory 'inputs.tfvars.json'
+    [IO.File]::WriteAllText($variableFile, (ConvertTo-Json -InputObject $variables -Depth 100), [Text.UTF8Encoding]::new($false))
     $planFile = Join-Path $temporaryDirectory 'module.tfplan'
     $planArguments = @('plan', '-input=false', '-no-color', '-detailed-exitcode', "-var-file=$variableFile", "-out=$planFile")
     if ($Action -eq 'plan') {

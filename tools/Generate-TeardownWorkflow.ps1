@@ -206,10 +206,13 @@ foreach ($manifest in $modules.PSBase.Values) {
 
 $reversed = [System.Collections.Generic.List[object]]::new()
 $remaining = [System.Collections.Generic.List[string]]::new([string[]] @($modules.PSBase.Keys | Sort-Object -CaseSensitive))
+# The identity module owns the teams whose approvals the apply environments of every other module require.
+$identityModule = 'emu-identity'
 while ($remaining.Count -gt 0) {
     # Emit a module only after every module that needs it, so destroy jobs appear in reverse prerequisite order.
     $next = $remaining | Where-Object {
         $candidate = $_
+        ($candidate -cne $identityModule -or $remaining.Count -eq 1) -and
         -not ($remaining | Where-Object { $modules[$_]['prerequisites'] -contains $candidate })
     } | Select-Object -First 1
     if (-not $next) { throw 'Module prerequisites contain a cycle.' }
@@ -220,6 +223,9 @@ foreach ($manifest in $reversed) {
     $name = $manifest['name']
     $suffix = $name.Replace('-', '_')
     $dependents = @($modules.PSBase.Values | Where-Object { $_['prerequisites'] -contains $name } | ForEach-Object { $_['name'] })
+    if ($name -ceq $identityModule) {
+        $dependents = @($modules.PSBase.Keys | Where-Object { $_ -cne $identityModule } | Sort-Object -CaseSensitive)
+    }
     $needs = @('select', 'approve_teardown', 'enterprise_owner')
     $needs += @($manifest['prerequisites'] | ForEach-Object { 'outputs_' + $_.Replace('-', '_') })
     $needs += @($dependents | ForEach-Object { 'destroy_' + $_.Replace('-', '_') })

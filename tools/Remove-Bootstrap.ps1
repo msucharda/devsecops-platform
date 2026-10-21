@@ -85,6 +85,10 @@ foreach ($key in $removal['steps'].Keys) {
         throw "The bootstrap inventory has an invalid removal step '$key'."
     }
 }
+if ($removal.Contains('githubUserId') -and (($removal['githubUserId'] -isnot [long] -and $removal['githubUserId'] -isnot [int]) -or
+        $removal['githubUserId'] -le 0)) {
+    throw 'The bootstrap inventory has an invalid removal record.'
+}
 if ($removal.Contains('azurePrincipals') -and ($removal['azurePrincipals'] -isnot [System.Collections.IList] -or
         @($removal['azurePrincipals'] | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[0-9a-f-]{36}$' }).Count -gt 0)) {
     throw 'The bootstrap inventory has an invalid removal record.'
@@ -109,17 +113,16 @@ function Get-RemovalStepState {
     return 'pending'
 }
 
-function Set-RemovalStepState {
-    [CmdletBinding(SupportsShouldProcess)]
+function Write-RemovalStepState {
+    [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $Step,
         [Parameter(Mandatory)][ValidateSet('started', 'done')][string] $State
     )
 
-    if ($PSCmdlet.ShouldProcess($inventoryFile, "Record removal step $Step as $State")) {
-        $removal['steps'][$Step] = $State
-        Save-RemovalInventory
-    }
+    # The outer confirmation covers the whole removal; a separate prompt here could skip the recovery intent of a deletion.
+    $removal['steps'][$Step] = $State
+    Save-RemovalInventory
 }
 
 function Get-RemovalManualStep {
@@ -182,7 +185,8 @@ function Invoke-RemovalRequest {
     [OutputType([System.Collections.IDictionary])]
     param(
         [Parameter(Mandatory)][string] $Uri,
-        [ValidateSet('GET', 'DELETE')][string] $Method = 'GET',
+        [ValidateSet('GET', 'PUT', 'DELETE')][string] $Method = 'GET',
+        [System.Collections.IDictionary] $Body,
         [switch] $AllowNotFound,
         [int[]] $ExpectedStatus = @(200)
     )
@@ -192,7 +196,7 @@ function Invoke-RemovalRequest {
         $address.UserInfo -or $address.Fragment) {
         throw "Untrusted bootstrap removal API address '$Uri'."
     }
-    $headers = @{ Authorization = "******"; Accept = 'application/json' }
+    $headers = @{ Authorization = 'Bearer ' + $tokens[$address.Host]; Accept = 'application/json' }
     if ($address.Host -ceq $githubApi) {
         $headers.Accept = 'application/vnd.github+json'
         $headers['X-GitHub-Api-Version'] = '2026-03-10'
@@ -201,9 +205,13 @@ function Invoke-RemovalRequest {
         Uri = $Uri; Method = $Method; Headers = $headers; SkipHttpErrorCheck = $true
         MaximumRedirection = 0; TimeoutSec = 60; MaximumRetryCount = 0
     }
+    if ($Body) {
+        $arguments.Body = ConvertTo-Json -InputObject $Body -Depth 10 -Compress
+        $arguments.ContentType = 'application/json'
+    }
     $kind = if ($Method -ceq 'GET') { 'Read' } else { 'Reconcile' }
     for ($attempt = 1; ; $attempt++) {
-        Assert-PlatformBootstrapRequest -Uri $Uri -Method $Method -Kind $kind -RequestPolicy $requestPolicyHook
+        Assert-PlatformBootstrapRequest -Uri $Uri -Method $Method -Body $Body -Kind $kind -RequestPolicy $requestPolicyHook
         $response = Invoke-WebRequest @arguments
         if ($response.StatusCode -in @(429, 503) -and $attempt -lt 6) {
             Write-Verbose "Retrying $Method '$Uri' after HTTP $($response.StatusCode)."
@@ -216,7 +224,7 @@ function Invoke-RemovalRequest {
     if ($response.StatusCode -notin $ExpectedStatus) {
         throw "Bootstrap removal $Method '$Uri' failed (HTTP $($response.StatusCode)): $($response.Content). Correct the cause and rerun with the same inventory."
     }
-    if ($Method -ceq 'DELETE' -or [string]::IsNullOrWhiteSpace($response.Content)) {
+    if ($Method -cne 'GET' -or [string]::IsNullOrWhiteSpace($response.Content)) {
         if ($Method -ceq 'GET') { throw "Bootstrap removal GET '$Uri' returned an empty body." }
         return @{}
     }
@@ -304,6 +312,36 @@ function Assert-RemovalPreflight {
     }
 }
 
+function Disable-RemovalActionExecution {
+    [CmdletBinding()]
+    param()
+
+    # Disabled Actions survive an interrupted run, so no workflow can start between the final checks and the deletion.
+    $uri = "https://$githubApi/repos/$repository/actions/permissions"
+    $permissions = Invoke-RemovalRequest -Uri $uri
+    if ($permissions['enabled'] -isnot [bool]) { throw "GitHub did not return the Actions permissions of '$repository'." }
+    if ($permissions['enabled']) {
+        $null = Invoke-RemovalRequest -Uri $uri -Method PUT -Body @{ enabled = $false } -ExpectedStatus 204
+        $permissions = Invoke-RemovalRequest -Uri $uri
+        if ($permissions['enabled'] -isnot [bool] -or $permissions['enabled']) {
+            throw "GitHub did not confirm that Actions are disabled in '$repository'."
+        }
+    }
+}
+
+function Assert-RemovalUnrecordedResource {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Uri,
+        [Parameter(Mandatory)][string] $Name
+    )
+
+    # The GitHub bootstrap creates a resource before it records it; an interruption between them leaves it unrecorded.
+    if (Invoke-RemovalRequest -Uri $Uri -AllowNotFound) {
+        throw "$Name exists although the bootstrap inventory does not record it. Rerun the GitHub bootstrap with the same inventory to record it, or verify its ownership and delete it manually."
+    }
+}
+
 function Invoke-RepositoryRemoval {
     [CmdletBinding()]
     param()
@@ -311,8 +349,8 @@ function Invoke-RepositoryRemoval {
     $state = Get-RemovalStepState -Step 'repository'
     if ($state -ceq 'done') { return }
     if ("/repos/$repository" -cnotin $resources) {
-        # The GitHub bootstrap stopped before it created the repository, so no workflow could have run.
-        Set-RemovalStepState -Step 'repository' -State 'done'
+        Assert-RemovalUnrecordedResource -Uri "https://$githubApi/repos/$repository" -Name "Repository '$repository'"
+        Write-RemovalStepState -Step 'repository' -State 'done'
         return
     }
     $repo = Invoke-RemovalRequest -Uri "https://$githubApi/repos/$repository" -AllowNotFound
@@ -320,7 +358,7 @@ function Invoke-RepositoryRemoval {
         if ($state -cne 'started') {
             throw "Repository '$repository' is missing although this inventory never started its removal. Verify the inventory and the teardown evidence manually."
         }
-        Set-RemovalStepState -Step 'repository' -State 'done'
+        Write-RemovalStepState -Step 'repository' -State 'done'
         return
     }
     $ownership = "Platform instance $instanceName; bootstrap-owned."
@@ -329,10 +367,16 @@ function Invoke-RepositoryRemoval {
         $repo['description'] -cne $ownership) {
         throw "Repository '$repository' is not the private bootstrap-owned instance repository; refusing to delete it."
     }
-    Assert-RemovalPreflight
-    Set-RemovalStepState -Step 'repository' -State 'started'
+    # A failed check before the first change leaves Actions enabled, so the teardown workflow can run again.
+    if ($state -cne 'started') { Assert-RemovalPreflight }
+    Write-RemovalStepState -Step 'repository' -State 'started'
+    Disable-RemovalActionExecution
+    try { Assert-RemovalPreflight }
+    catch {
+        throw "$($_.Exception.Message) Actions in '$repository' stay disabled; enable them before you run the teardown workflow again."
+    }
     $null = Invoke-RemovalRequest -Uri "https://$githubApi/repos/$repository" -Method DELETE -AllowNotFound -ExpectedStatus 204
-    Set-RemovalStepState -Step 'repository' -State 'done'
+    Write-RemovalStepState -Step 'repository' -State 'done'
 }
 
 function Invoke-OrganizationRemoval {
@@ -342,7 +386,8 @@ function Invoke-OrganizationRemoval {
     $state = Get-RemovalStepState -Step 'organization'
     if ($state -ceq 'done') { return }
     if ("/orgs/$organization" -cnotin $resources) {
-        Set-RemovalStepState -Step 'organization' -State 'done'
+        Assert-RemovalUnrecordedResource -Uri "https://$githubApi/orgs/$organization" -Name "Organization '$organization'"
+        Write-RemovalStepState -Step 'organization' -State 'done'
         return
     }
     $org = Invoke-RemovalRequest -Uri "https://$githubApi/orgs/$organization" -AllowNotFound
@@ -350,13 +395,13 @@ function Invoke-OrganizationRemoval {
         if ($state -cne 'started') {
             throw "Organization '$organization' is missing although this inventory never started its removal. Verify the inventory manually."
         }
-        Set-RemovalStepState -Step 'organization' -State 'done'
+        Write-RemovalStepState -Step 'organization' -State 'done'
         return
     }
     if ($org['login'] -cne $organization) {
         throw "GitHub returned organization '$($org['login'])' for '$organization'; refusing to delete it."
     }
-    Set-RemovalStepState -Step 'organization' -State 'started'
+    Write-RemovalStepState -Step 'organization' -State 'started'
     $null = Invoke-RemovalRequest -Uri "https://$githubApi/orgs/$organization" -Method DELETE -AllowNotFound -ExpectedStatus 202
     # GitHub deletes the organization asynchronously; the step stays started until it disappears.
     $deleted = $false
@@ -371,7 +416,7 @@ function Invoke-OrganizationRemoval {
     if (-not $deleted) {
         throw "Organization '$organization' is still being deleted. Rerun with the same inventory to continue."
     }
-    Set-RemovalStepState -Step 'organization' -State 'done'
+    Write-RemovalStepState -Step 'organization' -State 'done'
 }
 
 $resourceGroupName = "rg-$instanceName-bootstrap"
@@ -454,7 +499,7 @@ function Invoke-IdentityRoleAssignmentRemoval {
     if ($state -ceq 'done') { return }
     if (-not (Get-RemovalResourceGroup)) {
         if ((Get-RemovalStepState -Step 'resource-group') -cne 'pending') {
-            Set-RemovalStepState -Step 'identity-role-assignments' -State 'done'
+            Write-RemovalStepState -Step 'identity-role-assignments' -State 'done'
             return
         }
         throw "Resource group '$resourceGroupName' is missing before the role assignments of module identities were removed. Remove orphaned role assignments manually."
@@ -469,7 +514,7 @@ function Invoke-IdentityRoleAssignmentRemoval {
             }
         }
     }
-    if (@($principals).Count -gt 0) { Set-RemovalStepState -Step 'identity-role-assignments' -State 'started' }
+    if (@($principals).Count -gt 0) { Write-RemovalStepState -Step 'identity-role-assignments' -State 'started' }
     $removed = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($principalId in $principals) {
         $filter = [uri]::EscapeDataString("principalId eq '$principalId'")
@@ -490,7 +535,7 @@ function Invoke-IdentityRoleAssignmentRemoval {
             }
         }
     }
-    Set-RemovalStepState -Step 'identity-role-assignments' -State 'done'
+    Write-RemovalStepState -Step 'identity-role-assignments' -State 'done'
 }
 
 function Invoke-DirectoryRoleRemoval {
@@ -517,7 +562,7 @@ function Invoke-DirectoryRoleRemoval {
             }
         }
     }
-    if (@($definitions).Count -gt 0) { Set-RemovalStepState -Step 'directory-roles' -State 'started' }
+    if (@($definitions).Count -gt 0) { Write-RemovalStepState -Step 'directory-roles' -State 'started' }
     foreach ($definition in $definitions) {
         $filter = [uri]::EscapeDataString("roleDefinitionId eq '$($definition['id'])'")
         foreach ($assignment in @(Get-RemovalCollection -Uri "$graph/roleManagement/directory/roleAssignments?`$filter=$filter")) {
@@ -529,7 +574,7 @@ function Invoke-DirectoryRoleRemoval {
         }
         $null = Invoke-RemovalRequest -Uri "$graph/roleManagement/directory/roleDefinitions/$($definition['id'])" -Method DELETE -AllowNotFound -ExpectedStatus 204
     }
-    Set-RemovalStepState -Step 'directory-roles' -State 'done'
+    Write-RemovalStepState -Step 'directory-roles' -State 'done'
 }
 
 function Invoke-StateLockRemoval {
@@ -539,14 +584,14 @@ function Invoke-StateLockRemoval {
     if ((Get-RemovalStepState -Step 'state-lock') -ceq 'done') { return }
     if (Get-RemovalResourceGroup) {
         $null = Assert-RemovalAzureGeneration
-        Set-RemovalStepState -Step 'state-lock' -State 'started'
+        Write-RemovalStepState -Step 'state-lock' -State 'started'
         $null = Invoke-RemovalRequest -Uri "$arm$storageAccountId/providers/Microsoft.Authorization/locks/lock-state?api-version=2016-09-01" `
             -Method DELETE -AllowNotFound -ExpectedStatus 200, 204
     }
     elseif ((Get-RemovalStepState -Step 'resource-group') -ceq 'pending') {
         throw "Resource group '$resourceGroupName' is missing although this inventory never started its removal. Verify the state backend manually."
     }
-    Set-RemovalStepState -Step 'state-lock' -State 'done'
+    Write-RemovalStepState -Step 'state-lock' -State 'done'
 }
 
 function Invoke-ResourceGroupRemoval {
@@ -556,7 +601,7 @@ function Invoke-ResourceGroupRemoval {
     if ((Get-RemovalStepState -Step 'resource-group') -ceq 'done') { return }
     if (Get-RemovalResourceGroup) {
         $null = Assert-RemovalAzureGeneration -AllowPartial:((Get-RemovalStepState -Step 'resource-group') -ceq 'started')
-        Set-RemovalStepState -Step 'resource-group' -State 'started'
+        Write-RemovalStepState -Step 'resource-group' -State 'started'
         $null = Invoke-RemovalRequest -Uri "$arm$resourceGroupId`?api-version=2021-04-01" -Method DELETE -AllowNotFound -ExpectedStatus 200, 202
         $deleted = $false
         for ($poll = 0; $poll -lt $deletionPolls; $poll++) {
@@ -570,14 +615,32 @@ function Invoke-ResourceGroupRemoval {
     elseif ((Get-RemovalStepState -Step 'resource-group') -ceq 'pending') {
         throw "Resource group '$resourceGroupName' is missing although this inventory never started its removal. Verify the state backend manually."
     }
-    Set-RemovalStepState -Step 'resource-group' -State 'done'
+    Write-RemovalStepState -Step 'resource-group' -State 'done'
 }
 
 if (-not $PSCmdlet.ShouldProcess("platform instance '$instanceName' ($repository, $resourceGroupId)", 'Remove bootstrap resources')) {
     return
 }
-# Bind the Azure resources before the first deletion; a later first binding could adopt a replacement deployment.
-if ($removal['steps'].Count -eq 0 -and (Get-RemovalResourceGroup)) { $null = Assert-RemovalAzureGeneration -Record }
+# GitHub hides resources from users without access, so a 404 counts as deletion evidence only for the user that started the removal.
+$githubUser = Invoke-RemovalRequest -Uri "https://$githubApi/user"
+if (($githubUser['id'] -isnot [long] -and $githubUser['id'] -isnot [int]) -or $githubUser['id'] -le 0 -or
+    $githubUser['login'] -isnot [string] -or [string]::IsNullOrWhiteSpace($githubUser['login'])) {
+    throw 'GitHub did not return the authenticated user.'
+}
+if ($removal['steps'].Count -gt 0) {
+    if (-not $removal.Contains('githubUserId')) {
+        throw 'The bootstrap inventory does not record the GitHub user that started the removal; verify the remaining resources manually.'
+    }
+    if ($removal['githubUserId'] -ne $githubUser['id']) {
+        throw "Bootstrap removal started with GitHub user ID $($removal['githubUserId']), not with '$($githubUser['login'])'. Sign in with gh auth login as that user and rerun."
+    }
+}
+else {
+    # Bind the user and the Azure resources before the first deletion; a later first binding could adopt a replacement deployment.
+    $removal['githubUserId'] = [long] $githubUser['id']
+    Save-RemovalInventory
+    if (Get-RemovalResourceGroup) { $null = Assert-RemovalAzureGeneration -Record }
+}
 Invoke-RepositoryRemoval
 Invoke-OrganizationRemoval
 Invoke-IdentityRoleAssignmentRemoval

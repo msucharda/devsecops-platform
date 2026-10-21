@@ -110,6 +110,22 @@ Describe 'Teardown workflow generation' {
         }
     }
 
+    It 'destroys emu-identity last because it owns the teams that approve the other apply environments' {
+        $realOutput = Join-Path $TestDrive 'teardown-real.yml'
+        & $generator -ModulesPath (Join-Path $repositoryRoot 'modules') -OutputPath $realOutput
+        $realText = Get-Content -LiteralPath $realOutput -Raw
+        $real = ConvertFrom-Yaml $realText
+        $others = @($real.jobs.Keys | Where-Object { $_ -like 'destroy_*' -and $_ -cne 'destroy_emu_identity' })
+        $others | Should -Not -BeNullOrEmpty
+        $job = $real.jobs.destroy_emu_identity
+        foreach ($other in $others) {
+            $module = $other.Substring('destroy_'.Length).Replace('_', '-')
+            $job.needs | Should -Contain $other
+            $job.if | Should -Match ([regex]::Escape("(needs.$other.result == 'success' || (needs.$other.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), '$module')))"))
+            $realText.IndexOf("  ${other}:") | Should -BeLessThan $realText.IndexOf('  destroy_emu_identity:')
+        }
+    }
+
     It 'passes prerequisite outputs read from state by read-only jobs in the plan environment' {
         $workflow.jobs.Keys | Should -Contain 'outputs_foundation'
         $workflow.jobs.Keys | Should -Contain 'outputs_application'
