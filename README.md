@@ -54,38 +54,40 @@ Validátor načítá pouze pevná schémata `instance.schema.json` a `module.sch
 
 Schéma nepovoluje privátní klíče ani tokeny v záznamech Apps a credentialů. Parametry nesmějí obsahovat credential položky, například `token`, `clientSecret` nebo `privateKey`, ani rozpoznané formáty privátních klíčů a tokenů GitHubu. Doplňující validace kontroluje tyto položky i ve vnořených mapách a seznamech; PowerShell `Test-Json` neumí zde použitou rekurzi přes `additionalProperties` vyhodnotit. Tato kontrola nerozpozná libovolný secret pod obecným názvem. Secrets patří do chráněných environmentů, nikoli do konfigurace. Názvy parametrů `instance` a `prerequisites` jsou rezervované bez ohledu na velikost písmen.
 
-Příklad vazeb pro spustitelný modul `organizations`:
+Příklad vazeb pro modul `organizations` s enterprise installation:
 
 ```yaml
 modules:
   organizations:
     parameters:
-      target_organizations: [demo-actions, demo-workloads]
+      admin_logins: [alice_demo]
+      billing_email: billing@example.test
 githubApps:
-  governance-reader:
+  organizations-reader:
     appId: '101'
     installationId: '201'
     enterprise: example
     permissions:
-      organization_administration: read
+      enterprise_organization_installations: read
     resources:
-      organizations: [demo-actions, demo-workloads]
-  governance-writer:
+      enterprise: true
+  organizations-writer:
     appId: '102'
     installationId: '202'
     enterprise: example
     permissions:
-      organization_administration: write
+      enterprise_administration: write
+      enterprise_organization_installations: write
     resources:
-      organizations: [demo-actions, demo-workloads]
+      enterprise: true
 credentials:
   organizations:
     plan:
       environment: organizations-plan
-      githubApp: governance-reader
+      githubApp: organizations-reader
     apply:
       environment: organizations-apply
-      githubApp: governance-writer
+      githubApp: organizations-writer
 ```
 
 Alias musí existovat v `githubApps`. Validátor doplní výchozí environmenty `<module>-plan`, `<module>-apply` a pro deklarovanou výjimku `<module>-ruleset-plan`. Vybraný modul s deklarací App fáze musí mít její alias. Každý environment včetně odvozených variant `<environment>-drift` smí patřit jen jednomu modulu a jedné fázi. Názvy `pr-authorization`, `approve-apply`, `approve-teardown-platform`, `teardown` a `drift-report` jsou rezervované pro společné gate joby.
@@ -195,7 +197,7 @@ Job stáhne výstupy každého přímého předpokladu ze stejné fáze. Publiku
 
 Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFORMED`. Pro autorizovaný běh vyžaduje úspěch všech vybraných planů včetně rulesetů; chybějící job zastaví stale workflow. Teprve na `main` následuje jediné schválení platformním týmem v `approve-apply`. Apply joby poté běží ve svých environmentech; `enterprise-baseline-apply` navíc vyžaduje security tým. Pravidla environmentů nastaví `tools/Invoke-GitHubBootstrap.ps1`; [runbook](docs/bootstrap.md#github-část-bootstrapu) popisuje přípravu, ověření Apps, OIDC vazby a rotaci klíčů. Kontrakt environmentů popisuje [šablona](templates/instance/README.md).
 
-**Současný rozsah:** manifest a Terraform mají z produkčních modulů jen `emu-identity` a `enterprise-baseline`. Ostatní produkční adresáře obsahují jen specifikace. Produkční šablona proto obsahuje autorizaci, validaci, výběr, plan a apply těchto modulů včetně ruleset jobu `enterprise-baseline` a reportování. Ruleset root `enterprise-baseline` zatím nespravuje žádný ruleset; rulesety doplní [#20](https://github.com/msucharda/devsecops-platform/issues/20). Šablona očekává release v `platform/`; CODEOWNERS určuje platformní tým a bootstrap nahradí jeho ukázkový slug. Průvodce `tools\Start-InstanceSetup.ps1 -GitHubAcceptance` ověří bootstrap, read-only API a OIDC na izolovaném kandidátovi pro [#11](https://github.com/msucharda/devsecops-platform/issues/11). První produkční modul `emu-identity` ověří [#12](https://github.com/msucharda/devsecops-platform/issues/12). Produkční operace `enterprise-baseline` ověří jeho vlastní issues, počínaje [#17](https://github.com/msucharda/devsecops-platform/issues/17); probe manifesty je nenahrazují.
+**Současný rozsah:** manifest a Terraform mají z produkčních modulů jen `emu-identity`, `enterprise-baseline` a `organizations`. Ostatní produkční adresáře obsahují jen specifikace. Produkční šablona proto obsahuje autorizaci, validaci, výběr, plan a apply těchto modulů včetně ruleset jobu `enterprise-baseline` a reportování. Ruleset root `enterprise-baseline` zatím nespravuje žádný ruleset; rulesety doplní [#20](https://github.com/msucharda/devsecops-platform/issues/20). Šablona očekává release v `platform/`; CODEOWNERS určuje platformní tým a bootstrap nahradí jeho ukázkový slug. Průvodce `tools\Start-InstanceSetup.ps1 -GitHubAcceptance` ověří bootstrap, read-only API a OIDC na izolovaném kandidátovi pro [#11](https://github.com/msucharda/devsecops-platform/issues/11). První produkční modul `emu-identity` ověří [#12](https://github.com/msucharda/devsecops-platform/issues/12). Produkční operace `enterprise-baseline` ověří jeho vlastní issues, počínaje [#17](https://github.com/msucharda/devsecops-platform/issues/17); probe manifesty je nenahrazují.
 
 ### Detekce driftu
 

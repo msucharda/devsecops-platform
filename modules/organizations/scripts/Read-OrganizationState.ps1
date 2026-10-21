@@ -23,7 +23,8 @@ try {
     if ($clientIds -isnot [array] -or @($clientIds | Where-Object { $_ -isnot [string] -or -not $_ }).Count) {
         throw "The query client_ids is not a JSON array of client IDs."
     }
-    $state = Get-InstanceOrganizationState -ApiUrl $query['api_url'] -Enterprise $query['enterprise'] -Organization $query['organization']
+    $state = Get-InstanceOrganizationState -ApiUrl $query['api_url'] -Enterprise $query['enterprise'] -Organization $query['organization'] `
+        -ClientId ([string[]] $clientIds)
     $violations = Get-OrganizationStateViolation -State $state -Organization $query['organization'] -ClientId ([string[]] $clientIds)
     [Console]::Out.Write((ConvertTo-Json -Compress -InputObject @{
                 state      = ConvertTo-Json -InputObject $state -Depth 10 -Compress

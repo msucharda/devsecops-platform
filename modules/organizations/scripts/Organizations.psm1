@@ -296,6 +296,60 @@ function Find-OrganizationAppInstallation {
     return $null
 }
 
+function Get-OrganizationInstallationRepository {
+    <#
+    .SYNOPSIS
+    Lists the full names of all repositories that the App installation can access.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][string] $Enterprise,
+        [Parameter(Mandatory)][string] $Organization,
+        [Parameter(Mandatory)][object] $InstallationId
+    )
+
+    Assert-OrganizationsName -Value $Enterprise -Description 'Enterprise'
+    Assert-OrganizationsName -Value $Organization -Description 'Organization'
+    Assert-OrganizationsId -Value $InstallationId -Description "The installation in '$Organization'"
+    $reply = Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method GET -AllPages `
+        -Path "/enterprises/$Enterprise/apps/organizations/$Organization/installations/$InstallationId/repositories?per_page=100"
+    foreach ($repository in $reply.Body) {
+        if ($repository -isnot [System.Collections.IDictionary] -or $repository['full_name'] -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($repository['full_name'])) {
+            throw "Installation $InstallationId in '$Organization' returned an unreadable repository."
+        }
+        Assert-OrganizationsId -Value $repository['id'] -Description "Repository '$($repository['full_name'])'"
+        $repository['full_name']
+    }
+}
+
+function Assert-OrganizationInstallationWithoutRepository {
+    <#
+    .SYNOPSIS
+    Fails unless the installation has no repository access. A 'selected' installation must list no repository.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][string] $Enterprise,
+        [Parameter(Mandatory)][string] $Organization,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Installation
+    )
+
+    $clientId = $Installation['client_id']
+    if ($Installation['repository_selection'] -ceq 'none') { return }
+    if ($Installation['repository_selection'] -cne 'selected') {
+        throw "App '$clientId' is installed in '$Organization' with access to all repositories. The module installs it without repository access; reduce the access or uninstall the App and rerun the apply."
+    }
+    $repositories = @(Get-OrganizationInstallationRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization `
+            -InstallationId $Installation['id'])
+    if ($repositories.Count -gt 0) {
+        throw "App '$clientId' has access to $($repositories.Count) repositories in '$Organization'. The module installs it without repository access; remove the repositories from the installation and rerun the apply."
+    }
+}
+
 function Install-OrganizationApp {
     <#
     .SYNOPSIS
@@ -312,9 +366,7 @@ function Install-OrganizationApp {
     if ($ClientId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9.]{0,63}\z') { throw "App client ID '$ClientId' is not valid." }
     $existing = Find-OrganizationAppInstallation -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -ClientId $ClientId
     if ($existing) {
-        if ($existing.repository_selection -ceq 'all') {
-            throw "App '$ClientId' is installed in '$Organization' with access to all repositories. The module installs it without repository access; reduce the access or uninstall the App and rerun the apply."
-        }
+        Assert-OrganizationInstallationWithoutRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -Installation $existing
         return $existing
     }
 
@@ -341,6 +393,7 @@ function Install-OrganizationApp {
     if (-not $listed -or $listed.id -ne $installation['id']) {
         throw "The installation of App '$ClientId' is not listed in '$Organization'."
     }
+    Assert-OrganizationInstallationWithoutRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -Installation $listed
     return $listed
 }
 
@@ -372,18 +425,28 @@ function Get-InstanceOrganizationState {
     <#
     .SYNOPSIS
     Reads whether the organization exists and which Apps it has installed.
+    .DESCRIPTION
+    For a 'selected' installation of an App in ClientId, the state lists the accessible repositories.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
         [Parameter(Mandatory)][string] $Enterprise,
-        [Parameter(Mandatory)][string] $Organization
+        [Parameter(Mandatory)][string] $Organization,
+        [AllowEmptyCollection()][string[]] $ClientId = @()
     )
 
     $existing = Find-EnterpriseOrganization -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization
     if (-not $existing) { return [ordered]@{ exists = $false; login = $null; installations = @() } }
     $installations = @(@(Get-OrganizationAppInstallation -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $existing) |
-            ForEach-Object { [ordered]@{ client_id = $_.client_id; repository_selection = $_.repository_selection } })
+            ForEach-Object {
+                $item = [ordered]@{ client_id = $_.client_id; repository_selection = $_.repository_selection }
+                if ($_.repository_selection -ceq 'selected' -and $ClientId -ccontains $_.client_id) {
+                    $item.repositories = @(Get-OrganizationInstallationRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $existing `
+                            -InstallationId $_.id)
+                }
+                $item
+            })
     return [ordered]@{ exists = $true; login = $existing; installations = $installations }
 }
 
@@ -408,8 +471,17 @@ function Get-OrganizationStateViolation {
         if ($installed -cnotcontains $id) { $violations.Add("App '$id' is not installed in organization '$Organization'.") }
     }
     foreach ($installation in @($State['installations'])) {
-        if ($installation['repository_selection'] -cnotin @('selected', 'none')) {
+        $selection = $installation['repository_selection']
+        if ($selection -cnotin @('selected', 'none')) {
             $violations.Add("App '$($installation['client_id'])' has access to all repositories of organization '$Organization'.")
+        }
+        elseif ($selection -ceq 'selected' -and $ClientId -ccontains $installation['client_id']) {
+            if (-not $installation.Contains('repositories') -or $installation['repositories'] -isnot [array]) {
+                throw "The repositories of App '$($installation['client_id'])' in organization '$Organization' are unreadable."
+            }
+            if ($installation['repositories'].Count -gt 0) {
+                $violations.Add("App '$($installation['client_id'])' has access to $($installation['repositories'].Count) repositories of organization '$Organization'.")
+            }
         }
     }
     return , [string[]] $violations.ToArray()
@@ -417,5 +489,5 @@ function Get-OrganizationStateViolation {
 
 Export-ModuleMember -Function Invoke-OrganizationsApi, Invoke-OrganizationsGraphQL, Get-EnterpriseOrganizationLogin,
 Find-EnterpriseOrganization, New-EnterpriseOrganization, Assert-EnterpriseOrganizationRemoved, Get-OrganizationAppInstallation,
-Find-OrganizationAppInstallation, Install-OrganizationApp, Uninstall-OrganizationApp, Get-InstanceOrganizationState,
-Get-OrganizationStateViolation
+Find-OrganizationAppInstallation, Get-OrganizationInstallationRepository, Install-OrganizationApp, Uninstall-OrganizationApp,
+Get-InstanceOrganizationState, Get-OrganizationStateViolation

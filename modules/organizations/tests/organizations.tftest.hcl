@@ -41,6 +41,11 @@ run "creates_actions_and_workloads_organizations" {
   }
 
   assert {
+    condition     = terraform_data.removal_guard["actions"].input == terraform_data.organization["actions"].input
+    error_message = "The removal guard must verify the same organization on destroy."
+  }
+
+  assert {
     condition     = output.organizations == { actions = "demo-a1b2c3-actions", workloads = "demo-a1b2c3-workloads" }
     error_message = "The output must expose the organization logins."
   }

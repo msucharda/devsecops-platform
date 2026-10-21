@@ -216,7 +216,7 @@ Výsledek smí změnit člověk až po běhu. PR s výsledkem musí oddělit dol
 | Odstranění | Organizační App token, DELETE 204, nezávislé potvrzení nepřítomnosti, nový identifikátor pro další pokus | Neprovedeno |
 | Úklid | Revokace všech tokenů, odstranění probe a testovacích Apps/klíčů, případné zbytky | Neprovedeno |
 
-Q1–Q8 zůstávají otevřené: zdroj identifikátoru, zdroj ownerů, nové nasazení po destroy, čtení IdP linku v planu, platformní tým security, downstream Apps, přijetí širokého instalačního oprávnění a legacy názvy. Tento runbook ani enterprise-only kontrakt je nerozhodují.
+Rozhodnutí Q1–Q8 jsou v [komentáři #13](https://github.com/msucharda/devsecops-platform/issues/13#issuecomment-6312972204). Modul `organizations` je implementuje podle [specifikace modulu](../../modules/organizations/README.md). Manifest deklaruje pro apply kandidáta `enterprise_administration: write`. Tento runbook rozhodne, zda je kandidát minimum; jiný výsledek vyžaduje změnu manifestu.
 
 ## Zdroje a hranice důkazu
 

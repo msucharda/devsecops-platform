@@ -109,7 +109,7 @@ Describe 'Organizations module parameters' {
             ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
             $path
         }
-        function New-OrganizationsParameters {
+        function Get-DefaultOrganizationParameter {
             [ordered]@{
                 admin_logins = @('alice_demo', 'bob-smith_demo')
                 billing_email = 'billing@example.test'
@@ -120,7 +120,7 @@ Describe 'Organizations module parameters' {
     }
 
     It 'accepts explicit EMU owners, a billing email, App client IDs and adoption kinds' {
-        $path = Write-OrganizationsInstance -Parameters (New-OrganizationsParameters)
+        $path = Write-OrganizationsInstance -Parameters (Get-DefaultOrganizationParameter)
 
         $validated = & $validator -InstancePath $path -ModulesPath $modulesPath | ConvertFrom-Json
 
@@ -134,7 +134,7 @@ Describe 'Organizations module parameters' {
         @{ Missing = 'billing_email' }
     ) {
         $instance = ConvertFrom-Yaml (Get-Content -LiteralPath $example -Raw)
-        $parameters = New-OrganizationsParameters
+        $parameters = Get-DefaultOrganizationParameter
         $instance.modules = @{ organizations = @{ parameters = $parameters } }
         if ($Missing -eq 'parameters') { $instance.modules.organizations.Remove('parameters') } else { $parameters.Remove($Missing) }
         $path = Join-Path $TestDrive 'missing.yaml'
@@ -159,7 +159,7 @@ Describe 'Organizations module parameters' {
         @{ Field = 'adopt_organizations'; Case = 'platform organization'; Value = @('platform') }
         @{ Field = 'unknown_parameter'; Case = 'undeclared'; Value = 'x' }
     ) {
-        $parameters = New-OrganizationsParameters
+        $parameters = Get-DefaultOrganizationParameter
         $parameters[$Field] = $Value
         $path = Write-OrganizationsInstance -Parameters $parameters
 

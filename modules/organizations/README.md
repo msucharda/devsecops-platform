@@ -1,26 +1,104 @@
 # organizations
 
-Modul vytvoří organizace akcí a workloadů a nastaví jejich ownery a přiřazení role security manager.
+Modul vytvoří v enterprise organizace akcí (actions) a workloadů (workloads) instance a nainstaluje do nich enterprise-owned Apps bez přístupu k repozitářům.
 
-Předpoklady: `emu-identity`.
+Předpoklady: manifest žádné nedeklaruje. Owneři z `admin_logins` musí být existující EMU uživatelé, například členové platformního týmu zřízení přes SCIM z `emu-identity`. Modul je nezakládá.
 
-## Organizace a role
+## Stav implementace
 
-- Organizace mají názvy `{name}-{deployment}-actions` a `{name}-{deployment}-workloads`. `{deployment}` je identifikátor nasazení podle ADR 0008, protože GHE.com název smazané organizace neuvolní ani do 7 dní. Bootstrap ho uloží v inventory a použije v názvu organizace platformy `{name}-{deployment}-platform`. Funkce `Get-PlatformOrganizationName` v `tools/PlatformTools.psm1` skládá všechny tři názvy.
-- Organization owners patří jen do platformního týmu.
-- Security tým má roli security manager ve všech třech organizacích instance. Pokud ověření nepotvrdí přiřazení enterprise týmu i dědění role na jeho členech, roli získá tým organizace propojený se stejnou skupinou Entra ID. Samotné úspěšné přiřazení HTTP 204 nestačí.
-- Workload týmy mají nejvýše `Maintain` na svých repozitářích, ne repository `Admin`, organization owner ani organizační role pro změnu kontrol.
+[#13](https://github.com/msucharda/devsecops-platform/issues/13) PR 2 implementuje tvorbu organizací, instalaci Apps a kontrolu stavu. Tým security, IdP link, roli security manager a navazující Apps doplní PR 3. **Živé ověření neproběhlo.** Tvorbu organizace a instalaci App enterprise installation tokenem ověří člověk podle [runbooku C3](../../docs/runbooks/organizations-c3.md) a při apply [#12](https://github.com/msucharda/devsecops-platform/issues/12).
+
+## Názvy organizací
+
+Runner odvodí názvy z názvu organizace platformy (`-PlatformOrganization`). Workflow předá `GITHUB_REPOSITORY_OWNER` instance repozitáře; lokální běh předá název explicitně. Funkce `Get-PlatformInstanceOrganization` v `tools/PlatformTools.psm1` název striktně validuje a porovná s `instance.name`.
+
+| Organizace platformy | Deployment identifier (identifikátor nasazení) | actions | workloads |
+|---|---|---|---|
+| `{name}-{deployment}-platform` | `{deployment}`, 6 znaků `a-z0-9` | `{name}-{deployment}-actions` | `{name}-{deployment}-workloads` |
+| `{name}-platform` (legacy) | žádný | `{name}-actions` | `{name}-workloads` |
+
+GHE.com název smazané organizace neuvolní ([ADR 0008](../../docs/adr/0008-deployment-identifier-in-retained-names.md)). Modul nemá vlastní generování suffixu. Nové nasazení po teardownu vyžaduje nový bootstrap s novým identifikátorem.
+
+## Parametry
+
+| Parametr | Povinný | Význam |
+|---|---|---|
+| `admin_logins` | ano | Neprázdný seznam EMU loginů ownerů nové organizace (`alice_demo`). Jedinečné bez ohledu na velikost písmen. |
+| `billing_email` | ano | Billing email nové organizace. |
+| `app_client_ids` | ne | Client ID enterprise-owned Apps, které modul nainstaluje do obou organizací. Výchozí hodnota je prázdný seznam. |
+| `adopt_organizations` | ne | Druhy organizací (`actions`, `workloads`), které modul převezme bez identifikátoru nasazení. Určeno pro legacy instance. |
+
+- `admin_logins` a `billing_email` platí jen při tvorbě organizace. Jejich pozdější změna nic nezmění; modul ownery ani billing existující organizace nespravuje.
+- Instance schéma validuje parametry před spuštěním Terraformu. Terraform validace opakuje.
+
+## Životní cyklus
+
+### Tvorba
+
+1. Modul přečte organizace enterprise přes `GET /enterprises/{enterprise}/apps/installable_organizations` (stránkovaně) a hledá název bez ohledu na velikost písmen.
+2. Pokud organizace neexistuje, zjistí node ID enterprise (`enterprise(slug)`) a zavolá GraphQL mutaci `createEnterpriseOrganization` s `login`, `profileName`, `billingEmail` a `adminLogins`. Potom čeká, než se organizace objeví v enterprise seznamu.
+3. Pokud organizace existuje, modul ji převezme jen tehdy, když název obsahuje identifikátor nasazení, nebo když je její druh v `adopt_organizations`. Jinak běh skončí chybou (fail-closed).
+
+GraphQL odpověď HTTP 200 s `errors` je chyba. Odpověď bez `id` nebo s jiným `login` je chyba.
+
+### Instalace Apps
+
+Pro každou dvojici organizace a `app_client_ids` modul zavolá `POST /enterprises/{enterprise}/apps/organizations/{org}/installations` s `repository_selection: none`. Existující instalaci s `repository_selection` `none` převezme. U `selected` modul přečte seznam repozitářů instalace (`GET .../installations/{installation_id}/repositories`, všechny stránky) a instalaci převezme, jen když je seznam prázdný. Instalaci s přístupem ke všem repozitářům nebo k aspoň jednomu repozitáři odmítne. Stejnou kontrolu provede po vytvoření nové instalace. Destroy instalace volá `DELETE .../installations/{installation_id}`; chybějící instalace nebo organizace je no-op.
+
+### Kontrola stavu
+
+Data source `organization_state` po změnách přečte skutečný stav a vrátí seznam porušení. Postcondition vyžaduje prázdný seznam. Porušení jsou:
+
+- organizace neexistuje,
+- App z `app_client_ids` není nainstalovaná (client ID se porovnává s rozlišením velikosti písmen),
+- jakákoli App v organizaci, včetně Apps mimo modul, má přístup ke všem repozitářům,
+- App z `app_client_ids` s `repository_selection: selected` má přístup k aspoň jednomu repozitáři. Seznam repozitářů modul čte jen pro vlastní Apps; Apps mimo modul s `selected` nekontroluje.
+
+Nečitelná odpověď API ukončí čtení chybou; neznámý stav neprojde jako shoda. Plan i drift proto hlásí smazanou organizaci nebo odebranou App jako chybu.
+
+### Obnova po přerušení
+
+- Přerušení po mutaci a před uložením state: Terraform označí prostředek jako tainted a další apply ho nahradí. Destroy provisioner u tainted prostředku neběží, proto absenci organizace při destroy ověřuje i prostředek `removal_guard` (viz Destroy a teardown). Tvorba organizaci najde. S identifikátorem nasazení ji převezme. U legacy názvu bez `adopt_organizations` běh skončí chybou; operátor ověří, že organizace patří instanci, a doplní její druh do `adopt_organizations`.
+- Přerušení po instalaci App: další apply instalaci najde a převezme.
+- Výměna organizace nahradí i její instalace (`triggers_replace`).
+
+### Destroy a teardown
+
+GitHub nenabízí smazání organizace enterprise installation tokenem. Organizace smaže člověk (ruční krok `delete-instance-organizations`). Destroy jen ověří, že obě organizace v enterprise chybí, a jinak selže.
+
+Ověření provádí destroy provisioner prostředku `organization` a znovu prostředek `removal_guard`. Guard nemá create provisioner, proto nikdy není tainted. Organizace na něm závisí, proto Terraform guard vytvoří před organizací a odstraní ho až po ní. Kontrola proto proběhne i po přerušené tvorbě organizace, kdy je `organization` tainted. Zbytkové riziko: po ztrátě celého state runner modul s prázdným state přeskočí a nic neověří.
+
+Teardown odstraňuje moduly v obráceném pořadí předpokladů. Postup:
+
+1. Spusť teardown. Zastaví se na destroy modulu `organizations` s chybou, že organizace existuje.
+2. Enterprise owner smaže organizace actions a workloads v nastavení enterprise.
+3. Spusť teardown znovu. Moduly s prázdným state přeskočí; destroy `organizations` projde.
+
+Destroy zachová enterprise, organizaci platformy a ruční enterprise předpoklady. Apps založené pro instanci odstraní až lokální odstranění bootstrapu.
 
 ## Identita
 
-GitHub API používá installation tokeny enterprise-owned Apps podle ADR 0016. Plan má jen potřebná oprávnění ke čtení; apply vytváří organizace přes podporované enterprise API a zajišťuje instalace Apps potřebných pro navazující moduly. Apps a credentials pro plan a apply se nesdílejí.
+Modul používá installation tokeny enterprise-owned Apps podle [ADR 0016](../../docs/adr/0016-github-app-installation-tokens-for-instance-workflows.md) s `resources: { enterprise: true }`. Plan a apply mají oddělené Apps a environments.
 
-Manifest musí deklarovat skutečná oprávnění a cílové prostředky. Enterprise oprávnění se nesmí automaticky rozšířit na ostatní moduly. Dostupnost vytváření organizací, instalací Apps a přiřazení rolí na GHE.com je podmínka nasazení; implementace nesmí přejít na PAT.
+| Fáze | Oprávnění |
+|---|---|
+| plan | `enterprise_organization_installations: read` |
+| apply | `enterprise_organization_installations: write`, `enterprise_administration: write` |
 
-Podporu enterprise installation tokenu a neprokázané minimum pro tvorbu organizace ověří člověk podle [rozšíření C3](../../docs/runbooks/organizations-c3.md). Živý běh zatím neproběhl. Issuer podporuje samostatný enterprise scope `resources: { enterprise: true }`; kombinaci enterprise a organizačních instalací v jedné App fázi zatím odmítá. Modul nemá implementovaný Terraform root ani manifest; zdroj ownerů a životní cyklus organizačních instalací zůstávají otevřené.
+- `enterprise_administration: write` je neověřený kandidát pro `createEnterpriseOrganization`. Minimum potvrdí runbook C3.
+- `enterprise_organization_installations: write` dovoluje instalovat Apps do všech organizací enterprise. Riziko je přijaté s mitigací (Q7): samostatná App jen pro tento modul, token jen v apply environmentu s required reviewers, minimální oprávnění a krátká platnost.
+- Enterprise token nemá přístup k organizačním členům. Modul proto neověří, že owneři z `admin_logins` mají aktivní členství. GraphQL dokumentace uvádí, že chyba pozvánky ownera tvorbu organizace nevrátí zpět. Ověření ownerů je živé kritérium runbooku C3.
 
-Živé ověření C2 ze 13. 10. 2026 potvrdilo fallback s týmem organizace propojeným přes SCIM: token s `members: write` a `organization_custom_org_roles: read` přiřadil `security_manager`, uživatel zdědil roli nepřímo z přesného týmu a zůstal `member`, ne owner. U enterprise týmu API přijalo přiřazení, ale dědění se nepodařilo potvrdit. Podrobnosti a hranice důkazu jsou v [C2 runbooku](../../docs/reference-instance.md#c2-role-security-manager-pro-enterprise-tým-4).
+## Neověřené živě
 
-## Teardown
+- Oprávnění pro `createEnterpriseOrganization` (preview) s enterprise installation tokenem.
+- Čtení `enterprise(slug) { id }` enterprise installation tokenem.
+- Instalace App do organizace enterprise tokenem a hodnota `none` v seznamu instalací.
+- Povinnost `billingEmail` v EMU.
+- Aktivní členství ownerů z `admin_logins`.
 
-Destroy odstraní organizace akcí a workloadů a přiřazení role security manager. Zachová enterprise, organizaci platformy a ruční enterprise předpoklady. Apps založené pro instanci odstraní až lokální odstranění bootstrapu, po skončení workflow, která je používají.
+## Zdroje
+
+- [Enterprise App installations](https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/organization-installations?apiVersion=2026-03-10), API verze `2026-03-10`, OpenAPI `github/rest-api-description@755ee33b4a81d51f6f07a902cce26cbec3b822f2` (`descriptions/ghec/ghec.2026-03-10.json`).
+- [GraphQL createEnterpriseOrganization](https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/mutations#createenterpriseorganization), schéma `github/docs@3a444c04d005e5d91e29ee0658fd5c9bbeaecf24` (`src/graphql/data/ghec/schema.docs.graphql`).
+- Kontraktní fixtures jsou v `tools/tests/fixtures/github-api/enterprise-apps/` a `tools/tests/fixtures/github-api/graphql/`.

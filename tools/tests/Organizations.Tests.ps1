@@ -8,7 +8,7 @@ BeforeAll {
     $enterprise = 'example'
     $target = @{ ApiUrl = $apiUrl; Enterprise = $enterprise }
 
-    function New-OrganizationsStub {
+    function Initialize-OrganizationsStub {
         @{
             Organizations      = [Collections.Generic.List[object]]::new()
             Installations      = @{}
@@ -34,8 +34,11 @@ BeforeAll {
     }
 
     function Add-StubInstallation {
-        param([string] $Organization, [string] $ClientId, [string] $Selection = 'selected')
-        $stub.Installations[$Organization.ToLowerInvariant()].Add(@{ id = $stub.NextId++; client_id = $ClientId; repository_selection = $Selection })
+        param([string] $Organization, [string] $ClientId, [string] $Selection = 'selected', [string[]] $Repositories = @())
+        $stub.Installations[$Organization.ToLowerInvariant()].Add(@{
+                id = $stub.NextId++; client_id = $ClientId; repository_selection = $Selection
+                repositories = [Collections.Generic.List[string]]::new([string[]] $Repositories)
+            })
     }
 
     function Get-StubRequest {
@@ -70,6 +73,7 @@ BeforeAll {
             '^GET /enterprises/[^/]+/apps/organizations/[^/]+/installations$' { 'listInstallations' }
             '^POST /enterprises/[^/]+/apps/organizations/[^/]+/installations$' { 'createInstallation' }
             '^DELETE /enterprises/[^/]+/apps/organizations/[^/]+/installations/\d+$' { 'deleteInstallation' }
+            '^GET /enterprises/[^/]+/apps/organizations/[^/]+/installations/\d+/repositories$' { 'listInstallationRepositories' }
             default { throw "Unexpected request $Method $PathAndQuery" }
         }
         $stub.Requests.Add(@{ Operation = $operation; Path = $PathAndQuery; Body = $request })
@@ -120,10 +124,26 @@ BeforeAll {
             }
             'createInstallation' {
                 $id = $stub.NextId++
-                $stub.Installations[$organization].Add(@{ id = $id; client_id = $request.client_id; repository_selection = 'selected' })
+                $stub.Installations[$organization].Add(@{
+                        id = $id; client_id = $request.client_id; repository_selection = 'selected'
+                        repositories = [Collections.Generic.List[string]]::new()
+                    })
                 $login = ($stub.Organizations | Where-Object { $_.login -eq $organization }).login
                 $created = Get-GitHubApiFixture -Name enterprise-apps/create-installation.account-simple-user -Set @{ id = $id; 'account.login' = $login }
                 @{ Status = 201; Body = (ConvertTo-Json -InputObject $created -Depth 20 -Compress) }
+            }
+            'listInstallationRepositories' {
+                $id = [long] ($path -split '/')[-2]
+                $item = $stub.Installations[$organization] | Where-Object { $_.id -eq $id }
+                if (-not $item) { @{ Status = 404; Body = '{"message":"Not Found"}' } }
+                else {
+                    $items = @(foreach ($fullName in $item.repositories) {
+                            (Get-GitHubApiFixture -Name enterprise-apps/installation-repositories -Set @{
+                                '0.id' = $stub.NextId++; '0.full_name' = $fullName; '0.name' = $fullName.Split('/')[-1]
+                            })[0]
+                        })
+                    Get-StubPage -Items $items -PathAndQuery $PathAndQuery
+                }
             }
             'deleteInstallation' {
                 $id = [long] ($path -split '/')[-1]
@@ -143,7 +163,7 @@ BeforeAll {
 Describe 'Organizations module against the documented GitHub API' {
     BeforeEach {
         $env:REST_API_BEARER = $token
-        $stub = New-OrganizationsStub
+        $stub = Initialize-OrganizationsStub
         Mock -ModuleName Organizations Start-Sleep {}
         Mock -ModuleName Organizations Invoke-WebRequest {
             $uri = [Uri] $Uri
@@ -416,6 +436,53 @@ Describe 'Organizations module against the documented GitHub API' {
             { Install-OrganizationApp @target @install } | Should -Throw '*all repositories*'
         }
 
+        It 'refuses an existing selected installation with repository access' {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Repositories @('demo-a1b2c3-actions/app')
+
+            { Install-OrganizationApp @target @install } | Should -Throw '*access to 1 repositories*'
+            (Get-StubRequest createInstallation).Count | Should -Be 0
+        }
+
+        It 'reads all repository pages of an existing selected installation' {
+            $stub.PageSize = 1
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Repositories @('demo-a1b2c3-actions/a', 'demo-a1b2c3-actions/b')
+
+            { Install-OrganizationApp @target @install } | Should -Throw '*access to 2 repositories*'
+            (Get-StubRequest listInstallationRepositories).Count | Should -Be 2
+        }
+
+        It 'refuses a new installation that has repository access after creation' {
+            $body = Get-GitHubApiFixture -Name enterprise-apps/installation-repositories
+            $stub.Override['listInstallationRepositories'] = { @{ Status = 200; Body = $body } }.GetNewClosure()
+
+            { Install-OrganizationApp @target @install } | Should -Throw '*access to 1 repositories*'
+        }
+
+        It 'fails closed on a listed repository with <Case>' -ForEach @(
+            @{ Case = 'no full_name'; Set = @{ '0.full_name' = $null }; Error = '*unreadable repository*' }
+            @{ Case = 'empty full_name'; Set = @{ '0.full_name' = '' }; Error = '*unreadable repository*' }
+            @{ Case = 'no id'; Set = @{ '0.id' = $null }; Error = '*no valid ID*' }
+        ) {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01'
+            $body = Get-GitHubApiFixture -Name enterprise-apps/installation-repositories -Set $Set
+            $stub.Override['listInstallationRepositories'] = { @{ Status = 200; Body = $body } }.GetNewClosure()
+
+            { Install-OrganizationApp @target @install } | Should -Throw $Error
+        }
+
+        It 'fails closed when the repositories are not readable' {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01'
+            $stub.Override['listInstallationRepositories'] = { @{ Status = 403; Body = @{ message = 'Forbidden' } } }
+
+            { Install-OrganizationApp @target @install } | Should -Throw '*HTTP 403*'
+        }
+
+        It 'does not read repositories of an installation without repository access' {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection 'none'
+
+            $null = Install-OrganizationApp @target @install
+            (Get-StubRequest listInstallationRepositories).Count | Should -Be 0
+        }
         It 'matches the client ID case-sensitively' {
             Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'IV23LIEXAMPLE01'
 
@@ -550,6 +617,17 @@ Describe 'Organizations module against the documented GitHub API' {
             $state.installations[0].client_id | Should -BeExactly 'Iv23liExample01'
             $state.installations[0].repository_selection | Should -BeExactly 'none'
         }
+        It 'lists the repositories only for selected installations of managed Apps' {
+            Add-StubOrganization -Login 'demo-a1b2c3-actions'
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Repositories @('demo-a1b2c3-actions/app')
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liOther0001' -Repositories @('demo-a1b2c3-actions/app')
+
+            $state = Get-InstanceOrganizationState @target -Organization 'demo-a1b2c3-actions' -ClientId @('Iv23liExample01')
+
+            $state.installations[0].repositories | Should -Be @('demo-a1b2c3-actions/app')
+            $state.installations[1].Contains('repositories') | Should -BeFalse
+            (Get-StubRequest listInstallationRepositories).Count | Should -Be 1
+        }
     }
 
     Context 'Get-OrganizationStateViolation' {
@@ -592,6 +670,29 @@ Describe 'Organizations module against the documented GitHub API' {
             Get-OrganizationStateViolation -State $compliant @check | Should -BeLike '*IV23LIEXAMPLE01*not installed*'
         }
 
+        It 'accepts a selected managed App without repositories' {
+            $compliant.installations[0].repository_selection = 'selected'
+            $compliant.installations[0].repositories = @()
+
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeNullOrEmpty
+        }
+
+        It 'reports a selected managed App with repositories' {
+            $compliant.installations[0].repository_selection = 'selected'
+            $compliant.installations[0].repositories = @('demo-a1b2c3-actions/app')
+
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeExactly @("App 'Iv23liExample01' has access to 1 repositories of organization 'demo-a1b2c3-actions'.")
+        }
+
+        It 'fails closed on a selected managed App with unreadable repositories: <Case>' -ForEach @(
+            @{ Case = 'missing'; Value = $null; Remove = $true }
+            @{ Case = 'string'; Value = 'demo-a1b2c3-actions/app'; Remove = $false }
+        ) {
+            $compliant.installations[0].repository_selection = 'selected'
+            if (-not $Remove) { $compliant.installations[0].repositories = $Value }
+
+            { Get-OrganizationStateViolation -State $compliant @check } | Should -Throw '*repositories*unreadable*'
+        }
         It 'reports an App with access to all repositories, also outside the module' {
             $compliant.installations[1].repository_selection = 'all'
 
@@ -655,5 +756,92 @@ Describe 'Organizations Terraform programs' {
         $output = ConvertTo-Json $query -Compress | pwsh -NoProfile -NonInteractive -File $read 2>&1
         $LASTEXITCODE | Should -Be 1
         ($output -join "`n") | Should -BeLike '*not a JSON array of client IDs*'
+    }
+}
+
+Describe 'Organizations Terraform lifecycle' {
+    BeforeAll {
+        $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/organizations'
+        $nativeTerraform = (Get-Command terraform -CommandType Application -ErrorAction Stop).Source
+        $fakeChange = @(
+            'param([Parameter(Mandatory)][string] $Action)'
+            '$organization = (ConvertFrom-Json $env:ORGANIZATIONS_INPUT).organization'
+            'Add-Content -LiteralPath $env:FAKE_ORGANIZATIONS_LOG -Value "$Action $organization"'
+            'if ($Action -ceq ''CreateOrganization'' -and $env:FAKE_ORGANIZATIONS_FAIL_CREATE -ceq $organization) { throw ''interrupted'' }'
+            'if ($Action -ceq ''AssertOrganizationRemoved'' -and ($env:FAKE_ORGANIZATIONS_EXISTING -split '','') -ccontains $organization) {'
+            '    throw "Organization ''$organization'' still exists."'
+            '}'
+        )
+    }
+
+    BeforeEach {
+        # Offline copy of the root: the provisioner script is a fake that logs each action, and the live-state data
+        # source (hashicorp/external) is removed so that Terraform needs no provider download.
+        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+        $null = New-Item -ItemType Directory -Path (Join-Path $root 'scripts')
+        $main = Get-Content -LiteralPath (Join-Path $moduleRoot 'main.tf') -Raw
+        $dataIndex = $main.IndexOf('data "external" "organization_state"')
+        $dataIndex | Should -BeGreaterThan 0
+        $commentIndex = $main.LastIndexOf("`n`n", $dataIndex)
+        Set-Content -LiteralPath (Join-Path $root 'main.tf') -Value $main.Substring(0, $commentIndex + 1)
+        Copy-Item -LiteralPath (Join-Path $moduleRoot 'variables.tf') -Destination $root
+        Set-Content -LiteralPath (Join-Path $root 'versions.tf') -Value 'terraform { required_version = ">= 1.9.0" }'
+        Set-Content -LiteralPath (Join-Path $root 'scripts/Invoke-OrganizationChange.ps1') -Value $fakeChange
+        $variables = @{
+            instance       = @{
+                name          = 'demo'
+                github        = @{ host = 'example.ghe.com'; enterprise = 'example' }
+                organizations = @{
+                    deploymentIdentifier = $null; platform = 'demo-platform'; actions = 'demo-actions'; workloads = 'demo-workloads'
+                }
+            }
+            prerequisites  = @{}
+            admin_logins   = @('alice_demo')
+            billing_email  = 'billing@example.test'
+            app_client_ids = @()
+        }
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json $variables -Depth 10)
+        $log = Join-Path $root 'actions.log'
+        $env:FAKE_ORGANIZATIONS_LOG = $log
+        $env:FAKE_ORGANIZATIONS_FAIL_CREATE = ''
+        $env:FAKE_ORGANIZATIONS_EXISTING = ''
+
+        function Invoke-LifecycleTerraform {
+            $output = & $nativeTerraform "-chdir=$root" @args 2>&1
+            [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join "`n") }
+        }
+
+        $init = Invoke-LifecycleTerraform init -backend=false -input=false -no-color
+        $init.ExitCode | Should -Be 0 -Because $init.Output
+    }
+
+    AfterEach {
+        Remove-Item Env:\FAKE_ORGANIZATIONS_LOG, Env:\FAKE_ORGANIZATIONS_FAIL_CREATE, Env:\FAKE_ORGANIZATIONS_EXISTING -ErrorAction SilentlyContinue
+    }
+
+    It 'fails destroy while an organization exists after an interrupted creation' {
+        $env:FAKE_ORGANIZATIONS_FAIL_CREATE = 'demo-actions'
+        (Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color).ExitCode | Should -Not -Be 0
+        (Invoke-LifecycleTerraform state show -no-color 'terraform_data.organization["actions"]').Output | Should -BeLike '*tainted*'
+
+        $env:FAKE_ORGANIZATIONS_EXISTING = 'demo-actions'
+        $destroy = Invoke-LifecycleTerraform destroy -auto-approve -input=false -no-color
+
+        $destroy.ExitCode | Should -Not -Be 0
+        $destroy.Output | Should -BeLike "*Organization 'demo-actions' still exists*"
+        Get-Content -LiteralPath $log | Should -Contain 'AssertOrganizationRemoved demo-actions'
+    }
+
+    It 'destroys after the organizations are removed and verifies each one twice' {
+        $apply = Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+
+        $destroy = Invoke-LifecycleTerraform destroy -auto-approve -input=false -no-color
+
+        $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
+        $actions = @(Get-Content -LiteralPath $log)
+        @($actions | Where-Object { $_ -ceq 'AssertOrganizationRemoved demo-actions' }).Count | Should -Be 2
+        @($actions | Where-Object { $_ -ceq 'AssertOrganizationRemoved demo-workloads' }).Count | Should -Be 2
+        (Invoke-LifecycleTerraform state list -no-color).Output | Should -BeNullOrEmpty
     }
 }

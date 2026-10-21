@@ -19,12 +19,32 @@ locals {
   provisioner   = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-OrganizationChange.ps1", "-Action"]
 }
 
+# Verifies on destroy that the organization is gone, even when terraform_data.organization is tainted after an
+# interrupted creation (Terraform runs no destroy provisioner for a tainted resource). The guard has no create
+# provisioner, so it is never tainted; the organization depends on it, so the guard is created first and destroyed last.
+resource "terraform_data" "removal_guard" {
+  for_each = local.organizations
+
+  input = each.value
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-OrganizationChange.ps1", "-Action"]
+    command     = "AssertOrganizationRemoved"
+    environment = {
+      ORGANIZATIONS_INPUT = jsonencode(self.input)
+    }
+  }
+}
+
 # Creates the organization through the GraphQL mutation createEnterpriseOrganization. The input holds only the
 # identity of the organization; owners and billing email apply only on creation, so changing them replaces nothing.
 resource "terraform_data" "organization" {
   for_each = local.organizations
 
   input = each.value
+
+  depends_on = [terraform_data.removal_guard]
 
   provisioner "local-exec" {
     interpreter = local.provisioner
