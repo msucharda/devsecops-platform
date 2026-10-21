@@ -50,8 +50,8 @@ Data source `organization_state` po změnách přečte skutečný stav a vrátí
 
 - organizace neexistuje,
 - App z `app_client_ids` není nainstalovaná (client ID se porovnává s rozlišením velikosti písmen),
-- jakákoli App v organizaci, včetně Apps mimo modul, má přístup ke všem repozitářům,
-- App z `app_client_ids` s `repository_selection: selected` má přístup k aspoň jednomu repozitáři. Seznam repozitářů modul čte jen pro vlastní Apps; Apps mimo modul s `selected` nekontroluje.
+- App z `app_client_ids` má přístup ke všem repozitářům,
+- App z `app_client_ids` s `repository_selection` `selected` nebo `none` má přístup k aspoň jednomu repozitáři. Apps mimo modul modul nekontroluje; jejich přístup k repozitářům není součástí kontraktu modulu.
 
 Nečitelná odpověď API ukončí čtení chybou; neznámý stav neprojde jako shoda. Plan i drift proto hlásí smazanou organizaci nebo odebranou App jako chybu.
 
