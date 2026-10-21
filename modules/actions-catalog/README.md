@@ -66,9 +66,11 @@ Prostředek `terraform_data.repository` pro každou akci katalogu spustí `Invok
 Prostředek `terraform_data.release_tag` pro každou položku `releases` spustí `-Action CreateReleaseTag`:
 
 1. Pokud tag existuje a ukazuje přímo na `commit`, modul nic nemění. Tag na jiný objekt, včetně anotovaného tagu, ukončí běh chybou. Modul tag nikdy nepřesune.
-2. Modul ověří, že `main` obsahuje `commit` (`GET /repos/{org}/{repo}/compare/{commit}...main`, stav `identical` nebo `ahead`). Commit mimo `main` neprošel schváleným PR.
-3. Modul přečte receipt `.vendoring.json` v daném commitu. Receipt musí mít `version: 1`, `kind: action`, `source` rovné upstreamu katalogu a `tag` rovné tagu releasu. Porovnání rozlišuje velikost písmen.
-4. Modul vytvoří lightweight tag (`POST /repos/{org}/{repo}/git/refs`). Odpověď HTTP 422 vede k opakovanému čtení tagu podle kroku 1.
+2. Modul přečte stav repozitáře jako [kontrola stavu](#kontrola-stavu) bez tagu. Každé porušení ukončí běh chybou před tvorbou tagu. Schvalovací pravidlo, CODEOWNERS a push security týmu zajišťují, že `main` obsahuje jen schválené změny.
+3. Modul ověří, že SHA `main` z kroku 2 obsahuje `commit` (`GET /repos/{org}/{repo}/compare/{commit}...{main_sha}`, stav `identical` nebo `ahead`). Commit mimo `main` neprošel schváleným PR.
+4. Modul přečte receipt `.vendoring.json` v daném commitu. Receipt musí mít `version: 1`, `kind: action`, `source` rovné upstreamu katalogu a `tag` rovné tagu releasu. Hodnoty musí být řetězce a porovnání rozlišuje velikost písmen.
+5. Modul znovu přečte SHA `main`. Pokud se od kroku 2 změnilo, běh skončí chybou a tag nevznikne.
+6. Modul vytvoří lightweight tag (`POST /repos/{org}/{repo}/git/refs`). Odpověď HTTP 422 vede k opakovanému čtení tagu podle kroku 1.
 
 Nový release je nová položka `releases` s novým tagem. Starý tag zůstává.
 
@@ -81,7 +83,7 @@ Data source `catalog_state` po změnách přečte stav každého repozitáře je
 - security tým nemá `push`,
 - `main` neexistuje nebo CODEOWNERS na `main` se liší od `* @{organizace}/{security tým}`,
 - na `main` není aktivní pravidlo `pull_request` s `require_code_owner_review: true`, `dismiss_stale_reviews_on_push: true` a `required_approving_review_count` ≥ 1 (`GET /repos/{org}/{repo}/rules/branches/main`, všechny stránky),
-- tag releasu chybí, neukazuje přímo na `commit` nebo `commit` nesplňuje podmínky z kroků 2 a 3.
+- tag releasu chybí, neukazuje přímo na `commit` nebo `commit` nesplňuje podmínky z kroků 3 a 4.
 
 Chyba čtení nebo nečitelná odpověď API ukončí program chybou. Neznámý stav neprojde jako shoda. Plan i drift proto hlásí každý rozdíl jako chybu, ne jako plánovanou změnu.
 

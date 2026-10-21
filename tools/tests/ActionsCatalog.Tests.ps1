@@ -237,9 +237,9 @@ BeforeAll {
             }
             'compare' {
                 $base, $head = $segments[4].Split('...')
-                $head | Should -BeExactly 'main'
-                $main = $repository.heads['main']
-                if (-not $repository.commits.Contains($base) -or -not $main) { return $notFound }
+                $head | Should -Match '^[0-9a-f]{40}$'
+                $main = $head
+                if (-not $repository.commits.Contains($base) -or -not $repository.commits.Contains($main)) { return $notFound }
                 $status = if ($base -ceq $main) { 'identical' }
                 elseif (Test-StubAncestor -Repository $repository -Ancestor $base -Commit $main) { 'ahead' }
                 elseif (Test-StubAncestor -Repository $repository -Ancestor $main -Commit $base) { 'behind' }
@@ -528,12 +528,15 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'privacy in another case'; Body = 'Closed' }
             @{ Case = 'no privacy'; Body = $null }
             @{ Case = 'an array body'; Body = 'array' }
+            @{ Case = 'an empty privacy array'; Body = 'emptyArray' }
+            @{ Case = 'a privacy array'; Body = 'closedArray' }
         ) {
             $value = $Body
             $stub.Override['getTeam'] = {
                 $team = Get-GitHubApiFixture -Name teams/get-by-name -Set @{ slug = $securityTeam }
                 if ($value -ceq 'array') { return @{ Status = 200; Body = @($team) } }
-                $team['privacy'] = $value
+                # Array privacy values are deliberately invalid: -cne on an array filters instead of comparing.
+                $team['privacy'] = switch ($value) { 'emptyArray' { , @() } 'closedArray' { , @('closed') } default { $value } }
                 @{ Status = 200; Body = $team }
             }.GetNewClosure()
 
@@ -596,6 +599,8 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'public visibility'; Path = 'visibility'; Value = 'public'; Error = '*is not internal*' }
             @{ Case = 'visibility in upper case'; Path = 'visibility'; Value = 'INTERNAL'; Error = '*is not internal*' }
             @{ Case = 'no visibility'; Path = 'visibility'; Value = $null; Error = '*is not internal*' }
+            @{ Case = 'an empty visibility array'; Path = 'visibility'; Value = 'emptyArray'; Error = '*is not internal*' }
+            @{ Case = 'a visibility array'; Path = 'visibility'; Value = 'array'; Error = '*is not internal*' }
             @{ Case = 'archived'; Path = 'archived'; Value = $true; Error = '*is archived*' }
             @{ Case = 'a string archived flag'; Path = 'archived'; Value = 'false'; Error = '*is archived*' }
             @{ Case = 'no archived flag'; Path = 'archived'; Value = $null; Error = '*is archived*' }
@@ -604,9 +609,13 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'no fork flag'; Path = 'fork'; Value = $null; Error = '*is a fork*' }
             @{ Case = 'the default branch master'; Path = 'default_branch'; Value = 'master'; Error = '*default branch main*' }
             @{ Case = 'the default branch Main'; Path = 'default_branch'; Value = 'Main'; Error = '*default branch main*' }
+            @{ Case = 'an empty default branch array'; Path = 'default_branch'; Value = 'emptyArray'; Error = '*default branch main*' }
+            @{ Case = 'a default branch array'; Path = 'default_branch'; Value = 'array'; Error = '*default branch main*' }
         ) {
             # An array that holds the expected value is a deliberately invalid shape: -ne on an array filters instead of comparing.
-            if ($Value -ceq 'array') { $Value = if ($Path -ceq 'name') { , @($repositoryName) } else { , @($organization) } }
+            $expected = @{ name = $repositoryName; 'owner.login' = $organization; visibility = 'internal'; default_branch = 'main' }
+            if ($Value -ceq 'array') { $Value = @($expected[$Path]) }
+            elseif ($Value -ceq 'emptyArray') { $Value = @() }
             if ($Path -ceq 'owner.login') { $repository['owner']['login'] = $Value } else { $repository[$Path] = $Value }
 
             $reasons = @(Test-CatalogRepositoryAdoptable -Repository $repository -Organization $organization -Name $repositoryName)
@@ -659,12 +668,16 @@ Describe 'Actions catalog module against the documented GitHub API' {
         It 'refuses a file reply with <Case>' -ForEach @(
             @{ Case = 'another path'; Set = @{ path = '.github/codeowners' }; Error = '*not a regular file*' }
             @{ Case = 'another encoding'; Set = @{ encoding = 'none' }; Error = '*not a regular file*' }
+            @{ Case = 'an empty type array'; Set = @{ type = 'emptyArray' }; Error = '*not a regular file*' }
+            @{ Case = 'an empty path array'; Set = @{ path = 'emptyArray' }; Error = '*not a regular file*' }
+            @{ Case = 'an empty encoding array'; Set = @{ encoding = 'emptyArray' }; Error = '*not a regular file*' }
             @{ Case = 'no content'; Set = @{ content = $null }; Error = '*not a regular file*' }
             @{ Case = 'invalid base64'; Set = @{ content = '***' }; Error = '*not base64 UTF-8 text*' }
             @{ Case = 'invalid UTF-8'; Set = @{ content = [Convert]::ToBase64String([byte[]] @(0xff, 0xfe)) }; Error = '*not base64 UTF-8 text*' }
         ) {
-            $fields = @{ path = '.github/CODEOWNERS'; encoding = 'base64'; content = 'YQ==' }
-            foreach ($key in $Set.Keys) { $fields[$key] = $Set[$key] }
+            $fields = @{ type = 'file'; path = '.github/CODEOWNERS'; encoding = 'base64'; content = 'YQ==' }
+            # An empty array is a deliberately invalid shape: -cne on an array filters instead of comparing.
+            foreach ($key in $Set.Keys) { $fields[$key] = if ($Set[$key] -ceq 'emptyArray') { , @() } else { $Set[$key] } }
             $null = Add-StubCompliantRepository
             $stub.Override['getContent'] = { @{ Status = 200; Body = (Get-GitHubApiFixture -Name repos/get-content.file -Set $fields) } }.GetNewClosure()
 
@@ -699,10 +712,13 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'no parameters'; Set = @{ '0.parameters' = $null } }
             @{ Case = 'another rule type'; Set = @{ '0.type' = 'required_status_checks' } }
             @{ Case = 'a rule type in upper case'; Set = @{ '0.type' = 'PULL_REQUEST' } }
+            @{ Case = 'an empty rule type array'; Set = @{ '0.type' = 'emptyArray' } }
         ) {
             $rules = if ($_.Contains('Rules')) { $_.Rules }
             elseif ($_.Contains('Fixture')) { Get-GitHubApiFixture -Name $_.Fixture }
             else { Get-StubApprovalRule -Set $_.Set }
+            # An empty array is a deliberately invalid shape: -cne on an array filters instead of comparing.
+            if ($_.Contains('Set') -and $_.Set['0.type'] -ceq 'emptyArray') { $rules[0]['type'] = @() }
 
             Test-CatalogApprovalRule -Rule $rules | Should -BeFalse
         }
@@ -781,6 +797,12 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'has no receipt source'; Receipt = @{ Source = $null }; Error = '*records source*' }
             @{ Case = 'has a receipt of another tag'; Receipt = @{ Tag = 'v4.2.1' }; Error = "*records tag 'v4.2.1'*" }
             @{ Case = 'has a receipt tag in another case'; Receipt = @{ Tag = 'V4.2.2' }; Error = "*records tag 'V4.2.2'*" }
+            @{ Case = 'has an empty receipt kind array'; Receipt = @{ Kind = 'emptyArray' }; Error = '*not a version 1 action receipt*' }
+            @{ Case = 'has a receipt kind array'; Receipt = @{ Kind = 'array:action' }; Error = '*not a version 1 action receipt*' }
+            @{ Case = 'has an empty receipt source array'; Receipt = @{ Source = 'emptyArray' }; Error = '*records source*' }
+            @{ Case = 'has a receipt source array'; Receipt = @{ Source = 'array:actions/checkout' }; Error = '*records source*' }
+            @{ Case = 'has an empty receipt tag array'; Receipt = @{ Tag = 'emptyArray' }; Error = '*records tag*' }
+            @{ Case = 'has a receipt tag array'; Receipt = @{ Tag = 'array:v4.2.2' }; Error = '*records tag*' }
             @{ Case = 'has an invalid receipt'; Setup = 'invalidJson'; Error = '*not a version 1 action receipt*' }
         ) {
             $receiptFields = $_['Receipt']
@@ -792,13 +814,44 @@ Describe 'Actions catalog module against the documented GitHub API' {
                 'invalidJson' { Add-StubCommit -Files @{ '.vendoring.json' = '{ not json' } }
                 default {
                     $arguments = @{}
-                    foreach ($key in $receiptFields.Keys) { $arguments[$key] = $receiptFields[$key] }
+                    # Array receipt fields are deliberately invalid: -cne on an array filters instead of comparing.
+                    foreach ($key in $receiptFields.Keys) {
+                        $field = $receiptFields[$key]
+                        $arguments[$key] = if ($field -ceq 'emptyArray') { , @() } elseif ($field -clike 'array:*') { , @($field.Substring(6)) } else { $field }
+                    }
                     Add-StubCommit -Files @{ '.vendoring.json' = (Get-StubReceipt @arguments) }
                 }
             }
             $tagTarget.Commit = $commit
 
             { New-CatalogReleaseTag @tagTarget } | Should -Throw $Error
+            (Get-StubRequest createRef).Count | Should -Be 0
+        }
+
+        It 'refuses to tag a repository <Case>' -ForEach @(
+            @{ Case = 'without the approval rule'; Setup = 'rule'; Error = '*no active rule that requires an approving code owner review*' }
+            @{ Case = 'whose CODEOWNERS changed on main'; Setup = 'codeOwners'; Error = '*does not name only the security team*' }
+            @{ Case = 'where the security team cannot push'; Setup = 'team'; Error = '*cannot push*' }
+            @{ Case = 'closed to the enterprise'; Setup = 'access'; Error = '*not accessible to the enterprise*' }
+        ) {
+            switch ($Setup) {
+                'rule' { $repository.rules.Clear() }
+                'codeOwners' { $null = Add-StubCommit -Files @{ '.github/CODEOWNERS' = '* @other' } }
+                'team' { $repository.teams[$securityTeam] = 'pull' }
+                'access' { $repository.access = 'none' }
+            }
+
+            { New-CatalogReleaseTag @tagTarget } | Should -Throw $Error
+            (Get-StubRequest createRef).Count | Should -Be 0
+        }
+
+        It 'refuses the tag when main moves during the release check' {
+            $stub.Override['getContent'] = {
+                # The stub passes the request body and the path; only the path matters here.
+                if ($args[1] -like '*/.vendoring.json*') { $repository.heads['main'] = $repository.commits[$release].parent }
+            }.GetNewClosure()
+
+            { New-CatalogReleaseTag @tagTarget } | Should -Throw '*changed during the release check*'
             (Get-StubRequest createRef).Count | Should -Be 0
         }
 

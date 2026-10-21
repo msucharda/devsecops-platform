@@ -160,10 +160,10 @@ function Test-CatalogRepositoryAdoptable {
         $Repository['name'] -isnot [string] -or $Repository['name'] -ne $Name) {
         "Repository '$Organization/$Name' is not owned by the actions organization under the catalog name."
     }
-    if ($Repository['visibility'] -cne 'internal') { "Repository '$Organization/$Name' is not internal." }
+    if ($Repository['visibility'] -isnot [string] -or $Repository['visibility'] -cne 'internal') { "Repository '$Organization/$Name' is not internal." }
     if ($Repository['archived'] -isnot [bool] -or $Repository['archived']) { "Repository '$Organization/$Name' is archived." }
     if ($Repository['fork'] -isnot [bool] -or $Repository['fork']) { "Repository '$Organization/$Name' is a fork." }
-    if ($Repository['default_branch'] -cne $script:DefaultBranch) { "Repository '$Organization/$Name' does not use the default branch main." }
+    if ($Repository['default_branch'] -isnot [string] -or $Repository['default_branch'] -cne $script:DefaultBranch) { "Repository '$Organization/$Name' does not use the default branch main." }
 }
 
 function Get-CatalogAccessLevel {
@@ -199,7 +199,7 @@ function Get-CatalogTeamPush {
     $team = Invoke-CatalogApi -ApiUrl $ApiUrl -Method GET -Path "/orgs/$Organization/teams/$SecurityTeam" -AcceptStatus @(200, 404)
     if ($team.Status -eq 404) { throw "Security team '$Organization/$SecurityTeam' does not exist; create it before the catalog." }
     # CODEOWNERS ignores a secret team, so its review would not be required.
-    if ($team.Body -isnot [System.Collections.IDictionary] -or $team.Body['privacy'] -cne 'closed') {
+    if ($team.Body -isnot [System.Collections.IDictionary] -or $team.Body['privacy'] -isnot [string] -or $team.Body['privacy'] -cne 'closed') {
         throw "Security team '$Organization/$SecurityTeam' is not visible; CODEOWNERS requires a team with privacy 'closed'."
     }
     $reply = Invoke-CatalogApi -ApiUrl $ApiUrl -Method GET -Path "/orgs/$Organization/teams/$SecurityTeam/repos/$Organization/$Repository" `
@@ -226,8 +226,8 @@ function Get-CatalogBranchSha {
     if ($reply.Status -ne 200) { return $null }
     $reference = $reply.Body
     $object = if ($reference -is [System.Collections.IDictionary]) { $reference['object'] } else { $null }
-    if ($object -isnot [System.Collections.IDictionary] -or $reference['ref'] -cne "refs/heads/$($script:DefaultBranch)" -or
-        $object['type'] -cne 'commit' -or $object['sha'] -cnotmatch '^[0-9a-f]{40}\z') {
+    if ($object -isnot [System.Collections.IDictionary] -or $reference['ref'] -isnot [string] -or $reference['ref'] -cne "refs/heads/$($script:DefaultBranch)" -or
+        $object['type'] -isnot [string] -or $object['type'] -cne 'commit' -or $object['sha'] -isnot [string] -or $object['sha'] -cnotmatch '^[0-9a-f]{40}\z') {
         throw "GitHub returned no commit for the main branch of '$Organization/$Repository'."
     }
     return $object['sha']
@@ -252,8 +252,9 @@ function Get-CatalogFile {
     $reply = Invoke-CatalogApi -ApiUrl $ApiUrl -Method GET -Path "/repos/$Organization/$Repository/contents/$($Path)?ref=$Commit" -AcceptStatus @(200, 404)
     if ($reply.Status -eq 404) { return $null }
     $file = $reply.Body
-    if ($file -isnot [System.Collections.IDictionary] -or $file['type'] -cne 'file' -or $file['path'] -cne $Path -or
-        $file['encoding'] -cne 'base64' -or $file['content'] -isnot [string]) {
+    if ($file -isnot [System.Collections.IDictionary] -or $file['type'] -isnot [string] -or $file['type'] -cne 'file' -or
+        $file['path'] -isnot [string] -or $file['path'] -cne $Path -or $file['encoding'] -isnot [string] -or $file['encoding'] -cne 'base64' -or
+        $file['content'] -isnot [string]) {
         throw "'$Path' in '$Organization/$Repository' at $Commit is not a regular file."
     }
     try {
@@ -273,7 +274,7 @@ function Test-CatalogApprovalRule {
     param([AllowNull()][AllowEmptyCollection()][object[]] $Rule)
 
     foreach ($item in @($Rule)) {
-        if ($item -isnot [System.Collections.IDictionary] -or $item['type'] -cne 'pull_request') { continue }
+        if ($item -isnot [System.Collections.IDictionary] -or $item['type'] -isnot [string] -or $item['type'] -cne 'pull_request') { continue }
         $parameters = $item['parameters']
         if ($parameters -isnot [System.Collections.IDictionary]) { continue }
         $count = $parameters['required_approving_review_count']
@@ -304,7 +305,7 @@ function Get-CatalogTag {
     if ($reply.Status -eq 404) { return $null }
     $reference = $reply.Body
     $object = if ($reference -is [System.Collections.IDictionary]) { $reference['object'] } else { $null }
-    if ($object -isnot [System.Collections.IDictionary] -or $reference['ref'] -cne "refs/tags/$Tag" -or
+    if ($object -isnot [System.Collections.IDictionary] -or $reference['ref'] -isnot [string] -or $reference['ref'] -cne "refs/tags/$Tag" -or
         $object['type'] -isnot [string] -or $object['sha'] -isnot [string]) {
         throw "GitHub returned no object for tag '$Tag' of '$Organization/$Repository'."
     }
@@ -317,8 +318,9 @@ function Test-CatalogReleaseCommit {
     .SYNOPSIS
     Returns the reasons why a commit of the vendored copy is not an approved import of the upstream tag.
     .DESCRIPTION
-    The commit must be reachable from the protected main branch, so it passed the reviewed PR, and its .vendoring.json
-    receipt must record the upstream repository and tag.
+    The commit must be reachable from the given commit of the protected main branch, so it passed the reviewed PR, and its
+    .vendoring.json receipt must record the upstream repository and tag. The caller reads main once and passes its SHA, so a
+    moving branch cannot change the answer between the checks.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -328,10 +330,11 @@ function Test-CatalogReleaseCommit {
         [Parameter(Mandatory)][string] $Repository,
         [Parameter(Mandatory)][string] $Upstream,
         [Parameter(Mandatory)][string] $Tag,
-        [Parameter(Mandatory)][string] $Commit
+        [Parameter(Mandatory)][string] $Commit,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string] $Main
     )
 
-    $compare = Invoke-CatalogApi -ApiUrl $ApiUrl -Method GET -Path "/repos/$Organization/$Repository/compare/$Commit...$($script:DefaultBranch)?per_page=1" `
+    $compare = Invoke-CatalogApi -ApiUrl $ApiUrl -Method GET -Path "/repos/$Organization/$Repository/compare/$Commit...$($Main)?per_page=1" `
         -AcceptStatus @(200, 404)
     if ($compare.Status -eq 404) { return "Commit $Commit is not in '$Organization/$Repository'." }
     $comparison = $compare.Body
@@ -342,11 +345,11 @@ function Test-CatalogReleaseCommit {
     if ($null -eq $text) { return "Commit $Commit of '$Organization/$Repository' has no $($script:ReceiptPath) receipt." }
     $receipt = try { ConvertFrom-Json -InputObject $text -AsHashtable -Depth 20 } catch { $null }
     if ($receipt -isnot [System.Collections.IDictionary] -or $receipt['version'] -isnot [long] -or $receipt['version'] -ne 1 -or
-        $receipt['kind'] -cne 'action') {
+        $receipt['kind'] -isnot [string] -or $receipt['kind'] -cne 'action') {
         return "The receipt at $Commit of '$Organization/$Repository' is not a version 1 action receipt."
     }
-    if ($receipt['source'] -cne $Upstream) { "The receipt at $Commit of '$Organization/$Repository' records source '$($receipt['source'])', not '$Upstream'." }
-    if ($receipt['tag'] -cne $Tag) { "The receipt at $Commit of '$Organization/$Repository' records tag '$($receipt['tag'])', not '$Tag'." }
+    if ($receipt['source'] -isnot [string] -or $receipt['source'] -cne $Upstream) { "The receipt at $Commit of '$Organization/$Repository' records source '$($receipt['source'])', not '$Upstream'." }
+    if ($receipt['tag'] -isnot [string] -or $receipt['tag'] -cne $Tag) { "The receipt at $Commit of '$Organization/$Repository' records tag '$($receipt['tag'])', not '$Tag'." }
 }
 
 function Get-CatalogRepositoryState {
@@ -382,7 +385,10 @@ function Get-CatalogRepositoryState {
     $state.approvalRule = Test-CatalogApprovalRule -Rule $rules.Body
     if ($Tag) {
         $state.tag = Get-CatalogTag -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Tag $Tag
-        $state.release = @(Test-CatalogReleaseCommit -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Upstream $Upstream -Tag $Tag -Commit $Commit)
+        # Without main, the violations already report the missing branch.
+        $state.release = if ($state.mainSha) {
+            @(Test-CatalogReleaseCommit -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Upstream $Upstream -Tag $Tag -Commit $Commit -Main $state.mainSha)
+        }
     }
     return $state
 }
@@ -492,6 +498,10 @@ function New-CatalogReleaseTag {
     <#
     .SYNOPSIS
     Tags an approved import commit of the vendored copy with the upstream tag. An existing tag is never moved.
+    .DESCRIPTION
+    The repository must be governed before a new tag is published: the approval rule, CODEOWNERS and the security team
+    make main the reviewed branch that the release check relies on. Main is read once and read again before the tag, so a
+    push between the check and the tag fails the run instead of tagging a commit that main no longer contains.
     #>
     [CmdletBinding()]
     param(
@@ -507,8 +517,15 @@ function New-CatalogReleaseTag {
     $name = Get-CatalogRepositoryName -Upstream $Upstream
     $existing = Get-CatalogTag -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Tag $Tag
     if ($null -eq $existing) {
-        $reasons = @(Test-CatalogReleaseCommit -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Upstream $Upstream -Tag $Tag -Commit $Commit)
+        $governance = Get-CatalogRepositoryState -ApiUrl $ApiUrl -Organization $Organization -Upstream $Upstream -SecurityTeam $SecurityTeam
+        $reasons = @(Get-CatalogStateViolation -State $governance -Organization $Organization -SecurityTeam $SecurityTeam)
+        if ($reasons.Count) { throw ((@('Repository is not governed;') + $reasons) -join ' ') }
+        $main = $governance['mainSha']
+        $reasons = @(Test-CatalogReleaseCommit -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Upstream $Upstream -Tag $Tag -Commit $Commit -Main $main)
         if ($reasons.Count) { throw ($reasons -join ' ') }
+        if ((Get-CatalogBranchSha -ApiUrl $ApiUrl -Organization $Organization -Repository $name) -cne $main) {
+            throw "Main of '$Organization/$name' changed during the release check; run the release again."
+        }
         $reply = Invoke-CatalogApi -ApiUrl $ApiUrl -Method POST -Path "/repos/$Organization/$name/git/refs" -AcceptStatus @(201, 422) `
             -Body @{ ref = "refs/tags/$Tag"; sha = $Commit }
         if ($reply.Status -eq 201) { return }
