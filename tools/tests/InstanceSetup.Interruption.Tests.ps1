@@ -168,6 +168,13 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
                 $null = Invoke-StepProbeAdmin -Setup $setup
             }
         }
+        $statePath = Join-Path $work 'setup-state.json'
+        $captureLocal = { if (Test-Path -LiteralPath $statePath) { [IO.File]::ReadAllText($statePath) } }.GetNewClosure()
+        $restoreLocal = {
+            param($Text)
+            if (Test-Path -LiteralPath $statePath) { Remove-Item -LiteralPath $statePath }
+            if ($null -ne $Text) { [IO.File]::WriteAllText($statePath, $Text) }
+        }
         $snapshot = {
             $statePath = Join-Path $work 'setup-state.json'
             $state = if (Test-Path -LiteralPath $statePath) { Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable } else { @{ probe = $null } }
@@ -182,7 +189,7 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
     }
 
     It 'recovers from an interruption at every mutating step of the probe organization and organization API probe' {
-        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot @shard)
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
 
         $report = Format-InterruptionResult -Name 'InstanceSetup.psm1 (ProbeOrg, ProbeAdmin)' -Result $result
         Write-Information $report -InformationAction Continue

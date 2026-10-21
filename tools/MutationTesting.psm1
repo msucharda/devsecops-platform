@@ -144,20 +144,29 @@ function Get-ExpressionMutant {
     }
 }
 
+function Test-BooleanReturn {
+    # True when a return statement returns the literal $Value, also in parentheses such as 'return ($false)'.
+    param($Node, [ValidateSet('$true', '$false')][string] $Value)
+
+    if ($Node -isnot [System.Management.Automation.Language.ReturnStatementAst] -or -not $Node.Pipeline) { return $false }
+    $inner = Get-InnerExpression -Node $Node.Pipeline
+    return $inner -is [System.Management.Automation.Language.VariableExpressionAst] -and $inner.Extent.Text -eq $Value
+}
+
 function Get-ClausePolarity {
     param($Body)
 
     $denies = $Body.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.ThrowStatementAst] -or
-            ($node -is [System.Management.Automation.Language.ReturnStatementAst] -and $node.Pipeline -and $node.Pipeline.Extent.Text -eq '$false') -or
+            (Test-BooleanReturn -Node $node -Value '$false') -or
             ($node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in @('Exit-SetupStage', 'Write-Error'))
         }, $false)
     if (@($denies).Count -gt 0) { return 'Deny' }
     $allows = $Body.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.ContinueStatementAst] -or
-            ($node -is [System.Management.Automation.Language.ReturnStatementAst] -and $node.Pipeline -and $node.Pipeline.Extent.Text -eq '$true')
+            (Test-BooleanReturn -Node $node -Value '$true')
         }, $false)
     if (@($allows).Count -gt 0) { return 'Allow' }
     return $null
@@ -217,7 +226,7 @@ function Get-FunctionMutant {
     $returns = $Function.Body.FindAll({ param($node) $node -is [System.Management.Automation.Language.ReturnStatementAst] -and $node.Pipeline }, $true)
     foreach ($statement in $returns) {
         $pipeline = $statement.Pipeline
-        if ($pipeline.Extent.Text -in @('$true', '$false')) { continue }
+        if ((Test-BooleanReturn -Node $statement -Value '$true') -or (Test-BooleanReturn -Node $statement -Value '$false')) { continue }
         $expression = Get-InnerExpression -Node $pipeline
         $logical = $expression -is [System.Management.Automation.Language.BinaryExpressionAst] -or
             ($expression -is [System.Management.Automation.Language.UnaryExpressionAst] -and

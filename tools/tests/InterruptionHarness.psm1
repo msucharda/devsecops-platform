@@ -8,6 +8,10 @@ A test stub routes every mutating request through Invoke-InterruptionStep. Invok
 runs the tool once to count the mutating steps, then for every step and every kind:
   BeforeApply  - the request fails before the stub applies it (the run ends between step k-1 and k);
   LoseResponse - the stub applies the request and the response is lost (the run ends between step k and k+1).
+Each interruption ends the run in one of two ways (Stop):
+  Error  - the stub returns the interrupt response, so the tool's catch and finally blocks still run;
+  Abrupt - the process dies at the injection boundary: the matrix restores the local state captured
+           there, discarding whatever catch and finally blocks saved, and keeps the stub state.
 After each interrupted run it runs the tool again and requires that the rerun succeeds, that the
 snapshot of the stub state equals the reference snapshot and that no creation was applied more often
 than in the reference run.
@@ -23,6 +27,8 @@ function Get-InterruptionPlan {
         Kind = 'None'
         Step = 0
         Injected = $false
+        CaptureLocal = $null
+        LocalAtInjection = $null
         Requests = [System.Collections.Generic.List[string]]::new()
         Applied = [System.Collections.Generic.List[string]]::new()
     }
@@ -40,6 +46,7 @@ function Clear-InterruptionPlan {
     $Plan.Kind = $Kind
     $Plan.Step = 0
     $Plan.Injected = $false
+    $Plan.LocalAtInjection = $null
     $Plan.Requests.Clear()
     $Plan.Applied.Clear()
 }
@@ -67,6 +74,7 @@ function Invoke-InterruptionStep {
     $inject = $Plan.Kind -ne 'None' -and $Plan.Step -eq $Plan.Target
     if ($inject -and $Plan.Kind -eq 'BeforeApply') {
         $Plan.Injected = $true
+        if ($Plan.CaptureLocal) { $Plan.LocalAtInjection = & $Plan.CaptureLocal }
         return & $Interrupt
     }
     $response = & $Apply
@@ -77,6 +85,7 @@ function Invoke-InterruptionStep {
     if ($Identity -and $succeeded) { $Plan.Applied.Add($Identity) }
     if ($inject) {
         $Plan.Injected = $true
+        if ($Plan.CaptureLocal) { $Plan.LocalAtInjection = & $Plan.CaptureLocal }
         return & $Interrupt
     }
     return $response
@@ -135,6 +144,9 @@ function Invoke-InterruptionMatrix {
     Run runs the tool once in a new process context. Recover runs after an interrupted run and
     receives its error record; it defaults to Run. Snapshot returns the comparable stub and local
     state; it must exclude values that legitimately differ between runs (generated IDs, timestamps).
+    CaptureLocal returns the persisted local state (for example the state file text) and RestoreLocal
+    receives it and writes it back. Both are required: without them an injected error could hide
+    progress that the tool only saves in catch or finally blocks.
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject[]])]
@@ -143,8 +155,11 @@ function Invoke-InterruptionMatrix {
         [Parameter(Mandatory)][scriptblock] $Reset,
         [Parameter(Mandatory)][scriptblock] $Run,
         [Parameter(Mandatory)][scriptblock] $Snapshot,
+        [Parameter(Mandatory)][scriptblock] $CaptureLocal,
+        [Parameter(Mandatory)][scriptblock] $RestoreLocal,
         [scriptblock] $Recover,
         [ValidateSet('BeforeApply', 'LoseResponse')][string[]] $Kind = @('BeforeApply', 'LoseResponse'),
+        [ValidateSet('Error', 'Abrupt')][string[]] $Stop = @('Error', 'Abrupt'),
         [ValidateRange(0, 1000)][int] $ShardIndex = 0,
         [ValidateRange(1, 1000)][int] $ShardCount = 1
     )
@@ -161,40 +176,46 @@ function Invoke-InterruptionMatrix {
     foreach ($identity in $Plan.Applied) { $referenceApplied[$identity] = 1 + [int] $referenceApplied[$identity] }
     if ($requests.Count -eq 0) { throw 'The reference run made no mutating request. The stub does not route requests through Invoke-InterruptionStep.' }
 
-    foreach ($kindName in $Kind) {
-        for ($step = 1; $step -le $requests.Count; $step++) {
-            if (($step - 1) % $ShardCount -ne $ShardIndex) { continue }
-            & $Reset
-            Clear-InterruptionPlan -Plan $Plan -Target $step -Kind $kindName
-            $interruptedError = $null
-            try { $null = & $Run }
-            catch { $interruptedError = $_ }
-            $injected = $Plan.Injected
-            $Plan.Target = 0
-            $Plan.Kind = 'None'
-            $Plan.Injected = $false
-            $rerunError = $null
-            try { $null = & $Recover $interruptedError }
-            catch { $rerunError = $_ }
-            $state = Get-InterruptionSnapshot -Snapshot $Snapshot
-            $applied = @{}
-            foreach ($identity in $Plan.Applied) { $applied[$identity] = 1 + [int] $applied[$identity] }
-            $duplicates = [string[]] @($applied.Keys | Where-Object { $applied[$_] -gt [int] $referenceApplied[$_] } | Sort-Object |
-                ForEach-Object { "$_ ($($applied[$_])x, reference $([int] $referenceApplied[$_])x)" })
-            $difference = [string[]] @(Compare-Object -ReferenceObject $reference -DifferenceObject $state -CaseSensitive |
-                ForEach-Object { if ($_.SideIndicator -eq '<=') { "- $($_.InputObject)" } else { "+ $($_.InputObject)" } })
-            $problems = [System.Collections.Generic.List[string]]::new()
-            if (-not $injected) { $problems.Add('the interruption was not reached') }
-            if ($rerunError) { $problems.Add("the rerun failed: $($rerunError.Exception.Message)") }
-            if ($difference.Count -gt 0) { $problems.Add("the final state differs: $($difference -join '; ')") }
-            if ($duplicates.Count -gt 0) { $problems.Add("duplicate creations: $($duplicates -join ', ')") }
-            [pscustomobject]@{
-                Step = $step
-                Kind = $kindName
-                Request = $requests[$step - 1]
-                Interrupted = $null -ne $interruptedError
-                Passed = $problems.Count -eq 0
-                Problem = $problems -join '; '
+    foreach ($stopName in $Stop) {
+        foreach ($kindName in $Kind) {
+            for ($step = 1; $step -le $requests.Count; $step++) {
+                if (($step - 1) % $ShardCount -ne $ShardIndex) { continue }
+                & $Reset
+                Clear-InterruptionPlan -Plan $Plan -Target $step -Kind $kindName
+                $Plan.CaptureLocal = if ($stopName -eq 'Abrupt') { $CaptureLocal } else { $null }
+                $interruptedError = $null
+                try { $null = & $Run }
+                catch { $interruptedError = $_ }
+                $injected = $Plan.Injected
+                if ($injected -and $stopName -eq 'Abrupt') { & $RestoreLocal $Plan.LocalAtInjection }
+                $Plan.CaptureLocal = $null
+                $Plan.Target = 0
+                $Plan.Kind = 'None'
+                $Plan.Injected = $false
+                $rerunError = $null
+                try { $null = & $Recover $interruptedError }
+                catch { $rerunError = $_ }
+                $state = Get-InterruptionSnapshot -Snapshot $Snapshot
+                $applied = @{}
+                foreach ($identity in $Plan.Applied) { $applied[$identity] = 1 + [int] $applied[$identity] }
+                $duplicates = [string[]] @($applied.Keys | Where-Object { $applied[$_] -gt [int] $referenceApplied[$_] } | Sort-Object |
+                    ForEach-Object { "$_ ($($applied[$_])x, reference $([int] $referenceApplied[$_])x)" })
+                $difference = [string[]] @(Compare-Object -ReferenceObject $reference -DifferenceObject $state -CaseSensitive |
+                    ForEach-Object { if ($_.SideIndicator -eq '<=') { "- $($_.InputObject)" } else { "+ $($_.InputObject)" } })
+                $problems = [System.Collections.Generic.List[string]]::new()
+                if (-not $injected) { $problems.Add('the interruption was not reached') }
+                if ($rerunError) { $problems.Add("the rerun failed: $($rerunError.Exception.Message)") }
+                if ($difference.Count -gt 0) { $problems.Add("the final state differs: $($difference -join '; ')") }
+                if ($duplicates.Count -gt 0) { $problems.Add("duplicate creations: $($duplicates -join ', ')") }
+                [pscustomobject]@{
+                    Step = $step
+                    Kind = $kindName
+                    Stop = $stopName
+                    Request = $requests[$step - 1]
+                    Interrupted = $null -ne $interruptedError
+                    Passed = $problems.Count -eq 0
+                    Problem = $problems -join '; '
+                }
             }
         }
     }
@@ -228,7 +249,7 @@ function Format-InterruptionResult {
     $steps = @($Result | Select-Object -ExpandProperty Step -Unique).Count
     $lines = @("Interruption harness $($Name): $steps mutating steps, $($Result.Count) interruptions, $($Result.Count - $failed.Count) passed, $($failed.Count) failed.")
     if ($Result.Count -eq 0) { $lines += '  The shard selected no step.' }
-    foreach ($item in $failed) { $lines += "  step $($item.Step) $($item.Kind) $($item.Request): $($item.Problem)" }
+    foreach ($item in $failed) { $lines += "  step $($item.Step) $($item.Kind) $($item.Stop) $($item.Request): $($item.Problem)" }
     return $lines -join [Environment]::NewLine
 }
 

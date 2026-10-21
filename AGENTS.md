@@ -70,13 +70,17 @@ CI workflow `Source CI` spouští dva joby navíc k Pester testům. Oba běží 
 #### Harness přerušení
 
 - Job `Interruption harness` spouští testy s tagem `Interruption` ve 4 shardech (`INTERRUPTION_SHARD=<index>/4`). `tools/Invoke-Tests.ps1` bez parametru `-Tag` tyto testy vynechá. Lokální běh: `./tools/Invoke-Tests.ps1 -Tag Interruption`.
-- Harness je v `tools/tests/InterruptionHarness.psm1`. `Invoke-InterruptionMatrix` spustí nástroj jednou a spočítá zapisující kroky. Pak pro každý krok spustí dvě varianty: `BeforeApply` (požadavek selže před zápisem) a `LoseResponse` (stub zápis provede a odpověď se ztratí). Po každém přerušení spustí nástroj znovu a vyžaduje:
+- Harness je v `tools/tests/InterruptionHarness.psm1`. `Invoke-InterruptionMatrix` spustí nástroj jednou a spočítá zapisující kroky. Pak pro každý krok spustí dvě varianty: `BeforeApply` (požadavek selže před zápisem) a `LoseResponse` (stub zápis provede a odpověď se ztratí). Každou variantu ukončí dvěma způsoby:
+  - `Error`: stub vrátí chybovou odpověď a v nástroji proběhnou bloky `catch` a `finally`.
+  - `Abrupt`: proces skončí přímo na hranici přerušení. Harness vrátí lokální stav, který zachytil na hranici, a zahodí zápisy z `catch` a `finally`. Stav stubu zůstane.
+
+  Po každém přerušení harness spustí nástroj znovu a vyžaduje:
   - opakovaný běh skončí úspěchem;
   - snapshot stavu stubu a lokálního stavu se rovná referenčnímu běhu;
   - žádné vytvoření objektu neproběhlo víckrát než v referenčním běhu.
 - Nový nástroj, který mění stav, zapoj do harnessu takto:
   1. Ve stubu API pošli každý zapisující požadavek přes `Invoke-InterruptionStep`. U vytvoření, které API při opakování neodmítne, předej `-Identity`.
-  2. Napiš `Reset` (počáteční stav stubu a lokálních souborů), `Run` a `Snapshot`. `Snapshot` vynechá hodnoty, které se mezi běhy legitimně liší (generovaná ID, časy).
+  2. Napiš `Reset` (počáteční stav stubu a lokálních souborů), `Run` a `Snapshot`. `Snapshot` vynechá hodnoty, které se mezi běhy legitimně liší (generovaná ID, časy). Napiš `CaptureLocal` (vrátí uložený lokální stav, například text stavového souboru) a `RestoreLocal` (zapíše zachycený stav zpět).
   3. Přidej `Describe` s tagem `Interruption` a sharduj přes `Get-InterruptionShard`. Vzor: `tools/tests/GitHubBootstrap.Interruption.Tests.ps1`.
 
 #### Mutační testy bezpečnostních kontrol

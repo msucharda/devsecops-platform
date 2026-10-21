@@ -103,6 +103,21 @@ Describe 'Security check mutation testing' {
             $mutants | Should -Contain '-ceq=>-ieq'
         }
 
+        It 'weakens a guard that returns <Return> in parentheses' -ForEach @(
+            @{ Return = '($false)'; Expected = '$a -or $b=>($false)'; Operand = '$a=>($false)' }
+            @{ Return = '($true)'; Expected = '$a -and $b=>($true)'; Operand = '$a=>($true)' }
+        ) {
+            $condition = ($Expected -split '=>')[0]
+            $function = Get-TestFunctionAst -Text "function Test-Sample { if (`$c) { throw 'no' }; if ($condition) { return $Return }; return `$false }"
+
+            $mutants = @(Get-FunctionMutant -Function $function)
+            $replacement = @($mutants | ForEach-Object { "$($_.Original)=>$($_.Replacement)" })
+
+            $replacement | Should -Contain $Expected
+            $replacement | Should -Contain $Operand
+            @($mutants | Where-Object Kind -eq 'return') | Should -BeNullOrEmpty
+        }
+
         It 'does not weaken a logical value that no guard checks' {
             $function = Get-TestFunctionAst -Text 'function Test-Sample { $ok = $a -and $b; if (-not $c) { return $false }; return $ok }'
 

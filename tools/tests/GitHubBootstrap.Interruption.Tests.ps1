@@ -100,6 +100,13 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
             if (Test-Path -LiteralPath $inventory) { Remove-Item -LiteralPath $inventory }
             if ($null -ne $initialInventory) { [IO.File]::WriteAllText($inventory, $initialInventory) }
         }
+        # CaptureLocal runs inside the bootstrap script, whose $inventory hashtable would shadow the path.
+        $captureLocal = { if (Test-Path -LiteralPath $inventory) { [IO.File]::ReadAllText($inventory) } }.GetNewClosure()
+        $restoreLocal = {
+            param($Text)
+            if (Test-Path -LiteralPath $inventory) { Remove-Item -LiteralPath $inventory }
+            if ($null -ne $Text) { [IO.File]::WriteAllText($inventory, $Text) }
+        }
         $snapshot = {
             $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
             # verifiedAt records the time of the last successful App check, so it differs on every run.
@@ -120,7 +127,7 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $arguments.ResourcesOnly = $true
         $run = { $null = & $bootstrap @arguments 3>$null 6>$null }
 
-        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot @shard)
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
 
         $report = Format-InterruptionResult -Name 'Invoke-GitHubBootstrap.ps1 (resource setup)' -Result $result
         Write-Information $report -InformationAction Continue
@@ -137,7 +144,7 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $arguments.ResourcesOnly = $false
         $run = { $null = & $bootstrap @arguments 3>$null 6>$null }
 
-        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot @shard)
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
 
         $report = Format-InterruptionResult -Name 'Invoke-GitHubBootstrap.ps1 (credential setup)' -Result $result
         Write-Information $report -InformationAction Continue
