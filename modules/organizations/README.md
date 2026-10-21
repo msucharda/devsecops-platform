@@ -6,7 +6,7 @@ Předpoklady: manifest žádné nedeklaruje. Owneři z `admin_logins` musí být
 
 ## Stav implementace
 
-[#13](https://github.com/msucharda/devsecops-platform/issues/13) PR 2 implementuje tvorbu organizací, instalaci Apps a kontrolu stavu. Tým security, IdP link, roli security manager a navazující Apps doplní PR 3. **Živé ověření neproběhlo.** Tvorbu organizace a instalaci App enterprise installation tokenem ověří člověk podle [runbooku C3](../../docs/runbooks/organizations-c3.md) a při apply [#12](https://github.com/msucharda/devsecops-platform/issues/12).
+[#13](https://github.com/msucharda/devsecops-platform/issues/13) PR 2 implementuje tvorbu organizací, instalaci Apps a kontrolu stavu. Tým security, IdP link, roli security manager a navazující Apps doplní PR 3. **Živý pokus C3 proběhl 2026-10-21** podle [runbooku C3](../../docs/runbooks/organizations-c3.md). Potvrdil tvorbu organizace a instalaci App enterprise installation tokenem mimo modul. Živý apply modulu neproběhl; ověří ho apply [#12](https://github.com/msucharda/devsecops-platform/issues/12).
 
 ## Názvy organizací
 
@@ -42,7 +42,7 @@ GraphQL odpověď HTTP 200 s `errors` je chyba. Odpověď bez `id` nebo s jiným
 
 ### Instalace Apps
 
-Pro každou dvojici organizace a `app_client_ids` modul zavolá `POST /enterprises/{enterprise}/apps/organizations/{org}/installations` s `repository_selection: none`. U existující instalace s `repository_selection` `selected` nebo `none` modul přečte seznam repozitářů instalace (`GET .../installations/{installation_id}/repositories`, všechny stránky) a instalaci převezme, jen když je seznam prázdný. Dokumentovaný enum odpovědi obsahuje jen `all` a `selected`; hodnotu `none` modul proto neověřuje podle názvu, ale podle prázdného seznamu repozitářů. Instalaci s přístupem ke všem repozitářům nebo k aspoň jednomu repozitáři odmítne. Stejnou kontrolu provede po vytvoření nové instalace. Kontrolu existující instalace provede jen čtením i create provisioner prostředku `installation_guard`, ještě než Terraform guard uloží do state. Odmítnutou instalaci proto modul po odebrání client ID neodinstaluje. Destroy instalace volá `DELETE .../installations/{installation_id}`; chybějící instalace nebo organizace je no-op.
+Pro každou dvojici organizace a `app_client_ids` modul zavolá `POST /enterprises/{enterprise}/apps/organizations/{org}/installations` s `repository_selection: none`. U existující instalace s `repository_selection` `selected` nebo `none` modul přečte seznam repozitářů instalace (`GET .../installations/{installation_id}/repositories`, všechny stránky) a instalaci převezme, jen když je seznam prázdný. Dokumentovaný enum odpovědi obsahuje jen `all` a `selected`; hodnotu `none` modul proto neověřuje podle názvu, ale podle prázdného seznamu repozitářů. Běh C3 2026-10-21 to živě potvrdil: požadavek s `repository_selection: none` vrátil HTTP 201 s `repository_selection: "selected"` a instalace neměla přístup k žádnému repozitáři. Instalaci s přístupem ke všem repozitářům nebo k aspoň jednomu repozitáři odmítne. Stejnou kontrolu provede po vytvoření nové instalace. Kontrolu existující instalace provede jen čtením i create provisioner prostředku `installation_guard`, ještě než Terraform guard uloží do state. Odmítnutou instalaci proto modul po odebrání client ID neodinstaluje. Destroy instalace volá `DELETE .../installations/{installation_id}`; chybějící instalace nebo organizace je no-op.
 
 ### Kontrola stavu
 
@@ -84,17 +84,29 @@ Modul používá installation tokeny enterprise-owned Apps podle [ADR 0016](../.
 | plan | `enterprise_organization_installations: read` |
 | apply | `enterprise_organization_installations: write`, `enterprise_organizations: write` |
 
-- `enterprise_organizations: write` vyžaduje pro `createEnterpriseOrganization` [dokumentace GitHubu](https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/content/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation.md). OpenAPI schéma `app-permissions` tuto permission neuvádí. Živé minimum potvrdí runbook C3.
+- `enterprise_organizations: write` vyžaduje pro `createEnterpriseOrganization` [dokumentace GitHubu](https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/content/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation.md). OpenAPI schéma `app-permissions` tuto permission neuvádí. Runbook C3 2026-10-21 potvrdil, že je to jediné a dostačující oprávnění; token jen s `enterprise_organization_installations: read` organizaci nevytvořil.
 - `enterprise_organization_installations: write` dovoluje instalovat Apps do všech organizací enterprise. Riziko je přijaté s mitigací (Q7): samostatná App jen pro tento modul, token jen v apply environmentu s required reviewers, minimální oprávnění a krátká platnost.
-- Enterprise token nemá přístup k organizačním členům. Modul proto neověří, že owneři z `admin_logins` mají aktivní členství. GraphQL dokumentace uvádí, že chyba pozvánky ownera tvorbu organizace nevrátí zpět. Ověření ownerů je živé kritérium runbooku C3.
+- Enterprise token nemá přístup k organizačním členům. Modul proto neověří, že owneři z `admin_logins` mají aktivní členství. GraphQL dokumentace uvádí, že chyba pozvánky ownera tvorbu organizace nevrátí zpět. Runbook C3 2026-10-21 ověřil u explicitního `adminLogins` s 1 loginem aktivní členství s rolí admin a právě 1 ownera.
+
+## Ověřené živě
+
+Runbook C3 2026-10-21 ověřil mimo modul:
+
+- `createEnterpriseOrganization` (preview) enterprise installation tokenem s jediným oprávněním `enterprise_organizations: write`.
+- Instalaci App do organizace enterprise tokenem s `enterprise_organization_installations: write`. Odpověď vrátila `repository_selection: "selected"` místo `none` a instalace neměla přístup k repozitářům.
+- Povinnost `billingEmail`: mutace bez něj skončila GraphQL validační chybou a organizace nevznikla.
+- Aktivní členství ownera z explicitního `adminLogins` s rolí admin.
+- Smazání organizace tokenem organizační App s `organization_administration: write`: `DELETE /orgs/{org}` vrátil HTTP 202 a organizace zmizela z enterprise seznamu asynchronně. Smazání enterprise installation tokenem se netestovalo.
+
+Schválení `enterprise_organization_installations: write` pro pokus C3 není přijetí rizika Q7 pro produkční modul.
 
 ## Neověřené živě
 
-- Oprávnění pro `createEnterpriseOrganization` (preview) s enterprise installation tokenem.
-- Čtení `enterprise(slug) { id }` enterprise installation tokenem.
-- Instalace App do organizace enterprise tokenem a hodnota `none` v seznamu instalací.
-- Povinnost `billingEmail` v EMU.
-- Aktivní členství ownerů z `admin_logins`.
+- Apply modulu ([#12](https://github.com/msucharda/devsecops-platform/issues/12)) a produkční apply.
+- Čtení `enterprise(slug) { id }` enterprise installation tokenem. Node ID enterprise v C3 zjistil enterprise owner přes UI.
+- Hodnota `repository_selection` existující instalace v seznamu instalací `GET .../installations`.
+- Teardown se smazáním organizací v reálném nasazení.
+- Tvorba organizace bez `adminLogins`.
 
 ## Zdroje
 

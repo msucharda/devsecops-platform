@@ -1,6 +1,6 @@
 # C3: Organizace přes enterprise installation token (#13)
 
-**Stav: živé ověření neproběhlo.** Tento runbook provede člověk na referenční instanci GHE.com. Lokální testy issueru nenahrazují důkaz dostupnosti API. Výsledek zapiš do tabulky na konci tohoto souboru přes PR; nezavírej tím automaticky #13.
+**Stav: živé ověření proběhlo 2026-10-21.** Výsledek je v sekci [Záznam výsledku](#záznam-výsledku). Tento runbook provede člověk na referenční instanci GHE.com. Lokální testy issueru nenahrazují důkaz dostupnosti API. Výsledek opakovaného běhu zapiš do tabulky na konci tohoto souboru přes PR; nezavírej tím automaticky #13.
 
 Původní [C3 pro blokaci názvu](../reference-instance.md#c3-nové-použití-názvu-smazané-organizace-5) už proběhlo. Jeho výsledek v [ADR 0008](../adr/0008-deployment-identifier-in-retained-names.md) platí dál. Toto rozšíření ověřuje autentizaci, oprávnění, vlastníka, instalaci App a odstranění organizace.
 
@@ -38,7 +38,7 @@ try {
 
 `-Phase apply` zde označuje izolovaný ověřovací pokus, nikoli produkční plan. Issuer ověří enterprise vlastníka, App ID, přesná oprávnění App i instalace, enterprise slug a ID, installation ID a aktivní stav. Vydá token bez těla `permissions`. U kontraktu s `enterprise_organization_installations` musí aktivním tokenem úspěšně přečíst `GET /enterprises/{enterprise}/apps/installable_organizations`; při chybě token odvolá a vrátí chybu. Potom token odvolá přes `DELETE /installation/token` a musí dostat právě HTTP 401 při následném čtení enterprise endpointu. HTTP 403 ani 404 nejsou důkaz revokace. Kontrakt bez tohoto oprávnění neprokazuje aktivní čtení tímto endpointem. Issuer nic nezapíše do `GITHUB_ENV`.
 
-GitHub pro enterprise installation nepodporuje zúžení přes `permissions` a token nemá přístup k repozitářům. Oprávnění pro `createEnterpriseOrganization` zatím nejsou prokázaná. Pokud API vrátí jiný tvar vlastníka nebo instalace, zastav se a zaznamenej anonymizovaný tvar; kontrolu identity nevypínej.
+GitHub pro enterprise installation nepodporuje zúžení přes `permissions` a token nemá přístup k repozitářům. Běh 2026-10-21 prokázal, že `createEnterpriseOrganization` vyžaduje `enterprise_organizations: write` a že toto oprávnění stačí. Pokud API vrátí jiný tvar vlastníka nebo instalace, zastav se a zaznamenej anonymizovaný tvar; kontrolu identity nevypínej.
 
 ## 2. Pomocné funkce pro ruční požadavky
 
@@ -131,7 +131,7 @@ Nejdřív enterprise owner přes UI zjistí GraphQL node ID enterprise. Ulož ho
 | Pokus | Oprávnění enterprise App | Očekávání a vyhodnocení |
 |---|---|---|
 | A | `enterprise_organization_installations: read` | Čtení `GET /enterprises/{enterprise}/apps/installable_organizations` vrátí 200. Tvorba by měla selhat bez nové organizace. Pokud uspěje, zaznamenej porušení předpokladu read-only planu a zastav návrh produkčního planu. |
-| B | `enterprise_organizations: write` | Oprávnění, které pro tvorbu vyžaduje dokumentace GitHubu. Živě není ověřené. Ověř tvorbu se stejnými vstupy a novým názvem. |
+| B | `enterprise_organizations: write` | Oprávnění, které pro tvorbu vyžaduje dokumentace GitHubu. Běh 2026-10-21 tvorbu potvrdil. Ověř tvorbu se stejnými vstupy a novým názvem. |
 | C | B + `enterprise_organization_installations: write` | Jen po schválení, pokud B neuspěje. Pokud uspěje, jednotlivě odeber každé oprávnění a opakuj s novými tokeny i názvy. |
 
 Úspěšná širší sada bez negativního pokusu s odebraným oprávněním není důkaz minima. Pokud B ani C neuspějí, nepřidávej další práva pokusem naslepo; ulož důkaz a označ API/oprávnění za blokátor. Pokud UI nepovolí požadovanou sadu, zaznamenej tuto hranici místo předstíraného API pokusu.
@@ -162,7 +162,7 @@ if ($c3Reply.StatusCode -ne 200 -or $c3Result['errors'] -or $c3Created['login'] 
 }
 ```
 
-U negativního pokusu místo pokračování zaznamenej HTTP, GraphQL error type/message bez interních hodnot a potvrď v UI, že organizace nevznikla. U úspěchu ulož node ID jen do lokálního inventáře. Samostatně ověř, zda EMU vyžaduje `billingEmail`: vynech ho pouze v dalším schváleném pokusu s novým názvem.
+U negativního pokusu místo pokračování zaznamenej HTTP, GraphQL error type/message bez interních hodnot a potvrď v UI, že organizace nevznikla. U úspěchu ulož node ID jen do lokálního inventáře. `billingEmail` je ve schématu povinný: pokus bez něj skončil 2026-10-21 GraphQL validační chybou proměnné a organizace nevznikla. Pokus bez `billingEmail` opakuj jen se schválením a novým názvem.
 
 ## 4. Instalace organizační App a vlastník
 
@@ -175,6 +175,8 @@ if ($c3InstallReply.StatusCode -notin @(200, 201)) { throw 'Organization App ins
 ```
 
 Pokud sada pro tvorbu toto oprávnění nemá, použij samostatnou schválenou enterprise App nebo App nainstaluj ručně přes UI. Úspěch ruční instalace není důkaz podpory enterprise instalačního API. Před API pokusem znovu proveď krok 1 pro použitou App. Nepřidávej organizační instalaci do enterprise-only App; tento PR takovou kombinaci úmyslně odmítá.
+
+Odpověď na požadavek s `repository_selection: none` může obsahovat `repository_selection: "selected"`; běh 2026-10-21 vrátil HTTP 201 a `selected`. Hodnotu proto nevyhodnocuj podle názvu. Prázdný přístup k repozitářům ověř přes `GET /installation/repositories` tokenem organizační App (`total_count: 0`).
 
 Z odpovědi instalace zjisti installation ID organizační App. Vytvoř `$c3OrganizationApp` s jejími `appId`, `installationId`, `enterprise`, přesnými `permissions` a `resources` podle kroku 2. Ověř kontrakt issuerem. Potom vydej `$c3OrgIssued = New-C3Token -App $c3OrganizationApp -KeyPath $c3OrganizationKeyPath -Organization` a přiřaď `$c3OrgToken = $c3OrgIssued.Token`. Do sanitizovaného záznamu zahrň i `$c3OrgIssued.Permissions`, ne celý objekt.
 
@@ -191,8 +193,10 @@ if ($c3Org -cnotmatch '^probe13-[a-f0-9]{12}-actions$') { throw 'Not an allowed 
 $c3Confirmation = Read-Host 'Type the exact probe organization name to approve permanent deletion'
 if ($c3Confirmation -cne $c3Org) { throw 'Deletion was not approved.' }
 $c3DeleteReply = Invoke-C3Request -Path "/orgs/$c3Org" -Token $c3OrgToken -Method DELETE
-if ($c3DeleteReply.StatusCode -ne 204) { throw 'Deletion was not confirmed; inspect actual state before retry.' }
+if ($c3DeleteReply.StatusCode -notin @(202, 204)) { throw 'Deletion was not accepted; inspect actual state before retry.' }
 ```
+
+GitHub smaže organizaci asynchronně: běh 2026-10-21 dostal HTTP 202 s tělem `{}`, ne 204. Kód proto přijme 202 i 204. Ani jeden kód není důkaz smazání. Organizace chyběla v enterprise seznamu přibližně 20 s po DELETE.
 
 Potvrď nepřítomnost v enterprise UI a přes enterprise seznam organizací; seznam stránkuj. Samotné HTTP 404 s původním organizačním tokenem není důkaz smazání, protože instalace mohla zaniknout. `removeEnterpriseOrganization` nepoužívej jako náhradu DELETE: nemusí organizaci smazat.
 
@@ -202,21 +206,20 @@ Pokud DELETE selže, enterprise owner odstraní pouze schválený probe přes UI
 
 ## Záznam výsledku
 
-Výsledek smí změnit člověk až po běhu. PR s výsledkem musí oddělit doložený stav od hypotézy a obsahovat anonymizované chyby. Žádný řádek zatím nepotvrzuje dostupnost na GHE.com.
+Výsledek smí změnit člověk až po běhu. PR s výsledkem musí oddělit doložený stav od hypotézy a obsahovat anonymizované chyby. Tabulka obsahuje sanitizovaný výsledek běhu 2026-10-21; neobsahuje enterprise slug, loginy, interní ID ani email.
 
 | Oblast | Požadovaný důkaz | Výsledek |
 |---|---|---|
-| Relace | Datum UTC, operátor, commit nástrojů, API verze, GHE.com a stav preview | Neprovedeno |
-| Issuer | Přesná oprávnění a scope, vlastník App, Enterprise target, vydání bez permissions, revokace 204 → 401 | Neprovedeno |
-| Minimum pro tvorbu | Deklarovaná i skutečně vrácená mapa oprávnění každého tokenu (`Permissions`), HTTP, GraphQL errors/data, negativní pokus bez každého požadovaného práva | Neprovedeno |
-| Read-only | Pokus A, tvorba zamítnutá bez vedlejšího efektu; jiný výsledek blokuje návrh planu | Neprovedeno |
-| Vlastník | Explicitní adminLogins, aktivní admin členství, počet ownerů, platformní tým; stav varianty bez adminLogins | Neprovedeno |
-| Billing email | Povinnost/volitelnost v EMU, nebo výslovně neověřeno | Neprovedeno |
-| Instalace App | Enterprise endpoint, 200/201, repository_selection none, organizační token bez repozitářů | Neprovedeno |
-| Odstranění | Organizační App token, DELETE 204, nezávislé potvrzení nepřítomnosti, nový identifikátor pro další pokus | Neprovedeno |
-| Úklid | Revokace všech tokenů, odstranění probe a testovacích Apps/klíčů, případné zbytky | Neprovedeno |
-
-Rozhodnutí Q1–Q8 jsou v [komentáři #13](https://github.com/msucharda/devsecops-platform/issues/13#issuecomment-6312972204). Modul `organizations` je implementuje podle [specifikace modulu](../../modules/organizations/README.md). Manifest deklaruje pro apply `enterprise_organizations: write`, které pro `createEnterpriseOrganization` vyžaduje [dokumentace GitHubu](https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/content/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation.md). Tento runbook živě ověří, že je oprávnění minimum. Jiný výsledek vyžaduje změnu manifestu.
+| Relace | Datum UTC, operátor, commit nástrojů, API verze, GHE.com a stav preview | 2026-10-21, přibližně 18:00–18:41 UTC. Operátor: enterprise owner z platformního týmu; příkazy spouštěl koordinátor ve viditelném terminálu. Commit nástrojů `4afd252`, API verze `2026-03-10`, GHE.com, enterprise-installed Apps v public preview. Apps vznikly přes předvyplněné URL parametry registrace (`/enterprises/{enterprise}/settings/apps/new?...&enterprise_organizations=write`); UI oprávnění z URL přijalo. Testovací Apps: 3 enterprise-owned Apps (A, B, I), každá s jednou enterprise instalací, a 1 organizační App (O) s `members: read` a `organization_administration: write`, bez repozitářů a před testem bez instalace. |
+| Issuer | Přesná oprávnění a scope, vlastník App, Enterprise target, vydání bez permissions, revokace 204 → 401 | Prošlo. `New-PlatformGitHubToken.ps1 -ValidateOnly -VerifyRevocation` ověřil pro A, B a I enterprise vlastníka, přesná oprávnění App i instalace, cíl Enterprise, vydání bez `permissions` a revokaci 204 → 401. Pro O prošel issuer s `resources = @{ organizations = @(<probe>); repositories = @{} }` včetně čtení `actions/permissions` a endpointů `code-security`. |
+| Minimum pro tvorbu | Deklarovaná i skutečně vrácená mapa oprávnění každého tokenu (`Permissions`), HTTP, GraphQL errors/data, negativní pokus bez každého požadovaného práva | Minimum je `enterprise_organizations: write`; toto jediné oprávnění stačí. Pokus A (`{"enterprise_organization_installations":"read"}`): HTTP 200, GraphQL error `FORBIDDEN` „Resource not accessible by integration“, `data.createEnterpriseOrganization = null`. Pokus B (`{"enterprise_organizations":"write"}`): HTTP 200 bez `errors`, vrácený `login` odpovídá, `id` je vyplněné. Pokus A je negativní důkaz bez požadovaného oprávnění. Pokus C nebyl potřeba. Manifest modulu je potvrzený. Dva dřívější běhy pokusu A selhaly na chybě pomocného skriptu operátora (chybný název GraphQL proměnné); neměly vedlejší efekt a nejsou důkazem. |
+| Read-only | Pokus A, tvorba zamítnutá bez vedlejšího efektu; jiný výsledek blokuje návrh planu | Prošlo. Token s `enterprise_organization_installations: read` organizaci nevytvořil. Organizace nevznikla a enterprise seznam organizací se nezměnil. |
+| Vlastník | Explicitní adminLogins, aktivní admin členství, počet ownerů, platformní tým; stav varianty bez adminLogins | Explicitní `adminLogins` s 1 členem platformního týmu. `GET /orgs/{org}/memberships/{login}`: HTTP 200, `state: active`, `role: admin`. `GET /orgs/{org}/members?role=admin` (všechny stránky): 1 owner, člen platformního týmu. Potvrzení přihlášením vlastníka do UI neproběhlo. Varianta bez `adminLogins`: neověřeno. |
+| Billing email | Povinnost/volitelnost v EMU, nebo výslovně neověřeno | Povinný. Pokus B bez `billingEmail`: HTTP 200 a GraphQL validační chyba proměnné, `billingEmail` „Expected value to not be null“. Organizace nevznikla. Vytvořená organizace měla billing email uložený (`GET /orgs/{org}` tokenem organizační App). |
+| Instalace App | Enterprise endpoint, 200/201, repository_selection none, organizační token bez repozitářů | Prošlo s odchylkou. `POST /enterprises/{enterprise}/apps/organizations/{org}/installations` s `client_id` a `repository_selection: none` tokenem App I: HTTP 201. Odpověď obsahovala `repository_selection: "selected"`, ne `none`. Oprávnění instalace odpovídala deklaraci. Token organizační App: `{"members":"read","organization_administration":"write"}`, `GET /installation/repositories` vrátil `total_count: 0`. |
+| Odstranění | Organizační App token, DELETE 202/204, nezávislé potvrzení nepřítomnosti, nový identifikátor pro další pokus | Prošlo s odchylkou. Před smazáním se ověřil formát názvu a shoda živého `node_id` s vytvořenou organizací; člověk opsal přesný název. `DELETE /orgs/{org}` tokenem organizační App s `organization_administration: write`: HTTP 202 s tělem `{}`, ne 204. Přibližně 20 s potom organizace chyběla ve stránkovaném enterprise seznamu (GraphQL `enterprise.organizations`) a `GET /orgs/{org}` uživatelským tokenem vrátil 404. Smazání enterprise installation tokenem se netestovalo. Název probe zůstává rezervovaný; další pokus musí použít nový název. |
+| Úklid | Revokace všech tokenů, odstranění probe a testovacích Apps/klíčů, případné zbytky | Dokončeno. Všechny vydané tokeny jsou odvolané (204 → 401), včetně tokenu organizační App po smazání. Vznikla 1 probe organizace a je smazaná. Názvy z pokusů A a z pokusu bez billing emailu nevznikly. Owner smazal všechny 4 testovací Apps v UI; `GET /app` s JWT vrací 404. Lokální klíče jsou smazané. Zbytky: žádné. |
+Rozhodnutí Q1–Q8 jsou v [komentáři #13](https://github.com/msucharda/devsecops-platform/issues/13#issuecomment-6312972204). Modul `organizations` je implementuje podle [specifikace modulu](../../modules/organizations/README.md). Manifest deklaruje pro apply `enterprise_organizations: write`, které pro `createEnterpriseOrganization` vyžaduje [dokumentace GitHubu](https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/content/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation.md). Běh 2026-10-21 potvrdil, že je toto oprávnění minimum. Jiný výsledek opakovaného běhu vyžaduje změnu manifestu.
 
 ## Zdroje a hranice důkazu
 
