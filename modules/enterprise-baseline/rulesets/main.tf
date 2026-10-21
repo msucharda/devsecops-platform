@@ -51,7 +51,7 @@ data "external" "ruleset_plan_state" {
 
   lifecycle {
     postcondition {
-      condition     = try(jsondecode(self.result.state) == null ? true : jsondecode(self.result.state).bypass_actors == [], false)
+      condition     = try(jsondecode(self.result.state) == null ? true : jsonencode(jsondecode(self.result.state).bypass_actors) == "[]", false)
       error_message = "The existing ruleset of ${each.key} has bypass actors; restore the empty bypass list before apply."
     }
     postcondition {
@@ -99,7 +99,7 @@ resource "restapi_object" "ruleset" {
         jsondecode(self.api_response).source_type == "Organization" &&
         lower(jsondecode(self.api_response).source) == lower(each.key) &&
         jsondecode(self.api_response).name == local.ruleset.name &&
-        jsondecode(self.api_response).bypass_actors == [],
+        jsonencode(jsondecode(self.api_response).bypass_actors) == "[]",
         false
       )
       error_message = "The ruleset of ${each.key} has mismatched identity, bypass actors or an unreadable bypass_actors field."
@@ -123,7 +123,7 @@ data "external" "ruleset_state" {
 
   lifecycle {
     postcondition {
-      condition     = try(jsondecode(self.result.state).bypass_actors == [], false)
+      condition     = try(jsonencode(jsondecode(self.result.state).bypass_actors) == "[]", false)
       error_message = "The ruleset of ${each.key} has bypass actors or did not expose bypass_actors. Missing data is not proof of an empty bypass list."
     }
     postcondition {
