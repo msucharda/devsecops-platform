@@ -131,7 +131,8 @@ Describe 'Drift issue publication' {
         # Intentionally invalid: the documented schema requires the user field.
         @{ Case = 'an item has no user field'; Filter = { $Method -eq 'GET' -and $Uri -like '*page=1' }; Response = { return , @(@{ number = 3; body = 'x' }) }; Error = '*unknown issue list item*' }
         @{ Case = 'the list never ends'; Filter = { $Method -eq 'GET' }; Response = { return , @(Get-ListedIssue -Number 3 -Login 'mona' -Type 'User' -Body 'x') }; Error = '*within 1000 pages*' }
-        @{ Case = 'the created item is not an open issue'; Filter = { $Method -eq 'POST' }; Response = { return @{ number = 'x' } }; Error = '*did not return an open issue*' }
+        @{ Case = 'the created item has no issue number'; Filter = { $Method -eq 'POST' }; Response = { Get-GitHubApiFixture -Name issues/create -Set @{ number = 'x' } }; Error = '*POST did not return an open issue*' }
+        @{ Case = 'the created issue is closed'; Filter = { $Method -eq 'POST' }; Response = { Get-GitHubApiFixture -Name issues/create -Set @{ number = 41; state = 'closed' } }; Error = '*POST did not return an open issue*' }
     ) {
         Mock Invoke-RestMethod $Response -ParameterFilter $Filter
 

@@ -568,6 +568,24 @@ Describe 'Enterprise App key and installation token isolation' {
             Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
         }
 
+        It 'accepts a drift report App owned by the documented Enterprise variant in <Case>' -ForEach @(
+            @{ Case = 'workflow issuance'; Bootstrap = $false }
+            @{ Case = 'bootstrap validation'; Bootstrap = $true }
+        ) {
+            Mock Invoke-RestMethod {
+                Get-GitHubApiFixture -Name apps/get-app.owner-enterprise -Set @{ id = 101; slug = 'octoapp'; permissions = $actualPermissions; 'owner.slug' = 'example' }
+            } -ParameterFilter { $Uri -eq 'https://api.example.test/app' }
+
+            if ($Bootstrap) {
+                $result = & $issuer -BootstrapApp $driftApp -DriftReport -PrivateKey $privateKey -ValidateOnly -ApiUrl https://api.example.test
+                $result.Verified | Should -BeTrue
+            }
+            else {
+                & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
+                [IO.File]::ReadAllText($environmentPath) | Should -Match '(?m)^PLATFORM_APP_SLUG=octoapp$'
+            }
+        }
+
         It 'rejects a bootstrap drift report contract other than issues write on one repository: <Case>' -ForEach @(
             @{ Case = 'extra permission'; Change = { param($App) $App.permissions.contents = 'read' } }
             @{ Case = 'read-only issues'; Change = { param($App) $App.permissions.issues = 'read' } }
