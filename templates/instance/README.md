@@ -17,7 +17,7 @@ Změnu App oprávnění musí navíc schválit security tým podle ADR 0016. Boo
 | `drift-report` | Bez schválení, jen z `main`. Samostatná App s právě `issues: write` jen pro repozitář instance. Žádná Azure identita. Job `report_drift` v `drift.yml` jí otevře nebo aktualizuje issue driftu. |
 | `approve-apply` | Jedno schválení platformním týmem pro celý běh. Žádné secrets. |
 | `<module>-apply` | Vlastní apply identity a App. Po společném gate bez dalšího schválení, kromě `enterprise-baseline-apply`, který vyžaduje security tým. |
-| `approve-teardown-platform`, `teardown` | Navazující schválení platformním a potom security týmem. Žádné secrets, variables ani OIDC vazby. Workflow odstranění dodá #22. |
+| `approve-teardown-platform`, `teardown` | Navazující schválení platformním a potom security týmem. Žádné secrets, variables ani OIDC vazby. Používá je workflow `teardown`. |
 
 Explicitní názvy z `credentials` nahrazují výchozí názvy environmentů. Každý environment patří jen jednomu modulu a fázi. Bootstrap musí všechny environmenty omezit na deployment ref `main`, protože `pull_request_target` používá base ref. Nesmí přidat další schválení k PR planu ani ruleset planu. Doporučené pravidlo zabrání obejití schválení administrátorem.
 

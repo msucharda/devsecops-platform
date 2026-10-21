@@ -1,0 +1,31 @@
+{
+  "source": {
+    "operation": "GET /users/{id | userPrincipalName}",
+    "api": "Microsoft Graph",
+    "apiVersion": "v1.0",
+    "documentation": "https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0#example-1-standard-users-request",
+    "status": 200,
+    "schema": "https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"
+  },
+  "required": {
+    "": [
+      "id",
+      "userPrincipalName"
+    ]
+  },
+  "body": {
+    "businessPhones": [
+      "+1 425 555 0109"
+    ],
+    "displayName": "Adele Vance",
+    "givenName": "Adele",
+    "jobTitle": "Retail Manager",
+    "mail": "AdeleV@contoso.com",
+    "mobilePhone": "+1 425 555 0109",
+    "officeLocation": "18/2111",
+    "preferredLanguage": "en-US",
+    "surname": "Vance",
+    "userPrincipalName": "AdeleV@contoso.com",
+    "id": "87d349ed-44d7-43e1-9a83-5f2406dee5bd"
+  }
+}

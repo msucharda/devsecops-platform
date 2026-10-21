@@ -212,13 +212,13 @@ App pro issue drift registruje platformní tým ručně a předá ji bootstrapu 
 
 ### Runner modulu
 
-`tools/Invoke-Module.ps1` provede jednu akci `plan`, `apply` nebo `destroy` jednoho vybraného modulu či jeho Prerequisite. Terraform běží v `modules/<name>/`. Root musí deklarovat backend odpovídající parametru `-Backend`; runner odmítne implicitní lokální backend.
+`tools/Invoke-Module.ps1` provede jednu akci `plan`, `apply`, `destroy` nebo `output` jednoho vybraného modulu či jeho Prerequisite. Terraform běží v `modules/<name>/`. Root musí deklarovat backend odpovídající parametru `-Backend`; runner odmítne implicitní lokální backend.
 
 Produkční backend `azurerm` používá kontejner s názvem modulu, klíč `terraform.tfstate` a autentizaci Entra ID (`use_azuread_auth=true`). Název modulu musí mít nejméně tři znaky. Storage account a resource group určí `-StorageAccountName` a `-ResourceGroupName`, nebo proměnné `PLATFORM_STATE_STORAGE_ACCOUNT` a `PLATFORM_STATE_RESOURCE_GROUP`. Credentialy Azure a GitHubu připravuje volající; runner nevydává tokeny, neprovádí přihlášení a nepřechází na PAT. Terraform workspace je `default`; pracovní adresář Terraformu se izoluje pro každý běh.
 
 Root deklaruje standardní proměnné `instance` a `prerequisites`. `instance` obsahuje `name`, `regions`, `teams` a `customPatterns`. Položky `modules.<name>.parameters` jsou další jmenné proměnné Terraformu. `prerequisites` obsahuje mapu přímých předpokladů na jejich necitlivé výstupy, například `var.prerequisites.foundation.foundation_name`. Runner čte soubory `<prerequisite>.json` v `-PrerequisiteOutputsPath`, nikdy state jiného modulu.
 
-`plan` vrací známé hodnoty z uloženého planu, ne staré výstupy state. Terraform exit code `2` znamená změny, nikoli chybu. Neznámý nebo částečně neznámý výstup způsobí chybu; před dalším planem musíš nasadit daný předpoklad. Runner ho nenahradí hodnotou `null`, starým state ani prázdným výsledkem. `apply` a `destroy` provedou uložený plan a pak načtou aktuální výstupy. `destroy` vyžaduje `teardown.allowed: true`; pořadí odstranění více modulů a schválení běhu musí zajistit volající workflow.
+`plan` vrací známé hodnoty z uloženého planu, ne staré výstupy state. Terraform exit code `2` znamená změny, nikoli chybu. Neznámý nebo částečně neznámý výstup způsobí chybu; před dalším planem musíš nasadit daný předpoklad. Runner ho nenahradí hodnotou `null`, starým state ani prázdným výsledkem. `apply` a `destroy` provedou uložený plan a pak načtou aktuální výstupy. `destroy` vyžaduje `teardown.allowed: true`; pořadí odstranění více modulů a schválení běhu musí zajistit volající workflow. `destroy` s prázdným state neplánuje a vrátí `HasChanges: false`, takže opakovaný teardown nevyžaduje výstupy už odstraněných předpokladů. `output` načte výstupy z aktuálního state bez planu a bez výstupů předpokladů; workflow teardown je předá závislým modulům.
 
 Read-only `plan` používá `-lock=false`, aby nevyžadoval oprávnění k zápisu lease ve state backendu. Může souběžně číst state; apply si po schválení vytvoří nový plan se zamykáním. Workflow nepřenáší uložený PR plan do apply.
 
@@ -351,11 +351,56 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 
 ## Teardown
 
-- Workflow `teardown` odstraní moduly v obráceném pořadí předpokladů, kromě `bootstrap`. Modul `bootstrap` odstraní lokální skript.
-- Workflow se spustí jen při `teardown.allowed: true` v `instance.yaml`. Výchozí hodnota je `false`.
-- Environment `teardown` vyžaduje schválení od platformního týmu i od security týmu.
-- Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu a smaže organizační rulesety, code security configurations a custom patterns. Enterprise a jeho ruční předpoklady zůstanou beze změny.
-- Lokální odstranění bootstrapu odstraní i Apps založené pro instanci a jejich credentials, případně vyžádá deklarovaný ruční krok. Apps nesmějí být odstraněné dřív, než skončí workflow, která je potřebují.
+Teardown má dvě fáze. Workflow `teardown` v repozitáři instance odstraní moduly. Lokální skript `tools/Remove-Bootstrap.ps1` potom odstraní prostředky bootstrapu. Tenant, enterprise s OIDC a SCIM, subscriptions, licence a ručně nastavené enterprise kontroly zůstanou beze změny, takže instanci jde nasadit znovu.
+
+### Ruční krok před teardownem
+
+Ruční krok `emu-identity` po prvním nasazení odebral prvnímu enterprise ownerovi přímé přiřazení app role Enterprise Owner. Destroy modulu `emu-identity` odstraní skupinu platformního týmu. Bez přímého přiřazení by platformní tým ztratil roli Enterprise Owner a lokální skript by nemohl odstranit organizaci.
+
+Před spuštěním teardownu proto administrátor Entra ID přiřadí aspoň jednomu členovi `teams.platform` app roli Enterprise Owner na enterprise aplikaci přímo, ne přes skupinu. Workflow přiřazení ověří před prvním destroy. Přiřazení přes skupinu nestačí.
+
+### Workflow `teardown`
+
+Generátor `tools/Generate-TeardownWorkflow.ps1` vytvoří `.github/workflows/teardown.yml` z vybraných modulů. CI selže, pokud se commitnutý workflow liší od výstupu generátoru.
+
+1. Workflow spustíš ručně (`workflow_dispatch`) na větvi `main`. Vstup `instance` musí přesně odpovídat `name` z `instance.yaml`.
+2. Job `select` odmítne běh, pokud `teardown.allowed` není `true` nebo instance nevybírá modul `emu-identity`. Výchozí hodnota `teardown.allowed` je `false`.
+3. Environment `approve-teardown-platform` vyžaduje schválení platformním týmem. Potom environment `teardown` vyžaduje schválení security týmem.
+4. Job `enterprise_owner` v plan environmentu `emu-identity` ověří přes Graph přímé přiřazení Enterprise Owner. Pokud chybí, skončí chybou s popisem ručního kroku.
+5. Joby `outputs_<module>` načtou ze state výstupy modulů, na kterých závisí jiné moduly.
+6. Joby `destroy_<module>` běží v apply environmentu modulu v obráceném pořadí předpokladů. Destroy `emu-identity` běží jako poslední, až po úspěchu nebo přeskočení destroy ostatních modulů, protože odstraní týmy, jejichž schválení vyžadují apply environmenty ostatních modulů. Každý job použije installation token App modulu pro apply, ne PAT. Modul s ruleset rootem odstraní nejdřív ruleset root. Opakovaný destroy modulu s prázdným state skončí bez změny a nevyžaduje výstupy předpokladů.
+7. Těsně před každým destroy krokem skript `Assert-TeardownMainCommit.ps1` přečte přes [Get a reference](https://docs.github.com/en/enterprise-cloud@latest/rest/git/refs#get-a-reference) ref `main`. Pokud `main` neukazuje na commit spuštěného běhu, job skončí chybou bez destroy. Merge během čekání na schválení, například `teardown.allowed: false`, proto zastaví teardown. Teardown pak spusť znovu z aktuální `main`.
+Teardown sdílí concurrency skupinu `deploy-instance-main` s nasazením z `main`. Noční `drift.yml` má vlastní skupinu a může běžet souběžně. Pokud drift plan drží zámek state, destroy modulu skončí chybou a teardown spusť znovu. Drift po teardownu může otevřít issue s chybějícími zdroji.
+
+Workflow neodstraní `bootstrap`. Organizační politiky, rulesety, code security configurations a custom patterns odstraní destroy modulů, které je spravují.
+
+### Lokální odstranění bootstrapu
+
+Skript spusť až po úspěšném workflow `teardown`. Potřebuje inventory `bootstrap-resources.json` z bootstrapu, OAuth login `gh auth login --hostname <enterprise>.ghe.com` se scope `delete_repo` a `az login --tenant <tenantId>` uživatele platformního týmu s přímou rolí Enterprise Owner. Login z bootstrapu scope `delete_repo` nemá; doplň ho příkazem `gh auth refresh --hostname <enterprise>.ghe.com --scopes delete_repo`:
+
+```powershell
+.\tools\Remove-Bootstrap.ps1 -InstancePath .\instance.yaml -InventoryPath ..\secure\bootstrap-resources.json -ConfirmInstanceName demo
+```
+
+- Skript odmítne `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` a jiný GitHub token než OAuth token (`gho_`). Odmítne inventory uvnitř source checkoutu.
+- Před prvním zápisem ověří scope `delete_repo` v hlavičce `X-OAuth-Scopes` odpovědi `GET /user`. Chybějící hlavičku nebo scope odmítne, protože smazání repozitáře by selhalo až po vypnutí Actions.
+- Před prvním krokem zapíše do inventory ID přihlášeného uživatele GitHub (`GET /user`). Obnovený běh jiného uživatele odmítne, protože GitHub skrývá prostředky bez přístupu odpovědí 404. Inventory se zahájenými kroky bez ID uživatele odmítne.
+- Před smazáním repozitáře ověří, že poslední běh `teardown.yml` na `main` skončil úspěchem a v repozitáři neběží ani nečeká žádný workflow run. Ověří také, že se po vytvoření (dispatch) posledního běhu teardownu nezměnil žádný běh `deploy.yml` na žádné větvi. Porovnává `updated_at` běhu deploy s `created_at` běhu teardown. Opakovaný běh (rerun) teardownu zachová `created_at` a přeskočí joby, které uspěly před nasazením. Po nasazení proto skript vyžaduje nový dispatch teardownu, rerun nestačí. Apps zůstanou, dokud běží workflow, která je potřebují.
+- Potom zapíše krok `started`, vypne GitHub Actions v repozitáři instance a kontrolu zopakuje. Nový workflow run proto nemůže začít mezi kontrolou a smazáním. Pokud druhá kontrola selže, Actions zůstanou vypnuté; před novým spuštěním workflow `teardown` je zapni.
+- Prostředek GitHubu, který inventory neeviduje, skript ověří podle deterministického názvu. Bootstrap vytváří organizaci a repozitář před jejich zápisem do inventory. Existující neevidovaný prostředek zastaví běh: spusť znovu bootstrap se stejným inventory, nebo ověř vlastnictví a smaž ho ručně.
+- Skript odstraní v tomto pořadí: repozitář instance, organizaci platformy, Azure role assignments identit modulů mimo resource group bootstrapu, vlastní Entra directory roles a jejich přiřazení, lock state storage a resource group bootstrapu s identitami a state backendem.
+- Před každým smazáním ověří vlastnictví: popis a viditelnost repozitáře, záznam organizace v inventory, ownership tags v Azure a název, popis a příznak `isBuiltIn` directory role. Nesouhlas nebo nečitelná odpověď zastaví běh bez smazání.
+- Smazání organizace a resource group probíhá asynchronně. Skript čeká, dokud API nevrátí 404; jinak krok zůstane `started` a další běh čekání obnoví.
+- Před prvním smazáním skript zapíše do inventory `principalId` managed identit v resource group bootstrapu. Nové nasazení vytvoří identity s novými `principalId`. Každý další krok v Azure, včetně obnoveného běhu, proto ověří shodu s uloženou sadou a jinou sadu odmítne. Během mazání resource group smí identity jen ubývat.
+- Před každým vzdáleným smazáním skript zapíše do inventory stav kroku `started`, po něm `done`. Po přerušení oprav příčinu a spusť stejný příkaz; skript dokončí rozpracovaný krok a hotové kroky přeskočí. Chybějící prostředek, jehož odstranění nezačalo, zastaví běh; rozhodnutí patří platformnímu týmu.
+- `-WhatIf` vypíše cíl bez změny. Potvrzení `-Confirm` se týká celého odstranění; jednotlivé kroky se znovu nepotvrzují.
+
+Skript vrátí ruční kroky, které API nepokrývá. Při akceptaci je musíš potvrdit:
+
+- Smaž každou GitHub App instance podle App ID z inventory, včetně dřívějších App IDs. GitHub nemá API pro smazání App.
+- Smaž lokální privátní klíče Apps.
+- Archivuj inventory.
+- Přímé přiřazení Enterprise Owner ponech, pokud chceš instanci nasadit znovu.
 
 ## Testování release
 

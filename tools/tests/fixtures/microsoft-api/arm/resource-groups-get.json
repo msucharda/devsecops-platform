@@ -1,0 +1,31 @@
+{
+  "source": {
+    "operation": "GET /subscriptions/{subscriptionId}/resourcegroups/{resourceGroupName}",
+    "api": "Azure Resource Manager",
+    "apiVersion": "2021-04-01",
+    "documentation": "https://learn.microsoft.com/en-us/rest/api/resources/resource-groups/get?view=rest-resources-2021-04-01#resourcegroup",
+    "status": 200,
+    "schema": "https://learn.microsoft.com/en-us/rest/api/resources/resource-groups/get?view=rest-resources-2021-04-01#resourcegroup",
+    "note": "The operation page has no sample response. The body contains every documented ResourceGroup property with placeholder values from the schema."
+  },
+  "required": {
+    "": [
+      "id",
+      "name",
+      "tags"
+    ]
+  },
+  "body": {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/my-resource-group",
+    "location": "eastus",
+    "managedBy": null,
+    "name": "my-resource-group",
+    "properties": {
+      "provisioningState": "Succeeded"
+    },
+    "tags": {
+      "tagname1": "tagvalue1"
+    },
+    "type": "Microsoft.Resources/resourceGroups"
+  }
+}

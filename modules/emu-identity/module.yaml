@@ -11,7 +11,7 @@ manualSteps:
     limitations:
       plan: The module plan does not read user app role assignments; it cannot show whether the direct assignment remains.
       drift: A direct assignment added again later is not detected; bootstrap requires it only before the first apply.
-      teardown: Teardown does not restore the direct assignment; restore it manually before local bootstrap teardown.
+      teardown: Teardown does not restore the direct assignment; restore it manually before the teardown workflow, which verifies it before the first destroy.
   - id: link-organization-teams
     owner: platform
     description: >-
