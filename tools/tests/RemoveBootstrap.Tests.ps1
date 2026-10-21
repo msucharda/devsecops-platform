@@ -107,6 +107,7 @@ BeforeAll {
             Organization = Get-GitHubApiFixture -Name orgs/get -Set @{ login = $organization }
             User = Get-GitHubApiFixture -Name users/get-authenticated-user.private-user -Set @{ id = 4242; login = 'lead_contoso' }
             OAuthScopes = 'admin:enterprise, admin:org, delete_repo, repo, workflow'
+            OAuthScopesHeader = 'X-OAuth-Scopes'
             ActionsEnabled = $true
             ActiveRuns = @{ in_progress = 0; queued = 0; requested = 0; waiting = 0; pending = 0 }
             Runs = @{
@@ -149,7 +150,7 @@ BeforeAll {
         $query = [uri]::UnescapeDataString($address.Query)
         if ($address.Host -ceq 'api.contoso.ghe.com') {
             if ($path -ceq '/user' -and $Method -ceq 'GET') {
-                $headers = if ($null -eq $World.OAuthScopes) { @{} } else { @{ 'X-OAuth-Scopes' = $World.OAuthScopes } }
+                $headers = if ($null -eq $World.OAuthScopes) { @{} } else { @{ $World.OAuthScopesHeader = $World.OAuthScopes } }
                 return Get-TestResponse -Data $World.User -Headers $headers
             }
             if ($path -ceq "/repos/$repository/actions/permissions") {
@@ -1055,8 +1056,11 @@ Describe 'Bootstrap removal' {
         It 'and accepts the scope list <Label>' -ForEach @(
             @{ Label = 'without spaces'; Scopes = 'repo,delete_repo,admin:org' }
             @{ Label = 'with only delete_repo'; Scopes = 'delete_repo' }
+            @{ Label = 'in a lowercase header'; Scopes = 'repo, delete_repo'; Header = 'x-oauth-scopes' }
+            @{ Label = 'split across header values'; Scopes = @('repo', 'delete_repo') }
         ) {
             $world.OAuthScopes = $Scopes
+            if ($Header) { $world.OAuthScopesHeader = $Header }
 
             (& $run).Completed | Should -BeTrue
         }
@@ -1064,6 +1068,8 @@ Describe 'Bootstrap removal' {
         It 'and refuses before any change when the token <Label>' -ForEach @(
             @{ Label = 'returns no X-OAuth-Scopes header'; Scopes = $null }
             @{ Label = 'has no scope'; Scopes = '' }
+            @{ Label = 'has only whitespace'; Scopes = ' , ' }
+            @{ Label = 'has only an unknown scope'; Scopes = 'unknown_scope' }
             @{ Label = 'lacks delete_repo'; Scopes = 'admin:enterprise, admin:org, repo, workflow' }
             @{ Label = 'has only a longer scope name'; Scopes = 'admin:org, delete_repository' }
             @{ Label = 'has delete_repo in another case'; Scopes = 'admin:org, DELETE_REPO' }
