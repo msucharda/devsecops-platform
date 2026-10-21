@@ -47,19 +47,29 @@ resource "restapi_object" "organization_settings" {
         for field, value in local.organization_settings :
         try(self.api_data[field], null) == tostring(value)
       ])
-      error_message = "GitHub did not return the managed organization baseline for ${each.key}. A missing field means the token cannot read it; treat this as a failure."
+      error_message = "Organization ${each.key} does not match the managed baseline, or GitHub did not return a managed field. A missing field means the token cannot read it and is a failure. The provider does not repair drift of these fields automatically; restore the managed values in the organization before the next apply."
+    }
+
+    # The manual enterprise prerequisite cannot override contrary evidence from the API.
+    postcondition {
+      condition = alltrue([
+        for field, value in local.enterprise_enforced_settings :
+        try(self.api_data[field], tostring(value)) == tostring(value)
+      ])
+      error_message = "Organization ${each.key} reports that members can change repository visibility or delete repositories, although the enterprise prerequisite repositoryManagementPoliciesEnforced is confirmed. Enforce the enterprise repository management policies."
     }
   }
 }
 
+# The organization API may omit these fields for an installation token; the confirmed prerequisite then remains the only evidence.
 check "enterprise_repository_management_policies" {
   assert {
     condition = alltrue(flatten([
       for settings in restapi_object.organization_settings : [
-        for field, value in local.enterprise_enforced_settings :
-        try(settings.api_data[field], null) == tostring(value)
+        for field in keys(local.enterprise_enforced_settings) :
+        try(settings.api_data[field], null) != null
       ]
     ]))
-    error_message = "An organization reports that members can change repository visibility or delete repositories, or GitHub did not return these fields. Verify the enterprise prerequisite repositoryManagementPoliciesEnforced."
+    error_message = "GitHub did not return members_can_change_repo_visibility or members_can_delete_repositories. The module cannot verify the enterprise prerequisite repositoryManagementPoliciesEnforced."
   }
 }

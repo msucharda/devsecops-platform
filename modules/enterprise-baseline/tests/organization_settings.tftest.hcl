@@ -331,7 +331,7 @@ run "rejects_a_github_response_without_the_managed_fields" {
   expect_failures = [restapi_object.organization_settings]
 }
 
-run "warns_when_members_can_change_visibility" {
+run "rejects_a_github_response_that_lets_members_change_visibility" {
   command = plan
 
   override_resource {
@@ -353,10 +353,10 @@ run "warns_when_members_can_change_visibility" {
     }
   }
 
-  expect_failures = [check.enterprise_repository_management_policies]
+  expect_failures = [restapi_object.organization_settings]
 }
 
-run "warns_when_members_can_delete_repositories" {
+run "rejects_a_github_response_that_lets_members_delete_repositories" {
   command = plan
 
   override_resource {
@@ -378,10 +378,10 @@ run "warns_when_members_can_delete_repositories" {
     }
   }
 
-  expect_failures = [check.enterprise_repository_management_policies]
+  expect_failures = [restapi_object.organization_settings]
 }
 
-run "warns_when_github_does_not_return_the_enterprise_enforced_fields" {
+run "warns_when_github_does_not_return_the_enterprise_enforced_visibility_field" {
   command = plan
 
   override_resource {
@@ -397,6 +397,30 @@ run "warns_when_github_does_not_return_the_enterprise_enforced_fields" {
         members_can_create_private_repositories  = "false"
         members_can_create_internal_repositories = "false"
         members_can_fork_private_repositories    = "false"
+        members_can_delete_repositories          = "false"
+      }
+    }
+  }
+
+  expect_failures = [check.enterprise_repository_management_policies]
+}
+run "warns_when_github_does_not_return_the_enterprise_enforced_deletion_field" {
+  command = plan
+
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = {
+      id              = "mock"
+      api_response    = "{}"
+      create_response = "{}"
+      api_data = {
+        default_repository_permission            = "none"
+        members_can_create_repositories          = "false"
+        members_can_create_private_repositories  = "false"
+        members_can_create_internal_repositories = "false"
+        members_can_fork_private_repositories    = "false"
+        members_can_change_repo_visibility       = "false"
       }
     }
   }
