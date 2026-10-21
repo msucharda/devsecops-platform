@@ -67,11 +67,13 @@ GitHub nenabízí smazání organizace enterprise installation tokenem. Organiza
 
 Ověření provádí destroy provisioner prostředku `organization` a znovu prostředek `removal_guard`. Create provisioner guardu jen čte a nic nevytváří. Pokud selže, guard zůstane tainted, ale organizace se nevytvoří, protože na guardu závisí. Organizace na něm závisí, proto Terraform guard vytvoří před organizací a odstraní ho až po ní. Kontrola proto proběhne i po přerušené tvorbě organizace, kdy je `organization` tainted. Zbytkové riziko: po ztrátě celého state runner modul s prázdným state přeskočí a nic neověří.
 
-Teardown odstraňuje moduly v obráceném pořadí předpokladů. Postup:
+Teardown odstraňuje moduly v obráceném pořadí předpokladů. Modul `enterprise-baseline` deklaruje `organizations` jako předpoklad, proto teardown odstraní jeho kontroly v organizacích před destroy modulu `organizations`. Postup:
 
 1. Spusť teardown. Zastaví se na destroy modulu `organizations` s chybou, že organizace existuje.
-2. Enterprise owner smaže organizace actions a workloads v nastavení enterprise.
-3. Spusť teardown znovu. Moduly s prázdným state přeskočí; destroy `organizations` projde.
+2. Enterprise owner smaže organizace actions a workloads v nastavení enterprise. Organizace smaž až po úspěšném destroy modulu `enterprise-baseline`.
+3. Spusť teardown znovu. Moduly s prázdným state přeskočí; destroy `organizations` projde. Job `enterprise-baseline` nejdřív přečte state obou rootů (`-Action state`). Pokud jsou oba prázdné, nevydá token App: smazané organizace už instalaci App nemají a vydání tokenu by selhalo.
+
+Zbytkové riziko: pokud enterprise owner smaže organizace dřív, než destroy `enterprise-baseline` uspěje, state `enterprise-baseline` zůstane neprázdný a vydání tokenu selže. Teardown pak nepokračuje a stav vyžaduje ruční zásah.
 
 Destroy zachová enterprise, organizaci platformy a ruční enterprise předpoklady. Apps založené pro instanci odstraní až lokální odstranění bootstrapu.
 

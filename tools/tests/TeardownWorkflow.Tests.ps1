@@ -175,6 +175,74 @@ Describe 'Teardown workflow generation' {
         @($workflow.jobs.destroy_enterprise_baseline.steps | Where-Object { $_.Contains('run') -and $_.run -like '*Assert-TeardownMainCommit.ps1' }).Count | Should -Be 2
     }
 
+    It 'reads every state root of an organization-scoped module before issuing GitHub tokens and skips only when all are empty' {
+        $steps = @($workflow.jobs.destroy_enterprise_baseline.steps)
+        $stateIndex = [array]::FindIndex([object[]] $steps, [Predicate[object]] { param($s) $s.Contains('id') -and $s.id -ceq 'state' })
+        $tokenIndex = [array]::FindIndex([object[]] $steps, [Predicate[object]] { param($s) $s.Contains('run') -and $s.run -like '*New-PlatformGitHubToken.ps1*' })
+        $stateIndex | Should -BeGreaterOrEqual 0
+        $tokenIndex | Should -Be ($stateIndex + 1)
+        $state = $steps[$stateIndex]
+        $state.Contains('if') | Should -BeFalse
+        $state.Contains('env') | Should -BeFalse
+        $state.run | Should -Match "Invoke-Module\.ps1 -Module 'enterprise-baseline' -Action state [^\n]*-ModulesPath \./instance/platform/modules\n"
+        $state.run | Should -Match "Invoke-Module\.ps1 -Module 'enterprise-baseline' -Action state [^\n]*-Rulesets\n"
+        foreach ($step in $steps[$tokenIndex..($steps.Count - 2)]) {
+            $step.if | Should -BeExactly '${{ steps.state.outputs.empty != ''true'' }}'
+        }
+        $steps[-1].if | Should -Be '${{ always() && env.PLATFORM_GITHUB_TOKENS != '''' }}'
+    }
+
+    It 'writes empty=<Expected> when the state roots report <Case>' -ForEach @(
+        @{ Case = 'all empty'; Results = @($true, $true); Expected = 'true' }
+        @{ Case = 'a non-empty rulesets root'; Results = @($true, $false); Expected = 'false' }
+        @{ Case = 'a non-empty ordinary root'; Results = @($false, $true); Expected = 'false' }
+        @{ Case = 'a missing result'; Results = @($true); Expected = 'false' }
+        @{ Case = 'a non-boolean result'; Results = @($true, 'true'); Expected = 'false' }
+    ) {
+        $run = @($workflow.jobs.destroy_enterprise_baseline.steps | Where-Object { $_.Contains('id') -and $_.id -ceq 'state' })[0].run
+        $script:stateResults = [Collections.Generic.Queue[object]]::new()
+        foreach ($result in $Results) { $script:stateResults.Enqueue($result) }
+        function Get-FixtureState {
+            if ($script:stateResults.Count -gt 0) { [pscustomobject]@{ Empty = $script:stateResults.Dequeue() } }
+        }
+        $outputFile = Join-Path $TestDrive "state-$([guid]::NewGuid()).txt"
+        $previousOutput = $env:GITHUB_OUTPUT
+        $env:GITHUB_OUTPUT = $outputFile
+        try {
+            & ([scriptblock]::Create(($run -replace '\./instance/platform/tools/Invoke-Module\.ps1 [^\n]*', 'Get-FixtureState')))
+        }
+        finally {
+            $env:GITHUB_OUTPUT = $previousOutput
+        }
+
+        (Get-Content -LiteralPath $outputFile) | Should -Be @("empty=$Expected")
+    }
+
+    It 'fails the state step when a state root cannot be read' {
+        $run = @($workflow.jobs.destroy_enterprise_baseline.steps | Where-Object { $_.Contains('id') -and $_.id -ceq 'state' })[0].run
+        function Get-FixtureState { throw 'backend unavailable' }
+        $outputFile = Join-Path $TestDrive "state-$([guid]::NewGuid()).txt"
+        $previousOutput = $env:GITHUB_OUTPUT
+        $env:GITHUB_OUTPUT = $outputFile
+        try {
+            { & ([scriptblock]::Create(($run -replace '\./instance/platform/tools/Invoke-Module\.ps1 [^\n]*', 'Get-FixtureState'))) } |
+                Should -Throw '*backend unavailable*'
+        }
+        finally {
+            $env:GITHUB_OUTPUT = $previousOutput
+        }
+        Test-Path -LiteralPath $outputFile | Should -BeFalse
+    }
+
+    It 'does not read the state of a module without organization-scoped tokens' {
+        foreach ($job in @('destroy_foundation', 'destroy_application', 'destroy_service', 'destroy_observer')) {
+            $steps = @($workflow.jobs[$job].steps)
+            @($steps | Where-Object { $_.Contains('id') -and $_.id -ceq 'state' }).Count | Should -Be 0
+            @($steps | Where-Object { $_.Contains('run') -and $_.run -match '-Action state ' }).Count | Should -Be 0
+            @($steps | Where-Object { $_.Contains('if') -and $_.if -like '*steps.state*' }).Count | Should -Be 0
+        }
+    }
+
     It 'destroys the isolated rulesets root before the ordinary root of a ruleset module' {
         $runs = Get-StepRun -Job destroy_enterprise_baseline
         $rulesets = [array]::FindIndex([string[]] $runs, [Predicate[string]] { param($r) $r -match '-Action destroy .*-Rulesets$' })
