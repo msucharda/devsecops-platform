@@ -12,7 +12,8 @@ function Invoke-OrganizationRulesetApi {
         [ValidateSet('GET', 'POST', 'PUT', 'DELETE')][string] $Method,
         [string] $Path,
         [AllowNull()][object] $Body,
-        [switch] $AllPages
+        [switch] $AllPages,
+        [switch] $AllowNotFound
     )
 
     if ($Organization -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]*$') { throw 'Invalid ruleset organization name.' }
@@ -24,41 +25,47 @@ function Invoke-OrganizationRulesetApi {
     $previous = $env:REST_API_BEARER
     try {
         $env:REST_API_BEARER = $tokens[$Organization]
-        return , (Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method $Method -Path $Path -Body $Body -AllPages:$AllPages)
+        return , (Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method $Method -Path $Path -Body $Body -AllPages:$AllPages -AllowNotFound:$AllowNotFound)
     }
     finally { $env:REST_API_BEARER = $previous }
 }
 
 function Get-OrganizationRulesetDetail {
     [CmdletBinding()]
-    param([string] $ApiUrl, [string] $Organization, [string] $Name)
+    param([string] $ApiUrl, [string] $Organization, [string] $Name, [string] $Id)
 
     # API 2026-03-10: GET /orgs/{org}/rulesets and GET /orgs/{org}/rulesets/{ruleset_id}.
     # https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/rules
-    $listed = Invoke-OrganizationRulesetApi -ApiUrl $ApiUrl -Organization $Organization -Method GET `
-        -Path "/orgs/$Organization/rulesets?per_page=100" -AllPages
-    $found = @(
-        foreach ($item in $listed) {
-            if ($item -isnot [Collections.IDictionary] -or [string] $item['id'] -cnotmatch '^[1-9][0-9]{0,17}$' -or
-                -not $item['name'] -or -not $item['source']) {
-                throw "Ruleset list of '$Organization' contains invalid identity metadata."
+    if ($Id -and $Id -cnotmatch '^[1-9][0-9]{0,17}$') { throw 'Invalid recorded ruleset ID.' }
+    $recordedId = [bool] $Id
+    if (-not $recordedId) {
+        $listed = Invoke-OrganizationRulesetApi -ApiUrl $ApiUrl -Organization $Organization -Method GET `
+            -Path "/orgs/$Organization/rulesets?per_page=100" -AllPages
+        $found = @(
+            foreach ($item in $listed) {
+                if ($item -isnot [Collections.IDictionary] -or [string] $item['id'] -cnotmatch '^[1-9][0-9]{0,17}$' -or
+                    -not $item['name'] -or -not $item['source']) {
+                    throw "Ruleset list of '$Organization' contains invalid identity metadata."
+                }
+                if ([string] $item['source_type'] -ceq 'Enterprise') { continue }
+                if ([string] $item['source_type'] -cne 'Organization' -or [string] $item['source'] -ine $Organization) {
+                    throw "Ruleset list of '$Organization' contains unknown or mismatched source metadata."
+                }
+                if ([string] $item['name'] -ieq $Name) {
+                    if ([string] $item['name'] -cne $Name) { throw "Ruleset name '$Name' collides with a differently cased name." }
+                    $item
+                }
             }
-            if ([string] $item['source_type'] -ceq 'Enterprise') { continue }
-            if ([string] $item['source_type'] -cne 'Organization' -or [string] $item['source'] -ine $Organization) {
-                throw "Ruleset list of '$Organization' contains unknown or mismatched source metadata."
-            }
-            if ([string] $item['name'] -ieq $Name) {
-                if ([string] $item['name'] -cne $Name) { throw "Ruleset name '$Name' collides with a differently cased name." }
-                $item
-            }
-        }
-    )
-    if ($found.Count -gt 1) { throw "Organization '$Organization' has duplicate rulesets named '$Name'." }
-    if ($found.Count -eq 0) { return $null }
-    $id = $found[0]['id']
-    $detail = Invoke-OrganizationRulesetApi -ApiUrl $ApiUrl -Organization $Organization -Method GET -Path "/orgs/$Organization/rulesets/$id"
-    if ($detail -isnot [Collections.IDictionary] -or [string] $detail['id'] -cne [string] $id -or
-        [string] $detail['name'] -cne $Name -or [string] $detail['source_type'] -cne 'Organization' -or
+        )
+        if ($found.Count -gt 1) { throw "Organization '$Organization' has duplicate rulesets named '$Name'." }
+        if ($found.Count -eq 0) { return $null }
+        $Id = [string] $found[0]['id']
+    }
+    $detail = Invoke-OrganizationRulesetApi -ApiUrl $ApiUrl -Organization $Organization -Method GET `
+        -Path "/orgs/$Organization/rulesets/$Id" -AllowNotFound:$recordedId
+    if ($null -eq $detail -and $recordedId) { return $null }
+    if ($detail -isnot [Collections.IDictionary] -or [string] $detail['id'] -cne $Id -or
+        -not $detail['name'] -or (-not $recordedId -and [string] $detail['name'] -cne $Name) -or [string] $detail['source_type'] -cne 'Organization' -or
         [string] $detail['source'] -ine $Organization) {
         throw "Ruleset detail of '$Organization' has mismatched identity or source metadata."
     }
@@ -74,11 +81,12 @@ function Get-OrganizationRulesetState {
     Reads the managed organization ruleset, preserving drift and rejecting an unreadable bypass list.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string] $ApiUrl, [Parameter(Mandatory)][string] $Organization, [Parameter(Mandatory)][string] $Name)
+    param([Parameter(Mandatory)][string] $ApiUrl, [Parameter(Mandatory)][string] $Organization,
+        [Parameter(Mandatory)][string] $Name, [string] $Id)
 
     $detail = Get-OrganizationRulesetDetail @PSBoundParameters
     if ($null -eq $detail) { return $null }
-    $state = [ordered]@{}
+    $state = [ordered]@{ id = [string] $detail['id'] }
     foreach ($field in @('name', 'target', 'enforcement', 'bypass_actors', 'conditions', 'rules')) {
         if (-not $detail.Contains($field) -or $null -eq $detail[$field]) { throw "Ruleset detail has no '$field'." }
         $state[$field] = $detail[$field]
@@ -101,9 +109,11 @@ function Get-OrganizationRulesetState {
                 $parameters['required_reviewers'].Count -eq 0) { $parameters.Remove('required_reviewers') }
             if ($parameters.Contains('dismissal_restriction') -and $parameters['dismissal_restriction'] -is [Collections.IDictionary]) {
                 $restriction = $parameters['dismissal_restriction']
-                if ($restriction['enabled'] -ceq $false -and $restriction.Contains('allowed_actors') -and
-                    $restriction['allowed_actors'] -is [array] -and $restriction['allowed_actors'].Count -eq 0 -and
-                    $restriction.Count -eq 2) { $parameters.Remove('dismissal_restriction') }
+                if ($restriction['enabled'] -isnot [bool]) { throw 'dismissal_restriction.enabled must be boolean.' }
+                $emptyActors = -not $restriction.Contains('allowed_actors') -or
+                    ($restriction['allowed_actors'] -is [array] -and $restriction['allowed_actors'].Count -eq 0)
+                $knownFields = @($restriction.Keys | Where-Object { $_ -cnotin @('enabled', 'allowed_actors') }).Count -eq 0
+                if (-not $restriction['enabled'] -and $emptyActors -and $knownFields) { $parameters.Remove('dismissal_restriction') }
             }
         }
     }
@@ -111,39 +121,4 @@ function Get-OrganizationRulesetState {
     return $state
 }
 
-function Set-OrganizationRuleset {
-    <#
-    .SYNOPSIS
-    Upserts by the stable managed name, including after a lost POST or PUT response.
-    #>
-    [CmdletBinding(SupportsShouldProcess)]
-    param([Parameter(Mandatory)][string] $ApiUrl, [Parameter(Mandatory)][string] $Organization,
-        [Parameter(Mandatory)][Collections.IDictionary] $Ruleset)
-
-    $existing = Get-OrganizationRulesetDetail -ApiUrl $ApiUrl -Organization $Organization -Name $Ruleset['name']
-    if ($PSCmdlet.ShouldProcess("$Organization/$($Ruleset['name'])", 'Set organization ruleset')) {
-        $path = "/orgs/$Organization/rulesets"
-        $method = 'POST'
-        if ($existing) { $path += "/$($existing['id'])"; $method = 'PUT' }
-        $null = Invoke-OrganizationRulesetApi -ApiUrl $ApiUrl -Organization $Organization -Method $method -Path $path -Body $Ruleset
-    }
-}
-
-function Remove-OrganizationRuleset {
-    <#
-    .SYNOPSIS
-    Deletes only the named local ruleset; a repeated delete after a lost response finds nothing.
-    #>
-    [CmdletBinding(SupportsShouldProcess)]
-    param([Parameter(Mandatory)][string] $ApiUrl, [Parameter(Mandatory)][string] $Organization, [Parameter(Mandatory)][string] $Name)
-
-    $existing = Get-OrganizationRulesetDetail -ApiUrl $ApiUrl -Organization $Organization -Name $Name
-    if ($existing -and $PSCmdlet.ShouldProcess("$Organization/$Name", 'Delete organization ruleset')) {
-        $null = Invoke-OrganizationRulesetApi -ApiUrl $ApiUrl -Organization $Organization -Method DELETE -Path "/orgs/$Organization/rulesets/$($existing['id'])"
-        if ($null -ne (Get-OrganizationRulesetDetail -ApiUrl $ApiUrl -Organization $Organization -Name $Name)) {
-            throw "Ruleset '$Name' in '$Organization' still exists after DELETE."
-        }
-    }
-}
-
-Export-ModuleMember -Function Get-OrganizationRulesetState, Set-OrganizationRuleset, Remove-OrganizationRuleset
+Export-ModuleMember -Function Get-OrganizationRulesetState

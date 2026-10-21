@@ -89,7 +89,7 @@ Describe 'Organization ruleset detail contract' {
 
     It 'rejects duplicate local names instead of arbitrarily updating or deleting one' {
         $listed += Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{ id = 22; name = 'platform-default-branch'; source = 'demo' }
-        { Remove-OrganizationRuleset -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
+        { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
             Should -Throw '*duplicate rulesets*'
         Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
     }
@@ -136,5 +136,36 @@ Describe 'Organization ruleset detail contract' {
         { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
             Should -Throw '*No installation token*'
         Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 0 -Exactly
+    }
+
+    It 'does not normalize invalid dismissal restriction enabled value <Value>' -ForEach @(
+        @{ Value = 0 }, @{ Value = 'False' }
+    ) {
+        # Deliberately invalid API types: enabled is documented as boolean, not integer or string.
+        $detail.rules = @(@{ type = 'pull_request'; parameters = @{ dismissal_restriction = @{ enabled = $Value; allowed_actors = @() } } })
+        { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
+            Should -Throw '*dismissal_restriction.enabled must be boolean*'
+    }
+
+    It 'rejects deletion by recorded ID with changed <Field>' -ForEach @(
+        @{ Field = 'source'; Value = 'other' }
+        @{ Field = 'source_type'; Value = 'Enterprise' }
+        @{ Field = 'id'; Value = 22 }
+    ) {
+        # Deliberately invalid ID/source response for a destructive request.
+        $detail[$Field] = $Value
+        { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch -Id 21 } |
+            Should -Throw '*mismatched identity or source*'
+        Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'rejects a successful GET with <Case> instead of treating it like HTTP 404' -ForEach @(
+        @{ Case = 'empty body'; Body = '' }, @{ Case = 'JSON null'; Body = 'null' }
+    ) {
+        Mock -ModuleName CodeSecurity Invoke-WebRequest {
+            [pscustomobject]@{ StatusCode = 200; Content = $Body; Headers = @{} }
+        } -ParameterFilter { $Uri -like '*/rulesets/21' }
+        { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch -Id 21 } |
+            Should -Throw '*empty successful GET*'
     }
 }

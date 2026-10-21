@@ -17,10 +17,17 @@ variable "target_organizations" {
 
   validation {
     condition = (
-      length(var.target_organizations) > 0 &&
+      length(var.target_organizations) == 1 &&
       length(distinct([for org in var.target_organizations : lower(org)])) == length(var.target_organizations) &&
       alltrue([for org in var.target_organizations : can(regex("^[A-Za-z0-9][A-Za-z0-9-]*$", org))])
     )
-    error_message = "Target organizations must be a non-empty list of unique GitHub organization names."
+    error_message = "The REST provider supports exactly one organization per run; supply one valid GitHub organization name."
   }
+
+}
+
+variable "ruleset_destroy_started" {
+  description = "Internal runner checkpoint: persist teardown intent before deleting a remote ruleset."
+  type        = bool
+  default     = false
 }

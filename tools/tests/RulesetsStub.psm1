@@ -11,7 +11,9 @@ function Initialize-RulesetsStub {
         Requests = [Collections.Generic.List[string]]::new()
         Writes = [Collections.Generic.List[object]]::new()
         DropNext = ''
+        FailNext = ''
         NextId = 100
+        EmptyDetail = $false
     })
 }
 
@@ -25,7 +27,10 @@ function Invoke-RulesetsStubRequest {
         $reply.Status = 401
         return $reply
     }
-    if ($Path -cmatch '^/orgs/demo/rulesets\?per_page=100(?:&page=(?<page>[0-9]+))?$' -and $Method -ceq 'GET') {
+    if ($Path -ceq '/orgs/new/rulesets?per_page=100' -and $Method -ceq 'GET') {
+        $reply.Body = '[]'
+    }
+    elseif ($Path -cmatch '^/orgs/demo/rulesets\?per_page=100(?:&page=(?<page>[0-9]+))?$' -and $Method -ceq 'GET') {
         $page = if ($Matches['page']) { [int] $Matches['page'] } else { 1 }
         $items = @($State.Items | Select-Object -Skip ($page - 1) -First 1)
         $reply.Body = ConvertTo-Json -InputObject $items -Depth 50 -Compress
@@ -46,7 +51,9 @@ function Invoke-RulesetsStubRequest {
         if ($item.Count -eq 0) { $reply.Status = 404; return $reply }
         $item = $item[0]
         switch ($Method) {
-            GET { $reply.Body = ConvertTo-Json -InputObject $item -Depth 50 -Compress }
+            GET {
+                $reply.Body = if ($State.EmptyDetail) { 'null' } else { ConvertTo-Json -InputObject $item -Depth 50 -Compress }
+            }
             PUT {
                 $inputBody = ConvertFrom-Json -InputObject $Body -AsHashtable
                 foreach ($key in $inputBody.Keys) { $item[$key] = $inputBody[$key] }
@@ -61,6 +68,11 @@ function Invoke-RulesetsStubRequest {
     if ($State.DropNext -and "$Method $Path" -cmatch $State.DropNext) {
         $State.DropNext = ''
         $reply.Drop = $true
+    }
+    if ($State.FailNext -and "$Method $Path" -cmatch $State.FailNext) {
+        $State.FailNext = ''
+        $reply.Status = 503
+        $reply.Body = ''
     }
     return $reply
 }

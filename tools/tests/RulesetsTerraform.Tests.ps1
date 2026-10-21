@@ -40,9 +40,16 @@ BeforeAll {
         }
     }
     $previousTokens = $env:PLATFORM_GITHUB_TOKENS
+    $previousBearer = $env:REST_API_BEARER
     $env:PLATFORM_GITHUB_TOKENS = '{"demo":"stub-token"}'
+    $env:REST_API_BEARER = 'stub-token'
+    $recovery = Join-Path (Split-Path $PSScriptRoot -Parent) 'Restore-RulesetState.ps1'
 
     function Invoke-RulesetTerraform {
+        if ($args[0] -ceq 'destroy') {
+            try { & $recovery -TerraformRoot $root -VariableFile (Join-Path $root 'terraform.tfvars.json') }
+            catch { return @{ Code = 1; Text = $_.Exception.Message } }
+        }
         $output = & terraform "-chdir=$root" @args -no-color 2>&1 | Out-String
         return @{ Code = $LASTEXITCODE; Text = $output }
     }
@@ -50,6 +57,7 @@ BeforeAll {
 
 AfterAll {
     $env:PLATFORM_GITHUB_TOKENS = $previousTokens
+    $env:REST_API_BEARER = $previousBearer
     $server.Stop = $true
     $job | Wait-Job -Timeout 10 | Out-Null
     $listener.Stop()
@@ -72,6 +80,9 @@ locals { github_api_url = "http://127.0.0.1:$port" }
         if ($IsWindows) {
             Add-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @'
 data "external" "ruleset_state" {
+  program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "../scripts/Read-RulesetState.ps1"]
+}
+data "external" "ruleset_plan_state" {
   program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "../scripts/Read-RulesetState.ps1"]
 }
 '@
@@ -111,18 +122,134 @@ data "external" "ruleset_state" {
         $server.State.Items.Count | Should -Be 0
     }
 
+    It 'removes the recorded remote ID even when the managed ruleset was renamed outside Terraform' {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.Items[0]['name'] = 'renamed-outside-terraform'
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 0 -Because $destroy.Text
+        $server.State.Items.Count | Should -Be 0
+    }
+
+    It 'preserves an unrelated ruleset of the original name when the managed ID was renamed' {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.Items[0]['name'] = 'renamed-outside-terraform'
+        Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
+        $other = Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{
+            id = 999; name = 'platform-default-branch'; source = 'demo'
+        }
+        $server.State.Items.Add($other)
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 0 -Because $destroy.Text
+        $server.State.Items.Count | Should -Be 1
+        $server.State.Items[0]['id'] | Should -Be 999
+    }
+
+    It 'imports an interrupted POST by persisted intent before destroy instead of leaving an orphan' {
+        $server.State.DropNext = '^POST /orgs/demo/rulesets$'
+        (Invoke-RulesetTerraform apply -input=false -auto-approve).Code | Should -Not -Be 0
+        $server.State.Items.Count | Should -Be 1
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 0 -Because $destroy.Text
+        $server.State.Items.Count | Should -Be 0
+    }
+
+    It 'retains the recovered ID across interruption between import and destroy' {
+        $server.State.DropNext = '^POST /orgs/demo/rulesets$'
+        (Invoke-RulesetTerraform apply -input=false -auto-approve).Code | Should -Not -Be 0
+        & $recovery -TerraformRoot $root -VariableFile (Join-Path $root 'terraform.tfvars.json')
+        # The process ends after the durable import; the next invocation sees a rename and a new object of the old name.
+        $server.State.Items[0]['name'] = 'renamed-after-import'
+        Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
+        $server.State.Items.Add((Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{
+            id = 999; name = 'platform-default-branch'; source = 'demo'
+        }))
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 0 -Because $destroy.Text
+        $server.State.Items.Count | Should -Be 1
+        $server.State.Items[0]['id'] | Should -Be 999
+    }
+
+    It 'retains native identity when GET returns JSON null instead of the object before destroy' {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.EmptyDetail = $true
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 1
+        $destroy.Text | Should -Match 'empty successful GET'
+        $server.State.Items.Count | Should -Be 1
+        $remaining = Invoke-RulesetTerraform state list
+        $remaining.Text | Should -Match 'restapi_object.ruleset'
+        @($server.State.Requests | Where-Object { $_ -like 'DELETE *' }).Count | Should -Be 0
+    }
+
+    It 'never adopts another object after native deletion but before intent deletion' {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.Items[0]['name'] = 'renamed-before-destroy'
+        Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
+        $server.State.Items.Add((Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{
+            id = 999; name = 'platform-default-branch'; source = 'demo'
+        }))
+        & $recovery -TerraformRoot $root -VariableFile (Join-Path $root 'terraform.tfvars.json')
+        # Stop the destroy after the native resource leaves state, retaining its pre-POST intent.
+        $partial = & terraform "-chdir=$root" destroy -input=false -auto-approve -no-color '-target=restapi_object.ruleset["demo"]' 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $partial
+        (Invoke-RulesetTerraform state list).Text | Should -Match 'terraform_data.ruleset_intent'
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 0 -Because $destroy.Text
+        $server.State.Items.Count | Should -Be 1
+        $server.State.Items[0]['id'] | Should -Be 999
+    }
+
+    It 'checks an existing bypass during plan even when a pending resource change defers the post-apply reader' {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.Items[0]['bypass_actors'] = @(@{ actor_type = 'OrganizationAdmin'; actor_id = 1; bypass_mode = 'always' })
+        $plan = Invoke-RulesetTerraform plan -input=false -detailed-exitcode '-replace=terraform_data.ruleset_intent["demo"]'
+        $plan.Code | Should -Be 1 -Because $plan.Text
+        $plan.Text | Should -Match 'bypass actors'
+    }
+
+    It 'accepts the documented disabled dismissal restriction without optional allowed_actors' {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.Items[0]['rules'][3]['parameters']['dismissal_restriction'] = @{ enabled = $false }
+        $plan = Invoke-RulesetTerraform plan -input=false -detailed-exitcode
+        $plan.Code | Should -Be 0 -Because $plan.Text
+    }
+
+    It 'recovers interruption after the remote write but before its ID is captured in state' {
+        $server.State.FailNext = '^GET /orgs/demo/rulesets/[0-9]+$'
+        $interrupted = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $server.State.FailNext | Should -BeNullOrEmpty
+        $interrupted.Code | Should -Not -Be 0
+        $server.State.Items.Count | Should -Be 1
+        $resumed = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $resumed.Code | Should -Be 0 -Because $resumed.Text
+        $server.State.Items.Count | Should -Be 1
+        @($server.State.Writes | Where-Object { $_.Method -ceq 'POST' }).Count | Should -Be 1
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 0 -Because $destroy.Text
+        $server.State.Items.Count | Should -Be 0
+    }
+
     It 'recovers a lost <Method> response without duplication or a leftover object' -ForEach @(
         @{ Method = 'POST'; Drop = '^POST /orgs/demo/rulesets$'; Destroy = $false }
         @{ Method = 'PUT'; Drop = '^PUT /orgs/demo/rulesets/[0-9]+$'; Destroy = $false }
         @{ Method = 'DELETE'; Drop = '^DELETE /orgs/demo/rulesets/[0-9]+$'; Destroy = $true }
     ) {
         $arguments = @('apply', '-input=false', '-auto-approve')
-        if ($Method -ne 'POST') {
+        if ($Method -ceq 'PUT') {
+            $server.State.DropNext = '^POST /orgs/demo/rulesets$'
+            (Invoke-RulesetTerraform @arguments).Code | Should -Not -Be 0
+        }
+        elseif ($Method -ceq 'DELETE') {
             $created = Invoke-RulesetTerraform @arguments
             $created.Code | Should -Be 0 -Because $created.Text
         }
         if ($Destroy) { $arguments[0] = 'destroy' }
-        elseif ($Method -ceq 'PUT') { $arguments += '-replace=terraform_data.ruleset_content["demo"]' }
         $server.State.DropNext = $Drop
         $interrupted = Invoke-RulesetTerraform @arguments
         $server.State.DropNext | Should -BeNullOrEmpty -Because 'the write must have happened before the connection was lost'

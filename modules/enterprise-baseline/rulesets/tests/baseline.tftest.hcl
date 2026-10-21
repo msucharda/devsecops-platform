@@ -1,9 +1,14 @@
-mock_provider "external" {}
+mock_provider "external" {
+  mock_data "external" {
+    defaults = { result = { state = "null", remote_id = "" } }
+  }
+}
+mock_provider "restapi" {}
 
 variables {
   instance = { github = { host = "example.ghe.com" } }
   prerequisites        = {}
-  target_organizations = ["demo-platform", "demo-workloads"]
+  target_organizations = ["demo-platform"]
 }
 
 run "protects_default_branches_without_bypass" {
@@ -11,24 +16,24 @@ run "protects_default_branches_without_bypass" {
 
   assert {
     condition = alltrue([
-      for organization, resource in terraform_data.ruleset_content :
-      resource.input.organization == organization &&
-      resource.input.ruleset.name == "platform-default-branch" &&
-      resource.input.ruleset.enforcement == "active" &&
-      resource.input.ruleset.target == "branch" &&
-      length(resource.input.ruleset.bypass_actors) == 0 &&
-      resource.input.ruleset.conditions.ref_name.include == ["~DEFAULT_BRANCH"] &&
-      length(resource.input.ruleset.conditions.ref_name.exclude) == 0 &&
-      resource.input.ruleset.conditions.repository_name.include == ["~ALL"] &&
-      length(resource.input.ruleset.conditions.repository_name.exclude) == 0
-    ]) && length(terraform_data.ruleset_content) == 2
+      for organization, resource in restapi_object.ruleset :
+      resource.path == "/orgs/${organization}/rulesets" &&
+      jsondecode(resource.data).name == "platform-default-branch" &&
+      jsondecode(resource.data).enforcement == "active" &&
+      jsondecode(resource.data).target == "branch" &&
+      length(jsondecode(resource.data).bypass_actors) == 0 &&
+      jsondecode(resource.data).conditions.ref_name.include == ["~DEFAULT_BRANCH"] &&
+      length(jsondecode(resource.data).conditions.ref_name.exclude) == 0 &&
+      jsondecode(resource.data).conditions.repository_name.include == ["~ALL"] &&
+      length(jsondecode(resource.data).conditions.repository_name.exclude) == 0
+    ]) && length(restapi_object.ruleset) == 1
     error_message = "Each organization must enforce its default branches in all repositories, without bypass or exclusions."
   }
 
   assert {
     condition = alltrue([
-      for resource in terraform_data.ruleset_content :
-      resource.input.ruleset.rules == [
+      for resource in restapi_object.ruleset :
+      jsonencode(jsondecode(resource.data).rules) == jsonencode([
         {
           type = "code_scanning"
           parameters = {
@@ -52,7 +57,7 @@ run "protects_default_branches_without_bypass" {
             required_review_thread_resolution = false
           }
         },
-      ]
+      ])
     ])
     error_message = "The baseline must require one fresh CODEOWNER approval and CodeQL high-or-higher, and deny deletion and force push."
   }
