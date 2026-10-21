@@ -660,7 +660,28 @@ function Invoke-SetupGraphQL {
     )
 
     $response = Invoke-SetupApi -Setup $Setup -Uri "https://api.$($Setup.Settings['githubHost'])/graphql" -Method POST -Body @{ query = $Query; variables = $Variables }
-    $reply = Assert-SetupResponse -Response $response -Action $Action -Guidance $Guidance
+    return , (Get-SetupGraphQLData -Response $response -Action $Action -Guidance $Guidance)
+}
+
+function Test-SetupGraphQLRejected {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][hashtable] $Response)
+
+    # GitHub answered and refused the operation: a client error or GraphQL errors. A lost response never gets here.
+    if ($Response.Code -ge 400 -and $Response.Code -lt 500) { return $true }
+    return $Response.Status -eq 'Ok' -and $Response.Data -is [System.Collections.IDictionary] -and [bool] $Response.Data['errors']
+}
+
+function Get-SetupGraphQLData {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable] $Response,
+        [Parameter(Mandatory)][string] $Action,
+        [string[]] $Guidance = @()
+    )
+
+    $reply = Assert-SetupResponse -Response $Response -Action $Action -Guidance $Guidance
     if ($reply -isnot [System.Collections.IDictionary]) { Exit-SetupStage -Status Error -Area github -Message "$Action returned no GraphQL data." }
     if ($reply['errors']) {
         $errors = @($reply['errors'])
@@ -2358,12 +2379,21 @@ function Invoke-StepProbeOrg {
             }
             $mutation = 'mutation($input:CreateEnterpriseOrganizationInput!){createEnterpriseOrganization(input:$input){organization{login}}}'
             # Save the intent before the write, so a rerun after a lost response finds the organization.
+            $previousOrganization = $probe['organization']
             $probe['organization'] = $org
             $probe['organizationCreationPending'] = $true
             Save-SetupState -Setup $Setup
-            $null = Invoke-SetupGraphQL -Setup $Setup -Query $mutation -Action "Creating the organization $org" -Variables @{
-                input = @{ enterpriseId = $Setup.Facts.EnterpriseId; login = $org; profileName = $org; billingEmail = $billingEmail; adminLogins = @($login) }
+            $creation = Invoke-SetupApi -Setup $Setup -Uri "$api/graphql" -Method POST -Body @{
+                query = $mutation
+                variables = @{ input = @{ enterpriseId = $Setup.Facts.EnterpriseId; login = $org; profileName = $org; billingEmail = $billingEmail; adminLogins = @($login) } }
             }
+            if (Test-SetupGraphQLRejected -Response $creation) {
+                # GitHub refused the name, so no organization exists: the next run must offer another name.
+                $probe.Remove('organizationCreationPending')
+                if ($previousOrganization) { $probe['organization'] = $previousOrganization } else { $probe.Remove('organization') }
+                Save-SetupState -Setup $Setup
+            }
+            $null = Get-SetupGraphQLData -Response $creation -Action "Creating the organization $org"
             $probe.Remove('organizationCreationPending')
             $probe['organizationSignInPending'] = $true
             Save-SetupState -Setup $Setup

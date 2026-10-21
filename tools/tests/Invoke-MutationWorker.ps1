@@ -32,6 +32,22 @@ foreach ($job in $jobs) {
         Get-Module | Where-Object { $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) } | Remove-Module -Force
         if ($null -ne $job['Text']) { [IO.File]::WriteAllText($target, $job['Text'], [Text.UTF8Encoding]::new($false)) }
         foreach ($test in @($job['Tests'])) {
+            if ($null -eq $job['Text']) {
+                # Baseline: every pattern must select a test on its own, so an obsolete pattern cannot hide behind another one.
+                foreach ($pattern in @($test['FullName'])) {
+                    $discovery = New-PesterConfiguration
+                    $discovery.Run.Path = Join-Path $RepoPath $test['Path']
+                    $discovery.Run.PassThru = $true
+                    $discovery.Run.SkipRun = $true
+                    $discovery.Filter.FullName = [string[]] @($pattern)
+                    $discovery.Output.Verbosity = 'None'
+                    $found = Invoke-Pester -Configuration $discovery
+                    if (@($found.Tests | Where-Object ShouldRun).Count -eq 0) {
+                        $result.Errors += 1
+                        $result.Failures += @("No test in $($test['Path']) matched $pattern.")
+                    }
+                }
+            }
             $configuration = New-PesterConfiguration
             $configuration.Run.Path = Join-Path $RepoPath $test['Path']
             $configuration.Run.PassThru = $true

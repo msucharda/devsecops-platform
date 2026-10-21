@@ -129,7 +129,10 @@ function Get-ExpressionMutant {
             return
         }
         $variant = $script:CaseInsensitive[[string] $operator]
-        $caseless = @($node.Left, $node.Right | Where-Object {
+        # Regex and wildcard patterns without letters can still match letters (backreferences, ranges), so only literal
+        # comparisons with a letterless constant are equivalent under the case-insensitive operator.
+        $literal = [string] $operator -notmatch 'match|like'
+        $caseless = $literal -and @($node.Left, $node.Right | Where-Object {
                 $_ -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -ceq $_.Value.ToUpperInvariant() -and $_.Value -ceq $_.Value.ToLowerInvariant()
             }).Count -gt 0
         # A comparison with a constant that has no letters ignores case anyway; its case-insensitive mutant is equivalent.

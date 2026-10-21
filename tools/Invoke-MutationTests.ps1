@@ -22,6 +22,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $InformationPreference = 'Continue'
+# A failed run must not leave the report of an earlier successful run behind.
+$ReportPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReportPath)
+try { Remove-Item -LiteralPath $ReportPath -Force -ErrorAction Stop }
+catch [System.Management.Automation.ItemNotFoundException] { $null = $_ }
+catch { throw "The previous mutation report $ReportPath could not be removed: $($_.Exception.Message)" }
+if (Test-Path -LiteralPath $ReportPath) { throw "The previous mutation report $ReportPath could not be removed." }
 Import-Module (Join-Path $PSScriptRoot 'MutationTesting.psm1') -Force
 
 $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
@@ -55,9 +61,11 @@ function Invoke-WorkerBatch {
         $jobsPath = Join-Path $work "$Phase-$($slot.Index)-jobs.json"
         $resultPath = Join-Path $work "$Phase-$($slot.Index)-results.jsonl"
         ConvertTo-Json -InputObject @($slot.Jobs) -Depth 6 | Set-Content -LiteralPath $jobsPath
+        # Start-Process joins the arguments with spaces, so paths are quoted to keep their boundaries.
+        $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', "`"$workerScript`"", '-RepoPath', "`"$($slot.Copy)`"", '-JobsPath', "`"$jobsPath`"", '-ResultPath', "`"$resultPath`"")
         $process = Start-Process -FilePath (Get-Process -Id $PID).Path -PassThru -NoNewWindow `
             -RedirectStandardOutput (Join-Path $work "$Phase-$($slot.Index)-out.txt") -RedirectStandardError (Join-Path $work "$Phase-$($slot.Index)-err.txt") `
-            -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $workerScript, '-RepoPath', $slot.Copy, '-JobsPath', $jobsPath, '-ResultPath', $resultPath)
+            -ArgumentList $arguments
         [pscustomobject]@{ Slot = $slot; Process = $process; ResultPath = $resultPath }
     }
     foreach ($worker in @($running)) {
@@ -165,7 +173,6 @@ $report = [ordered]@{
     mutants = $resolved.Results
     problems = $resolved.Problems
 }
-$ReportPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReportPath)
 New-Item -ItemType Directory -Path (Split-Path -Parent $ReportPath) -Force | Out-Null
 ConvertTo-Json -InputObject $report -Depth 6 | Set-Content -LiteralPath $ReportPath
 $summary | Format-Table -AutoSize | Out-String | Write-Information

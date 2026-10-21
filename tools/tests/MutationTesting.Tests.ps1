@@ -135,6 +135,15 @@ Describe 'Security check mutation testing' {
             @(Get-FunctionMutant -Function $function | Where-Object Kind -eq 'case').Count | Should -Be 0
         }
 
+        It 'keeps the case mutant of a <Operator> pattern without letters' -ForEach @(
+            @{ Operator = '-cnotmatch'; Pattern = '^(.)\1$' }
+            @{ Operator = '-cnotlike'; Pattern = '[!-~]' }
+        ) {
+            $function = Get-TestFunctionAst -Text "function Test-Sample { if (`$a $Operator '$Pattern') { throw 'no' } }"
+
+            @(Get-FunctionMutant -Function $function | Where-Object Kind -eq 'case').Count | Should -Be 1
+        }
+
         It 'gives every mutant a unique ID' {
             $function = Get-TestFunctionAst -Text "function Test-Sample { if (`$a) { throw 'one' }; if (`$a) { throw 'two' } }"
 

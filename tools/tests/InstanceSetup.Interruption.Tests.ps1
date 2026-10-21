@@ -46,6 +46,17 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
                     [pscustomobject]@{ StatusCode = $Code; Content = $content; Headers = @{} }
                 }
                 $notFound = { & $respond 404 @{ message = 'Not Found' } }
+                # Ruleset responses come from the documented examples; only the stored fields replace the example values.
+                $rulesetBody = {
+                    param([string] $Fixture, [hashtable] $Ruleset, [string] $Prefix = '')
+                    $set = @{ "${Prefix}id" = $Ruleset.id; "${Prefix}name" = $Ruleset.name; "${Prefix}source" = $Ruleset.org; "${Prefix}enforcement" = $Ruleset.enforcement }
+                    if (-not $Prefix) {
+                        foreach ($field in @('target', 'bypass_actors', 'conditions', 'rules')) { if ($Ruleset.ContainsKey($field)) { $set[$field] = $Ruleset[$field] } }
+                    }
+                    $body = Get-GitHubApiFixture -Name $Fixture -Set $set
+                    if ($Prefix) { return , $body[0] }
+                    return , $body
+                }
                 # https://docs.github.com/enterprise-cloud@latest/rest/orgs/orgs#get-an-organization
                 # https://docs.github.com/enterprise-cloud@latest/rest/repos/repos#create-an-organization-repository (201, 422)
                 # https://docs.github.com/enterprise-cloud@latest/rest/teams/teams#create-a-team (201, 422)
@@ -103,7 +114,7 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
                         '^GET /orgs/[^/]+/code-security/configurations$' { return & $respond 200 @() }
                         '^GET /orgs/([^/]+)/rulesets$' {
                             $org = $Matches[1]
-                            return & $respond 200 @($S.Rulesets.Values | Where-Object { $_.org -ceq $org } | Sort-Object id | ForEach-Object { @{ id = $_.id; name = $_.name } })
+                            return & $respond 200 @($S.Rulesets.Values | Where-Object { $_.org -ceq $org } | Sort-Object id | ForEach-Object { & $rulesetBody 'repos/get-org-rulesets' $_ '0.' })
                         }
                         '^POST /orgs/([^/]+)/rulesets$' {
                             $org = $Matches[1]
@@ -115,7 +126,7 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
                             $ruleset.id = $S.NextRuleset
                             $ruleset.org = $org
                             $S.Rulesets[[string] $ruleset.id] = $ruleset
-                            return & $respond 201 $ruleset
+                            return & $respond 201 (& $rulesetBody 'repos/create-org-ruleset' $ruleset)
                         }
                         '^(GET|DELETE) /orgs/[^/]+/rulesets/([0-9]+)$' {
                             if (-not $S.Rulesets.ContainsKey($Matches[2])) { return & $notFound }
@@ -123,7 +134,7 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
                                 $S.Rulesets.Remove($Matches[2])
                                 return & $respond 204 $null
                             }
-                            return & $respond 200 $S.Rulesets[$Matches[2]]
+                            return & $respond 200 (& $rulesetBody 'repos/get-org-ruleset' $S.Rulesets[$Matches[2]])
                         }
                     }
                     throw "Unexpected request $Method $path"

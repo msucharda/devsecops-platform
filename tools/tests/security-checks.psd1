@@ -59,6 +59,11 @@
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
         @{
+            Mutant = 'Assert-OpenIssue: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Issue[''number''] -cnotmatch ''^[1-9][0-9]*$''''#1'
+            Reason = 'Equivalent mutant: the pattern contains only digit classes, and no character matches a digit class case-insensitively but not case-sensitively.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/57'
+        }
+        @{
             Mutant = 'Assert-OpenIssue: operator ''-cne'' -> -ine in ''[string] $Issue[''number''] -cne $ExpectedNumber''#1'
             Reason = 'Equivalent mutant: the same condition first requires the issue number to be a decimal number, which has no case.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/57'
