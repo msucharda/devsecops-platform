@@ -319,7 +319,14 @@ Describe 'GitHub bootstrap public interface' {
             param([string] $Uri, [string] $Method = 'GET', [hashtable] $Headers)
             if ($Uri -like '*/installation/token' -and $Method -eq 'DELETE') { return }
             if ($Uri -like '*/installation/repositories`?*') {
-                return Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{ total_count = 0; repositories = @() }
+                $tokenAppId = $Headers.Authorization -replace '^Bearer installation-test-', ''
+                $names = if ($cloud.apps.ContainsKey($tokenAppId) -and $cloud.apps[$tokenAppId]['repositories']) { @($cloud.apps[$tokenAppId]['repositories']) } else { @() }
+                $repositories = @(foreach ($name in $names) {
+                    $repository = (Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation).repositories[0]
+                    $repository.name = $name
+                    $repository
+                })
+                return Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{ total_count = $repositories.Count; repositories = $repositories }
             }
             if ($Uri -like '*/orgs/demo-a1b2c3-platform/teams`?*') { return Get-GitHubApiFixture -Name teams/list-teams -Set @{ '0.id' = 30; '0.slug' = 'platform' } }
             if ($Uri -like '*/orgs/demo-a1b2c3-platform/actions/permissions') {
@@ -359,7 +366,7 @@ Describe 'GitHub bootstrap public interface' {
                 }
             }
             if ($Uri -like '*/access_tokens') {
-                return Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{ token = 'installation-test'; permissions = $permissions }
+                return Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{ token = "installation-test-$appId"; permissions = $permissions }
             }
             throw "Unexpected App request: $Method $Uri"
         }
@@ -1026,6 +1033,75 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Clear()
         (& $bootstrap @arguments).HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
+    }
+
+    Context 'drift report App' -Tag 'DriftReport' {
+        BeforeEach {
+            $driftApp = @{ appId = '150'; installationId = '250'; enterprise = 'example'; permissions = @{ issues = 'write' }
+                resources = @{ organizations = @('demo-a1b2c3-platform'); repositories = @{ 'demo-a1b2c3-platform' = @('instance') } } }
+            $instance.githubApps.drift = $driftApp
+            $cloud.apps['150'] = @{ installationId = '250'; permissions = @{ issues = 'write'; metadata = 'read' }
+                selection = 'selected'; slug = 'platform-drift'; repositories = @('instance') }
+            $driftKeyPath = Join-Path $casePath 'drift.pem'
+            $driftRsa = [Security.Cryptography.RSA]::Create(2048)
+            try { $driftRsa.ExportRSAPrivateKeyPem() | Set-Content -LiteralPath $driftKeyPath }
+            finally { $driftRsa.Dispose() }
+            $driftKeys = Get-Content -LiteralPath $keysPath -Raw | ConvertFrom-Json -AsHashtable
+            $driftKeys.drift = @{} + $driftKeys.authorization
+            $driftKeys.drift.privateKeyPath = $driftKeyPath
+            ConvertTo-Json -InputObject $driftKeys -Depth 10 | Set-Content -LiteralPath $keysPath
+            $arguments.ResourcesOnly = $false
+            $arguments.DriftReportApp = 'drift'
+            $driftEnvironment = '/repos/demo-a1b2c3-platform/instance/environments/drift-report'
+        }
+
+        It 'verifies the issue-writer App and binds it only to the main-only drift-report environment' {
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+            $result = & $bootstrap @arguments
+
+            $result.CredentialsConfigured | Should -BeTrue
+            $cloud.variables["$driftEnvironment/variables/PLATFORM_APP_ID"] | Should -Be '150'
+            $cloud.variables["$driftEnvironment/variables/PLATFORM_APP_INSTALLATION_ID"] | Should -Be '250'
+            $cloud.secrets["$driftEnvironment/secrets/PLATFORM_APP_PRIVATE_KEY"].encrypted_value | Should -Be 'encrypted-key'
+            $cloud.environments[$driftEnvironment].protection_rules | Where-Object { $_.type -eq 'required_reviewers' } | Should -BeNullOrEmpty
+            @($cloud.writes | Where-Object { $_.path -eq "$driftEnvironment/deployment-branch-policies" -and $_.body.name -eq 'main' }).Count | Should -Be 1
+            @($cloud.secrets.Keys | Where-Object { $_ -like '*/PLATFORM_APP_PRIVATE_KEY' }).Count | Should -Be 2
+            (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).apps.drift.appId | Should -Be '150'
+        }
+
+        It 'rejects a drift report App with <Case> before publishing any key' -ForEach @(
+            @{ Case = 'an unknown alias'; Alias = 'missing'; Change = {} }
+            @{ Case = 'read-only issues'; Alias = 'drift'; Change = { $instance.githubApps.drift.permissions = @{ issues = 'read' } } }
+            @{ Case = 'an extra permission'; Alias = 'drift'; Change = { $instance.githubApps.drift.permissions.contents = 'read' } }
+            @{ Case = 'another repository'; Alias = 'drift'; Change = { $instance.githubApps.drift.resources.repositories.'demo-a1b2c3-platform' = @('other') } }
+            @{ Case = 'two repositories'; Alias = 'drift'; Change = { $instance.githubApps.drift.resources.repositories.'demo-a1b2c3-platform' = @('instance', 'other') } }
+            @{ Case = 'organization-wide access'; Alias = 'drift'; Change = { $instance.githubApps.drift.resources.Remove('repositories') } }
+            @{ Case = 'another enterprise'; Alias = 'drift'; Change = { $instance.githubApps.drift.enterprise = 'other' } }
+            @{ Case = 'the authorization App identity'; Alias = 'drift'; Change = { $instance.githubApps.drift.appId = '101' } }
+        ) {
+            . $Change
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            $arguments.DriftReportApp = $Alias
+
+            { & $bootstrap @arguments } | Should -Throw '*drift report App*'
+            $cloud.secrets.Count | Should -Be 0
+        }
+
+        It 'warns without a drift report App and refuses a stale key in the drift-report environment' {
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            $arguments.Remove('DriftReportApp')
+
+            $result = & $bootstrap @arguments -WarningVariable warnings -WarningAction SilentlyContinue
+
+            $result.CredentialsConfigured | Should -BeTrue
+            ($warnings -join "`n") | Should -Match 'drift report App'
+            $cloud.environments.ContainsKey($driftEnvironment) | Should -BeTrue
+            $cloud.secrets.ContainsKey("$driftEnvironment/secrets/PLATFORM_APP_PRIVATE_KEY") | Should -BeFalse
+            $cloud.secrets["$driftEnvironment/secrets/PLATFORM_APP_PRIVATE_KEY"] = @{ encrypted_value = 'stale' }
+
+            { & $bootstrap @arguments -WarningAction SilentlyContinue } | Should -Throw '*drift-report*App key without*drift report App*'
+        }
     }
 
     It 'preserves original key dates and existing history across successive rotations and an unchanged repeat' -Tag 'KeyRotationHistory' {

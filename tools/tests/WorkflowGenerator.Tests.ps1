@@ -47,15 +47,15 @@ Describe 'Deployment workflow generation' {
         Test-Path -LiteralPath (Join-Path $released 'enterprise-baseline/rulesets/versions.tf') | Should -BeTrue
     }
 
-    It 'schedules isolated nightly plans without opening the shared apply gate' {
+    It 'leaves nightly plans to the separate drift workflow' {
         $output = Join-Path $TestDrive 'nightly.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
 
-        $workflow.on.schedule[0].cron | Should -Be '17 2 * * *'
-        $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.environments)[''enterprise-baseline'']) || fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
-        $workflow.jobs.ruleset_plan_enterprise_baseline.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline'']) || fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline''] }}'
-        $workflow.jobs.approve_apply.if | Should -Match "github.event_name != 'schedule'"
+        $workflow.on.ContainsKey('schedule') | Should -BeFalse
+        $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
+        $workflow.jobs.ContainsKey('report_drift') | Should -BeFalse
+        @($workflow.jobs.Values | Where-Object { $_.ContainsKey('outputs') -and $_.outputs.ContainsKey('changes') }).Count | Should -Be 0
     }
 
     It 'rejects write permissions in the ordinary plan before writing a workflow' {
@@ -129,7 +129,7 @@ Describe 'Deployment workflow generation' {
         $upload = $job.steps | Where-Object { $_['uses'] -like 'actions/upload-artifact@*' }
         $upload.with.path | Should -Be './artifacts/module-outputs/application.json'
         $upload.with.'if-no-files-found' | Should -Be 'error'
-        $job.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.environments)[''application'']) || fromJSON(needs.select.outputs.environments)[''application''] }}'
+        $job.environment | Should -Be '${{ fromJSON(needs.select.outputs.environments)[''application''] }}'
     }
 
     It 'gates jobs on runtime selection and successful prerequisites without propagating unrelated skips' {
@@ -174,12 +174,12 @@ Describe 'Deployment workflow generation' {
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
         $job = $workflow.jobs.ruleset_plan_enterprise_baseline
 
-        $job.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline'']) || fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline''] }}'
+        $job.environment | Should -Be '${{ fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline''] }}'
         $job.needs | Should -Be @('authorize', 'select', 'module_service', 'module_enterprise_baseline')
         $job.if | Should -Match "contains.*enterprise-baseline.*needs.module_service.result == 'success'.*needs.module_enterprise_baseline.result == 'success'"
         ($job.steps | Where-Object { $_['name'] -eq 'Run module' }).run | Should -Match '-Action plan.*-Rulesets$'
         ($job.steps | Where-Object { $_['name'] -like 'Issue a phase*' }).run | Should -Match '-Phase rulesetPlan'
-        $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ github.event_name == ''schedule'' && format(''{0}-drift'', fromJSON(needs.select.outputs.environments)[''enterprise-baseline'']) || fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
+        $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
         $workflow.jobs.apply_enterprise_baseline.environment | Should -Be '${{ fromJSON(needs.select.outputs.applyEnvironments)[''enterprise-baseline''] }}'
         $workflow.jobs.plan_complete.needs | Should -Contain 'ruleset_plan_enterprise_baseline'
         ($workflow.jobs.apply_enterprise_baseline.steps | Where-Object { $_['name'] -like 'Apply the complete*' }).run | Should -Match '-Action apply.*-Rulesets$'
@@ -417,5 +417,146 @@ Describe 'Deployment workflow generation' {
 
         { & $generator -ModulesPath $modules -OutputPath (Join-Path $modules 'invalid.yml') } |
             Should -Throw '*Invalid module manifest*application*'
+    }
+}
+
+Describe 'Drift workflow generation' {
+    BeforeAll {
+        $directory = Join-Path $TestDrive 'drift-generated'
+        New-Item -ItemType Directory -Path $directory | Out-Null
+        $deployPath = Join-Path $directory 'deploy.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $deployPath
+        $driftPath = Join-Path $directory 'drift.yml'
+        $drift = ConvertFrom-Yaml (Get-Content -LiteralPath $driftPath -Raw)
+        $planJobs = @($drift.jobs.Keys | Where-Object { $_ -match '^(module_|ruleset_plan_)' } | Sort-Object)
+    }
+
+    It 'writes the drift workflow next to the deployment workflow by default' {
+        [IO.File]::ReadAllBytes($driftPath)[0] | Should -Be 35
+        [IO.File]::ReadAllText($driftPath) | Should -Not -Match "`r"
+        [IO.File]::ReadAllText($driftPath) | Should -Match '^# Generated by tools/Generate-DeploymentWorkflow\.ps1\. Do not edit\.'
+    }
+
+    It 'writes the drift workflow to an explicit path' {
+        $output = Join-Path $TestDrive 'explicit-deploy.yml'
+        $explicit = Join-Path $TestDrive 'explicit-drift.yml'
+
+        & $generator -ModulesPath $fixtures -OutputPath $output -DriftOutputPath $explicit
+
+        [IO.File]::ReadAllText($explicit) | Should -BeExactly ([IO.File]::ReadAllText($driftPath))
+    }
+
+    It 'runs nightly and on demand, never for pull requests or pushes' {
+        $drift.on.schedule[0].cron | Should -Be '17 2 * * *'
+        @($drift.on.Keys | Sort-Object) | Should -Be @('schedule', 'workflow_dispatch')
+        $drift.permissions.Keys | Should -Be @('contents')
+        $drift.permissions.contents | Should -Be 'read'
+        $drift.concurrency['cancel-in-progress'] | Should -BeFalse
+    }
+
+    It 'authorizes only the immutable main revision without any App key' {
+        $job = $drift.jobs.authorize
+
+        $job.ContainsKey('environment') | Should -BeFalse
+        $job.outputs.allowed | Should -Be '${{ steps.preflight.outputs.allowed }}'
+        $job.outputs.revision | Should -Be '${{ steps.preflight.outputs.revision }}'
+        $job.steps[0].with.ref | Should -Be '${{ github.event.pull_request.base.sha || github.sha }}'
+        $job.steps[-1].run | Should -Match 'Test-DeploymentAuthorization\.ps1 -Preflight'
+        (ConvertTo-Json $job -Depth 20) | Should -Not -Match 'PRIVATE_KEY|New-PlatformGitHubToken'
+        $drift.jobs.select.steps[-1].run | Should -Not -Match 'TrustedInstancePath'
+    }
+
+    It 'plans every module in its separate read-only drift environment and publishes only the change state' {
+        $planJobs | Should -Be @('module_application', 'module_enterprise_baseline', 'module_foundation', 'module_observer', 'module_service', 'ruleset_plan_enterprise_baseline')
+        foreach ($id in $planJobs) {
+            $job = $drift.jobs[$id]
+            $job.outputs.changes | Should -Be '${{ steps.run.outputs.changes }}'
+            $run = $job.steps | Where-Object { $_['name'] -eq 'Run module' }
+            $run.id | Should -Be 'run'
+            $run.run | Should -Match '-Action plan .*-GitHubOutputPath \$env:GITHUB_OUTPUT'
+            $job.permissions.Keys | Sort-Object | Should -Be @('contents', 'id-token')
+            $job.permissions.contents | Should -Be 'read'
+            (ConvertTo-Json $job -Depth 20) | Should -Not -Match 'Publish-DriftIssue|-DriftReport|issues'
+            @($job.steps | Where-Object { $_['run'] -match '-Action apply' }).Count | Should -Be 0
+        }
+        $drift.jobs.module_application.environment | Should -Be '${{ format(''{0}-drift'', fromJSON(needs.select.outputs.environments)[''application'']) }}'
+        $drift.jobs.module_application.needs | Should -Contain 'module_foundation'
+    }
+
+    It 'keeps the enterprise-baseline ruleset key in a separate drift environment with a bypass check' {
+        $ruleset = $drift.jobs.ruleset_plan_enterprise_baseline
+        $plan = $drift.jobs.module_enterprise_baseline
+
+        $ruleset.environment | Should -Be '${{ format(''{0}-drift'', fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline'']) }}'
+        $plan.environment | Should -Be '${{ format(''{0}-drift'', fromJSON(needs.select.outputs.environments)[''enterprise-baseline'']) }}'
+        ($ruleset.steps | Where-Object { $_['name'] -like 'Issue a phase*' }).run | Should -Match '-Phase rulesetPlan'
+        ($plan.steps | Where-Object { $_['name'] -like 'Issue a phase*' }).run | Should -Match '-Phase plan'
+        ($ruleset.steps | Where-Object { $_['name'] -eq 'Run module' }).run | Should -Match '-Rulesets -GitHubOutputPath'
+        $names = @($ruleset.steps | ForEach-Object { $_['name'] })
+        $bypassIndex = [array]::IndexOf($names, 'Check ruleset bypass visibility')
+        $bypassIndex | Should -BeGreaterThan 0
+        $bypassIndex | Should -BeLessThan ([array]::IndexOf($names, 'Revoke the job installation tokens'))
+        $ruleset.steps[$bypassIndex].id | Should -Be 'bypass'
+        $ruleset.steps[$bypassIndex].run | Should -Match 'trusted/platform/tools/Test-RulesetBypassVisibility\.ps1 -GitHubOutputPath \$env:GITHUB_OUTPUT'
+        $ruleset.outputs.inheritedRulesets | Should -Be '${{ steps.bypass.outputs.inheritedRulesets }}'
+        $plan.outputs.ContainsKey('inheritedRulesets') | Should -BeFalse
+    }
+
+    It 'reports drift in a separate job with the only issue-write credential' {
+        $job = $drift.jobs.report_drift
+
+        $job.environment | Should -Be 'drift-report'
+        $job.if | Should -Be '${{ !cancelled() && github.ref == ''refs/heads/main'' }}'
+        @($job.needs | Sort-Object) | Should -Be (@('authorize', 'select', 'validate') + $planJobs | Sort-Object)
+        $job.permissions.Keys | Should -Be @('contents')
+        $job.ContainsKey('outputs') | Should -BeFalse
+        $evaluate = $job.steps | Where-Object { $_['id'] -eq 'evaluate' }
+        $evaluate.env.DRIFT_NEEDS | Should -Be '${{ toJSON(needs) }}'
+        $evaluate.run | Should -Match 'trusted/platform/tools/Get-DriftReport\.ps1 '
+        $token = $job.steps | Where-Object { $_['run'] -match 'New-PlatformGitHubToken' }
+        $token.run | Should -Match 'New-PlatformGitHubToken\.ps1 -DriftReport$'
+        $token.if | Should -Be '${{ steps.evaluate.outputs.report == ''true'' }}'
+        ($job.steps | Where-Object { $_['run'] -match 'Publish-DriftIssue' }).if | Should -Be '${{ steps.evaluate.outputs.report == ''true'' }}'
+        ($job.steps | Where-Object { $_['run'] -match 'Remove-PlatformGitHubToken' }).if | Should -Be '${{ always() && env.PLATFORM_GITHUB_TOKENS != '''' }}'
+        $job.steps[-1].if | Should -Be '${{ steps.evaluate.outputs.complete != ''true'' }}'
+        (ConvertTo-Json $job -Depth 20) | Should -Not -Match 'candidate|id-token|Azure/login'
+        @($drift.jobs.Keys | Where-Object { (ConvertTo-Json $drift.jobs[$_] -Depth 20) -match '-DriftReport' }) | Should -Be @('report_drift')
+    }
+
+    It 'pins actions and never runs an apply or approval' {
+        foreach ($job in $drift.jobs.Values) {
+            foreach ($step in $job.steps) {
+                if ($step.ContainsKey('uses')) { $step.uses | Should -Match '@[0-9a-f]{40}$' }
+            }
+        }
+        @($drift.jobs.Keys | Where-Object { $_ -match '^(apply_|approve_)' }).Count | Should -Be 0
+        [IO.File]::ReadAllText($driftPath) | Should -Not -Match '-Action apply|approve-apply|pr-authorization'
+    }
+
+    It 'checks the committed drift workflow without rewriting it' {
+        $directory = Join-Path $TestDrive 'drift-check'
+        New-Item -ItemType Directory -Path $directory | Out-Null
+        $output = Join-Path $directory 'deploy.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        { & $generator -ModulesPath $fixtures -OutputPath $output -Check } | Should -Not -Throw
+        [IO.File]::WriteAllText((Join-Path $directory 'drift.yml'), 'stale drift')
+
+        { & $generator -ModulesPath $fixtures -OutputPath $output -Check } | Should -Throw '*workflow differs*drift.yml*'
+        [IO.File]::ReadAllText((Join-Path $directory 'drift.yml')) | Should -Be 'stale drift'
+        Remove-Item -LiteralPath (Join-Path $directory 'drift.yml')
+        { & $generator -ModulesPath $fixtures -OutputPath $output -Check } | Should -Throw '*workflow differs*drift.yml*'
+    }
+
+    It 'keeps authorization, validation and fail-closed reporting when no modules exist' {
+        $modules = Join-Path $TestDrive 'drift-empty-modules'
+        New-Item -ItemType Directory -Path $modules | Out-Null
+        $output = Join-Path $TestDrive 'drift-empty.yml'
+        $emptyDrift = Join-Path $TestDrive 'drift-empty-drift.yml'
+
+        & $generator -ModulesPath $modules -OutputPath $output -DriftOutputPath $emptyDrift
+
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $emptyDrift -Raw)
+        @($workflow.jobs.Keys | Sort-Object) | Should -Be @('authorize', 'report_drift', 'select', 'validate')
+        $workflow.jobs.report_drift.needs | Should -Be @('authorize', 'validate', 'select')
     }
 }

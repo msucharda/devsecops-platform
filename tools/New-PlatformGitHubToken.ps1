@@ -11,6 +11,7 @@ param(
     [switch] $ValidateOnly,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$')][string] $VendoringRepository,
     [switch] $ReadOnlySource,
+    [switch] $DriftReport,
     [string] $EnvironmentPath = $env:GITHUB_ENV,
     [string] $ApiUrl = $env:GITHUB_API_URL,
     [scriptblock] $RequestPolicy,
@@ -133,12 +134,41 @@ function Assert-AppPermission {
 if ($ReadOnlySource -and -not $VendoringRepository) {
     throw '-ReadOnlySource requires -VendoringRepository.'
 }
+if ($DriftReport -and ($Authorization -or $Module -or $InstancePath -or $VendoringRepository)) {
+    throw 'Drift report credentials cannot share an authorization, deployment or vendoring phase.'
+}
 if ($BootstrapApp) {
     if (-not $ValidateOnly) { throw '-BootstrapApp is only supported with -ValidateOnly.' }
     if ($VendoringRepository -or $Module -or $InstancePath) {
         throw 'Bootstrap App validation cannot share vendoring or deployment inputs.'
     }
+    if ($DriftReport) {
+        $repositories = $BootstrapApp['resources']['repositories']
+        $organizations = @($BootstrapApp['resources']['organizations'])
+        if ((ConvertTo-PlatformCanonicalJson $BootstrapApp['permissions']) -cne (ConvertTo-PlatformCanonicalJson @{ issues = 'write' }) -or
+            $organizations.Count -ne 1 -or $BootstrapApp['resources'].Count -ne 2 -or
+            $repositories -isnot [System.Collections.IDictionary] -or $repositories.Count -ne 1 -or
+            -not $repositories.Contains($organizations[0]) -or @($repositories[$organizations[0]]).Count -ne 1) {
+            throw 'The drift report App contract must be exactly issues: write on one instance repository.'
+        }
+    }
     $expected = $BootstrapApp
+}
+elseif ($DriftReport) {
+    $repository = "$env:GITHUB_REPOSITORY".Split('/')
+    if ($repository.Count -ne 2 -or $repository[0] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]*$' -or $repository[1] -cnotmatch '^[A-Za-z0-9_.-]+$') {
+        throw 'Drift reporting requires the instance repository owner/name.'
+    }
+    $expected = @{
+        appId = $env:PLATFORM_APP_ID
+        installationId = $env:PLATFORM_APP_INSTALLATION_ID
+        enterprise = $env:PLATFORM_APP_ENTERPRISE
+        permissions = @{ issues = 'write' }
+        resources = @{
+            organizations = @($repository[0])
+            repositories = @{ $repository[0] = @($repository[1]) }
+        }
+    }
 }
 elseif ($VendoringRepository) {
     if ($Authorization -or $Module -or $InstancePath) { throw 'Vendoring credentials cannot share a deployment or authorization phase.' }
@@ -195,7 +225,7 @@ if (-not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https' -or (-not $ValidateOnly
     -not $expected['enterprise'] -or -not $PrivateKey) {
     throw 'GitHub App token issuance requires HTTPS API URL, environment output, enterprise ownership, App/installation IDs and the phase private key. PAT fallback is not supported.'
 }
-if (($Authorization -or (-not $VendoringRepository -and $Phase -eq 'plan') -or $ReadOnlySource) -and 'write' -cin @($expected['permissions'].PSBase.Values)) {
+if (-not $DriftReport -and ($Authorization -or (-not $VendoringRepository -and $Phase -eq 'plan') -or $ReadOnlySource) -and 'write' -cin @($expected['permissions'].PSBase.Values)) {
     throw 'Read-only plan and authorization must not receive write-capable App keys.'
 }
 $enterpriseInstallation = $expected['resources'].Contains('enterprise')
@@ -230,6 +260,10 @@ try {
         throw 'GitHub App is not owned by the declared enterprise.'
     }
     Assert-AppPermission -Actual $app['permissions']
+    $appSlug = [string] $app['slug']
+    if ($DriftReport -and $appSlug -cnotmatch '^[a-z0-9][a-z0-9-]*$') {
+        throw 'GitHub App slug is missing or invalid; the drift report cannot identify its own issues.'
+    }
     $installations = [Collections.Generic.List[object]]::new()
     $page = 1
     do {
@@ -271,6 +305,8 @@ try {
             throw "Actual App repository scope for '$organization' differs from the declared scope."
         }
         $tokenRequest = if ($enterpriseInstallation) { $null } else { @{ permissions = $expected['permissions'] } }
+        # The drift report token keeps the installation repository scope so that /installation/repositories
+        # proves the installation itself reaches only the instance repository.
         if ($VendoringRepository) { $tokenRequest['repositories'] = @($repositories[$organization]) }
         $issued = Invoke-GitHubAppRequest -Path "/app/installations/$($installation['id'])/access_tokens" -Method POST `
             -Token $jwt -Body $tokenRequest
@@ -348,6 +384,7 @@ try {
     }
     $json = ConvertTo-Json -InputObject $tokens -Depth 100 -Compress
     $content = "PLATFORM_GITHUB_TOKENS=$json`nTF_VAR_github_tokens=$json`n"
+    if ($DriftReport) { $content += "PLATFORM_APP_SLUG=$appSlug`n" }
     if ($tokens.Count -eq 1) {
         $token = @($tokens.PSBase.Values)[0]
         $content += "GH_TOKEN=$token`n"

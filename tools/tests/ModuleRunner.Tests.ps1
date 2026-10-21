@@ -265,6 +265,32 @@ terraform {
         [IO.File]::ReadAllText($stateFile) | Should -BeExactly $stateBefore
     }
 
+    It 'publishes the plan change state as a workflow output only after a successful plan' {
+        $outputFile = Join-Path $directory 'github-output.txt'
+        $null = & $runner -Module foundation -Action apply @arguments 6>$null
+
+        $null = & $runner -Module foundation -Action plan -GitHubOutputPath $outputFile @arguments 6>$null
+        [IO.File]::ReadAllText($outputFile) | Should -BeExactly "changes=false`n"
+
+        $instance.modules.foundation.parameters.message = 'drifted'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $null = & $runner -Module foundation -Action plan -GitHubOutputPath $outputFile @arguments 6>$null
+        [IO.File]::ReadAllText($outputFile) | Should -BeExactly "changes=false`nchanges=true`n"
+    }
+
+    It 'publishes no change state when the plan fails' {
+        $outputFile = Join-Path $directory 'github-output.txt'
+        Set-Content -LiteralPath (Join-Path $modules 'foundation/broken.tf') -Value 'resource "terraform_data" "broken" {'
+
+        { & $runner -Module foundation -Action plan -GitHubOutputPath $outputFile @arguments 6>$null } | Should -Throw
+        Test-Path -LiteralPath $outputFile | Should -BeFalse
+    }
+
+    It 'refuses a workflow change output for apply and destroy' {
+        { & $runner -Module foundation -Action apply -GitHubOutputPath (Join-Path $directory 'out.txt') @arguments 6>$null } |
+            Should -Throw '*only for plan*'
+    }
+
     It 'passes prerequisite artifacts as variables without requiring their state' {
         $instance.modules = @{ application = @{} }
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath

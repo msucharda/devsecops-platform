@@ -88,7 +88,7 @@ credentials:
       githubApp: governance-writer
 ```
 
-Alias musí existovat v `githubApps`. Validátor doplní výchozí environmenty `<module>-plan`, `<module>-apply` a pro deklarovanou výjimku `<module>-ruleset-plan`. Vybraný modul s deklarací App fáze musí mít její alias. Každý environment včetně odvozených variant `<environment>-drift` smí patřit jen jednomu modulu a jedné fázi. Názvy `pr-authorization`, `approve-apply`, `approve-teardown-platform` a `teardown` jsou rezervované pro společné gate joby.
+Alias musí existovat v `githubApps`. Validátor doplní výchozí environmenty `<module>-plan`, `<module>-apply` a pro deklarovanou výjimku `<module>-ruleset-plan`. Vybraný modul s deklarací App fáze musí mít její alias. Každý environment včetně odvozených variant `<environment>-drift` smí patřit jen jednomu modulu a jedné fázi. Názvy `pr-authorization`, `approve-apply`, `approve-teardown-platform`, `teardown` a `drift-report` jsou rezervované pro společné gate joby.
 
 Validátor porovná oprávnění aliasu s manifestem a rozsah prostředků s parametry modulu. Stejné `appId` lze sdílet jen při shodné fázi, enterprise, oprávněních a prostředcích, i když má App více aliasů či klíčů. Běžný plan odmítne App s libovolným write oprávněním, nikoli pouze široký token. `resources.organizations` uvádí přesné slugy všech instalací App. Volitelná mapa `resources.repositories` omezí danou organizaci na přesný seznam repozitářů; bez její položky musí instalace pokrývat všechny repozitáře organizace. `installationId` identifikuje jednu z deklarovaných instalací; job ověří i ostatní a vydá token pro každou cílovou organizaci.
 
@@ -153,7 +153,7 @@ Plan nesmí deklarovat write. Výjimka `rulesetPlan` musí deklarovat právě `o
 
 ### Generování workflow a výběr
 
-Generátor zapisuje `templates/instance/.github/workflows/deploy.yml`. Přepínač `-Check` pouze porovná obsah a při rozdílu skončí chybou; soubor nezmění. Výstup používá UTF-8 bez BOM a konce řádků LF. Pořadí adresářů ani pořadí Prerequisite v Module manifest nemění výstup.
+Generátor zapisuje `templates/instance/.github/workflows/deploy.yml` a vedle něj noční `drift.yml`. Volitelný `-DriftOutputPath` cestu `drift.yml` změní. Přepínač `-Check` pouze porovná oba soubory a při rozdílu skončí chybou; soubory nezmění. Výstup používá UTF-8 bez BOM a konce řádků LF. Pořadí adresářů ani pořadí Prerequisite v Module manifest nemění výstup.
 
 ```powershell
 .\tools\Generate-DeploymentWorkflow.ps1 -Check
@@ -181,7 +181,7 @@ modules:
 .\tools\Select-InstanceModules.ps1 -ModulesPath .\tools\tests\fixtures\modules -InstancePath .\instance.yaml
 ```
 
-Workflow reaguje na `pull_request_target` proti `main`, push do `main`, ruční spuštění z `main` a schedule denně v 02:17 UTC. Schedule používá environmenty `<plan-environment>-drift` a `<ruleset-plan-environment>-drift` a nikdy neodemkne apply. Job `authorize` načte jen nástroje z neměnného base commitu. Nejprve odmítne forky, App autory a draft PR bez načtení App klíče. Pro ostatní PR ověří aktivní členství autora v platformním týmu přes samostatnou App s `members: read`. Tento job nikdy nenačte kód z PR a nedostane credential modulu.
+Workflow `deploy.yml` reaguje na `pull_request_target` proti `main`, push do `main` a ruční spuštění z `main`. Noční plan patří do samostatného workflow `drift.yml` (viz [Detekce driftu](#detekce-driftu)). Job `authorize` načte jen nástroje z neměnného base commitu. Nejprve odmítne forky, App autory a draft PR bez načtení App klíče. Pro ostatní PR ověří aktivní členství autora v platformním týmu přes samostatnou App s `members: read`. Tento job nikdy nenačte kód z PR a nedostane credential modulu.
 
 Job `validate` bez environmentu, OIDC a cloudových secrets ověří `instance.yaml` schématem vendorovaného release. Autorizovaný job `select` používá trusted nástroje a před zveřejněním environmentů porovná App metadata i credential vazby PR s base konfigurací. Jejich změna vyžaduje review a merge; cloudový plan pak poběží z chráněné `main`.
 
@@ -193,9 +193,22 @@ Proměnná Terraformu `github_tokens` musí mít `type = map(string)` a `sensiti
 
 Job stáhne výstupy každého přímého předpokladu ze stejné fáze. Publikuje jen `<module>.json` jako `plan-outputs-<module>` nebo `apply-outputs-<module>`, s retencí jeden den. Ruleset plan publikuje oddělený `<module>.rulesets.json`. Plan, proměnné a state se nenahrávají. Chybějící artifact nebo selhání runneru zastaví větev.
 
-Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFORMED`. Pro autorizovaný běh vyžaduje úspěch všech vybraných planů včetně rulesetů; chybějící job zastaví stale workflow. Teprve na `main`, mimo schedule, následuje jediné schválení platformním týmem v `approve-apply`. Apply joby poté běží ve svých environmentech; `enterprise-baseline-apply` navíc vyžaduje security tým. Pravidla environmentů nastaví `tools/Invoke-GitHubBootstrap.ps1`; [runbook](docs/bootstrap.md#github-část-bootstrapu) popisuje přípravu, ověření Apps, OIDC vazby a rotaci klíčů. Kontrakt environmentů popisuje [šablona](templates/instance/README.md).
+Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFORMED`. Pro autorizovaný běh vyžaduje úspěch všech vybraných planů včetně rulesetů; chybějící job zastaví stale workflow. Teprve na `main` následuje jediné schválení platformním týmem v `approve-apply`. Apply joby poté běží ve svých environmentech; `enterprise-baseline-apply` navíc vyžaduje security tým. Pravidla environmentů nastaví `tools/Invoke-GitHubBootstrap.ps1`; [runbook](docs/bootstrap.md#github-část-bootstrapu) popisuje přípravu, ověření Apps, OIDC vazby a rotaci klíčů. Kontrakt environmentů popisuje [šablona](templates/instance/README.md).
 
 **Současný rozsah:** manifest a Terraform mají z produkčních modulů jen `emu-identity` a `enterprise-baseline`. Ostatní produkční adresáře obsahují jen specifikace. Produkční šablona proto obsahuje autorizaci, validaci, výběr, plan a apply těchto modulů včetně ruleset jobu `enterprise-baseline` a reportování. Ruleset root `enterprise-baseline` zatím nespravuje žádný ruleset; rulesety doplní [#20](https://github.com/msucharda/devsecops-platform/issues/20). Šablona očekává release v `platform/`; CODEOWNERS určuje platformní tým a bootstrap nahradí jeho ukázkový slug. Průvodce `tools\Start-InstanceSetup.ps1 -GitHubAcceptance` ověří bootstrap, read-only API a OIDC na izolovaném kandidátovi pro [#11](https://github.com/msucharda/devsecops-platform/issues/11). První produkční modul `emu-identity` ověří [#12](https://github.com/msucharda/devsecops-platform/issues/12). Produkční operace `enterprise-baseline` ověří jeho vlastní issues, počínaje [#17](https://github.com/msucharda/devsecops-platform/issues/17); probe manifesty je nenahrazují.
+
+### Detekce driftu
+
+Workflow `drift.yml` spouští plan všech vybraných modulů denně v 02:17 UTC a ručně přes `workflow_dispatch`, jen z `main`. Nikdy neodemkne apply. Používá vlastní concurrency skupinu `drift-instance-main`, aby čekající noční běh nezrušil čekající nasazení z `main`.
+
+- Joby `authorize`, `validate` a `select` ověří `main` a 40znakový SHA revize stejně jako `deploy.yml`, bez App klíče.
+- Běžný plan běží v environmentu `<plan-environment>-drift` a ruleset plan v `<ruleset-plan-environment>-drift`. Ruleset klíč a token nedostane žádný jiný job.
+- Ruleset plan navíc spustí `Test-RulesetBypassVisibility.ps1`. Skript vyžaduje u každého lokálního organizačního rulesetu pole `bypass_actors`; chybějící pole není „bez bypassu“, ale chyba. Zděděné enterprise rulesety skript spočítá a report je uvede jako nepokryté.
+- Job `report_drift` v environmentu `drift-report` vyhodnotí výsledky všech jobů skriptem `Get-DriftReport.ps1` bez credentials. Chybějící, neúspěšný nebo nečitelný výsledek označí běh jako neúplný (fail-closed); job pak skončí chybou.
+- Pokud report obsahuje drift nebo neúplný běh, job vydá izolovaný installation token s právě `issues: write` pro repozitář instance a `Publish-DriftIssue.ps1` otevře nebo aktualizuje jedno issue s markerem `<!-- platform-drift-report -->` od této App. Bez driftu existující issue nemění.
+- Report vždy vypíše oblasti mimo automatickou detekci: ruční enterprise předpoklady, ruční kroky vybraných modulů s jejich omezením driftu a zděděné enterprise rulesety.
+
+App pro issue drift registruje platformní tým ručně a předá ji bootstrapu přes `-DriftReportApp` ([runbook](docs/bootstrap.md#environmenty-noční-plan-a-teardown)).
 
 ### Runner modulu
 
