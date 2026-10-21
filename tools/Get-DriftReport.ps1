@@ -91,11 +91,12 @@ if ($needs) {
                 if ($module -cin $rulesetModules) { $roots += @{ Job = 'ruleset_plan_' + $module.Replace('-', '_'); Label = 'rulesets' } }
                 foreach ($root in $roots) {
                     $changes = Get-NeedValue $needs $root.Job 'changes'
+                    # A plan can report changes before a later step fails the job; keep that drift visible.
+                    if ($changes -ceq 'true') { $drift.Add("- ``$module`` ($($root.Label))") }
                     if ((Get-NeedValue $needs $root.Job) -cne 'success' -or $changes -cnotin @('true', 'false')) {
                         $incomplete.Add("Plan job $($root.Job) did not complete with a published change state.")
                         continue
                     }
-                    if ($changes -ceq 'true') { $drift.Add("- ``$module`` ($($root.Label))") }
                     if ($root.Label -eq 'rulesets') {
                         $inherited = Get-NeedValue $needs $root.Job 'inheritedRulesets'
                         if ($inherited -isnot [string] -or $inherited -cnotmatch '^(0|[1-9][0-9]{0,5})$') {

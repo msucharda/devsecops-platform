@@ -132,6 +132,23 @@ Describe 'Drift report evaluation' {
         $report | Should -Match 'module_service'
     }
 
+    It 'keeps drift detected by a plan whose job later failed in the <Root> root' -ForEach @(
+        @{ Root = 'plan'; Job = 'module_application'; Expected = '- `application` (Terraform plan)' }
+        @{ Root = 'ruleset'; Job = 'ruleset_plan_enterprise_baseline'; Expected = '- `enterprise-baseline` (rulesets)' }
+    ) {
+        $needs = Get-DriftNeed
+        $needs[$Job].outputs.changes = 'true'
+        $needs[$Job].result = 'failure'
+
+        Invoke-DriftReport -Needs $needs
+
+        $output.report | Should -BeExactly 'true'
+        $output.complete | Should -BeExactly 'false'
+        $report | Should -Match '### Drift detected'
+        $report | Should -Match ([regex]::Escape($Expected))
+        $report | Should -Match "Plan job $Job did not complete"
+    }
+
     It 'reports an incomplete run when the trusted instance cannot be read' {
         Invoke-DriftReport -Needs (Get-DriftNeed) -Instance (Join-Path $TestDrive 'missing.yaml')
 
