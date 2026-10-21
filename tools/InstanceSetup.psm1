@@ -2300,16 +2300,24 @@ function Invoke-StepProbeOrg {
     $api = "https://api.$($Setup.Settings['githubHost'])"
     $login = $Setup.Facts.Login
     $org = if ($probe['organization']) { [string] $probe['organization'] } else { "probe-$((Get-Date).ToString('yyyyMMdd'))" }
+    $creationPending = [bool] $probe['organizationCreationPending']
     if ($probe['organizationSignInPending']) {
         Invoke-SetupProbeOrganizationSignIn -Setup $Setup
     }
     $orgResponse = Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org"
+    if ($creationPending -and $orgResponse.Status -eq 'Forbidden') {
+        # The previous run lost the response of the creation: the organization exists and needs the SSO sign-in.
+        $probe['organizationSignInPending'] = $true
+        Save-SetupState -Setup $Setup
+        Invoke-SetupProbeOrganizationSignIn -Setup $Setup
+        $orgResponse = Invoke-SetupApi -Setup $Setup -Uri "$api/orgs/$org"
+    }
     $null = Assert-SetupResponse -Response $orgResponse -Action "Reading the organization $org" -AllowMissing
     $orgMissing = $orgResponse.Status -eq 'Missing'
     if ($orgMissing -and $probe['organization'] -and $probe['organizationSignInPending']) {
         Exit-SetupStage -Status Error -Area github -Message "The organization $org was created but is not readable yet." -Guidance @('Wait a minute, then choose [r].')
     }
-    if ($orgMissing -and $probe['organization']) {
+    if ($orgMissing -and $probe['organization'] -and -not $creationPending) {
         $stored = [string] $probe['organization']
         Show-SetupMessage -Kind Warning -Message "The probe organization $stored from setup-state.json no longer exists. GitHub keeps the name of a deleted organization blocked (ADR 0008)."
         $suggested = "probe-$((Get-Date).ToString('yyyyMMdd'))"
@@ -2348,10 +2356,14 @@ function Invoke-StepProbeOrg {
                 Read-SetupValue -Prompt 'Billing email of the probe organization' -Validate { param($text) if ($text -notmatch '^[^@\s]+@[^@\s]+$') { 'Enter an email address.' } }
             }
             $mutation = 'mutation($input:CreateEnterpriseOrganizationInput!){createEnterpriseOrganization(input:$input){organization{login}}}'
+            # Save the intent before the write, so a rerun after a lost response finds the organization.
+            $probe['organization'] = $org
+            $probe['organizationCreationPending'] = $true
+            Save-SetupState -Setup $Setup
             $null = Invoke-SetupGraphQL -Setup $Setup -Query $mutation -Action "Creating the organization $org" -Variables @{
                 input = @{ enterpriseId = $Setup.Facts.EnterpriseId; login = $org; profileName = $org; billingEmail = $billingEmail; adminLogins = @($login) }
             }
-            $probe['organization'] = $org
+            $probe.Remove('organizationCreationPending')
             $probe['organizationSignInPending'] = $true
             Save-SetupState -Setup $Setup
             Invoke-SetupProbeOrganizationSignIn -Setup $Setup
@@ -2379,6 +2391,7 @@ function Invoke-StepProbeOrg {
     }
     $probe['organization'] = $org
     $probe['organizationSignInPending'] = $false
+    $probe.Remove('organizationCreationPending')
     Save-SetupState -Setup $Setup
     return "The probe organization $org has the private repository instance-probe and the team platform-probe with your active membership."
 }
@@ -2503,6 +2516,7 @@ function Invoke-StepProbeAdmin {
         })
         if ($created -isnot [System.Collections.IDictionary] -or -not $created['id']) { Exit-SetupStage -Status Error -Message 'GitHub did not return the probe ruleset.' -Guidance $findingGuidance }
         $rulesetUri = "$api/orgs/$org/rulesets/$($created['id'])"
+        $deletedProbe = $false
         try {
             $detail = Assert-SetupResponse -Response (Invoke-SetupApi -Setup $Setup -Uri $rulesetUri -Token $writeToken) -Action 'Reading the probe ruleset' -Guidance $findingGuidance
             $bypass = if ($detail -is [System.Collections.IDictionary]) { @($detail['bypass_actors'] | Where-Object { $_ -is [System.Collections.IDictionary] -and $_['actor_type'] -eq 'OrganizationAdmin' }) } else { @() }
@@ -2510,9 +2524,15 @@ function Invoke-StepProbeAdmin {
         }
         finally {
             $deleted = Invoke-SetupApi -Setup $Setup -Uri $rulesetUri -Method DELETE -Token $writeToken
-            if ($deleted.Status -ne 'Ok') {
+            $deletedProbe = $deleted.Status -eq 'Ok'
+            if (-not $deletedProbe) {
                 Show-SetupMessage -Kind Warning -Message "Deleting the probe ruleset failed. $($deleted.Message) Delete $rulesetName in the organization settings of $org."
             }
+        }
+        # A passed probe skips the step on resume; the stale ruleset deletion above runs only when the probe repeats.
+        if (-not $deletedProbe) {
+            Exit-SetupStage -Status Error -Area github -Message "The probe ruleset $rulesetName in $org was not deleted." `
+                -Guidance @('Choose [r]. The probe deletes the stale ruleset before it creates a new one.')
         }
     }
     finally {

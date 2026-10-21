@@ -704,6 +704,8 @@ foreach ($name in $selected) {
             }
         }
         foreach ($credentialName in $desired.Keys) {
+            # Record the intent before the write, so a lost PUT response cannot hide the credential from teardown.
+            Register-GitHubBootstrapResource -Path "$path/$credentialName"
             if (-not $current.ContainsKey($credentialName)) {
                 $null = Invoke-GitHubBootstrapAzure -Path "$path/$credentialName`?api-version=2023-01-31" -Method PUT -Body $desired[$credentialName]
             }
