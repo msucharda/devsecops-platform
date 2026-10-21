@@ -21,6 +21,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$InformationPreference = 'Continue'
 Import-Module (Join-Path $PSScriptRoot 'MutationTesting.psm1') -Force
 
 $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
@@ -79,11 +80,7 @@ function Invoke-WorkerBatch {
 function Get-JobStatus {
     param($Result)
 
-    if ($null -eq $Result) { return 'Error', 'The worker did not finish the job before the timeout.' }
-    if ($Result['Failed'] -gt 0) { return 'Killed', "Failed: $(@($Result['Failures']) -join '; ')" }
-    if ($Result['Errors'] -gt 0) { return 'Error', "The tests did not run cleanly. $(@($Result['Failures']) -join '; ')" }
-    if ($Result['Passed'] -eq 0) { return 'Error', 'No test ran.' }
-    return 'Survived', "$($Result['Passed']) tests passed."
+    Get-MutationJobStatus -Result $Result
 }
 
 try {
@@ -96,7 +93,7 @@ try {
             [pscustomobject]@{ Index = $index; Copy = $copy; Jobs = [Collections.Generic.List[object]]::new(); Load = 0.0 }
         })
 
-    Write-Host "Baseline: $($markers.Count) security checks with $workers workers."
+    Write-Information "Baseline: $($markers.Count) security checks with $workers workers."
     $position = 0
     foreach ($marker in $markers) {
         $slots[$position % $workers].Jobs.Add(@{ Id = "baseline:$($marker.Name)"; File = $marker.File; Text = $null; Tests = $testsByCheck[$marker.Name] })
@@ -109,7 +106,7 @@ try {
             if ($status -ne 'Survived') { "The baseline of $name is not green: $status. $detail" }
             else {
                 $baselineSeconds[$name] = [double] $item.Result['Seconds']
-                Write-Host ("  {0}: {1} tests passed in {2:N1} s." -f $name, $item.Result['Passed'], $item.Result['Seconds'])
+                Write-Information ("  {0}: {1} tests passed in {2:N1} s." -f $name, $item.Result['Passed'], $item.Result['Seconds'])
             }
         })
     if ($baselineProblems.Count -gt 0) { throw ($baselineProblems -join [Environment]::NewLine) }
@@ -121,7 +118,7 @@ try {
         $slot.Jobs.Add(@{ Id = $mutant.Id; File = $mutant.File; Text = $mutant.Text; Tests = $testsByCheck[$mutant.Check] })
         $slot.Load += $baselineSeconds[$mutant.Check]
     }
-    Write-Host "Mutants: $($mutants.Count)."
+    Write-Information "Mutants: $($mutants.Count)."
     $byId = @{}
     foreach ($mutant in $mutants) { $byId[$mutant.Id] = $mutant }
     $results = @(foreach ($item in @(Invoke-WorkerBatch -Phase mutant -Assignment $slots)) {
@@ -168,8 +165,8 @@ $report = [ordered]@{
 $ReportPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReportPath)
 New-Item -ItemType Directory -Path (Split-Path -Parent $ReportPath) -Force | Out-Null
 ConvertTo-Json -InputObject $report -Depth 6 | Set-Content -LiteralPath $ReportPath
-$summary | Format-Table -AutoSize | Out-String | Write-Host
-Write-Host "Report: $ReportPath ($($report.seconds) s)."
+$summary | Format-Table -AutoSize | Out-String | Write-Information
+Write-Information "Report: $ReportPath ($($report.seconds) s)."
 if ($env:GITHUB_STEP_SUMMARY) {
     $lines = @('## Security check mutation testing', '', '| Check | Mutants | Killed | Survived | Excepted | Errors |', '|---|---|---|---|---|---|')
     $lines += @($summary | ForEach-Object { "| $($_.Check) | $($_.Mutants) | $($_.Killed) | $($_.Survived) | $($_.Excepted) | $($_.Errors) |" })
@@ -179,7 +176,7 @@ if ($env:GITHUB_STEP_SUMMARY) {
 if ($resolved.Problems.Count -gt 0) {
     if ($env:GITHUB_ACTIONS -eq 'true') {
         foreach ($item in @($resolved.Results | Where-Object Status -in @('Survived', 'Error'))) {
-            Write-Host "::error file=$($item.File),line=$($item.Line)::$($item.Status) mutant $($item.Id)"
+            Write-Information "::error file=$($item.File),line=$($item.Line)::$($item.Status) mutant $($item.Id)"
         }
     }
     throw ('Mutation testing failed:' + [Environment]::NewLine + ($resolved.Problems -join [Environment]::NewLine))

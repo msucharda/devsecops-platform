@@ -37,7 +37,7 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         . $stubBlocks.BeforeEach
         # The workflow check costs about one second per run and has its own tests. The harness tests recovery only.
         Set-Content -LiteralPath (Join-Path $release 'tools/Generate-DeploymentWorkflow.ps1') -Value 'param($ModulesPath, $OutputPath, [switch] $Check)'
-        $plan = New-InterruptionPlan
+        $plan = Get-InterruptionPlan
         $stubTransport = $cloudTransport
         $initialCloud = Copy-TestValue $cloud
         # Documented conflict responses of create operations; the stub itself overwrites existing objects.
@@ -123,7 +123,7 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot @shard)
 
         $report = Format-InterruptionResult -Name 'Invoke-GitHubBootstrap.ps1 (resource setup)' -Result $result
-        Write-Host $report
+        Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
     }
 
@@ -140,7 +140,7 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot @shard)
 
         $report = Format-InterruptionResult -Name 'Invoke-GitHubBootstrap.ps1 (credential setup)' -Result $result
-        Write-Host $report
+        Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
     }
 }

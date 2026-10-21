@@ -16,7 +16,7 @@ BeforeAll {
 Describe 'Instance setup interruption harness' -Tag 'Interruption' {
     BeforeEach {
         $work = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
-        $plan = New-InterruptionPlan
+        $plan = Get-InterruptionPlan
         $stub = @{ Plan = $plan }
         InModuleScope InstanceSetup -Parameters @{ Stub = $stub } {
             param($Stub)
@@ -35,6 +35,7 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
             Mock Revoke-SetupInstallationToken {}
             Mock Invoke-WebRequest {
                 param([uri] $Uri, [string] $Method = 'GET', [string] $Body, [hashtable] $Headers)
+                $null = $Headers
                 $S = $script:InterruptionStub
                 $Method = $Method.ToUpperInvariant()
                 $path = $Uri.AbsolutePath
@@ -173,7 +174,7 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot @shard)
 
         $report = Format-InterruptionResult -Name 'InstanceSetup.psm1 (ProbeOrg, ProbeAdmin)' -Result $result
-        Write-Host $report
+        Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
     }
 }

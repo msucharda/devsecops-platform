@@ -21,6 +21,8 @@ if ($CI) {
     $configuration.TestResult.OutputPath = Join-Path $PSScriptRoot '../artifacts/pester.xml'
 }
 $result = Invoke-Pester -Configuration $configuration
-if ($result.TotalCount -eq 0 -or $result.FailedCount -gt 0 -or $result.NotRunCount -gt 0) {
-    throw "Pester failed: $($result.FailedCount) failed, $($result.NotRunCount) not run, $($result.TotalCount) total tests."
+# Pester counts tests excluded by the tag filter as not run; only selected tests must run.
+$notRun = @($result.Tests | Where-Object { $_.ShouldRun -and $_.Result -eq 'NotRun' }).Count
+if ($result.PassedCount -eq 0 -or $result.FailedCount -gt 0 -or $notRun -gt 0) {
+    throw "Pester failed: $($result.FailedCount) failed, $notRun not run, $($result.PassedCount) passed of $($result.TotalCount) total tests."
 }

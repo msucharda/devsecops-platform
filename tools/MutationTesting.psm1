@@ -61,7 +61,7 @@ function Get-SecurityCheckMarker {
     }
 }
 
-function New-MutantRecord {
+function ConvertTo-MutantRecord {
     param($Extent, [string] $Replacement, [string] $Kind, [string] $Description)
 
     [pscustomobject]@{
@@ -122,7 +122,7 @@ function Get-ExpressionMutant {
             foreach ($operand in @(Get-ChainOperand -Expression $node -Operator $operator)) {
                 if ($Polarity -eq $weakened) {
                     $value = if ($Polarity -eq 'Allow') { '$true' } else { '$false' }
-                    New-MutantRecord -Extent $operand.Extent -Replacement "($value)" -Kind 'operand' -Description "operand '$($operand.Extent.Text)' -> $value"
+                    ConvertTo-MutantRecord -Extent $operand.Extent -Replacement "($value)" -Kind 'operand' -Description "operand '$($operand.Extent.Text)' -> $value"
                 }
                 Get-ExpressionMutant -Expression $operand -Polarity $Polarity
             }
@@ -135,7 +135,7 @@ function Get-ExpressionMutant {
         # A comparison with a constant that has no letters ignores case anyway; its case-insensitive mutant is equivalent.
         if ($variant -and -not $caseless -and ($variant.Positive -eq ($Polarity -eq 'Allow'))) {
             $operatorExtent = $node.ErrorPosition
-            New-MutantRecord -Extent $operatorExtent -Replacement $variant.Text -Kind 'case' -Description "operator '$($operatorExtent.Text)' -> $($variant.Text) in '$($node.Extent.Text)'"
+            ConvertTo-MutantRecord -Extent $operatorExtent -Replacement $variant.Text -Kind 'case' -Description "operator '$($operatorExtent.Text)' -> $($variant.Text) in '$($node.Extent.Text)'"
         }
     }
 }
@@ -175,8 +175,8 @@ function Get-FunctionMutant {
             $polarity = Get-ClausePolarity -Body $clause.Item2
             if (-not $polarity) { continue }
             $value = if ($polarity -eq 'Deny') { '$false' } else { '$true' }
-            $mutants.Add((New-MutantRecord -Extent $clause.Item1.Extent -Replacement "($value)" -Kind 'condition' -Description "condition '$($clause.Item1.Extent.Text)' -> $value"))
-            $mutants.Add((New-MutantRecord -Extent $clause.Item1.Extent -Replacement "(-not ($($clause.Item1.Extent.Text)))" -Kind 'negation' -Description "condition '$($clause.Item1.Extent.Text)' negated"))
+            $mutants.Add((ConvertTo-MutantRecord -Extent $clause.Item1.Extent -Replacement "($value)" -Kind 'condition' -Description "condition '$($clause.Item1.Extent.Text)' -> $value"))
+            $mutants.Add((ConvertTo-MutantRecord -Extent $clause.Item1.Extent -Replacement "(-not ($($clause.Item1.Extent.Text)))" -Kind 'negation' -Description "condition '$($clause.Item1.Extent.Text)' negated"))
             foreach ($mutant in @(Get-ExpressionMutant -Expression $clause.Item1 -Polarity $polarity)) { $mutants.Add($mutant) }
         }
     }
@@ -191,8 +191,8 @@ function Get-FunctionMutant {
             ($expression -is [System.Management.Automation.Language.UnaryExpressionAst] -and
             $expression.TokenKind -in @([System.Management.Automation.Language.TokenKind]::Not, [System.Management.Automation.Language.TokenKind]::Exclaim))
         if (-not $logical) { continue }
-        $mutants.Add((New-MutantRecord -Extent $pipeline.Extent -Replacement '$true' -Kind 'return' -Description "return '$($pipeline.Extent.Text)' -> `$true"))
-        $mutants.Add((New-MutantRecord -Extent $pipeline.Extent -Replacement "(-not ($($pipeline.Extent.Text)))" -Kind 'negation' -Description "return '$($pipeline.Extent.Text)' negated"))
+        $mutants.Add((ConvertTo-MutantRecord -Extent $pipeline.Extent -Replacement '$true' -Kind 'return' -Description "return '$($pipeline.Extent.Text)' -> `$true"))
+        $mutants.Add((ConvertTo-MutantRecord -Extent $pipeline.Extent -Replacement "(-not ($($pipeline.Extent.Text)))" -Kind 'negation' -Description "return '$($pipeline.Extent.Text)' negated"))
         foreach ($mutant in @(Get-ExpressionMutant -Expression $expression -Polarity Allow)) { $mutants.Add($mutant) }
     }
 
@@ -283,6 +283,22 @@ function Assert-SecurityCheckConfiguration {
     if ($problems.Count -gt 0) { throw ($problems -join [Environment]::NewLine) }
 }
 
+function Get-MutationJobStatus {
+    <#
+    .SYNOPSIS
+    Classifies one worker result. Errors win over failures; a missing result or a run without tests is an error.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()][System.Collections.IDictionary] $Result)
+
+    if ($null -eq $Result) { return 'Error', 'The worker did not finish the job before the timeout.' }
+    # An unclean run is not evidence that a test detected the mutant, even when another test failed.
+    if ([int] $Result['Errors'] -gt 0) { return 'Error', "The tests did not run cleanly. $(@($Result['Failures']) -join '; ')" }
+    if ([int] $Result['Failed'] -gt 0) { return 'Killed', "Failed: $(@($Result['Failures']) -join '; ')" }
+    if ([int] $Result['Passed'] -le 0) { return 'Error', 'No test ran.' }
+    return 'Survived', "$($Result['Passed']) tests passed."
+}
+
 function Resolve-MutationResult {
     <#
     .SYNOPSIS
@@ -316,4 +332,4 @@ function Resolve-MutationResult {
     [pscustomobject]@{ Results = $Result; Problems = $problems.ToArray() }
 }
 
-Export-ModuleMember -Function Get-SecurityCheckMarker, Get-FunctionMutant, Get-SecurityCheckMutant, Assert-SecurityCheckConfiguration, Resolve-MutationResult
+Export-ModuleMember -Function Get-SecurityCheckMarker, Get-FunctionMutant, Get-SecurityCheckMutant, Assert-SecurityCheckConfiguration, Get-MutationJobStatus, Resolve-MutationResult

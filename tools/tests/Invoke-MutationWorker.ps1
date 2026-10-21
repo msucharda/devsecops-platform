@@ -44,6 +44,10 @@ foreach ($job in $jobs) {
             $result.Errors += $run.FailedContainersCount + $run.FailedBlocksCount
             $result.Failures += @($run.Failed | Select-Object -First 1 | ForEach-Object { $_.ExpandedPath })
             if ($run.FailedCount -gt 0) { break }
+            if ($run.PassedCount -eq 0) {
+                $result.Errors += 1
+                $result.Failures += @("No test in $($test['Path']) matched $(@($test['FullName']) -join ', ').")
+            }
         }
     }
     catch {

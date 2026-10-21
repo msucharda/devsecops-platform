@@ -13,7 +13,7 @@ snapshot of the stub state equals the reference snapshot and that no creation wa
 than in the reference run.
 #>
 
-function New-InterruptionPlan {
+function Get-InterruptionPlan {
     [CmdletBinding()]
     [OutputType([hashtable])]
     param()
@@ -28,7 +28,7 @@ function New-InterruptionPlan {
     }
 }
 
-function Reset-InterruptionPlan {
+function Clear-InterruptionPlan {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][hashtable] $Plan,
@@ -153,7 +153,7 @@ function Invoke-InterruptionMatrix {
 
     if (-not $Recover) { $Recover = { param($InterruptedError) $null = $InterruptedError; & $Run }.GetNewClosure() }
     & $Reset
-    Reset-InterruptionPlan -Plan $Plan
+    Clear-InterruptionPlan -Plan $Plan
     $null = & $Run
     $reference = Get-InterruptionSnapshot -Snapshot $Snapshot
     $requests = [string[]] $Plan.Requests.ToArray()
@@ -165,7 +165,7 @@ function Invoke-InterruptionMatrix {
         for ($step = 1; $step -le $requests.Count; $step++) {
             if (($step - 1) % $ShardCount -ne $ShardIndex) { continue }
             & $Reset
-            Reset-InterruptionPlan -Plan $Plan -Target $step -Kind $kindName
+            Clear-InterruptionPlan -Plan $Plan -Target $step -Kind $kindName
             $interruptedError = $null
             try { $null = & $Run }
             catch { $interruptedError = $_ }
@@ -232,4 +232,4 @@ function Format-InterruptionResult {
     return $lines -join [Environment]::NewLine
 }
 
-Export-ModuleMember -Function New-InterruptionPlan, Reset-InterruptionPlan, Invoke-InterruptionStep, Invoke-InterruptionMatrix, Get-InterruptionShard, Format-InterruptionResult
+Export-ModuleMember -Function Get-InterruptionPlan, Clear-InterruptionPlan, Invoke-InterruptionStep, Invoke-InterruptionMatrix, Get-InterruptionShard, Format-InterruptionResult

@@ -8,7 +8,7 @@ BeforeAll {
         return $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
     }
 
-    function New-TestRepository {
+    function Initialize-TestRepository {
         param([Parameter(Mandatory)][string] $Content)
 
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
@@ -17,7 +17,7 @@ BeforeAll {
         return $root
     }
 
-    function New-TestConfiguration {
+    function Get-TestConfiguration {
         param([string[]] $Name = @('sample-check'), [object[]] $Exception = @())
 
         return @{
@@ -26,7 +26,7 @@ BeforeAll {
         }
     }
 
-    function New-TestResult {
+    function Get-TestResult {
         param([string] $Id = 'Sample: condition', [string] $Status = 'Killed')
 
         return [pscustomobject]@{ Id = $Id; Status = $Status; File = 'tools/Check.psm1'; Line = 3; Detail = '' }
@@ -36,7 +36,7 @@ BeforeAll {
 Describe 'Security check mutation testing' {
     Context 'markers' {
         It 'finds the function on the line after the marker' {
-            $repo = New-TestRepository -Content "function Other { }`n# security-check: sample-check`nfunction Test-Sample { if (`$x) { throw 'no' } }`n"
+            $repo = Initialize-TestRepository -Content "function Other { }`n# security-check: sample-check`nfunction Test-Sample { if (`$x) { throw 'no' } }`n"
 
             $marker = @(Get-SecurityCheckMarker -RepoPath $repo)
 
@@ -48,20 +48,20 @@ Describe 'Security check mutation testing' {
         }
 
         It 'ignores markers in test files' {
-            $repo = New-TestRepository -Content 'function Other { }'
+            $repo = Initialize-TestRepository -Content 'function Other { }'
             Set-Content -LiteralPath (Join-Path $repo 'tools/tests/Sample.Tests.ps1') -Value "# security-check: sample-check`nfunction Test-Sample { }"
 
             @(Get-SecurityCheckMarker -RepoPath $repo).Count | Should -Be 0
         }
 
         It 'fails closed on a malformed marker' {
-            $repo = New-TestRepository -Content "# security-check: bad name`nfunction Test-Sample { }"
+            $repo = Initialize-TestRepository -Content "# security-check: bad name`nfunction Test-Sample { }"
 
             { Get-SecurityCheckMarker -RepoPath $repo } | Should -Throw '*malformed security-check marker*'
         }
 
         It 'fails closed when the marker is not directly before a function' {
-            $repo = New-TestRepository -Content "# security-check: sample-check`n`nfunction Test-Sample { }"
+            $repo = Initialize-TestRepository -Content "# security-check: sample-check`n`nfunction Test-Sample { }"
 
             { Get-SecurityCheckMarker -RepoPath $repo } | Should -Throw '*directly before a function*'
         }
@@ -135,14 +135,14 @@ Describe 'Security check mutation testing' {
         }
 
         It 'fails closed when a marked function has no mutable condition' {
-            $repo = New-TestRepository -Content "# security-check: sample-check`nfunction Test-Sample { 'no check' }"
+            $repo = Initialize-TestRepository -Content "# security-check: sample-check`nfunction Test-Sample { 'no check' }"
             $marker = @(Get-SecurityCheckMarker -RepoPath $repo)
 
             { Get-SecurityCheckMutant -RepoPath $repo -Marker $marker } | Should -Throw '*has no mutable condition*'
         }
 
         It 'returns the mutated file text for each mutant' {
-            $repo = New-TestRepository -Content "# security-check: sample-check`nfunction Test-Sample { if (`$a) { throw 'no' } }"
+            $repo = Initialize-TestRepository -Content "# security-check: sample-check`nfunction Test-Sample { if (`$a) { throw 'no' } }"
             $marker = @(Get-SecurityCheckMarker -RepoPath $repo)
 
             $mutant = @(Get-SecurityCheckMutant -RepoPath $repo -Marker $marker | Where-Object Kind -eq 'condition')
@@ -159,7 +159,7 @@ Describe 'Security check mutation testing' {
         }
 
         It 'accepts a marker configured exactly once with a complete exception' {
-            { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (New-TestConfiguration -Exception @($exception)) } | Should -Not -Throw
+            { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (Get-TestConfiguration -Exception @($exception)) } | Should -Not -Throw
         }
 
         It 'rejects <Case>' -ForEach @(
@@ -168,7 +168,7 @@ Describe 'Security check mutation testing' {
             @{ Case = 'a check configured twice'; Name = @('sample-check', 'sample-check'); Message = '*must be configured exactly once*' }
             @{ Case = 'a check name that differs in case'; Name = @('Sample-Check'); Message = '*Sample-Check has no marker*' }
         ) {
-            { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (New-TestConfiguration -Name $Name) } | Should -Throw $Message
+            { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (Get-TestConfiguration -Name $Name) } | Should -Throw $Message
         }
 
         It 'rejects a check without tests' {
@@ -178,7 +178,7 @@ Describe 'Security check mutation testing' {
         }
 
         It 'rejects a test without <Key>' -ForEach @(@{ Key = 'Path' }, @{ Key = 'FullName' }) {
-            $configuration = New-TestConfiguration
+            $configuration = Get-TestConfiguration
             $configuration.Checks[0].Tests[0].Remove($Key)
 
             { Assert-SecurityCheckConfiguration -Marker $marker -Configuration $configuration } | Should -Throw '*test without Path and FullName*'
@@ -187,14 +187,14 @@ Describe 'Security check mutation testing' {
         It 'rejects a marker used twice' {
             $twice = @($marker[0], [pscustomobject]@{ Name = 'sample-check'; File = 'tools/Other.psm1'; Line = 5; Function = 'Test-Other' })
 
-            { Assert-SecurityCheckConfiguration -Marker $twice -Configuration (New-TestConfiguration) } | Should -Throw '*marked more than once*'
+            { Assert-SecurityCheckConfiguration -Marker $twice -Configuration (Get-TestConfiguration) } | Should -Throw '*marked more than once*'
         }
 
         It 'rejects an exception without <Key>' -ForEach @(@{ Key = 'Mutant' }, @{ Key = 'Reason' }, @{ Key = 'Issue' }) {
             $incomplete = @{} + $exception
             $incomplete[$Key] = ' '
 
-            { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (New-TestConfiguration -Exception @($incomplete)) } | Should -Throw "*lacks $Key*"
+            { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (Get-TestConfiguration -Exception @($incomplete)) } | Should -Throw "*lacks $Key*"
         }
 
         It 'rejects an exception whose issue is not a GitHub issue or pull request URL: <Issue>' -ForEach @(
@@ -205,21 +205,34 @@ Describe 'Security check mutation testing' {
             $invalid = @{} + $exception
             $invalid.Issue = $Issue
 
-            { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (New-TestConfiguration -Exception @($invalid)) } | Should -Throw '*must link an issue or pull request URL*'
+            { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (Get-TestConfiguration -Exception @($invalid)) } | Should -Throw '*must link an issue or pull request URL*'
         }
     }
 
     Context 'results' {
+        It 'classifies a worker result as <Expected> when <Case>' -ForEach @(
+            @{ Case = 'a test failed'; Result = @{ Passed = 3; Failed = 1; Errors = 0 }; Expected = 'Killed' }
+            @{ Case = 'all tests passed'; Result = @{ Passed = 3; Failed = 0; Errors = 0 }; Expected = 'Survived' }
+            @{ Case = 'a test failed and a container failed'; Result = @{ Passed = 0; Failed = 1; Errors = 1 }; Expected = 'Error' }
+            @{ Case = 'tests passed and a block failed'; Result = @{ Passed = 3; Failed = 0; Errors = 1 }; Expected = 'Error' }
+            @{ Case = 'no test ran'; Result = @{ Passed = 0; Failed = 0; Errors = 0 }; Expected = 'Error' }
+            @{ Case = 'the counters are missing'; Result = @{}; Expected = 'Error' }
+            @{ Case = 'the worker wrote no result'; Result = $null; Expected = 'Error' }
+        ) {
+            $status, $null = Get-MutationJobStatus -Result $Result
+
+            $status | Should -BeExactly $Expected
+        }
         BeforeAll {
             $script:exception = @{ Mutant = 'Sample: condition'; Reason = 'Equivalent.'; Issue = 'https://github.com/msucharda/devsecops-platform/issues/57' }
         }
 
         It 'accepts killed mutants' {
-            (Resolve-MutationResult -Result @(New-TestResult)).Problems.Count | Should -Be 0
+            (Resolve-MutationResult -Result @(Get-TestResult)).Problems.Count | Should -Be 0
         }
 
         It 'marks an excepted survivor and accepts it' {
-            $resolved = Resolve-MutationResult -Result @(New-TestResult -Status Survived) -Exception @($exception)
+            $resolved = Resolve-MutationResult -Result @(Get-TestResult -Status Survived) -Exception @($exception)
 
             $resolved.Problems.Count | Should -Be 0
             $resolved.Results[0].Status | Should -BeExactly 'Excepted'
@@ -231,26 +244,26 @@ Describe 'Security check mutation testing' {
             @{ Status = 'Error'; Message = '*ended with Error*' }
             @{ Status = ''; Message = '*ended with*' }
         ) {
-            $resolved = Resolve-MutationResult -Result @(New-TestResult -Status $Status)
+            $resolved = Resolve-MutationResult -Result @(Get-TestResult -Status $Status)
 
             $resolved.Problems | Should -HaveCount 1
             $resolved.Problems[0] | Should -BeLike $Message
         }
 
         It 'does not let an exception hide an error' {
-            $resolved = Resolve-MutationResult -Result @(New-TestResult -Status Error) -Exception @($exception)
+            $resolved = Resolve-MutationResult -Result @(Get-TestResult -Status Error) -Exception @($exception)
 
             $resolved.Problems[0] | Should -BeLike '*ended with Error*'
         }
 
         It 'reports an exception that matches no mutant' {
-            $resolved = Resolve-MutationResult -Result @(New-TestResult -Id 'Other') -Exception @($exception)
+            $resolved = Resolve-MutationResult -Result @(Get-TestResult -Id 'Other') -Exception @($exception)
 
             $resolved.Problems | Should -Contain "The mutation exception 'Sample: condition' matches no mutant. Remove it."
         }
 
         It 'reports an exception that matches only by case' {
-            $resolved = Resolve-MutationResult -Result @(New-TestResult -Id 'sample: condition' -Status Survived) -Exception @($exception)
+            $resolved = Resolve-MutationResult -Result @(Get-TestResult -Id 'sample: condition' -Status Survived) -Exception @($exception)
 
             $resolved.Problems | Should -Contain "The mutation exception 'Sample: condition' matches no mutant. Remove it."
             $resolved.Results[0].Status | Should -BeExactly 'Survived'
@@ -258,7 +271,7 @@ Describe 'Security check mutation testing' {
         }
 
         It 'reports a stale exception of a killed mutant' {
-            $resolved = Resolve-MutationResult -Result @(New-TestResult) -Exception @($exception)
+            $resolved = Resolve-MutationResult -Result @(Get-TestResult) -Exception @($exception)
 
             $resolved.Problems | Should -Contain "The mutation exception 'Sample: condition' is stale: the mutant is killed. Remove it."
         }

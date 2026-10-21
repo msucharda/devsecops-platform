@@ -3,7 +3,7 @@ BeforeAll {
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
     Import-Module (Join-Path $repoRoot 'tools/InstanceSetup.psm1') -Force
 
-    function New-TestEvidence {
+    function Get-TestEvidenceRecord {
         param([Parameter(Mandatory)][string] $Phase)
 
         $alias = @{ plan = 'reader'; apply = 'writer'; rulesetPlan = 'rulesets'; wrongSubject = $null }[$Phase]
@@ -44,23 +44,19 @@ BeforeAll {
 
 Describe 'Acceptance run evidence' {
     BeforeEach {
-        $global:TestEvidence = @{}
-        foreach ($name in @('plan', 'rulesetPlan', 'wrongSubject', 'apply')) { $global:TestEvidence[$name] = New-TestEvidence -Phase $name }
-        $global:TestDownloadExitCode = 0
+        $script:TestEvidence = @{}
+        foreach ($name in @('plan', 'rulesetPlan', 'wrongSubject', 'apply')) { $script:TestEvidence[$name] = Get-TestEvidenceRecord -Phase $name }
+        $script:TestDownloadExitCode = 0
         Mock gh -ModuleName InstanceSetup {
             $target = $args[[array]::IndexOf($args, '--dir') + 1]
-            foreach ($phase in $global:TestEvidence.Keys) {
-                if ($null -eq $global:TestEvidence[$phase]) { continue }
+            foreach ($phase in $script:TestEvidence.Keys) {
+                if ($null -eq $script:TestEvidence[$phase]) { continue }
                 $folder = Join-Path $target "bootstrap-acceptance-$phase"
                 $null = New-Item -ItemType Directory -Path $folder -Force
-                ConvertTo-Json -InputObject $global:TestEvidence[$phase] -Depth 10 | Set-Content -LiteralPath (Join-Path $folder 'result.json')
+                ConvertTo-Json -InputObject $script:TestEvidence[$phase] -Depth 10 | Set-Content -LiteralPath (Join-Path $folder 'result.json')
             }
-            $global:LASTEXITCODE = $global:TestDownloadExitCode
+            $global:LASTEXITCODE = $script:TestDownloadExitCode
         }
-    }
-
-    AfterAll {
-        Remove-Variable -Name TestEvidence, TestDownloadExitCode -Scope Global -ErrorAction SilentlyContinue
     }
 
     It 'stores the evidence of every phase of the successful run' {
@@ -76,7 +72,7 @@ Describe 'Acceptance run evidence' {
     }
 
     It 'accepts the requested subset of phases' {
-        $global:TestEvidence.apply = $null
+        $script:TestEvidence.apply = $null
 
         $directory = Invoke-TestEvidence -Phases plan, rulesetPlan, wrongSubject
 
@@ -84,13 +80,13 @@ Describe 'Acceptance run evidence' {
     }
 
     It 'rejects a failed evidence download' {
-        $global:TestDownloadExitCode = 1
+        $script:TestDownloadExitCode = 1
 
         { Invoke-TestEvidence } | Should -Throw '*Downloading acceptance evidence failed*'
     }
 
     It 'rejects missing evidence of a phase' {
-        $global:TestEvidence.rulesetPlan = $null
+        $script:TestEvidence.rulesetPlan = $null
 
         { Invoke-TestEvidence } | Should -Throw '*no evidence for rulesetPlan*'
     }
@@ -108,7 +104,7 @@ Describe 'Acceptance run evidence' {
         @{ Phase = 'plan'; Case = 'another run attempt'; Field = 'runAttempt'; Value = '1' }
         @{ Phase = 'wrongSubject'; Case = 'another version'; Field = 'version'; Value = 2 }
     ) {
-        $global:TestEvidence[$Phase][$Field] = $Value
+        $script:TestEvidence[$Phase][$Field] = $Value
 
         { Invoke-TestEvidence } | Should -Throw "*$Phase evidence does not belong to this successful immutable run*"
     }
@@ -119,7 +115,7 @@ Describe 'Acceptance run evidence' {
         @{ Phase = 'rulesetPlan'; Case = 'another authorization key'; Field = 'authorizationFingerprint'; Value = 'SHA256:otherKey' }
         @{ Phase = 'plan'; Case = 'an authorization key in another case'; Field = 'authorizationFingerprint'; Value = 'SHA256:AUTHORIZATIONKEY' }
     ) {
-        $global:TestEvidence[$Phase][$Field] = $Value
+        $script:TestEvidence[$Phase][$Field] = $Value
 
         { Invoke-TestEvidence } | Should -Throw "*$Phase evidence tested another App key*"
     }
@@ -131,8 +127,8 @@ Describe 'Acceptance run evidence' {
         @{ Phase = 'rulesetPlan'; Check = 'otherModuleStateDenied'; Case = 'false'; Value = $false }
         @{ Phase = 'wrongSubject'; Check = 'wrongSubjectRejected'; Case = 'false'; Value = $false }
     ) {
-        if ($null -eq $Value) { $global:TestEvidence[$Phase].checks.Remove($Check) }
-        else { $global:TestEvidence[$Phase].checks[$Check] = $Value }
+        if ($null -eq $Value) { $script:TestEvidence[$Phase].checks.Remove($Check) }
+        else { $script:TestEvidence[$Phase].checks[$Check] = $Value }
 
         { Invoke-TestEvidence } | Should -Throw "*$Phase evidence did not verify $Check*"
     }
