@@ -76,6 +76,11 @@ run "installs_every_app_into_both_organizations" {
     condition     = terraform_data.installation["workloads/Iv23liBBBBBBBBBBBBBB"].input.client_id == "Iv23liBBBBBBBBBBBBBB"
     error_message = "An installation must carry its App client ID."
   }
+
+  assert {
+    condition     = terraform_data.installation_guard["workloads/Iv23liBBBBBBBBBBBBBB"].input == terraform_data.installation["workloads/Iv23liBBBBBBBBBBBBBB"].input
+    error_message = "The installation guard must uninstall the same App on destroy."
+  }
 }
 
 run "uses_legacy_names_without_identifier" {

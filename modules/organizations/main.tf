@@ -75,12 +75,35 @@ resource "terraform_data" "organization" {
   }
 }
 
+# Uninstalls the App on destroy, even when terraform_data.installation is tainted after an interrupted installation
+# (Terraform runs no destroy provisioner for a tainted resource). Without it, removing the client ID from
+# app_client_ids would forget a tainted installation and leave the App installed. The guard has no create provisioner,
+# so it is never tainted; the installation depends on it, so the guard is created first and destroyed last.
+resource "terraform_data" "installation_guard" {
+  for_each = local.installations
+
+  input = merge(local.organizations[each.value.kind], { client_id = each.value.client_id })
+
+  triggers_replace = [terraform_data.organization[each.value.kind].id, local.organizations[each.value.kind], each.value.client_id]
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-OrganizationChange.ps1", "-Action"]
+    command     = "UninstallApp"
+    environment = {
+      ORGANIZATIONS_INPUT = jsonencode(self.input)
+    }
+  }
+}
+
 resource "terraform_data" "installation" {
   for_each = local.installations
 
   input = merge(local.organizations[each.value.kind], { client_id = each.value.client_id })
 
   triggers_replace = [terraform_data.organization[each.value.kind].id, local.organizations[each.value.kind], each.value.client_id]
+
+  depends_on = [terraform_data.installation_guard]
 
   provisioner "local-exec" {
     interpreter = local.provisioner

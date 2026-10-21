@@ -631,6 +631,40 @@ Describe 'Organizations module against the documented GitHub API' {
         }
     }
 
+    Context 'ConvertTo-OrganizationStateResult' {
+        BeforeEach {
+            $state = [ordered]@{
+                exists = $true; login = 'demo-a1b2c3-actions'
+                installations = @([ordered]@{ client_id = 'Iv23liExample01'; repository_selection = 'none'; repositories = @() })
+            }
+            $check = @{ Organization = 'demo-a1b2c3-actions'; ClientId = @('Iv23liExample01') }
+        }
+
+        It 'serializes a compliant state as an empty flat violations array' {
+            $violations = Get-OrganizationStateViolation -State $state @check
+
+            $result = ConvertTo-OrganizationStateResult -State $state -Violation $violations | ConvertFrom-Json -AsHashtable
+
+            $result.violations | Should -BeExactly '[]'
+            $result.state | ConvertFrom-Json -AsHashtable | ForEach-Object { $_.login } | Should -BeExactly 'demo-a1b2c3-actions'
+        }
+
+        It 'serializes <Count> violations as a flat array of messages' -ForEach @(
+            @{ Count = 1; Missing = @('Iv23liMissing01') }
+            @{ Count = 2; Missing = @('Iv23liMissing01', 'Iv23liMissing02') }
+        ) {
+            $violations = Get-OrganizationStateViolation -State $state -Organization 'demo-a1b2c3-actions' -ClientId (@('Iv23liExample01') + $Missing)
+
+            $result = ConvertTo-OrganizationStateResult -State $state -Violation $violations | ConvertFrom-Json -AsHashtable
+            $decoded = ConvertFrom-Json $result.violations -NoEnumerate
+
+            $decoded -is [array] | Should -BeTrue
+            $decoded.Count | Should -Be $Count
+            $decoded | ForEach-Object { $_ | Should -BeOfType [string] }
+            $decoded[0] | Should -BeExactly "App 'Iv23liMissing01' is not installed in organization 'demo-a1b2c3-actions'."
+        }
+    }
+
     Context 'Get-OrganizationStateViolation' {
         BeforeEach {
             $compliant = [ordered]@{
@@ -779,8 +813,11 @@ Describe 'Organizations Terraform lifecycle' {
         $nativeTerraform = (Get-Command terraform -CommandType Application -ErrorAction Stop).Source
         $fakeChange = @(
             'param([Parameter(Mandatory)][string] $Action)'
-            '$organization = (ConvertFrom-Json $env:ORGANIZATIONS_INPUT).organization'
+            '$resourceInput = ConvertFrom-Json $env:ORGANIZATIONS_INPUT'
+            '$organization = $resourceInput.organization'
             'Add-Content -LiteralPath $env:FAKE_ORGANIZATIONS_LOG -Value "$Action $organization"'
+            'if ($Action -cin @(''InstallApp'', ''UninstallApp'')) { Add-Content -LiteralPath $env:FAKE_ORGANIZATIONS_LOG -Value "$Action $organization/$($resourceInput.client_id)" }'
+            'if ($Action -ceq ''InstallApp'' -and $env:FAKE_ORGANIZATIONS_FAIL_INSTALL -ceq "$organization/$($resourceInput.client_id)") { throw ''interrupted'' }'
             'if ($Action -ceq ''CreateOrganization'') {'
             '    Add-Content -LiteralPath $env:FAKE_ORGANIZATIONS_LOG -Value "AllowExisting $organization $((ConvertFrom-Json $env:ORGANIZATIONS_INPUT).allow_existing)"'
             '}'
@@ -822,6 +859,7 @@ Describe 'Organizations Terraform lifecycle' {
         $env:FAKE_ORGANIZATIONS_LOG = $log
         $env:FAKE_ORGANIZATIONS_FAIL_CREATE = ''
         $env:FAKE_ORGANIZATIONS_EXISTING = ''
+        $env:FAKE_ORGANIZATIONS_FAIL_INSTALL = ''
 
         function Invoke-LifecycleTerraform {
             $output = & $nativeTerraform "-chdir=$root" @args 2>&1
@@ -833,7 +871,24 @@ Describe 'Organizations Terraform lifecycle' {
     }
 
     AfterEach {
-        Remove-Item Env:\FAKE_ORGANIZATIONS_LOG, Env:\FAKE_ORGANIZATIONS_FAIL_CREATE, Env:\FAKE_ORGANIZATIONS_EXISTING -ErrorAction SilentlyContinue
+        Remove-Item Env:\FAKE_ORGANIZATIONS_LOG, Env:\FAKE_ORGANIZATIONS_FAIL_CREATE, Env:\FAKE_ORGANIZATIONS_EXISTING, Env:\FAKE_ORGANIZATIONS_FAIL_INSTALL -ErrorAction SilentlyContinue
+    }
+
+    It 'uninstalls an App after an interrupted installation when its client ID is removed' {
+        $variables.app_client_ids = @('Iv23liAAAAAAAAAAAAAA')
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json $variables -Depth 10)
+        $env:FAKE_ORGANIZATIONS_FAIL_INSTALL = 'demo-actions/Iv23liAAAAAAAAAAAAAA'
+        (Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color).ExitCode | Should -Not -Be 0
+        (Invoke-LifecycleTerraform state show -no-color 'terraform_data.installation["actions/Iv23liAAAAAAAAAAAAAA"]').Output | Should -BeLike '*tainted*'
+
+        $env:FAKE_ORGANIZATIONS_FAIL_INSTALL = ''
+        $variables.app_client_ids = @()
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json $variables -Depth 10)
+        $apply = Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color
+
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        Get-Content -LiteralPath $log | Should -Contain 'UninstallApp demo-actions/Iv23liAAAAAAAAAAAAAA'
+        (Invoke-LifecycleTerraform state list -no-color).Output | Should -Not -BeLike '*installation*'
     }
 
     It 'fails destroy while an organization exists after an interrupted creation' {

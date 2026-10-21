@@ -490,7 +490,29 @@ function Get-OrganizationStateViolation {
     return , [string[]] $violations.ToArray()
 }
 
+function ConvertTo-OrganizationStateResult {
+    <#
+    .SYNOPSIS
+    Serializes the state and its violations into the string map of the Terraform external data source.
+    .DESCRIPTION
+    The external data source accepts only string values, so both values are JSON documents. The violations are a
+    flat JSON array of messages; an empty array means compliant.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $State,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]] $Violation
+    )
+
+    ConvertTo-Json -Compress -InputObject @{
+        state      = ConvertTo-Json -InputObject $State -Depth 10 -Compress
+        # -InputObject keeps an empty or single-item array as an array; -AsArray would nest it once more.
+        violations = ConvertTo-Json -InputObject ([string[]] $Violation) -Compress
+    }
+}
+
 Export-ModuleMember -Function Invoke-OrganizationsApi, Invoke-OrganizationsGraphQL, Get-EnterpriseOrganizationLogin,
 Find-EnterpriseOrganization, New-EnterpriseOrganization, Assert-EnterpriseOrganizationRemoved, Get-OrganizationAppInstallation,
 Find-OrganizationAppInstallation, Get-OrganizationInstallationRepository, Install-OrganizationApp, Uninstall-OrganizationApp,
-Get-InstanceOrganizationState, Get-OrganizationStateViolation
+Get-InstanceOrganizationState, Get-OrganizationStateViolation, ConvertTo-OrganizationStateResult

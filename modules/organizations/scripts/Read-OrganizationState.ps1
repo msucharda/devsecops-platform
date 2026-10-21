@@ -26,10 +26,7 @@ try {
     $state = Get-InstanceOrganizationState -ApiUrl $query['api_url'] -Enterprise $query['enterprise'] -Organization $query['organization'] `
         -ClientId ([string[]] $clientIds)
     $violations = Get-OrganizationStateViolation -State $state -Organization $query['organization'] -ClientId ([string[]] $clientIds)
-    [Console]::Out.Write((ConvertTo-Json -Compress -InputObject @{
-                state      = ConvertTo-Json -InputObject $state -Depth 10 -Compress
-                violations = ConvertTo-Json -InputObject $violations -Compress -AsArray
-            }))
+    [Console]::Out.Write((ConvertTo-OrganizationStateResult -State $state -Violation $violations))
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
