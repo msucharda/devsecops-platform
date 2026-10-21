@@ -158,12 +158,15 @@ Describe 'Module runner with local Terraform' {
         $organizations.workloads | Should -BeExactly $Workloads
     }
 
-    It 'refuses a platform organization of another instance before Terraform' {
+    It 'refuses a platform organization of another instance before Terraform and removes the stale output' {
         function terraform { throw 'Terraform must not run.' }
+        $stale = Join-Path $arguments.ArtifactsPath 'foundation.json'
+        $null = New-Item -ItemType Directory -Path $arguments.ArtifactsPath -Force
+        Set-Content -LiteralPath $stale -Value '{"stale":true}'
 
         { & $runner -Module foundation -Action plan -PlatformOrganization 'other-a1b2c3-platform' @arguments 6>$null } |
             Should -Throw "*does not match instance.name 'demo'*"
-        Test-Path -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json') | Should -BeFalse
+        Test-Path -LiteralPath $stale | Should -BeFalse
     }
 
     It 'passes no instance organizations without a platform organization' {

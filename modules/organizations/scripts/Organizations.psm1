@@ -197,7 +197,7 @@ function New-EnterpriseOrganization {
     $existing = Find-EnterpriseOrganization -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization
     if ($existing) {
         if (-not $AllowExisting) {
-            throw "Organization '$existing' already exists in enterprise '$Enterprise'. The module adopts an existing organization only when its name contains the deployment identifier. Delete it, or bootstrap a new deployment with a new identifier."
+            throw "Organization '$existing' already exists in enterprise '$Enterprise'. The module adopts an existing organization only when its name contains the deployment identifier. GitHub retains deleted organization names, so retrying the same name does not help: clean up this deployment and bootstrap a new deployment with a new deployment identifier."
         }
         Write-Information "Organization '$existing' already exists in enterprise '$Enterprise'; the module adopts it."
         return $existing

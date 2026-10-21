@@ -151,10 +151,6 @@ $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
 if ($Module -cnotin (Get-PlatformModuleSelection -Instance $instance -Modules $modules)) {
     throw "Module '$Module' is not selected in $.modules or required by a selected module."
 }
-$organizations = $null
-if ($PSBoundParameters.ContainsKey('PlatformOrganization')) {
-    $organizations = Get-PlatformInstanceOrganization -InstanceName $instance['instance']['name'] -PlatformOrganization $PlatformOrganization
-}
 $moduleRoot = [IO.Path]::GetFullPath((Join-Path $ModulesPath $Module))
 $outputName = $Module
 $stateKey = 'terraform.tfstate'
@@ -172,6 +168,10 @@ if (-not (Test-Path -LiteralPath $moduleRoot -PathType Container)) {
 $artifactFile = [IO.Path]::GetFullPath((Join-Path $ArtifactsPath "$outputName.json"))
 if (Test-Path -LiteralPath $artifactFile -PathType Leaf) {
     [IO.File]::Delete($artifactFile)
+}
+$organizations = $null
+if ($PSBoundParameters.ContainsKey('PlatformOrganization')) {
+    $organizations = Get-PlatformInstanceOrganization -InstanceName $instance['instance']['name'] -PlatformOrganization $PlatformOrganization
 }
 if ($Action -eq 'destroy' -and -not $instance['teardown']['allowed']) {
     throw "Destroy is denied: $.teardown.allowed must be true."

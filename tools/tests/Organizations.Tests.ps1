@@ -279,7 +279,7 @@ Describe 'Organizations module against the documented GitHub API' {
         ) {
             Add-StubOrganization -Login $Login
 
-            { New-EnterpriseOrganization @target @create } | Should -Throw '*already exists*only when its name contains the deployment identifier*new identifier*'
+            { New-EnterpriseOrganization @target @create } | Should -Throw '*already exists*only when its name contains the deployment identifier*retains deleted organization names*new deployment identifier*'
             (Get-StubRequest createOrganization).Count | Should -Be 0
         }
 
