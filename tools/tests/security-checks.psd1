@@ -7,7 +7,7 @@
             Name = 'github-app-owner'
             Tests = @(
                 @{ Path = 'tools/tests/GitHubAppOwner.Tests.ps1'; FullName = @('*') }
-                @{ Path = 'tools/tests/InstanceSetup.Tests.ps1'; FullName = @('*accepts the observed enterprise owner login*') }
+                @{ Path = 'tools/tests/InstanceSetup.Tests.ps1'; FullName = @('*accepts the <Case> owner for a Members-only App*', '*rejects and forgets an App owned by another enterprise*') }
                 @{ Path = 'tools/tests/GitHubAppToken.Tests.ps1'; FullName = @('*rejects an invalid enterprise owner*', '*issues a members-only token after verifying enterprise ownership*') }
             )
         }
