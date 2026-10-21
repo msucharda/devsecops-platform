@@ -58,14 +58,18 @@ Describe 'enterprise-baseline organization settings contract' {
 Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' {
     BeforeAll {
         $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline'
-        $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new() })
+        $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); CodeSecurity = $null })
+        $codeSecurityStub = Join-Path $PSScriptRoot 'CodeSecurityStub.psm1'
+        Import-Module $codeSecurityStub -Force
         $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
         $listener.Start()
         $port = $listener.LocalEndpoint.Port
         # Serves GET and PATCH /orgs/demo; DropNextPatch applies a PATCH and closes the connection without a response.
+        # Other paths go to the code security stub, whose Drop also closes the connection without a response.
         $stub = Start-ThreadJob -ScriptBlock {
             $listener = $using:listener
             $state = $using:stubState
+            Import-Module $using:codeSecurityStub
             while ($true) {
                 $client = $listener.AcceptTcpClient()
                 try {
@@ -73,19 +77,30 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
                     $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $false, 1024, $true)
                     $requestLine = $reader.ReadLine()
                     $length = 0
+                    $headers = @{}
                     while ($line = $reader.ReadLine()) {
                         if ($line -match '^Content-Length:\s*(\d+)$') { $length = [int] $Matches[1] }
+                        if ($line -match '^(?<name>[^:]+):\s*(?<value>.*)$') { $headers[$Matches['name']] = $Matches['value'] }
                     }
                     $buffer = [char[]]::new($length)
                     $read = 0
                     while ($read -lt $length) { $read += $reader.Read($buffer, $read, $length - $read) }
                     $method, $path = $requestLine.Split(' ')[0, 1]
-                    $state.Requests.Add("$method $path")
-                    if ($path -cne '/orgs/demo' -or $method -notin @('GET', 'PATCH')) {
+                    $link = $null
+                    if ($path -cne '/orgs/demo' -and $state.CodeSecurity) {
+                        $reply = Invoke-CodeSecurityStubRequest -State $state.CodeSecurity -Method $method -PathAndQuery $path -Headers $headers -Body ([string]::new($buffer))
+                        if ($reply.Drop) { continue }
+                        $status = "$($reply.Status) Stub"
+                        $body = [string] $reply.Body
+                        $link = $reply.Link
+                    }
+                    elseif ($path -cne '/orgs/demo' -or $method -notin @('GET', 'PATCH')) {
+                        $state.Requests.Add("$method $path")
                         $status = '404 Not Found'
                         $body = '{"message":"Not Found"}'
                     }
                     else {
+                        $state.Requests.Add("$method $path")
                         if ($method -eq 'PATCH') {
                             $changes = ([string]::new($buffer)) | ConvertFrom-Json -AsHashtable
                             foreach ($key in $changes.Keys) { $state.Organization[$key] = $changes[$key] }
@@ -98,7 +113,8 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
                         $body = ConvertTo-Json -InputObject $state.Organization -Depth 20 -Compress
                     }
                     $bytes = [Text.Encoding]::UTF8.GetBytes($body)
-                    $header = "HTTP/1.1 $status`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
+                    $linkHeader = if ($link) { "Link: $link`r`n" } else { '' }
+                    $header = "HTTP/1.1 $status`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`n$($linkHeader)Connection: close`r`n`r`n"
                     $headerBytes = [Text.Encoding]::ASCII.GetBytes($header)
                     $stream.Write($headerBytes, 0, $headerBytes.Length)
                     $stream.Write($bytes, 0, $bytes.Length)
@@ -110,6 +126,11 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
             }
         }
 
+        $previousBearer = $env:REST_API_BEARER
+        $previousTimeout = $env:CODE_SECURITY_ATTACHMENT_TIMEOUT
+        $env:REST_API_BEARER = 'stub-token'
+        $env:CODE_SECURITY_ATTACHMENT_TIMEOUT = '0'
+
         function Invoke-StubTerraform {
             $output = & terraform "-chdir=$root" @args -no-color 2>&1 | Out-String
             [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
@@ -117,6 +138,8 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
     }
 
     AfterAll {
+        $env:REST_API_BEARER = $previousBearer
+        $env:CODE_SECURITY_ATTACHMENT_TIMEOUT = $previousTimeout
         $listener.Stop()
         $stub | Stop-Job -PassThru | Remove-Job -Force
     }
@@ -125,6 +148,7 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         New-Item -ItemType Directory -Path $root | Out-Null
         Copy-Item -Path (Join-Path $moduleRoot '*.tf'), (Join-Path $moduleRoot '.terraform.lock.hcl') -Destination $root
+        Copy-Item -Path (Join-Path $moduleRoot 'scripts') -Destination $root -Recurse
         Set-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @"
 terraform {
   backend "local" {}
@@ -133,12 +157,29 @@ terraform {
 provider "restapi" {
   uri = "http://127.0.0.1:$port"
 }
+
+locals {
+  github_api_url = "http://127.0.0.1:$port"
+}
 "@
+        if ($IsWindows) {
+            # The external provider cannot start the Microsoft Store app execution alias of pwsh directly.
+            Add-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @'
+data "external" "code_security_state" {
+  program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "./scripts/Read-CodeSecurityState.ps1"]
+}
+'@
+        }
         Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json -Depth 10 -InputObject @{
-            instance = @{ name = 'demo'; github = @{ host = 'example.ghe.com'; enterprise = 'example' } }
+            instance = @{
+                name = 'demo'; github = @{ host = 'example.ghe.com'; enterprise = 'example' }
+                customPatterns = @(@{ name = 'Internal token'; secretRegex = 'itk_[0-9a-f]{32}' })
+            }
             target_organizations = @('demo')
             prerequisites = @{}
+            secret_scanning_bypass_reviewers = @(@{ reviewer_type = 'TEAM'; reviewer_id = 42 })
         })
+        $stubState.CodeSecurity = Initialize-CodeSecurityStub -Organization demo -Origin "http://127.0.0.1:$port" -Token stub-token
         $stubState.Organization = Get-GitHubApiFixture -Name orgs/get -Set @{
             login = 'demo'
             members_can_change_repo_visibility = $false
@@ -206,5 +247,80 @@ provider "restapi" {
 
         $plan.ExitCode | Should -Be 1
         $plan.Output | Should -Match 'does not match the managed baseline'
+    }
+
+    It 'converges on the next apply when the <Object> POST response is lost' -ForEach @(
+        @{ Object = 'configuration'; Request = '^POST /orgs/demo/code-security/configurations$' }
+        @{ Object = 'custom pattern'; Request = '^POST /orgs/demo/secret-scanning/custom-patterns$' }
+    ) {
+        $codeSecurity = $stubState.CodeSecurity
+        $codeSecurity.DropNext = $Request
+
+        $interrupted = Invoke-StubTerraform apply -input=false -auto-approve
+        $resumed = Invoke-StubTerraform apply -input=false -auto-approve
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+
+        $codeSecurity.DropNext | Should -BeNullOrEmpty -Because 'the stub must have lost the response'
+        $interrupted.ExitCode | Should -Not -Be 0
+        $resumed.ExitCode | Should -Be 0 -Because $resumed.Output
+        $plan.ExitCode | Should -Be 0 -Because $plan.Output
+        $managed = @($codeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })
+        $managed.Count | Should -Be 1
+        $managed[0]['name'] | Should -Be 'platform-baseline'
+        $codeSecurity.Defaults.public | Should -Be $managed[0]['id']
+        $codeSecurity.Defaults.private_and_internal | Should -Be $managed[0]['id']
+        foreach ($repository in $codeSecurity.Repositories.Values) { $repository.status | Should -Be 'attached' }
+        @($codeSecurity.Patterns).Count | Should -Be 1
+        $codeSecurity.Patterns[0]['name'] | Should -Be 'Internal token'
+        $codeSecurity.Patterns[0]['push_protection_enabled'] | Should -BeTrue
+    }
+
+    It 'removes the configuration and patterns when a destroy loses a DELETE response and is repeated' {
+        (Invoke-StubTerraform apply -input=false -auto-approve).ExitCode | Should -Be 0
+        $codeSecurity = $stubState.CodeSecurity
+        $codeSecurity.DropNext = '^DELETE /orgs/demo/code-security/configurations/[0-9]+$'
+
+        $interrupted = Invoke-StubTerraform destroy -input=false -auto-approve
+        $resumed = Invoke-StubTerraform destroy -input=false -auto-approve
+        $remaining = Invoke-StubTerraform state list
+
+        $interrupted.ExitCode | Should -Not -Be 0
+        $resumed.ExitCode | Should -Be 0 -Because $resumed.Output
+        $remaining.Output.Trim() | Should -BeNullOrEmpty
+        @($codeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }) | Should -BeNullOrEmpty
+        @($codeSecurity.Patterns) | Should -BeNullOrEmpty
+        $codeSecurity.Defaults.public | Should -BeNullOrEmpty
+    }
+
+    It 'fails the plan when the code security state drifts: <Case>' -ForEach @(
+        @{ Case = 'configuration deleted'; Message = 'has no organization code security configuration'; Drift = {
+            param($s)
+            # Deleting a configuration also removes its default role and its attachments.
+            $c = $s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }
+            $null = $s.Configurations.Remove($c)
+            $s.Defaults.public = $null; $s.Defaults.private_and_internal = $null
+            foreach ($repository in $s.Repositories.Values) { $repository.configuration = $null; $repository.status = $null } } }
+        @{ Case = 'setting changed'; Message = 'does not match the managed settings'; Drift = {
+            param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['dependabot_alerts'] = 'disabled' } }
+        @{ Case = 'enforcement removed'; Message = 'does not match the managed settings'; Drift = {
+            param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['enforcement'] = 'unenforced' } }
+        @{ Case = 'bypass reviewer changed'; Message = 'bypass reviewers'; Drift = {
+            param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['secret_scanning_delegated_bypass_options']['reviewers'][0]['reviewer_id'] = 43 } }
+        @{ Case = 'default removed for public repositories'; Message = 'not the only default'; Drift = { param($s) $s.Defaults.public = $null } }
+        @{ Case = 'repository attachment failed'; Message = 'pending or failed'; Drift = { param($s) $s.Repositories['demo/app'].status = 'failed' } }
+        @{ Case = 'repository moved to another configuration'; Message = 'attached to another code security configuration'; Drift = {
+            param($s) $s.Repositories['demo/lib'].configuration = 17 } }
+        @{ Case = 'pattern regex changed'; Message = 'missing or differs from customPatterns'; Drift = { param($s) $s.Patterns[0]['pattern'] = 'itk_.*' } }
+        @{ Case = 'pattern deleted'; Message = 'missing or differs from customPatterns'; Drift = { param($s) $s.Patterns.RemoveAt(0) } }
+        @{ Case = 'push protection disabled'; Message = 'push protection disabled'; Drift = { param($s) $s.Patterns[0]['push_protection_enabled'] = $false } }
+    ) {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        & $Drift $stubState.CodeSecurity
+
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+
+        $plan.ExitCode | Should -Be 1 -Because $plan.Output
+        ($plan.Output -replace '\s+', ' ') | Should -BeLike "*$Message*"
     }
 }

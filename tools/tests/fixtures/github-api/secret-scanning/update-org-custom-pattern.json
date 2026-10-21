@@ -1,0 +1,48 @@
+{
+  "source": {
+    "operation": "PATCH /orgs/{org}/secret-scanning/custom-patterns/{pattern_id}",
+    "operationId": "secret-scanning/update-org-custom-pattern",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/secret-scanning/custom-patterns#update-an-organization-custom-pattern",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/secret-scanning-custom-pattern"
+  },
+  "requestProperties": [
+    "pattern",
+    "start_delimiter",
+    "end_delimiter",
+    "must_match",
+    "must_not_match",
+    "custom_pattern_version"
+  ],
+  "required": {
+    "": [
+      "id",
+      "name",
+      "pattern",
+      "slug",
+      "state",
+      "push_protection_enabled"
+    ]
+  },
+  "body": {
+    "id": 1,
+    "name": "Example Custom Pattern",
+    "pattern": "updated_secret_[0-9A-Z]{16}",
+    "slug": "example_custom_pattern",
+    "state": "published",
+    "push_protection_enabled": true,
+    "start_delimiter": "[^0-9A-Za-z]",
+    "end_delimiter": "[^0-9A-Za-z]",
+    "must_match": [
+      "updated_secret_[0-9]{2}*"
+    ],
+    "must_not_match": [
+      "updated_secret_1234567890ABCDEF"
+    ],
+    "custom_pattern_version": "0ujsswThIGTUYm2K8FjOOfXtY1K",
+    "created_at": "2024-01-15T10:30:00Z",
+    "updated_at": "2024-06-01T12:00:00Z"
+  }
+}

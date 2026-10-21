@@ -1,0 +1,75 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/code-security/configurations/{configuration_id}",
+    "operationId": "code-security/get-configuration",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/code-security/configurations#get-a-code-security-configuration",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/code-security-configuration",
+    "note": "The schema declares no required properties; required lists the documented properties the module reads."
+  },
+  "required": {
+    "": [
+      "id",
+      "name",
+      "target_type",
+      "enforcement",
+      "advanced_security",
+      "dependency_graph",
+      "dependabot_alerts",
+      "dependabot_security_updates",
+      "code_scanning_default_setup",
+      "secret_scanning",
+      "secret_scanning_push_protection",
+      "secret_scanning_validity_checks",
+      "secret_scanning_delegated_bypass",
+      "secret_scanning_delegated_bypass_options"
+    ]
+  },
+  "body": {
+    "id": 1325,
+    "target_type": "organization",
+    "name": "octo-org recommended settings",
+    "description": "This is a code security configuration for octo-org",
+    "advanced_security": "enabled",
+    "dependency_graph": "enabled",
+    "dependency_graph_autosubmit_action": "enabled",
+    "dependency_graph_autosubmit_action_options": {
+      "labeled_runners": false
+    },
+    "dependabot_alerts": "enabled",
+    "dependabot_security_updates": "not_set",
+    "code_scanning_default_setup": "disabled",
+    "code_scanning_default_setup_options": {
+      "runner_type": "not_set",
+      "runner_label": null
+    },
+    "code_scanning_options": {
+      "allow_advanced": false
+    },
+    "code_scanning_delegated_alert_dismissal": "disabled",
+    "secret_scanning": "enabled",
+    "secret_scanning_push_protection": "enabled",
+    "secret_scanning_delegated_bypass": "enabled",
+    "secret_scanning_delegated_bypass_options": {
+      "reviewers": [
+        {
+          "security_configuration_id": 1325,
+          "reviewer_id": 5678,
+          "reviewer_type": "TEAM"
+        }
+      ]
+    },
+    "secret_scanning_validity_checks": "disabled",
+    "secret_scanning_non_provider_patterns": "disabled",
+    "secret_scanning_generic_secrets": "disabled",
+    "secret_scanning_delegated_alert_dismissal": "disabled",
+    "private_vulnerability_reporting": "disabled",
+    "enforcement": "enforced",
+    "url": "https://api.github.com/orgs/octo-org/code-security/configurations/1325",
+    "html_url": "https://github.com/organizations/octo-org/settings/security_products/configurations/edit/1325",
+    "created_at": "2024-05-01T00:00:00Z",
+    "updated_at": "2024-05-01T00:00:00Z"
+  }
+}
