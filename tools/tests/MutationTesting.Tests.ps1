@@ -181,6 +181,15 @@ Describe 'Security check mutation testing' {
             { Get-SecurityCheckMutant -RepoPath $repo -Marker $marker } | Should -Throw '*has no mutable condition*'
         }
 
+        It 'fails closed when marked functions in different files generate the same mutant ID' {
+            $repo = Initialize-TestRepository -Content "# security-check: sample-check`nfunction Test-Sample { if (`$a) { throw 'no' } }"
+            Set-Content -LiteralPath (Join-Path $repo 'tools/Other.psm1') -Value "# security-check: other-check`nfunction test-sample { if (`$A) { throw 'no' } }" -NoNewline
+            $marker = @(Get-SecurityCheckMarker -RepoPath $repo)
+            $marker.Count | Should -Be 2
+
+            { Get-SecurityCheckMutant -RepoPath $repo -Marker $marker } | Should -Throw '*is also generated in*'
+        }
+
         It 'returns the mutated file text for each mutant' {
             $repo = Initialize-TestRepository -Content "# security-check: sample-check`nfunction Test-Sample { if (`$a) { throw 'no' } }"
             $marker = @(Get-SecurityCheckMarker -RepoPath $repo)

@@ -250,6 +250,7 @@ function Get-SecurityCheckMutant {
         [Parameter(Mandatory)][object[]] $Marker
     )
 
+    $ids = [System.Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($check in $Marker) {
         $path = Join-Path $RepoPath $check.File
         $text = [IO.File]::ReadAllText($path)
@@ -263,6 +264,9 @@ function Get-SecurityCheckMutant {
             $errors = $null
             $null = [System.Management.Automation.Language.Parser]::ParseInput($mutated, [ref] $null, [ref] $errors)
             if (@($errors).Count -gt 0) { throw "$($check.File):$($mutant.Line): the mutant '$($mutant.Description)' does not parse: $($errors[0].Message)" }
+            # Results and exceptions are keyed by Id, so a collision could let a killed mutant hide a survivor.
+            if ($ids.ContainsKey($mutant.Id)) { throw "$($check.File):$($mutant.Line): the mutant ID '$($mutant.Id)' is also generated in $($ids[$mutant.Id]). Rename one of the marked functions." }
+            $ids[$mutant.Id] = "$($check.File):$($mutant.Line)"
             $mutant | Add-Member -NotePropertyName Check -NotePropertyValue $check.Name
             $mutant | Add-Member -NotePropertyName File -NotePropertyValue $check.File
             $mutant | Add-Member -NotePropertyName Text -NotePropertyValue $mutated
