@@ -396,6 +396,7 @@ Describe 'Instance setup wizard' {
             @{ Policy = 'membersCanDeleteRepositoriesSetting' }
         ) {
             $setup = Get-TestSetup
+            $setup.Facts.RepositoryPoliciesDisabled = $true
             InModuleScope InstanceSetup -Parameters @{ Setup = $setup; Policy = $Policy } {
                 param($Setup, $Policy)
                 $script:testPolicies = @{
@@ -411,6 +412,18 @@ Describe 'Instance setup wizard' {
                 Mock Invoke-SetupGraphQL { throw 'Declined policies must not be changed.' }
                 $policySetup = $Setup
                 { Invoke-StepEnterprisePolicy -Setup $policySetup } | Should -Throw '*not enforced*'
+            }
+            $setup.Facts.RepositoryPoliciesDisabled | Should -BeFalse
+        }
+
+        It 'withdraws a previous policy verification when the retried policy read fails' {
+            $setup = Get-TestSetup
+            $setup.Facts.RepositoryPoliciesDisabled = $true
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Mock Get-SetupEnterprisePolicy { throw 'GitHub did not return the enterprise policies.' }
+                $policySetup = $Setup
+                { Invoke-StepEnterprisePolicy -Setup $policySetup } | Should -Throw '*did not return the enterprise policies*'
             }
             $setup.Facts.RepositoryPoliciesDisabled | Should -BeFalse
         }

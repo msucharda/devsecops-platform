@@ -1910,6 +1910,8 @@ function Invoke-StepEnterprisePolicy {
         'Repository creation, Repository visibility change and Repository deletion and transfer = members cannot. Then choose [r].'
     )
     Show-SetupMessage -Message 'AUTOMATIC: The wizard checks four repository policies through the API and changes them only after your confirmation.'
+    # A retry must not keep a verification from an earlier attempt if this attempt fails.
+    $Setup.Facts.RepositoryPoliciesDisabled = $false
     $policies = Get-SetupEnterprisePolicy -Setup $Setup
     $pending = @($script:PolicySettings.Keys | Where-Object { $policies[$_] -ne 'DISABLED' })
     if ($pending.Count -gt 0) {

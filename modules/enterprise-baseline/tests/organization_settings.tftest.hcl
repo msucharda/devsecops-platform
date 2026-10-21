@@ -310,7 +310,7 @@ run "rejects_a_github_response_that_allows_private_forks" {
   expect_failures = [restapi_object.organization_settings]
 }
 
-run "rejects_a_github_response_without_the_managed_fields" {
+run "rejects_a_github_response_without_default_repository_permission" {
   command = plan
 
   override_resource {
@@ -321,16 +321,110 @@ run "rejects_a_github_response_without_the_managed_fields" {
       api_response    = "{}"
       create_response = "{}"
       api_data = {
-        login                              = "demo-platform"
-        members_can_change_repo_visibility = "false"
-        members_can_delete_repositories    = "false"
+        members_can_create_repositories          = "false"
+        members_can_create_private_repositories  = "false"
+        members_can_create_internal_repositories = "false"
+        members_can_fork_private_repositories    = "false"
+        members_can_change_repo_visibility       = "false"
+        members_can_delete_repositories          = "false"
       }
     }
   }
 
   expect_failures = [restapi_object.organization_settings]
 }
+run "rejects_a_github_response_without_members_can_create_repositories" {
+  command = plan
 
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = {
+      id              = "mock"
+      api_response    = "{}"
+      create_response = "{}"
+      api_data = {
+        default_repository_permission            = "none"
+        members_can_create_private_repositories  = "false"
+        members_can_create_internal_repositories = "false"
+        members_can_fork_private_repositories    = "false"
+        members_can_change_repo_visibility       = "false"
+        members_can_delete_repositories          = "false"
+      }
+    }
+  }
+
+  expect_failures = [restapi_object.organization_settings]
+}
+run "rejects_a_github_response_without_members_can_create_private_repositories" {
+  command = plan
+
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = {
+      id              = "mock"
+      api_response    = "{}"
+      create_response = "{}"
+      api_data = {
+        default_repository_permission            = "none"
+        members_can_create_repositories          = "false"
+        members_can_create_internal_repositories = "false"
+        members_can_fork_private_repositories    = "false"
+        members_can_change_repo_visibility       = "false"
+        members_can_delete_repositories          = "false"
+      }
+    }
+  }
+
+  expect_failures = [restapi_object.organization_settings]
+}
+run "rejects_a_github_response_without_members_can_create_internal_repositories" {
+  command = plan
+
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = {
+      id              = "mock"
+      api_response    = "{}"
+      create_response = "{}"
+      api_data = {
+        default_repository_permission           = "none"
+        members_can_create_repositories         = "false"
+        members_can_create_private_repositories = "false"
+        members_can_fork_private_repositories   = "false"
+        members_can_change_repo_visibility      = "false"
+        members_can_delete_repositories         = "false"
+      }
+    }
+  }
+
+  expect_failures = [restapi_object.organization_settings]
+}
+run "rejects_a_github_response_without_members_can_fork_private_repositories" {
+  command = plan
+
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = {
+      id              = "mock"
+      api_response    = "{}"
+      create_response = "{}"
+      api_data = {
+        default_repository_permission            = "none"
+        members_can_create_repositories          = "false"
+        members_can_create_private_repositories  = "false"
+        members_can_create_internal_repositories = "false"
+        members_can_change_repo_visibility       = "false"
+        members_can_delete_repositories          = "false"
+      }
+    }
+  }
+
+  expect_failures = [restapi_object.organization_settings]
+}
 run "rejects_a_github_response_that_lets_members_change_visibility" {
   command = plan
 
