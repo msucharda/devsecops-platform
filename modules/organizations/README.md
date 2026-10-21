@@ -43,7 +43,7 @@ GraphQL odpověď HTTP 200 s `errors` je chyba. Odpověď bez `id` nebo s jiným
 
 ### Instalace Apps
 
-Pro každou dvojici organizace a `app_client_ids` modul zavolá `POST /enterprises/{enterprise}/apps/organizations/{org}/installations` s `repository_selection: none`. Existující instalaci s `repository_selection` `none` převezme. U `selected` modul přečte seznam repozitářů instalace (`GET .../installations/{installation_id}/repositories`, všechny stránky) a instalaci převezme, jen když je seznam prázdný. Instalaci s přístupem ke všem repozitářům nebo k aspoň jednomu repozitáři odmítne. Stejnou kontrolu provede po vytvoření nové instalace. Destroy instalace volá `DELETE .../installations/{installation_id}`; chybějící instalace nebo organizace je no-op.
+Pro každou dvojici organizace a `app_client_ids` modul zavolá `POST /enterprises/{enterprise}/apps/organizations/{org}/installations` s `repository_selection: none`. U existující instalace s `repository_selection` `selected` nebo `none` modul přečte seznam repozitářů instalace (`GET .../installations/{installation_id}/repositories`, všechny stránky) a instalaci převezme, jen když je seznam prázdný. Dokumentovaný enum odpovědi obsahuje jen `all` a `selected`; hodnotu `none` modul proto neověřuje podle názvu, ale podle prázdného seznamu repozitářů. Instalaci s přístupem ke všem repozitářům nebo k aspoň jednomu repozitáři odmítne. Stejnou kontrolu provede po vytvoření nové instalace. Destroy instalace volá `DELETE .../installations/{installation_id}`; chybějící instalace nebo organizace je no-op.
 
 ### Kontrola stavu
 
@@ -60,7 +60,7 @@ Nečitelná odpověď API ukončí čtení chybou; neznámý stav neprojde jako 
 
 - Přerušení po mutaci a před uložením state: Terraform označí prostředek jako tainted a další apply ho nahradí. Destroy provisioner u tainted prostředku neběží, proto absenci organizace při destroy ověřuje i prostředek `removal_guard` (viz Destroy a teardown). Tvorba organizaci najde. S identifikátorem nasazení ji převezme. U legacy názvu bez `adopt_organizations` běh skončí chybou; operátor ověří, že organizace patří instanci, a doplní její druh do `adopt_organizations`.
 - Přerušení po instalaci App: další apply instalaci najde a převezme.
-- Výměna organizace nahradí i její instalace (`triggers_replace`).
+- Změna identity organizace (host, enterprise, název) nahradí guard, organizaci i její instalace (`triggers_replace`). Destroy původních prostředků ověří, že původní organizace neexistuje; jinak apply skončí chybou dřív, než vytvoří novou organizaci stejného druhu. `terraform_data` mění `input` bez nahrazení, proto identita musí být i v `triggers_replace`.
 
 ### Destroy a teardown
 

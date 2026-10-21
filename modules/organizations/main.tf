@@ -27,6 +27,9 @@ resource "terraform_data" "removal_guard" {
 
   input = each.value
 
+  # terraform_data updates input in place; a new identity must replace the resource so that destroy checks the old one.
+  triggers_replace = each.value
+
   provisioner "local-exec" {
     when        = destroy
     interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-OrganizationChange.ps1", "-Action"]
@@ -42,7 +45,8 @@ resource "terraform_data" "removal_guard" {
 resource "terraform_data" "organization" {
   for_each = local.organizations
 
-  input = each.value
+  input            = each.value
+  triggers_replace = each.value
 
   depends_on = [terraform_data.removal_guard]
 
@@ -75,7 +79,7 @@ resource "terraform_data" "installation" {
 
   input = merge(local.organizations[each.value.kind], { client_id = each.value.client_id })
 
-  triggers_replace = [terraform_data.organization[each.value.kind].id]
+  triggers_replace = [terraform_data.organization[each.value.kind].id, local.organizations[each.value.kind], each.value.client_id]
 
   provisioner "local-exec" {
     interpreter = local.provisioner

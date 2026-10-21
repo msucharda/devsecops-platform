@@ -477,11 +477,12 @@ Describe 'Organizations module against the documented GitHub API' {
             { Install-OrganizationApp @target @install } | Should -Throw '*HTTP 403*'
         }
 
-        It 'does not read repositories of an installation without repository access' {
-            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection 'none'
+        It 'verifies the repositories of an installation with the undocumented none selection' {
+            # 'none' is not in the documented response enum; the module proves it by the repository list.
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection 'none' -Repositories @('demo-a1b2c3-actions/app')
 
-            $null = Install-OrganizationApp @target @install
-            (Get-StubRequest listInstallationRepositories).Count | Should -Be 0
+            { Install-OrganizationApp @target @install } | Should -Throw '*access to 1 repositories*'
+            (Get-StubRequest listInstallationRepositories).Count | Should -Be 1
         }
         It 'matches the client ID case-sensitively' {
             Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'IV23LIEXAMPLE01'
@@ -634,7 +635,7 @@ Describe 'Organizations module against the documented GitHub API' {
         BeforeEach {
             $compliant = [ordered]@{
                 exists = $true; login = 'demo-a1b2c3-actions'
-                installations = @([ordered]@{ client_id = 'Iv23liExample01'; repository_selection = 'none' }, [ordered]@{ client_id = 'Iv23liOther01'; repository_selection = 'selected' })
+                installations = @([ordered]@{ client_id = 'Iv23liExample01'; repository_selection = 'none'; repositories = @() }, [ordered]@{ client_id = 'Iv23liOther01'; repository_selection = 'selected' })
             }
             $check = @{ Organization = 'demo-a1b2c3-actions'; ClientId = @('Iv23liExample01') }
         }
@@ -689,14 +690,27 @@ Describe 'Organizations module against the documented GitHub API' {
             @{ Case = 'string'; Value = 'demo-a1b2c3-actions/app'; Remove = $false }
         ) {
             $compliant.installations[0].repository_selection = 'selected'
-            if (-not $Remove) { $compliant.installations[0].repositories = $Value }
+            if ($Remove) { $compliant.installations[0].Remove('repositories') } else { $compliant.installations[0].repositories = $Value }
 
             { Get-OrganizationStateViolation -State $compliant @check } | Should -Throw '*repositories*unreadable*'
         }
-        It 'reports an App with access to all repositories, also outside the module' {
+
+        It 'reports a managed App with access to all repositories' {
+            $compliant.installations[0].repository_selection = 'all'
+
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeExactly @("App 'Iv23liExample01' has access to all repositories of organization 'demo-a1b2c3-actions'.")
+        }
+
+        It 'ignores the repository access of Apps outside the module' {
             $compliant.installations[1].repository_selection = 'all'
 
-            Get-OrganizationStateViolation -State $compliant @check | Should -BeExactly @("App 'Iv23liOther01' has access to all repositories of organization 'demo-a1b2c3-actions'.")
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeNullOrEmpty
+        }
+
+        It 'reports a managed App with the undocumented none selection and repositories' {
+            $compliant.installations[0].repositories = @('demo-a1b2c3-actions/app')
+
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeExactly @("App 'Iv23liExample01' has access to 1 repositories of organization 'demo-a1b2c3-actions'.")
         }
     }
 }
@@ -830,6 +844,23 @@ Describe 'Organizations Terraform lifecycle' {
         $destroy.ExitCode | Should -Not -Be 0
         $destroy.Output | Should -BeLike "*Organization 'demo-actions' still exists*"
         Get-Content -LiteralPath $log | Should -Contain 'AssertOrganizationRemoved demo-actions'
+    }
+
+    It 'replaces the resources on a new identity and verifies that the old organization is gone' {
+        $apply = Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        $variables.instance.name = 'demo2'
+        $variables.instance.organizations = @{
+            deploymentIdentifier = $null; platform = 'demo2-platform'; actions = 'demo2-actions'; workloads = 'demo2-workloads'
+        }
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json $variables -Depth 10)
+        $env:FAKE_ORGANIZATIONS_EXISTING = 'demo-actions'
+
+        $change = Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color
+
+        $change.ExitCode | Should -Not -Be 0
+        $change.Output | Should -BeLike "*Organization 'demo-actions' still exists*"
+        Get-Content -LiteralPath $log | Should -Not -Contain 'CreateOrganization demo2-actions'
     }
 
     It 'destroys after the organizations are removed and verifies each one twice' {

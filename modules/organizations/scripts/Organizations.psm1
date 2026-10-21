@@ -339,8 +339,9 @@ function Assert-OrganizationInstallationWithoutRepository {
     )
 
     $clientId = $Installation['client_id']
-    if ($Installation['repository_selection'] -ceq 'none') { return }
-    if ($Installation['repository_selection'] -cne 'selected') {
+    # The documented response enum is all | selected; 'none' is accepted only as an undocumented value and proven
+    # by the same empty repository list as 'selected'.
+    if ($Installation['repository_selection'] -cnotin @('selected', 'none')) {
         throw "App '$clientId' is installed in '$Organization' with access to all repositories. The module installs it without repository access; reduce the access or uninstall the App and rerun the apply."
     }
     $repositories = @(Get-OrganizationInstallationRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization `
@@ -441,7 +442,7 @@ function Get-InstanceOrganizationState {
     $installations = @(@(Get-OrganizationAppInstallation -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $existing) |
             ForEach-Object {
                 $item = [ordered]@{ client_id = $_.client_id; repository_selection = $_.repository_selection }
-                if ($_.repository_selection -ceq 'selected' -and $ClientId -ccontains $_.client_id) {
+                if ($_.repository_selection -cin @('selected', 'none') -and $ClientId -ccontains $_.client_id) {
                     $item.repositories = @(Get-OrganizationInstallationRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $existing `
                             -InstallationId $_.id)
                 }
@@ -471,11 +472,13 @@ function Get-OrganizationStateViolation {
         if ($installed -cnotcontains $id) { $violations.Add("App '$id' is not installed in organization '$Organization'.") }
     }
     foreach ($installation in @($State['installations'])) {
+        # Apps outside the module are not checked; their repository access is not part of the module contract.
+        if ($ClientId -cnotcontains $installation['client_id']) { continue }
         $selection = $installation['repository_selection']
         if ($selection -cnotin @('selected', 'none')) {
             $violations.Add("App '$($installation['client_id'])' has access to all repositories of organization '$Organization'.")
         }
-        elseif ($selection -ceq 'selected' -and $ClientId -ccontains $installation['client_id']) {
+        else {
             if (-not $installation.Contains('repositories') -or $installation['repositories'] -isnot [array]) {
                 throw "The repositories of App '$($installation['client_id'])' in organization '$Organization' are unreadable."
             }
