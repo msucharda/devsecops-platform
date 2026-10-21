@@ -421,7 +421,12 @@ Pokud API vrátí HTTP 403 s textem `Resource protected by organization SAML enf
 - Token odvolá nástrojem `tools/Remove-PlatformGitHubToken.ps1` a ověří, že odvolaný token vrátí HTTP 401.
 - Otevře stránku pro smazání App A a čeká na tvoje potvrzení. Potom ověří smazání: `GET /app` s privátním klíčem App A musí vrátit HTTP 401 nebo 404. Teprve potom smaže klíč App A a App ID ze `setup-state.json`. Pokud GitHub klíč stále přijímá, dílčí krok skončí stavem `Missing`. Pokud klíč chybí, průvodce smazání neověří a spolehne se na tvoje potvrzení.
 
-Enterprise-owned znamená vlastnictví registrace, nikoli zapnutí oprávnění v sekci Enterprise permissions. Registraci otevři přes **Your enterprise → Settings → GitHub Apps → New GitHub App**. Průvodce i vydávání tokenů ověřují ve výsledku `GET /app` vlastníka s `owner.type` rovnou `enterprise` a `owner.login` odpovídající enterprise. Stejný `login` u vlastníka typu `User` nebo `Organization` nestačí.
+Enterprise-owned znamená vlastnictví registrace, nikoli zapnutí oprávnění v sekci Enterprise permissions. Registraci otevři přes **Your enterprise → Settings → GitHub Apps → New GitHub App**. Průvodce i vydávání tokenů ověřují ve výsledku `GET /app` vlastníka (`owner`). Dokumentace ([Get the authenticated app](https://docs.github.com/en/enterprise-cloud@latest/rest/apps/apps#get-the-authenticated-app), API `2026-03-10`) definuje `owner` jako one-of a kontrola přijme obě varianty:
+
+- Simple User: `owner.type` je `enterprise` bez ohledu na velikost písmen a `owner.login` odpovídá enterprise bez ohledu na velikost písmen. Tuto variantu vrací GHE.com živě. Stejný `login` u vlastníka typu `User` nebo `Organization` nestačí.
+- Enterprise: `owner` nemá `type` a `owner.slug` přesně odpovídá enterprise.
+
+V obou variantách musí být `owner.id` kladné celé číslo a `owner.node_id` neprázdný řetězec. Jiný tvar, chybějící identifikátor nebo hodnota jiného typu než podle schématu kontrolou neprojde.
 
 Vyhledání privátní enterprise-owned App přes `GET /apps/{slug}` s OAuth tokenem může vrátit HTTP 404 i pro existující App. Průvodce proto nejdřív vyžádá kontrolu registrace v enterprise UI. Pokud App existuje, zadej její App ID a nevytvářej další. Průvodce identitu, očekávaný slug, vlastníka a oprávnění ověří privátním klíčem přes `GET /app`. Pokud slug neodpovídá očekávané App, průvodce odstraní uložené App ID a vyžádá opravu.
 

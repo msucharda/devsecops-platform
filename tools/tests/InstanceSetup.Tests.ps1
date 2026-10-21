@@ -798,21 +798,19 @@ Describe 'Instance setup wizard' {
             }
         }
 
-        It 'accepts the observed enterprise owner login and type for a Members-only App with no repository access' {
+        It 'accepts the <Case> owner for a Members-only App with no repository access' -ForEach @(
+            @{ Case = 'observed simple-user enterprise'; Fixture = 'apps/get-app.owner-simple-user'; Owner = @{ 'owner.login' = 'example'; 'owner.type' = 'enterprise' } }
+            @{ Case = 'documented Enterprise variant'; Fixture = 'apps/get-app.owner-enterprise'; Owner = @{ 'owner.slug' = 'example' } }
+        ) {
             $setup = Get-TestSetup
             $setup.State.probe['organization'] = 'probe-test'
             $setup.State.probe['authorizationAppId'] = '101'
-            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
-                param($Setup)
-                Mock Find-SetupAppKey {
-                    @{
-                        KeyPath = 'synthetic-key.pem'
-                        App = Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set @{
-                            id = 101; slug = 'ref-probe-authorization'; 'owner.login' = 'example'; 'owner.type' = 'enterprise'
-                            permissions = @{ members = 'read' }
-                        }
-                    }
-                }
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup; Fixture = $Fixture; Owner = $Owner } {
+                param($Setup, $Fixture, $Owner)
+                $ownedApp = Get-GitHubApiFixture -Name $Fixture -Set (@{
+                    id = 101; slug = 'ref-probe-authorization'; permissions = @{ members = 'read' }
+                } + $Owner)
+                Mock Find-SetupAppKey { @{ KeyPath = 'synthetic-key.pem'; App = $ownedApp } }
                 Mock ConvertTo-SetupAppJwt { 'synthetic-jwt' }
                 Mock Invoke-SetupApi {
                     @{
@@ -826,6 +824,31 @@ Describe 'Instance setup wizard' {
                 $app = Get-SetupProbeApp -Setup $Setup -Role authorization -Permission @{ members = 'read' } -Selection none
                 $app.AppId | Should -Be '101'
                 $app.InstallationId | Should -Be '201'
+            }
+        }
+
+        It 'rejects and forgets an App owned by another enterprise in the <Case> variant' -ForEach @(
+            @{ Case = 'simple-user'; Fixture = 'apps/get-app.owner-simple-user'; Owner = @{ 'owner.login' = 'another'; 'owner.type' = 'enterprise' } }
+            @{ Case = 'Enterprise'; Fixture = 'apps/get-app.owner-enterprise'; Owner = @{ 'owner.slug' = 'another' } }
+        ) {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['authorizationAppId'] = '101'
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup; Fixture = $Fixture; Owner = $Owner } {
+                param($Setup, $Fixture, $Owner)
+                $ownedApp = Get-GitHubApiFixture -Name $Fixture -Set (@{
+                    id = 101; slug = 'ref-probe-authorization'; permissions = @{ members = 'read' }
+                } + $Owner)
+                Mock Find-SetupAppKey { @{ KeyPath = 'synthetic-key.pem'; App = $ownedApp } }
+                Mock ConvertTo-SetupAppJwt { 'synthetic-jwt' }
+                Mock Invoke-SetupApi { throw "Unexpected API call: $Uri" }
+
+                { Get-SetupProbeApp -Setup $Setup -Role authorization -Permission @{ members = 'read' } -Selection none } |
+                    Should -Throw '*App 101 is not owned by the enterprise example*'
+                $Setup.State.probe.ContainsKey('authorizationAppId') | Should -BeFalse
+                $saved = Get-Content -LiteralPath (Join-Path $Setup.WorkPath 'setup-state.json') -Raw | ConvertFrom-Json -AsHashtable
+                $saved.probe.ContainsKey('authorizationAppId') | Should -BeFalse
+                Should -Invoke ConvertTo-SetupAppJwt -Times 0 -Exactly
             }
         }
 

@@ -165,12 +165,13 @@ Describe 'Enterprise installation credentials' {
         @{ Case = 'zero IDs'; EnterpriseId = 0 }
         @{ Case = 'malformed IDs'; EnterpriseId = 'invalid' }
     ) {
-        $owner = @{ login = 'example'; type = 'Enterprise'; id = $EnterpriseId }
+        $owner = @{ login = 'example'; type = 'Enterprise'; id = $EnterpriseId; node_id = 'E_example' }
         $actualInstallations[0].account = @{ slug = 'example'; id = $EnterpriseId }
         $actualInstallations[0].target_id = $EnterpriseId
 
+        # The App owner check rejects the invalid owner ID before the installation inventory is compared.
         { & $issuer -Module observer -InstancePath $instancePath -ModulesPath $modulesPath -PrivateKey $privateKey `
-            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } | Should -Throw '*enterprise installation*'
+            -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } | Should -Throw '*not owned by the declared enterprise*'
 
         Test-Path -LiteralPath $environmentPath | Should -BeFalse
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
