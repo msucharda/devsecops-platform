@@ -34,6 +34,20 @@ function Add-WorkflowCheckout {
 '@
 }
 
+function Add-TeardownMainCheck {
+    [CmdletBinding()]
+    param()
+
+    # Approvals can wait for a long time; the gate decision is valid only while main still points to the dispatched commit.
+    Add-WorkflowBlock @'
+      - name: Require main to still point to the dispatched commit
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
+'@
+}
+
 function Add-ModuleJobPreamble {
     [CmdletBinding()]
     param(
@@ -260,6 +274,7 @@ foreach ($manifest in $reversed) {
     }
     $runner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action destroy $runnerArguments -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs"
     if ($manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
+        Add-TeardownMainCheck
         Add-WorkflowBlock @"
       - name: Destroy the isolated rulesets root first
         shell: pwsh
@@ -268,6 +283,7 @@ foreach ($manifest in $reversed) {
         run: $runner -Rulesets
 "@
     }
+    Add-TeardownMainCheck
     Add-WorkflowBlock @"
       - name: Destroy module
         shell: pwsh

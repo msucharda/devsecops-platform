@@ -157,6 +157,23 @@ Describe 'Teardown workflow generation' {
         $revoke.if | Should -Be '${{ always() && env.PLATFORM_GITHUB_TOKENS != '''' }}'
     }
 
+    It 'checks that main still points to the dispatched commit immediately before every destroy step' {
+        $destroyJobs = @($workflow.jobs.Keys | Where-Object { $_ -like 'destroy_*' })
+        $destroyJobs.Count | Should -Be $graph.Count
+        foreach ($job in $destroyJobs) {
+            $steps = @($workflow.jobs[$job].steps)
+            $destroySteps = @(0..($steps.Count - 1) | Where-Object { $steps[$_].Contains('run') -and $steps[$_].run -match '-Action destroy ' })
+            $destroySteps.Count | Should -BeGreaterThan 0
+            foreach ($index in $destroySteps) {
+                $check = $steps[$index - 1]
+                $check.run | Should -BeExactly './instance/platform/tools/Assert-TeardownMainCommit.ps1'
+                $check.env.TEARDOWN_MAIN_TOKEN | Should -BeExactly '${{ github.token }}'
+            }
+            $workflow.jobs[$job].permissions.contents | Should -BeExactly 'read'
+        }
+        @($workflow.jobs.destroy_enterprise_baseline.steps | Where-Object { $_.Contains('run') -and $_.run -like '*Assert-TeardownMainCommit.ps1' }).Count | Should -Be 2
+    }
+
     It 'destroys the isolated rulesets root before the ordinary root of a ruleset module' {
         $runs = Get-StepRun -Job destroy_enterprise_baseline
         $rulesets = [array]::FindIndex([string[]] $runs, [Predicate[string]] { param($r) $r -match '-Action destroy .*-Rulesets$' })

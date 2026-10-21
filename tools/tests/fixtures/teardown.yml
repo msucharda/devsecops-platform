@@ -287,11 +287,21 @@ jobs:
         with:
           name: teardown-outputs-service
           path: ./artifacts/prerequisites
+      - name: Require main to still point to the dispatched commit
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
       - name: Destroy the isolated rulesets root first
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
         run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action destroy -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -Rulesets
+      - name: Require main to still point to the dispatched commit
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
       - name: Destroy module
         shell: pwsh
         env:
@@ -347,6 +357,11 @@ jobs:
           PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
         run: ./instance/platform/tools/New-PlatformGitHubToken.ps1 -Module 'observer' -Phase apply -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+      - name: Require main to still point to the dispatched commit
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
       - name: Destroy module
         shell: pwsh
         env:
@@ -412,6 +427,11 @@ jobs:
         with:
           name: teardown-outputs-foundation
           path: ./artifacts/prerequisites
+      - name: Require main to still point to the dispatched commit
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
       - name: Destroy module
         shell: pwsh
         env:
@@ -472,6 +492,11 @@ jobs:
         with:
           name: teardown-outputs-foundation
           path: ./artifacts/prerequisites
+      - name: Require main to still point to the dispatched commit
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
       - name: Destroy module
         shell: pwsh
         env:
@@ -527,6 +552,11 @@ jobs:
           PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
         run: ./instance/platform/tools/New-PlatformGitHubToken.ps1 -Module 'foundation' -Phase apply -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+      - name: Require main to still point to the dispatched commit
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
       - name: Destroy module
         shell: pwsh
         env:

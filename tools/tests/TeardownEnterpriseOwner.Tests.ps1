@@ -151,6 +151,8 @@ Describe 'Teardown Enterprise Owner check' {
             @{ Case = 'the assignment is inherited through a group'; Change = { $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $ownerId -PrincipalType 'Group') } }
             @{ Case = 'the owner is not in teams.platform'; Change = { $instance.teams.platform = @('lead@contoso.test'); & $write } }
             @{ Case = 'the assignment grants another app role'; Change = { $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $ownerId -AppRoleId $otherRoleId) } }
+            @{ Case = 'the assignment has a blank app role'; Change = { $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $ownerId -AppRoleId '') } }
+            @{ Case = 'the assignment has no app role'; Change = { $a = Get-TestAssignment -PrincipalId $ownerId; $a.Remove('appRoleId'); $assignmentPages[0].value = @($a) } }
             @{ Case = 'the assignment belongs to another resource'; Change = { $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $ownerId -ResourceId $otherRoleId) } }
             @{ Case = 'the application has no assignments'; Change = { $assignmentPages[0].value = @() } }
             @{ Case = 'no platform member exists in Entra ID'; Change = { $users.Clear() } }
@@ -172,6 +174,20 @@ Describe 'Teardown Enterprise Owner check' {
             . $Change
 
             { & $ownerCheck -InstancePath $instancePath -ModulesPath $modulesPath } | Should -Throw '*one enabled Enterprise Owner app role*'
+            @($requests | Where-Object { $_.Uri -like '*appRoleAssignedTo*' }) | Should -BeNullOrEmpty
+        }
+
+        It 'when the Enterprise Owner role <Case> and an assignment has no app role' -ForEach @(
+            @{ Case = 'has no id'; Change = { $application.appRoles[1].Remove('id') } }
+            @{ Case = 'has a blank id'; Change = { $application.appRoles[1].id = ' ' } }
+            @{ Case = 'has a non-GUID id'; Change = { $application.appRoles[1].id = 'enterprise_owner' } }
+            @{ Case = 'has the empty GUID'; Change = { $application.appRoles[1].id = '00000000-0000-0000-0000-000000000000' } }
+        ) {
+            # Intentionally invalid Graph responses: appRole.id and appRoleAssignment.appRoleId are documented GUIDs.
+            . $Change
+            $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $ownerId -AppRoleId '')
+
+            { & $ownerCheck -InstancePath $instancePath -ModulesPath $modulesPath } | Should -Throw '*Enterprise Owner app role*no valid id*'
             @($requests | Where-Object { $_.Uri -like '*appRoleAssignedTo*' }) | Should -BeNullOrEmpty
         }
 

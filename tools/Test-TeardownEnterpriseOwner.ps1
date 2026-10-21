@@ -90,6 +90,10 @@ if (@($application['appRoles'] | Where-Object { $_ -is [System.Collections.IDict
     throw 'The EMU enterprise application must expose one enabled Enterprise Owner app role for users.'
 }
 $ownerRoleId = [string] $ownerRoles[0]['id']
+$parsedRoleId = [guid]::Empty
+if (-not [guid]::TryParse($ownerRoleId, [ref] $parsedRoleId) -or $parsedRoleId -eq [guid]::Empty) {
+    throw 'The Enterprise Owner app role of the EMU enterprise application has no valid id.'
+}
 
 $platformUserIds = @{}
 foreach ($upn in $platformUsers) {

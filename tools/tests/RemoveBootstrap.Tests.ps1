@@ -766,8 +766,19 @@ Describe 'Bootstrap removal' {
             @($requests | Where-Object Uri -like '*deploy.yml/runs?per_page=100&page=1') | Should -HaveCount 1
         }
 
+        It 'when the teardown was only rerun after a deploy run that followed its dispatch' {
+            $teardown = $world.Runs['teardown.yml']['workflow_runs'][0]
+            $teardown['run_attempt'] = 2
+            $teardown['run_started_at'] = '2026-05-04T10:00:00Z'
+            $teardown['updated_at'] = '2026-05-04T10:30:00Z'
+            $world.Runs['deploy.yml'] = Get-TestRunList -Workflow 'deploy.yml' -CreatedAt ([datetime]'2026-05-03T10:00:00Z')
+
+            { & $run } | Should -Throw '*deploy workflow run changed after*Dispatch the teardown workflow again*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+        }
+
         It 'when <Label>' -ForEach @(
-            @{ Label = 'the teardown run has no attempt start time'; Workflow = 'teardown.yml'; Field = 'run_started_at'; Value = $null; Expected = '*start time of the latest teardown attempt*' }
+            @{ Label = 'the teardown run has no creation time'; Workflow = 'teardown.yml'; Field = 'created_at'; Value = $null; Expected = '*invalid run of teardown.yml*' }
             @{ Label = 'a deploy run has no update time'; Workflow = 'deploy.yml'; Field = 'updated_at'; Value = $null; Expected = '*invalid run of deploy.yml*' }
         ) {
             # Intentionally invalid response: the field is removed to test the fail-closed check.

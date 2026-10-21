@@ -289,10 +289,7 @@ function Assert-RemovalPreflight {
         $teardown['conclusion'] -cne 'success') {
         throw "The latest teardown workflow run on main in '$repository' did not succeed. Run the teardown workflow before removing bootstrap."
     }
-    if ($teardown['run_started_at'] -isnot [datetime]) {
-        throw "GitHub did not return the start time of the latest teardown attempt in '$repository'."
-    }
-    # A rerun keeps created_at of the original run, so every deploy run on any branch is compared by updated_at.
+    # A failed-jobs rerun keeps created_at and skips jobs that succeeded before an intervening deploy; only a new dispatch counts.
     $listedDeployRuns = 0
     for ($page = 1; ; $page++) {
         if ($page -gt 10) { throw "The deploy workflow in '$repository' has more than 1000 runs; verify the teardown evidence manually." }
@@ -304,8 +301,8 @@ function Assert-RemovalPreflight {
             if ($deploy -isnot [System.Collections.IDictionary] -or $deploy['updated_at'] -isnot [datetime]) {
                 throw "GitHub returned an invalid run of deploy.yml."
             }
-            if ($deploy['updated_at'] -ge $teardown['run_started_at']) {
-                throw "A deploy workflow run changed after the latest successful teardown started in '$repository'. Run the teardown workflow again."
+            if ($deploy['updated_at'] -ge $teardown['created_at']) {
+                throw "A deploy workflow run changed after the latest successful teardown was dispatched in '$repository'. Dispatch the teardown workflow again; a rerun does not count."
             }
         }
         $listedDeployRuns += $runs['workflow_runs'].Count
