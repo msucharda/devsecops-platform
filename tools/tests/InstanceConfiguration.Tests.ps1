@@ -244,4 +244,17 @@ Describe 'Instance configuration validation' {
 
         { & $validator -InstancePath $file -ModulesPath $fixtures } | Should -Throw $Error
     }
+
+    It 'rejects a module environment reserved for workflow gate <Gate>' -ForEach @(
+        @{ Gate = 'approve-apply' }, @{ Gate = 'pr-authorization' }, @{ Gate = 'approve-teardown-platform' }
+        @{ Gate = 'teardown' }, @{ Gate = 'drift-report' }
+    ) {
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath $example -Raw)
+        $instance.modules = @{ application = @{} }
+        $instance.credentials = @{ application = @{ plan = @{ environment = $Gate }; apply = @{ environment = 'application-write' } } }
+        $file = Join-Path $TestDrive 'reserved-environment.yaml'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $file
+
+        { & $validator -InstancePath $file -ModulesPath $fixtures } | Should -Throw '*$.credentials.application.plan.environment is reserved*'
+    }
 }

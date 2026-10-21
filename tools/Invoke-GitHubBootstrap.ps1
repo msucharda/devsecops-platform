@@ -8,6 +8,7 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$')][string] $ReleaseVersion,
     [Parameter(Mandatory)][string] $InventoryPath,
     [string] $AuthorizationApp,
+    [string] $DriftReportApp,
     [string] $AppKeysPath,
     [switch] $AcceptanceOnly,
     [switch] $ResourcesOnly,
@@ -591,7 +592,7 @@ function Initialize-GitHubBootstrapMainProtection {
 }
 if ($NoChanges) { Initialize-GitHubBootstrapMainProtection }
 $environmentNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($name in @('pr-authorization', 'approve-apply', 'approve-teardown-platform', 'teardown')) {
+foreach ($name in @('pr-authorization', 'approve-apply', 'approve-teardown-platform', 'teardown', 'drift-report')) {
     $null = $environmentNames.Add($name)
 }
 $environmentBindings = [Collections.Generic.List[object]]::new()
@@ -641,6 +642,7 @@ if ($selected.Count) {
 }
 Initialize-GitHubBootstrapEnvironment -Name 'pr-authorization'
 Initialize-GitHubBootstrapVariable -Environment 'pr-authorization' -Variables @{ PLATFORM_TEAM_SLUG = 'platform' }
+Initialize-GitHubBootstrapEnvironment -Name 'drift-report'
 Initialize-GitHubBootstrapEnvironment -Name 'approve-apply' -ReviewerId $teams['platform']['id'] -CredentialFree
 Initialize-GitHubBootstrapEnvironment -Name 'approve-teardown-platform' -ReviewerId $teams['platform']['id'] -CredentialFree
 Initialize-GitHubBootstrapEnvironment -Name 'teardown' -ReviewerId $teams['security']['id'] -CredentialFree
@@ -748,6 +750,27 @@ if (-not $ResourcesOnly) {
             if ($secrets.Count) { throw "Environment '$($binding['name'])' has an App key without an App binding." }
         }
     }
+    if ($DriftReportApp) {
+        if (-not $instance['githubApps'].Contains($DriftReportApp)) { throw "The drift report App alias '$DriftReportApp' is not declared." }
+        $driftReport = $instance['githubApps'][$DriftReportApp]
+        $driftResources = @{ organizations = @($organization); repositories = @{ $organization = @('instance') } }
+        if ($driftReport['enterprise'] -cne $connection['enterprise'] -or
+            (ConvertTo-PlatformCanonicalJson $driftReport['permissions']) -cne (ConvertTo-PlatformCanonicalJson @{ issues = 'write' }) -or
+            (ConvertTo-PlatformCanonicalJson $driftReport['resources']) -cne (ConvertTo-PlatformCanonicalJson $driftResources)) {
+            throw 'The drift report App requires exactly issues: write on the instance repository of the platform organization.'
+        }
+        foreach ($binding in $appBindings) {
+            if ($instance['githubApps'][$binding['alias']]['appId'] -ceq $driftReport['appId']) {
+                throw 'The drift report App must not share its identity with authorization or any module phase.'
+            }
+        }
+        $appBindings += @{ alias = $DriftReportApp; environment = 'drift-report'; phase = 'driftReport' }
+    }
+    else {
+        $secrets = @(Get-GitHubBootstrapCollection -Path "/repos/$repository/environments/drift-report/secrets" -Property 'secrets')
+        if ($secrets.Count) { throw "Environment 'drift-report' has an App key without a drift report App. Pass -DriftReportApp or remove the key." }
+        Write-Warning 'No drift report App was configured. Nightly drift detection cannot open or update drift issues until -DriftReportApp is set up.'
+    }
     $verifiedApps = @{}
     foreach ($binding in $appBindings) {
         $alias = $binding['alias']
@@ -766,8 +789,8 @@ if (-not $ResourcesOnly) {
         $keyPath = Assert-GitHubBootstrapExternalPath -Path $key['privateKeyPath']
         $privateKey = Get-Content -LiteralPath $keyPath -Raw
         $result = & (Join-Path $PSScriptRoot 'New-PlatformGitHubToken.ps1') -BootstrapApp $app `
-            -PrivateKey $privateKey -Phase $(if ($binding['phase'] -eq 'authorization') { 'plan' } else { $binding['phase'] }) `
-            -Authorization:($binding['phase'] -eq 'authorization') -ValidateOnly -ApiUrl $api `
+            -PrivateKey $privateKey -Phase $(if ($binding['phase'] -in @('authorization', 'driftReport')) { 'plan' } else { $binding['phase'] }) `
+            -Authorization:($binding['phase'] -eq 'authorization') -DriftReport:($binding['phase'] -eq 'driftReport') -ValidateOnly -ApiUrl $api `
             -RequestPolicy $RequestPolicy -TokenLifecycle $TokenLifecycle -VerifyRevocation:$VerifyTokenRevocation
         if (-not $result.Verified) { throw "App '$alias' verification did not complete." }
         $rsa = [Security.Cryptography.RSA]::Create()

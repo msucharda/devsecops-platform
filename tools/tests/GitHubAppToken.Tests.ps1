@@ -467,4 +467,118 @@ Describe 'Enterprise App key and installation token isolation' {
         }
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
     }
+
+    Context 'drift report token' {
+        BeforeEach {
+            $actualPermissions = @{ issues = 'write'; metadata = 'read' }
+            $repositorySelection = 'selected'
+            $fakeRepositoryNames = @('instance')
+            $driftApp = @{
+                appId = '101'; installationId = '201'; enterprise = 'example'
+                permissions = @{ issues = 'write' }
+                resources = @{ organizations = @('platform'); repositories = @{ platform = @('instance') } }
+            }
+        }
+
+        It 'issues an issues-write token over the verified instance-only installation and exports the App slug' {
+            & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
+
+            $content = [IO.File]::ReadAllText($environmentPath)
+            $content | Should -Match 'PLATFORM_GITHUB_TOKENS=\{"platform":"fake-installation-token"\}'
+            $content | Should -Match '(?m)^PLATFORM_APP_SLUG=octoapp$'
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+                if ($Method -ne 'POST') { return $false }
+                $request = ConvertFrom-Json $Body -AsHashtable
+                # No repository narrowing: a narrowed token would hide other repositories of the installation.
+                $request.permissions.issues -eq 'write' -and $request.permissions.Count -eq 1 -and
+                    -not $request.Contains('repositories') -and $request.Count -eq 1
+            }
+        }
+
+        It 'rejects a drift report App with broader permissions before issuing a token' {
+            $actualPermissions = @{ issues = 'write'; contents = 'write'; metadata = 'read' }
+
+            { & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*Actual GitHub App permissions differ*'
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'rejects a drift report App with access to all repositories' {
+            $repositorySelection = 'all'
+
+            { & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*repository scope*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'revokes the token when the drift report App reaches another repository' {
+            $fakeRepositoryNames = @('instance', 'unrelated')
+
+            { & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*repository access*differs*'
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        }
+
+        It 'rejects a drift report App installed in another organization' {
+            $actualOrganizations = @('platform', 'unrelated')
+
+            { & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*installations differ*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'rejects an App slug that cannot identify the issue author: <Slug>' -ForEach @(
+            @{ Slug = '' }
+            @{ Slug = 'Bad Slug' }
+            @{ Slug = 'octoapp[bot]' }
+        ) {
+            Mock Invoke-RestMethod {
+                Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set (@{ id = 101; slug = $Slug; permissions = $actualPermissions } + $ownerFields)
+            } -ParameterFilter { $Uri -eq 'https://api.example.test/app' }
+
+            { & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*App slug*'
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+        }
+
+        It 'rejects drift reporting combined with <Case>' -ForEach @(
+            @{ Case = 'authorization'; Arguments = @{ Authorization = $true } }
+            @{ Case = 'a module phase'; Arguments = @{ Module = 'foundation'; InstancePath = 'instance.yaml' } }
+            @{ Case = 'vendoring'; Arguments = @{ VendoringRepository = 'platform/instance' } }
+        ) {
+            { & $issuer -DriftReport @Arguments -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*Drift report credentials cannot share*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+        }
+
+        It 'rejects an instance repository that is not owner/name' {
+            $env:GITHUB_REPOSITORY = 'platform'
+
+            { & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*instance repository owner/name*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+        }
+
+        It 'validates a bootstrap drift report App with its issues-write contract' {
+            $result = & $issuer -BootstrapApp $driftApp -DriftReport -PrivateKey $privateKey -ValidateOnly -ApiUrl https://api.example.test
+
+            $result.Verified | Should -BeTrue
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        }
+
+        It 'rejects a bootstrap drift report contract other than issues write on one repository: <Case>' -ForEach @(
+            @{ Case = 'extra permission'; Change = { param($App) $App.permissions.contents = 'read' } }
+            @{ Case = 'read-only issues'; Change = { param($App) $App.permissions.issues = 'read' } }
+            @{ Case = 'no repository'; Change = { param($App) $App.resources.repositories = @{} } }
+            @{ Case = 'two repositories'; Change = { param($App) $App.resources.repositories.platform = @('instance', 'other') } }
+        ) {
+            & $Change $driftApp
+
+            { & $issuer -BootstrapApp $driftApp -DriftReport -PrivateKey $privateKey -ValidateOnly -ApiUrl https://api.example.test } |
+                Should -Throw '*drift report App*issues: write*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+        }
+    }
 }

@@ -14,6 +14,7 @@ Změnu App oprávnění musí navíc schválit security tým podle ADR 0016. Boo
 | `<module>-plan` | Bez schválení. Vlastní read-only Azure/Microsoft Graph identita a případně read-only enterprise-owned App. |
 | `<module>-ruleset-plan` | Bez schválení. Vlastní App s právě `organization_administration: write` pro cílové organizace a identita pro čtení state modulu. Žádný běžný plan tento klíč nedostane. |
 | `<plan-environment>-drift`, `<ruleset-plan-environment>-drift` | Noční varianty bez schválení, jen z `main`. Zachovají oddělené App klíče; používají plan identitu stejného modulu. |
+| `drift-report` | Bez schválení, jen z `main`. Samostatná App s právě `issues: write` jen pro repozitář instance. Žádná Azure identita. Job `report_drift` v `drift.yml` jí otevře nebo aktualizuje issue driftu. |
 | `approve-apply` | Jedno schválení platformním týmem pro celý běh. Žádné secrets. |
 | `<module>-apply` | Vlastní apply identity a App. Po společném gate bez dalšího schválení, kromě `enterprise-baseline-apply`, který vyžaduje security tým. |
 | `approve-teardown-platform`, `teardown` | Navazující schválení platformním a potom security týmem. Žádné secrets, variables ani OIDC vazby. Workflow odstranění dodá #22. |
@@ -48,4 +49,4 @@ Reusable workflow `.github/workflows/vendor.yml` volá důvěryhodný workflow z
 
 Workflow běží na GitHub-hosted runnerech. Dostupnost enterprise-owned Apps, API a oprávnění na konkrétní instanci GHE.com musí být potvrzená před nasazením. Selhání skončí chybou, nikdy PAT fallbackem nebo širšími plan oprávněními.
 
-Pravidla environmentů implementuje `tools/Invoke-GitHubBootstrap.ps1`; postup a rotaci klíčů popisuje [runbook bootstrapu](../../docs/bootstrap.md#github-část-bootstrapu). Schedule spouští oddělené plan joby denně v 02:17 UTC, bez apply. První cloudový běh a skutečné čtení ruleset bypassu ověří [msucharda/devsecops-platform#12](https://github.com/msucharda/devsecops-platform/issues/12); offline fixture toto ověření nenahrazuje.
+Pravidla environmentů implementuje `tools/Invoke-GitHubBootstrap.ps1`; postup a rotaci klíčů popisuje [runbook bootstrapu](../../docs/bootstrap.md#github-část-bootstrapu). Workflow `drift.yml` spouští oddělené plan joby denně v 02:17 UTC, bez apply. Drift nebo neúplný běh zapíše do jednoho issue; report uvádí i oblasti mimo automatickou detekci. První cloudový běh a skutečné čtení ruleset bypassu ověří [msucharda/devsecops-platform#12](https://github.com/msucharda/devsecops-platform/issues/12); offline fixture toto ověření nenahrazuje.

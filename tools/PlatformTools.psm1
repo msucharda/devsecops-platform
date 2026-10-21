@@ -393,7 +393,7 @@ function Get-PlatformInstance {
             $binding = $instance['credentials'][$name][$phase]
             $bindingPath = "$.credentials.$name.$phase"
             $environment = $binding['environment']
-            if ($environment -in @('approve-apply', 'pr-authorization', 'approve-teardown-platform', 'teardown')) {
+            if ($environment -in @('approve-apply', 'pr-authorization', 'approve-teardown-platform', 'teardown', 'drift-report')) {
                 throw "Invalid instance configuration '$Path': $bindingPath.environment is reserved for a workflow gate."
             }
             $explicit = $name -cin $configuredModules

@@ -7,8 +7,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '17 2 * * *'
 permissions:
   contents: read
 concurrency:
@@ -118,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [authorize, select]
     if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'emu-identity') }}
-    environment: ${{ github.event_name == 'schedule' && format('{0}-drift', fromJSON(needs.select.outputs.environments)['emu-identity']) || fromJSON(needs.select.outputs.environments)['emu-identity'] }}
+    environment: ${{ fromJSON(needs.select.outputs.environments)['emu-identity'] }}
     permissions:
       contents: read
       id-token: write
@@ -337,7 +335,7 @@ jobs:
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && github.event_name != 'schedule' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:

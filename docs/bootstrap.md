@@ -191,7 +191,24 @@ Teprve po dokončení skript zapne Actions a vrátí `CredentialsConfigured: tru
 
 ### Environmenty, noční plan a teardown
 
-Bootstrap omezí každý environment na větev `main`. `pull_request_target` používá base ref `main`; kontrola autora PR zůstává v trusted autorizačním jobu. Běžný plan, ruleset plan a jejich varianty `<environment>-drift` nemají reviewery. Schedule spouští plan denně v **02:17 UTC**, s oddělenými environmenty běžného a ruleset planu; nikdy neotevře apply gate. Reportování drift issues patří do #21.
+Bootstrap omezí každý environment na větev `main`. `pull_request_target` používá base ref `main`; kontrola autora PR zůstává v trusted autorizačním jobu. Běžný plan, ruleset plan a jejich varianty `<environment>-drift` nemají reviewery. Workflow `drift.yml` spouští plan denně v **02:17 UTC**, s oddělenými environmenty běžného a ruleset planu; nikdy neotevře apply gate.
+
+Bootstrap vytvoří environment `drift-report` bez reviewerů, jen z `main`. Issue driftu zapisuje samostatná App, kterou platformní tým ručně registruje a nainstaluje jen do repozitáře `instance`:
+
+| App | Oprávnění a rozsah |
+|---|---|
+| App reportu driftu | Právě `issues: write`, jen repozitář `instance` organizace platformy. Samostatná identita; nesmí ji sdílet autorizace ani žádná fáze modulu. |
+
+Alias App patří do `githubApps` a klíč do `keys.json`. Bootstrapu ho předáš přes `-DriftReportApp`:
+
+```powershell
+.\tools\Invoke-GitHubBootstrap.ps1 @arguments `
+    -AuthorizationApp authorization `
+    -DriftReportApp drift-report `
+    -AppKeysPath '<pracovni-adresar>\keys.json'
+```
+
+Bootstrap ověří kontrakt App stejným token issuerem jako workflow a uloží klíč a variables do `drift-report`. Bez `-DriftReportApp` bootstrap vypíše varování; noční běh pak drift issue neotevře a job `report_drift` selže. Pokud `drift-report` obsahuje klíč a parametr chybí, bootstrap skončí chybou.
 
 Plan identita má federated credentials jen pro plan environmenty daného modulu včetně ruleset planu a nočních variant. Apply identita má právě vazbu na apply environment modulu. Issuer pro GHE.com je `https://token.actions.<githubHost>` a audience `api://AzureADTokenExchange`.
 

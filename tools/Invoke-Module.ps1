@@ -13,13 +13,17 @@ param(
     [string] $StatePath,
     [string] $PrerequisiteOutputsPath,
     [string] $ArtifactsPath = (Join-Path (Get-Location) 'artifacts/module-outputs'),
-    [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY
+    [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY,
+    [string] $GitHubOutputPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
+if ($GitHubOutputPath -and $Action -ne 'plan') {
+    throw 'The workflow change output is supported only for plan.'
+}
 
 function Invoke-ModuleTerraform {
     [CmdletBinding()]
@@ -337,6 +341,10 @@ try {
     }
     [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($artifactFile)) | Out-Null
     [IO.File]::WriteAllText($artifactFile, (ConvertTo-Json -InputObject $outputs -Depth 100), [Text.UTF8Encoding]::new($false))
+    if ($GitHubOutputPath) {
+        [IO.File]::AppendAllText([IO.Path]::GetFullPath($GitHubOutputPath),
+            "changes=$(($plan.ExitCode -eq 2).ToString().ToLowerInvariant())`n", [Text.UTF8Encoding]::new($false))
+    }
     [pscustomobject]@{
         Module = $Module
         Action = $Action
