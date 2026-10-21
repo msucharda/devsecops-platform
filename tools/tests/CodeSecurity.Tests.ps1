@@ -30,6 +30,12 @@ BeforeAll {
         @{ name = 'Platform token'; pattern = $Pattern; start_delimiter = '\A|[^0-9A-Za-z]'; end_delimiter = '\z|[^0-9A-Za-z]' }
     }
 
+    function Edit-TestBypassMode {
+        param([AllowNull()][object] $Mode)
+        Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration)
+        $reviewer = ($stub.Configurations | Where-Object { $_['name'] -ceq 'platform-baseline' })['secret_scanning_delegated_bypass_options']['reviewers'][0]
+        $reviewer['mode'] = $Mode
+    }
     function Get-StubWrite {
         param([string] $Method, [string] $PathPattern)
         @($stub.Bodies | Where-Object { $_.Method -ceq $Method -and $_.Path -cmatch $PathPattern })
@@ -44,7 +50,7 @@ Describe 'CodeSecurity module against the documented GitHub API' {
         Mock -ModuleName CodeSecurity Invoke-WebRequest {
             $target = [Uri] $Uri
             "$($target.Scheme)://$($target.Authority)" | Should -Be $apiUrl
-            $reply = Invoke-CodeSecurityStubRequest -State $stub -Method ([string] $Method).ToUpperInvariant() -PathAndQuery $target.PathAndQuery -Headers $Headers -Body $Body
+            $reply = Invoke-CodeSecurityStubRequest -State $stub -Method ([string] $Method).ToUpperInvariant() -PathAndQuery $target.PathAndQuery -Headers $Headers -Body (Get-Variable -Name Body -ValueOnly -ErrorAction Ignore)
             if ($reply.Drop) { throw 'The connection was closed before the response arrived.' }
             [pscustomobject]@{ StatusCode = $reply.Status; Content = $reply.Body; Headers = @{ Link = $reply.Link } }
         }
@@ -200,6 +206,43 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             @($stub.Repositories.Values | Where-Object { $_.status -cne 'attached' }) | Should -BeNullOrEmpty
         }
 
+        It 'converges when the run stops after the default is set and before the attach' {
+            $stub.DropNext = '^PUT .*/defaults$'
+
+            { Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration) } | Should -Throw
+            $stub.Defaults.public | Should -Not -BeNullOrEmpty
+            Get-StubWrite POST '/attach$' | Should -BeNullOrEmpty
+            Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration)
+
+            @($stub.Repositories.Values | Where-Object { $_.status -cne 'attached' }) | Should -BeNullOrEmpty
+        }
+
+        It 'fails when an attachment ends as <Status> and converges on the next run' -ForEach @(
+            @{ Status = 'failed' }, @{ Status = 'detached' }, @{ Status = 'removed' }, @{ Status = 'removed_by_enterprise' }, @{ Status = 'enterprise_enforced' }
+        ) {
+            $stub.AttachStatus = $Status
+
+            { Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration) } |
+                Should -Throw "*did not attach to: demo/app ($Status), demo/lib ($Status)*"
+            $stub.AttachStatus = 'attached'
+            Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration)
+
+            @($stub.Repositories.Values | Where-Object { $_.status -cne 'attached' }) | Should -BeNullOrEmpty
+        }
+
+        It 'accepts an attachment that ends as enforced' {
+            $stub.AttachStatus = 'enforced'
+
+            { Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration) } | Should -Not -Throw
+        }
+
+        It 'fails when the attach leaves a repository of the installation without the configuration' {
+            $stub.AttachSkip = @('demo/lib')
+
+            { Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration) } |
+                Should -Throw '*is not attached to: demo/lib.'
+        }
+
         It 'waits until no repository is attaching' {
             $stub.AttachPendingReads = 2
 
@@ -318,6 +361,34 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             $stub.Patterns[0]['push_protection_enabled'] | Should -BeTrue
         }
 
+        It 'converges when the run stops after the pattern is created and before push protection is enabled' {
+            $stub.DropNext = '^GET .*/pattern-configurations$'
+
+            { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } | Should -Throw
+            $stub.Patterns[0]['push_protection_enabled'] | Should -BeFalse
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+
+            $stub.Patterns.Count | Should -Be 1
+            $stub.Patterns[0]['push_protection_enabled'] | Should -BeTrue
+        }
+
+        It 'converges when the push protection response is lost' {
+            $stub.DropNext = '^PATCH .*/pattern-configurations$'
+
+            { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } | Should -Throw
+            $stub.Bodies.Clear()
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+
+            $stub.Patterns[0]['push_protection_enabled'] | Should -BeTrue
+            @($stub.Bodies | Where-Object { $_.Method -cne 'GET' }) | Should -BeNullOrEmpty
+        }
+
+        It 'fails when the pattern does not report push protection after it was enabled' {
+            $stub.PushProtectionIgnored = $true
+
+            { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } | Should -Throw '*does not report push protection*'
+        }
+
         It 'fails with a publish instruction when GitHub creates an unpublished pattern' {
             $stub.CreatedPatternState = 'unpublished'
 
@@ -387,7 +458,56 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             @($state.defaults).Count | Should -Be 0
             @($state.repositories).Count | Should -Be 0
             @($state.foreign_attachments).Count | Should -Be 0
+            @($state.uncovered_repositories) | Should -Be @('demo/app', 'demo/lib')
             $state.custom_patterns.Count | Should -Be 0
+        }
+
+        It 'reports no uncovered repository in an organization without repositories' {
+            $stub.Repositories.Clear()
+            Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration)
+
+            @((Get-CodeSecurityState -ApiUrl $apiUrl -Organization demo -ConfigurationName platform-baseline).uncovered_repositories).Count | Should -Be 0
+        }
+
+        It 'reports a repository of the installation that <Case>' -ForEach @(
+            @{ Case = 'has no configuration'; Break = { $stub.Repositories['demo/lib'].configuration = $null; $stub.Repositories['demo/lib'].status = $null } }
+            @{ Case = 'has a failed attachment'; Break = { $stub.Repositories['demo/lib'].status = 'failed' } }
+            @{ Case = 'is detached'; Break = { $stub.Repositories['demo/lib'].status = 'detached' } }
+            @{ Case = 'is newer than the attach'; Break = { $stub.Repositories['demo/new'] = @{ id = 999; name = 'new'; configuration = $null; status = $null } } }
+        ) {
+            Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration)
+            & $Break
+
+            $state = Get-CodeSecurityState -ApiUrl $apiUrl -Organization demo -ConfigurationName platform-baseline
+
+            @($state.uncovered_repositories) | Should -HaveCount 1
+        }
+
+        It 'follows pagination of the installation repositories and accepts a response <Variant>' -ForEach @(
+            @{ Variant = 'with repository_selection all'; Selection = 'all' }
+            @{ Variant = 'without the optional repository_selection'; Selection = $null }
+        ) {
+            $stub.PageSize = 1
+            $stub.RepositorySelection = $Selection
+            Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration)
+
+            $state = Get-CodeSecurityState -ApiUrl $apiUrl -Organization demo -ConfigurationName platform-baseline
+
+            @($state.uncovered_repositories).Count | Should -Be 0
+            @($stub.Requests | Where-Object { $_ -ceq 'GET /installation/repositories' }).Count | Should -BeGreaterThan 2
+        }
+
+        It 'reads a bypass reviewer <Case>' -ForEach @(
+            @{ Case = 'without the optional mode as ALWAYS'; Remove = $true; Mode = $null; Expected = 'ALWAYS' }
+            @{ Case = 'with mode EXEMPT'; Remove = $false; Mode = 'EXEMPT'; Expected = 'EXEMPT' }
+        ) {
+            Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration)
+            $reviewer = ($stub.Configurations | Where-Object { $_['name'] -ceq 'platform-baseline' })['secret_scanning_delegated_bypass_options']['reviewers'][0]
+            if ($Remove) { $reviewer.Remove('mode') } else { $reviewer['mode'] = $Mode }
+
+            $state = Get-CodeSecurityState -ApiUrl $apiUrl -Organization demo -ConfigurationName platform-baseline
+
+            $state.configuration['secret_scanning_delegated_bypass_options']['reviewers'][0]['mode'] | Should -BeExactly $Expected
         }
 
         It 'reads the configuration, defaults, attachments and custom patterns' {
@@ -442,7 +562,14 @@ Describe 'CodeSecurity module against the documented GitHub API' {
 
         It 'fails when GitHub returns <Case>' -ForEach @(
             @{ Case = 'a configuration without ID'; Break = { $stub.Configurations[0]['id'] = $null }; Message = '*no valid ID*' }
-            @{ Case = 'a repository without status'; Break = { $stub.Repositories['demo/lib'].configuration = 17; $stub.Repositories['demo/lib'].status = '' }; Message = '*without status*' }
+            @{ Case = 'a foreign repository with an empty status'; Break = { $stub.Repositories['demo/lib'].configuration = 17; $stub.Repositories['demo/lib'].status = '' }; Message = "*unknown attachment status ''*" }
+            @{ Case = 'a foreign repository with an unknown status'; Break = { $stub.Repositories['demo/lib'].configuration = 17; $stub.Repositories['demo/lib'].status = 'unknown' }; Message = "*unknown attachment status 'unknown'*" }
+            @{ Case = 'a foreign repository with an upper-case status'; Break = { $stub.Repositories['demo/lib'].configuration = 17; $stub.Repositories['demo/lib'].status = 'ATTACHED' }; Message = "*unknown attachment status 'ATTACHED'*" }
+            @{ Case = 'a bypass reviewer with null mode'; Break = { (Edit-TestBypassMode $null) }; Message = "*unknown bypass mode ''*" }
+            @{ Case = 'a bypass reviewer with empty mode'; Break = { (Edit-TestBypassMode '') }; Message = "*unknown bypass mode ''*" }
+            @{ Case = 'a bypass reviewer with lower-case mode'; Break = { (Edit-TestBypassMode 'always') }; Message = "*unknown bypass mode 'always'*" }
+            @{ Case = 'installation repositories with selected access'; Break = { $stub.RepositorySelection = 'selected' }; Message = "*repository access 'selected'*" }
+            @{ Case = 'a total_count that differs from the listed repositories'; Break = { $stub.TotalCountOffset = 1 }; Message = '*reported 3 repositories but listed 2*' }
             @{ Case = 'a pattern without name'; Break = { $stub.Patterns.Add(@{ id = 1; revision = 1; name = ''; pattern = 'x'; slug = 'x'; state = 'published'; push_protection_enabled = $true; start_delimiter = $null; end_delimiter = $null; must_match = $null; must_not_match = $null }) }; Message = '*without name*' }
         ) {
             & $Break

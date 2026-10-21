@@ -43,6 +43,11 @@ function Initialize-CodeSecurityStub {
         IncludePatternVersion = $false
         PatchReturnsNoContent = $false
         DropNext              = $null
+        RepositorySelection   = 'all'
+        AttachStatus          = 'attached'
+        AttachSkip            = @()
+        PushProtectionIgnored = $false
+        TotalCountOffset      = 0
         Requests              = [Collections.Generic.List[string]]::new()
         Bodies                = [Collections.Generic.List[object]]::new()
     })
@@ -75,6 +80,26 @@ function Get-StubPage {
         $link = "<$($State.Origin)$Path`?$queryString>; rel=`"next`""
     }
     return ConvertTo-StubReply -Status 200 -Body $page -Link $link
+}
+
+function Get-StubInstallationRepository {
+    param([hashtable] $State, [string] $Path, [hashtable] $Query)
+
+    $items = @(foreach ($entry in $State.Repositories.GetEnumerator()) {
+        $item = (Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation)['repositories'][0]
+        $item['id'] = $entry.Value.id
+        $item['name'] = $entry.Value.name
+        $item['full_name'] = $entry.Key
+        $item['owner']['login'] = $State.Organization
+        $item
+    })
+    $page = Get-StubPage -State $State -Path $Path -Query $Query -Items $items
+    $body = Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation
+    $body['total_count'] = $items.Count + $State.TotalCountOffset
+    $body['repositories'] = ConvertFrom-Json -InputObject $page.Body -AsHashtable -Depth 100 -NoEnumerate
+    # repository_selection is an optional property of the documented response.
+    if ($State.RepositorySelection) { $body['repository_selection'] = $State.RepositorySelection }
+    return ConvertTo-StubReply -Status 200 -Body $body -Link $page.Link
 }
 
 function Find-StubConfiguration {
@@ -146,6 +171,9 @@ function Invoke-StubRoute {
     $notFound = ConvertTo-StubReply -Status 404 -Body @{ message = 'Not Found' }
     $route = "$Method $Path"
 
+    if ($route -ceq 'GET /installation/repositories') {
+        return Get-StubInstallationRepository -State $State -Path $Path -Query $Query
+    }
     if ($route -cmatch "^GET /orgs/$org/code-security/configurations$") {
         $items = @($State.Configurations | Where-Object { $Query['target_type'] -ceq 'all' -or $_['target_type'] -ceq $(if ($Query['target_type']) { $Query['target_type'] } else { 'all' }) })
         return Get-StubPage -State $State -Path $Path -Query $Query -Items $items
@@ -214,9 +242,10 @@ function Invoke-StubRoute {
         $id = [long] $Matches['id']
         if (-not (Find-StubConfiguration $State $id)) { return $notFound }
         if ($Request['scope'] -cne 'all') { return ConvertTo-StubReply -Status 422 -Body @{ message = 'Unsupported scope' } }
-        foreach ($repository in $State.Repositories.Values) {
-            $repository.configuration = $id
-            $repository.status = if ($State.AttachPendingReads -gt 0) { 'attaching' } else { 'attached' }
+        foreach ($entry in $State.Repositories.GetEnumerator()) {
+            if ($entry.Key -cin $State.AttachSkip) { continue }
+            $entry.Value.configuration = $id
+            $entry.Value.status = if ($State.AttachPendingReads -gt 0) { 'attaching' } else { $State.AttachStatus }
         }
         return ConvertTo-StubReply -Status 202 -Body @{}
     }
@@ -227,7 +256,7 @@ function Invoke-StubRoute {
             $State.AttachPendingReads--
         }
         else {
-            foreach ($repository in $State.Repositories.Values) { if ($repository.status -ceq 'attaching') { $repository.status = 'attached' } }
+            foreach ($repository in $State.Repositories.Values) { if ($repository.status -ceq 'attaching') { $repository.status = $State.AttachStatus } }
         }
         $items = @(foreach ($entry in $State.Repositories.GetEnumerator()) {
             if ($entry.Value.configuration -ne $id) { continue }
@@ -313,7 +342,7 @@ function Invoke-StubRoute {
             if (-not $pattern -or $setting['custom_pattern_version'] -cne (Get-StubPatternVersion -Pattern $pattern)) {
                 return ConvertTo-StubReply -Status 422 -Body @{ message = 'Unknown pattern' }
             }
-            $pattern['push_protection_enabled'] = $setting['push_protection_setting'] -ceq 'enabled'
+            if (-not $State.PushProtectionIgnored) { $pattern['push_protection_enabled'] = $setting['push_protection_setting'] -ceq 'enabled' }
         }
         $State.PatternConfigVersion++
         $reply = Get-GitHubApiFixture -Name secret-scanning/update-org-pattern-configs

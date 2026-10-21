@@ -10,6 +10,10 @@ $script:ApiVersion = '2026-03-10'
 # Statuses that mean a repository is still bound to a configuration.
 $script:ActiveAttachmentStatuses = @('attached', 'attaching', 'enforced', 'failed', 'updating', 'enterprise_enforced')
 $script:PendingAttachmentStatuses = @('attaching', 'updating')
+$script:SuccessfulAttachmentStatuses = @('attached', 'enforced')
+# Documented enum of the attachment status; any other value is unreadable state.
+$script:AttachmentStatuses = @('attached', 'attaching', 'detached', 'removed', 'enforced', 'failed', 'updating', 'removed_by_enterprise', 'enterprise_enforced')
+$script:BypassModes = @('ALWAYS', 'EXEMPT')
 # Documented defaults of POST /orgs/{org}/secret-scanning/custom-patterns; a null delimiter means the default.
 $script:DefaultStartDelimiter = '\A|[^0-9A-Za-z]'
 $script:DefaultEndDelimiter = '\z|[^0-9A-Za-z]'
@@ -44,6 +48,8 @@ function Invoke-CodeSecurityApi {
         [Parameter(Mandatory)][string] $Path,
         [AllowNull()][object] $Body,
         [switch] $AllPages,
+        # With AllPages, reads the page items from this property of an object response instead of a JSON array.
+        [string] $ItemsProperty,
         [switch] $AllowNotFound
     )
 
@@ -73,7 +79,14 @@ function Invoke-CodeSecurityApi {
         $content = if ($reply.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($reply.Content) } else { [string] $reply.Content }
         $parsed = if ([string]::IsNullOrWhiteSpace($content)) { $null } else { ConvertFrom-Json -InputObject $content -AsHashtable -Depth 100 -NoEnumerate }
         if (-not $AllPages) { return , $parsed }
-        if ($parsed -isnot [array]) { throw "GitHub returned no JSON array for $Method $($Path.Split('?')[0])." }
+        if ($ItemsProperty) {
+            if ($parsed -isnot [System.Collections.IDictionary] -or $parsed[$ItemsProperty] -isnot [array]) {
+                throw "GitHub returned no '$ItemsProperty' array for $Method $($Path.Split('?')[0])."
+            }
+            $pageMeta = $parsed
+            $parsed = $parsed[$ItemsProperty]
+        }
+        elseif ($parsed -isnot [array]) { throw "GitHub returned no JSON array for $Method $($Path.Split('?')[0])." }
         foreach ($item in $parsed) { $items.Add($item) }
         $uri = $null
         foreach ($link in @($reply.Headers['Link'])) {
@@ -87,6 +100,12 @@ function Invoke-CodeSecurityApi {
                 }
             }
         }
+    }
+    if ($ItemsProperty) {
+        $result = [ordered]@{}
+        foreach ($key in $pageMeta.Keys) { $result[$key] = $pageMeta[$key] }
+        $result[$ItemsProperty] = $items.ToArray()
+        return $result
     }
     return , $items.ToArray()
 }
@@ -129,11 +148,55 @@ function Get-CodeSecurityConfigurationRepository {
     $repositories = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method GET -AllPages `
         -Path "/orgs/$Organization/code-security/configurations/$ConfigurationId/repositories?status=all&per_page=100"
     return , @($repositories | ForEach-Object {
-        if (-not $_['status'] -or -not $_['repository'] -or -not $_['repository']['full_name']) {
-            throw "Configuration $ConfigurationId in '$Organization' returned a repository without status or full_name."
+        if ($_ -isnot [System.Collections.IDictionary] -or $_['repository'] -isnot [System.Collections.IDictionary] -or
+            -not $_['repository']['full_name']) {
+            throw "Configuration $ConfigurationId in '$Organization' returned a repository without full_name."
         }
-        [ordered]@{ repository = [string] $_['repository']['full_name']; status = [string] $_['status'] }
+        Assert-CodeSecurityId -Value $_['repository']['id'] -Description "Repository '$($_['repository']['full_name'])' of configuration $ConfigurationId"
+        if ([string] $_['status'] -cnotin $script:AttachmentStatuses) {
+            throw "Configuration $ConfigurationId in '$Organization' returned the unknown attachment status '$($_['status'])' for '$($_['repository']['full_name'])'."
+        }
+        [ordered]@{ id = [string] $_['repository']['id']; repository = [string] $_['repository']['full_name']; status = [string] $_['status'] }
     })
+}
+
+function Get-CodeSecurityRepositoryInventory {
+    <#
+    .SYNOPSIS
+    Lists every repository of the organization through the installation, which has access to all repositories.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $ApiUrl, [Parameter(Mandatory)][string] $Organization)
+
+    # GET /orgs/{org}/repos does not support internal repositories with installation tokens; the installation list does.
+    $reply = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method GET -AllPages -ItemsProperty repositories -Path '/installation/repositories?per_page=100'
+    if ($reply.Contains('repository_selection') -and [string] $reply['repository_selection'] -cne 'all') {
+        throw "The installation in '$Organization' has repository access '$($reply['repository_selection'])'; the module needs all repositories."
+    }
+    $repositories = @($reply['repositories'])
+    if ([string] $reply['total_count'] -cnotmatch '^[0-9]+$' -or [long] $reply['total_count'] -ne $repositories.Count) {
+        throw "The installation in '$Organization' reported $($reply['total_count']) repositories but listed $($repositories.Count)."
+    }
+    return , @($repositories | ForEach-Object {
+        if ($_ -isnot [System.Collections.IDictionary] -or -not $_['full_name'] -or $_['owner'] -isnot [System.Collections.IDictionary] -or
+            [string] $_['owner']['login'] -ine $Organization) {
+            throw "The installation in '$Organization' listed a repository outside the organization."
+        }
+        Assert-CodeSecurityId -Value $_['id'] -Description "Repository '$($_['full_name'])'"
+        [ordered]@{ id = [string] $_['id']; repository = [string] $_['full_name'] }
+    })
+}
+
+function Get-UncoveredRepository {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Inventory,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Attached
+    )
+
+    $covered = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in $Attached) { if ($entry['status'] -cin $script:SuccessfulAttachmentStatuses) { $null = $covered.Add($entry['id']) } }
+    return , @($Inventory | Where-Object { -not $covered.Contains($_['id']) } | ForEach-Object { $_['repository'] })
 }
 
 function Get-CustomPatternByName {
@@ -199,6 +262,21 @@ function Get-CodeSecurityState {
             }
         }
     }
+    $uncovered = Get-UncoveredRepository -Inventory (Get-CodeSecurityRepositoryInventory -ApiUrl $ApiUrl -Organization $Organization) -Attached $repositories
+
+    if ($configuration) {
+        # mode is optional with the documented default ALWAYS; a present value must be a documented mode.
+        $options = $configuration['secret_scanning_delegated_bypass_options']
+        if ($options -is [System.Collections.IDictionary] -and $options['reviewers'] -is [array]) {
+            foreach ($reviewer in $options['reviewers']) {
+                if ($reviewer -isnot [System.Collections.IDictionary]) { throw "Configuration '$ConfigurationName' in '$Organization' returned an invalid bypass reviewer." }
+                if (-not $reviewer.Contains('mode')) { $reviewer['mode'] = 'ALWAYS' }
+                elseif ([string] $reviewer['mode'] -cnotin $script:BypassModes) {
+                    throw "Configuration '$ConfigurationName' in '$Organization' returned the unknown bypass mode '$($reviewer['mode'])'."
+                }
+            }
+        }
+    }
 
     $defaults = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method GET -Path "/orgs/$Organization/code-security/configurations/defaults"
     if ($defaults -isnot [array]) { throw "Organization '$Organization' returned no array of default configurations." }
@@ -224,6 +302,7 @@ function Get-CodeSecurityState {
         defaults            = $defaultEntries
         repositories        = @($repositories)
         foreign_attachments = @($foreign)
+        uncovered_repositories = @($uncovered)
         custom_patterns     = $patterns
     }
 }
@@ -242,7 +321,17 @@ function Wait-CodeSecurityAttachment {
     while ($true) {
         $repositories = Get-CodeSecurityConfigurationRepository -ApiUrl $ApiUrl -Organization $Organization -ConfigurationId $ConfigurationId
         $pending = @($repositories | Where-Object { $_['status'] -cin $script:PendingAttachmentStatuses })
-        if ($pending.Count -eq 0) { return }
+        if ($pending.Count -eq 0) {
+            $unsuccessful = @($repositories | Where-Object { $_['status'] -cnotin $script:SuccessfulAttachmentStatuses } | ForEach-Object { "$($_['repository']) ($($_['status']))" })
+            if ($unsuccessful.Count -gt 0) {
+                throw "Configuration $ConfigurationId in '$Organization' did not attach to: $($unsuccessful -join ', ')."
+            }
+            $uncovered = Get-UncoveredRepository -Inventory (Get-CodeSecurityRepositoryInventory -ApiUrl $ApiUrl -Organization $Organization) -Attached $repositories
+            if ($uncovered.Count -gt 0) {
+                throw "Configuration $ConfigurationId in '$Organization' is not attached to: $($uncovered -join ', ')."
+            }
+            return
+        }
         if ([DateTime]::UtcNow -ge $deadline) {
             throw "Configuration $ConfigurationId in '$Organization' still has $($pending.Count) repositories attaching or updating."
         }
@@ -361,6 +450,10 @@ function Set-CustomPattern {
             pattern_config_version  = $found.Version
             custom_pattern_settings = @($setting)
         })
+    $verified = (Get-CustomPatternByName -ApiUrl $ApiUrl -Organization $Organization)[$name]
+    if (-not $verified -or $verified['push_protection_enabled'] -ne $true) {
+        throw "Custom pattern '$name' in '$Organization' does not report push protection after it was enabled."
+    }
 }
 
 function Get-CustomPatternOverride {

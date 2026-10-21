@@ -85,7 +85,7 @@ Modul v každé organizaci z `target_organizations` vytvoří organizační code
 | `enforcement` | `enforced` |
 
 - Configuration je organizační, ne `enterprise_enforced`. Installation token App enterprise configuration nevytvoří.
-- Apply nastaví configuration jako výchozí pro nové repozitáře (`default_for_new_repos: all`) a připojí ji ke všem repozitářům (`scope: all`). Potom čeká, dokud žádný repozitář nemá stav `attaching` nebo `updating`. Limit je 600 sekund; proměnná `CODE_SECURITY_ATTACHMENT_TIMEOUT` ho změní.
+- Apply nastaví configuration jako výchozí pro nové repozitáře (`default_for_new_repos: all`) a připojí ji ke všem repozitářům (`scope: all`). Potom čeká, dokud žádný repozitář nemá stav `attaching` nebo `updating`. Limit je 600 sekund; proměnná `CODE_SECURITY_ATTACHMENT_TIMEOUT` ho změní. Apply selže, když některý repozitář skončí v jiném stavu než `attached` nebo `enforced`, nebo když některý repozitář instalace configuration nemá. Další apply krok zopakuje.
 - Parametr `secret_scanning_bypass_reviewers` je povinný. Každá položka má `reviewer_type` (`TEAM` nebo `ROLE`) a číselné `reviewer_id` týmu nebo organizační role security týmu. `teams.security` v `instance.yaml` obsahuje jen e-maily, proto modul ID z této sekce neodvodí. Příklad:
 
   ```yaml
@@ -127,12 +127,15 @@ Modul drift neopravuje automaticky. Postconditions data source zastaví plan, kd
 - některé spravované pole nebo seznam bypass reviewerů má jinou hodnotu,
 - configuration není jediná výchozí pro nové public, private i internal repozitáře,
 - některý repozitář configuration nemá ve stavu `attached` nebo `enforced`,
+- některý repozitář instalace nemá úspěšně připojenou configuration, například po ručním odpojení nebo po vytvoření nového repozitáře,
 - některý repozitář je připojený k jiné configuration,
 - spravovaný pattern chybí, liší se, není publikovaný nebo nemá zapnutou push protection.
 
 Oprava: operátor obnoví stav ručně, nebo spustí apply s `-replace` obsahového prostředku, který uvádí chybová zpráva.
 
-Omezení: modul nečte seznam repozitářů organizace. Na to by potřeboval oprávnění `metadata: read`. Repozitář bez jakékoli configuration (například po ručním odpojení) proto plan nezachytí; zachytí ho až další apply s `-replace`.
+Seznam repozitářů modul čte přes [`GET /installation/repositories`](https://docs.github.com/en/enterprise-cloud@latest/rest/apps/installations#list-repositories-accessible-to-the-app-installation). Instalace App má přístup ke všem repozitářům organizace. `GET /orgs/{org}/repos` s installation tokenem nepodporuje internal repozitáře. Plan selže, když odpověď uvádí jiný `repository_selection` než `all`, nebo když `total_count` neodpovídá počtu vypsaných repozitářů. Archivované repozitáře modul nevynechává.
+
+Neznámý stav připojení (hodnota mimo dokumentovaný enum) a neznámý `mode` bypass reviewera plan zastaví. Chybějící `mode` znamená dokumentovanou výchozí hodnotu `ALWAYS`.
 ## Teardown
 
 Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu a smaže organizační rulesety, configurations a custom patterns. Destroy configuration nejdřív zruší její výchozí roli a potom ji smaže. GitHub odpojí repozitáře a ponechá jim nastavení bez vazby na configuration. Destroy patternu vyřeší jeho alerty jako `pattern deleted` (`post_delete_action: resolve_alerts`). Ruční enterprise předpoklady nemění. Případné ruční operace uvádí manifest včetně omezení odstranění. Destroy organizačních nastavení pošle `PATCH` jen se spravovanými poli a výchozími hodnotami z tabulky výše.

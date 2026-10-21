@@ -308,6 +308,7 @@ data "external" "code_security_state" {
             param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['secret_scanning_delegated_bypass_options']['reviewers'][0]['reviewer_id'] = 43 } }
         @{ Case = 'default removed for public repositories'; Message = 'not the only default'; Drift = { param($s) $s.Defaults.public = $null } }
         @{ Case = 'repository attachment failed'; Message = 'pending or failed'; Drift = { param($s) $s.Repositories['demo/app'].status = 'failed' } }
+        @{ Case = 'repository without any configuration'; Message = 'has no successful attachment'; Drift = { param($s) $s.Repositories['demo/app'].configuration = $null; $s.Repositories['demo/app'].status = $null } }
         @{ Case = 'repository moved to another configuration'; Message = 'attached to another code security configuration'; Drift = {
             param($s) $s.Repositories['demo/lib'].configuration = 17 } }
         @{ Case = 'pattern regex changed'; Message = 'missing or differs from customPatterns'; Drift = { param($s) $s.Patterns[0]['pattern'] = 'itk_.*' } }

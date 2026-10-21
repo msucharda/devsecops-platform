@@ -179,7 +179,7 @@ data "external" "code_security_state" {
         length(jsondecode(self.result.state).configuration.secret_scanning_delegated_bypass_options.reviewers) == length(local.secret_scanning_bypass_reviewers) &&
         toset([
           for reviewer in jsondecode(self.result.state).configuration.secret_scanning_delegated_bypass_options.reviewers :
-          "${reviewer.reviewer_type}/${reviewer.reviewer_id}/${coalesce(try(reviewer.mode, null), "ALWAYS")}"
+          "${reviewer.reviewer_type}/${reviewer.reviewer_id}/${reviewer.mode}"
         ]) == toset([for reviewer in local.secret_scanning_bypass_reviewers : "${reviewer.reviewer_type}/${reviewer.reviewer_id}/${reviewer.mode}"]),
         false
       )
@@ -205,6 +205,10 @@ data "external" "code_security_state" {
       error_message = "A repository of ${each.key} is not attached to the code security configuration, or its attachment is pending or failed. The plan output of the data source lists the statuses."
     }
 
+    postcondition {
+      condition     = try(length(jsondecode(self.result.state).uncovered_repositories) == 0, false)
+      error_message = "A repository of ${each.key} has no successful attachment to the code security configuration. Rerun the apply with -replace=terraform_data.code_security_configuration_settings[\"${each.key}\"] to attach it."
+    }
     postcondition {
       condition     = try(length(jsondecode(self.result.state).foreign_attachments) == 0, false)
       error_message = "A repository of ${each.key} is attached to another code security configuration. Rerun the apply with -replace=terraform_data.code_security_configuration_settings[\"${each.key}\"] to attach the managed configuration to all repositories."
