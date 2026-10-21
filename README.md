@@ -370,6 +370,8 @@ Generátor `tools/Generate-TeardownWorkflow.ps1` vytvoří `.github/workflows/te
 5. Joby `outputs_<module>` načtou ze state výstupy modulů, na kterých závisí jiné moduly.
 6. Joby `destroy_<module>` běží v apply environmentu modulu v obráceném pořadí předpokladů. Destroy `emu-identity` běží jako poslední, až po úspěchu nebo přeskočení destroy ostatních modulů, protože odstraní týmy, jejichž schválení vyžadují apply environmenty ostatních modulů. Každý job použije installation token App modulu pro apply, ne PAT. Modul s ruleset rootem odstraní nejdřív ruleset root. Opakovaný destroy modulu s prázdným state skončí bez změny a nevyžaduje výstupy předpokladů.
 
+Teardown sdílí concurrency skupinu `deploy-instance-main` s nasazením z `main`. Noční `drift.yml` má vlastní skupinu a může běžet souběžně. Pokud drift plan drží zámek state, destroy modulu skončí chybou a teardown spusť znovu. Drift po teardownu může otevřít issue s chybějícími zdroji.
+
 Workflow neodstraní `bootstrap`. Organizační politiky, rulesety, code security configurations a custom patterns odstraní destroy modulů, které je spravují.
 
 ### Lokální odstranění bootstrapu
