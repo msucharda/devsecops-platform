@@ -57,9 +57,9 @@ Prostředek `terraform_data.repository` pro každou akci katalogu spustí `Invok
 
 1. Modul přečte repozitář (`GET /repos/{org}/{repo}`). Pokud chybí, vytvoří ho (`POST /orgs/{org}/repos`, `visibility: internal`, `auto_init: false`). Odpověď HTTP 422 po ztracené odpovědi předchozího běhu vede k opakovanému čtení.
 2. Modul převezme jen repozitář organizace akcí s přesným názvem, viditelností `internal`, bez archivace, který není fork a má výchozí větev `main`. Jiný repozitář ukončí běh chybou (fail-closed).
-3. Pokud `access_level` není `enterprise`, modul ho nastaví (`PUT /repos/{org}/{repo}/actions/permissions/access`).
-4. Pokud security tým nemá `push`, modul ho přidá (`PUT /orgs/{org}/teams/{team}/repos/{org}/{repo}`). Chybějící tým nebo tým s jinou viditelností než `closed` ukončí běh chybou. CODEOWNERS tajný (`secret`) tým ignoruje.
-5. Prázdný repozitář dostane první commit `.github/CODEOWNERS` (`PUT /repos/{org}/{repo}/contents/.github/CODEOWNERS`). Pokud `main` existuje a CODEOWNERS se liší, modul soubor nepřepíše a skončí chybou. Změna musí projít PR se schválením.
+3. Pokud security tým nemá `push`, modul ho přidá (`PUT /orgs/{org}/teams/{team}/repos/{org}/{repo}`). Chybějící tým nebo tým s jinou viditelností než `closed` ukončí běh chybou. CODEOWNERS tajný (`secret`) tým ignoruje.
+4. Prázdný repozitář dostane první commit `.github/CODEOWNERS` (`PUT /repos/{org}/{repo}/contents/.github/CODEOWNERS`). Pokud `main` existuje a CODEOWNERS se liší, modul soubor nepřepíše a skončí chybou. Změna musí projít PR se schválením.
+5. Pokud `access_level` není `enterprise`, modul ho nastaví (`PUT /repos/{org}/{repo}/actions/permissions/access`). Krok je poslední, proto repozitář, který neprošel převzetím, zůstane pro enterprise uzavřený.
 
 ### Tag releasu
 
@@ -74,6 +74,8 @@ Prostředek `terraform_data.release_tag` pro každou položku `releases` spustí
 
 Nový release je nová položka `releases` s novým tagem. Starý tag zůstává.
 
+Omezení: krok 3 ověřuje dosažitelnost z `main`, ne schválení přesné revize. Mezilehlý commit importního PR s platným receiptem proto projde. Commit releasu volí člověk v parametru `releases` přes reviewovaný PR konfigurace instance. Vazbu na důkaz schválení řeší [#72](https://github.com/msucharda/devsecops-platform/issues/72).
+
 ### Kontrola stavu
 
 Data source `catalog_state` po změnách přečte stav každého repozitáře jen čtecími požadavky. Postcondition vyžaduje prázdný seznam porušení. Porušení jsou:
@@ -82,7 +84,7 @@ Data source `catalog_state` po změnách přečte stav každého repozitáře je
 - `access_level` není přesně `enterprise`,
 - security tým nemá `push`,
 - `main` neexistuje nebo CODEOWNERS na `main` se liší od `* @{organizace}/{security tým}`,
-- na `main` není aktivní pravidlo `pull_request` s `require_code_owner_review: true`, `dismiss_stale_reviews_on_push: true` a `required_approving_review_count` ≥ 1 (`GET /repos/{org}/{repo}/rules/branches/main`, všechny stránky),
+- na `main` není aktivní pravidlo `pull_request` z rulesetu organizace akcí (`ruleset_source_type: Organization`, `ruleset_source` rovné organizaci) s `require_code_owner_review: true`, `dismiss_stale_reviews_on_push: true` a `required_approving_review_count` ≥ 1 (`GET /repos/{org}/{repo}/rules/branches/main`, všechny stránky). Pravidlo z rulesetu repozitáře se nepočítá, protože apply credential s `administration: write` ho může změnit,
 - tag releasu chybí, neukazuje přímo na `commit` nebo `commit` nesplňuje podmínky z kroků 3 a 4.
 
 Chyba čtení nebo nečitelná odpověď API ukončí program chybou. Neznámý stav neprojde jako shoda. Plan i drift proto hlásí každý rozdíl jako chybu, ne jako plánovanou změnu.

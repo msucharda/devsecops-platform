@@ -268,13 +268,22 @@ function Test-CatalogApprovalRule {
     <#
     .SYNOPSIS
     Returns whether the rules active on main require an approving code owner review before merge.
+    .DESCRIPTION
+    Only a rule of an organization ruleset of the given organization counts. The apply credential holds repository
+    administration and could change a repository ruleset itself.
     #>
     [CmdletBinding()]
     [OutputType([bool])]
-    param([AllowNull()][AllowEmptyCollection()][object[]] $Rule)
+    param(
+        [AllowNull()][AllowEmptyCollection()][object[]] $Rule,
+        [Parameter(Mandatory)][string] $Organization
+    )
 
     foreach ($item in @($Rule)) {
         if ($item -isnot [System.Collections.IDictionary] -or $item['type'] -isnot [string] -or $item['type'] -cne 'pull_request') { continue }
+        # Organization logins are case-insensitive.
+        if ($item['ruleset_source_type'] -isnot [string] -or $item['ruleset_source_type'] -cne 'Organization' -or
+            $item['ruleset_source'] -isnot [string] -or $item['ruleset_source'] -ne $Organization) { continue }
         $parameters = $item['parameters']
         if ($parameters -isnot [System.Collections.IDictionary]) { continue }
         $count = $parameters['required_approving_review_count']
@@ -343,7 +352,7 @@ function Test-CatalogReleaseCommit {
     }
     $text = Get-CatalogFile -ApiUrl $ApiUrl -Organization $Organization -Repository $Repository -Path $script:ReceiptPath -Commit $Commit
     if ($null -eq $text) { return "Commit $Commit of '$Organization/$Repository' has no $($script:ReceiptPath) receipt." }
-    $receipt = try { ConvertFrom-Json -InputObject $text -AsHashtable -Depth 20 } catch { $null }
+    $receipt = try { ConvertFrom-Json -InputObject $text -AsHashtable -Depth 20 -NoEnumerate } catch { $null }
     if ($receipt -isnot [System.Collections.IDictionary] -or $receipt['version'] -isnot [long] -or $receipt['version'] -ne 1 -or
         $receipt['kind'] -isnot [string] -or $receipt['kind'] -cne 'action') {
         return "The receipt at $Commit of '$Organization/$Repository' is not a version 1 action receipt."
@@ -382,7 +391,7 @@ function Get-CatalogRepositoryState {
         Get-CatalogFile -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Path $script:CodeOwnersPath -Commit $state.mainSha
     }
     $rules = Invoke-CatalogApi -ApiUrl $ApiUrl -Method GET -Path "/repos/$Organization/$name/rules/branches/$($script:DefaultBranch)?per_page=100" -AllPages
-    $state.approvalRule = Test-CatalogApprovalRule -Rule $rules.Body
+    $state.approvalRule = Test-CatalogApprovalRule -Rule $rules.Body -Organization $Organization
     if ($Tag) {
         $state.tag = Get-CatalogTag -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Tag $Tag
         # Without main, the violations already report the missing branch.
@@ -470,10 +479,6 @@ function Initialize-CatalogRepository {
     }
     $reasons = @(Test-CatalogRepositoryAdoptable -Repository $repository -Organization $Organization -Name $name)
     if ($reasons.Count) { throw ($reasons -join ' ') }
-    if ((Get-CatalogAccessLevel -ApiUrl $ApiUrl -Organization $Organization -Repository $name) -cne 'enterprise') {
-        $null = Invoke-CatalogApi -ApiUrl $ApiUrl -Method PUT -Path "/repos/$Organization/$name/actions/permissions/access" `
-            -Body @{ access_level = 'enterprise' } -AcceptStatus @(204)
-    }
     if (-not (Get-CatalogTeamPush -ApiUrl $ApiUrl -Organization $Organization -Repository $name -SecurityTeam $SecurityTeam)) {
         $null = Invoke-CatalogApi -ApiUrl $ApiUrl -Method PUT -Path "/orgs/$Organization/teams/$SecurityTeam/repos/$Organization/$name" `
             -Body @{ permission = 'push' } -AcceptStatus @(204)
@@ -491,6 +496,11 @@ function Initialize-CatalogRepository {
     $current = Get-CatalogFile -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Path $script:CodeOwnersPath -Commit $main
     if ($current -cne $codeOwners) {
         throw "$($script:CodeOwnersPath) on main of '$Organization/$name' does not name only the security team; change it through a reviewed PR."
+    }
+    # Sharing comes last, so a repository that fails adoption is never opened to the enterprise.
+    if ((Get-CatalogAccessLevel -ApiUrl $ApiUrl -Organization $Organization -Repository $name) -cne 'enterprise') {
+        $null = Invoke-CatalogApi -ApiUrl $ApiUrl -Method PUT -Path "/repos/$Organization/$name/actions/permissions/access" `
+            -Body @{ access_level = 'enterprise' } -AcceptStatus @(204)
     }
 }
 

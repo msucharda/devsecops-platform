@@ -18,8 +18,9 @@ manualSteps:
   - id: require-catalog-code-owner-review
     owner: security
     description: >-
-      An active ruleset on the default branch of every catalog repository requires a pull request with at least one
-      approving review and a code owner review that a later push dismisses, without bypass. The module must not hold a ruleset write
+      An active organization ruleset of the actions organization on the default branch of every catalog repository requires a pull request with at least one
+      approving review and a code owner review that a later push dismisses, without bypass. A repository ruleset does not count,
+      because the apply credential administers the repository. The module must not hold a ruleset write
       credential (ADR 0016); it only reads the rules active on main and fails while they are missing. An owner of
       the actions organization creates the organization ruleset until a module manages it.
     limitations:

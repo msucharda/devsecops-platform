@@ -25,7 +25,9 @@ BeforeAll {
 
     function Get-StubApprovalRule {
         param([hashtable] $Set = @{})
-        , (Get-GitHubApiFixture -Name repos/get-branch-rules.pull-request -Set $Set)
+        $fields = @{ '0.ruleset_source' = $organization }
+        foreach ($key in $Set.Keys) { $fields[$key] = $Set[$key] }
+        , (Get-GitHubApiFixture -Name repos/get-branch-rules.pull-request -Set $fields)
     }
 
     function Initialize-CatalogStub {
@@ -501,19 +503,24 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'has no trailing newline'; Text = "* @{org}/{team}" }
             @{ Case = 'is empty'; Text = '' }
         ) {
-            $null = Add-StubCompliantRepository
+            $repository = Add-StubCompliantRepository
+            $repository.access = 'none'
             $text = $Text.Replace('{org}', $organization).Replace('{team}', $securityTeam).Replace('{TEAM}', $securityTeam.ToUpperInvariant())
             $null = Add-StubCommit -Files @{ '.github/CODEOWNERS' = $text }
 
             { Initialize-CatalogRepository @target } | Should -Throw '*does not name only the security team*'
             (Get-StubRequest putContent).Count | Should -Be 0
+            (Get-StubRequest setAccess).Count | Should -Be 0
+            $repository.access | Should -BeExactly 'none'
         }
 
         It 'refuses a repository with commits but no CODEOWNERS on main' {
-            $null = Add-StubRepository -Files @{ 'README.md' = 'readme' }
+            $repository = Add-StubRepository -Files @{ 'README.md' = 'readme' }
 
             { Initialize-CatalogRepository @target } | Should -Throw '*does not name only the security team*'
             (Get-StubRequest putContent).Count | Should -Be 0
+            (Get-StubRequest setAccess).Count | Should -Be 0
+            $repository.access | Should -BeExactly 'none'
         }
 
         It 'fails when the security team does not exist' {
@@ -688,13 +695,19 @@ Describe 'Actions catalog module against the documented GitHub API' {
 
     Context 'Test-CatalogApprovalRule' {
         It 'accepts the documented pull request rule' {
-            Test-CatalogApprovalRule -Rule (Get-StubApprovalRule) | Should -BeTrue
+            Test-CatalogApprovalRule -Rule (Get-StubApprovalRule) -Organization $organization | Should -BeTrue
+        }
+
+        It 'accepts a rule whose organization source differs only in case' {
+            $rules = Get-StubApprovalRule -Set @{ '0.ruleset_source' = $organization.ToUpperInvariant() }
+
+            Test-CatalogApprovalRule -Rule $rules -Organization $organization | Should -BeTrue
         }
 
         It 'accepts a qualifying pull request rule after other rules' {
             $rules = @(Get-GitHubApiFixture -Name repos/get-branch-rules) + (Get-StubApprovalRule -Set @{ '0.parameters.required_approving_review_count' = 2 })
 
-            Test-CatalogApprovalRule -Rule $rules | Should -BeTrue
+            Test-CatalogApprovalRule -Rule $rules -Organization $organization | Should -BeTrue
         }
 
         It 'refuses <Case>' -ForEach @(
@@ -713,14 +726,25 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'another rule type'; Set = @{ '0.type' = 'required_status_checks' } }
             @{ Case = 'a rule type in upper case'; Set = @{ '0.type' = 'PULL_REQUEST' } }
             @{ Case = 'an empty rule type array'; Set = @{ '0.type' = 'emptyArray' } }
+            @{ Case = 'a repository ruleset'; Set = @{ '0.ruleset_source_type' = 'Repository'; '0.ruleset_source' = 'monalisa/my-repo' } }
+            @{ Case = 'a source type in lower case'; Set = @{ '0.ruleset_source_type' = 'organization' } }
+            @{ Case = 'no source type'; Set = @{ '0.ruleset_source_type' = $null } }
+            @{ Case = 'an empty source type array'; Set = @{ '0.ruleset_source_type' = 'emptyArray' } }
+            @{ Case = 'a ruleset of another organization'; Set = @{ '0.ruleset_source' = 'other-org' } }
+            @{ Case = 'no source'; Set = @{ '0.ruleset_source' = $null } }
+            @{ Case = 'an empty source array'; Set = @{ '0.ruleset_source' = 'emptyArray' } }
         ) {
             $rules = if ($_.Contains('Rules')) { $_.Rules }
             elseif ($_.Contains('Fixture')) { Get-GitHubApiFixture -Name $_.Fixture }
             else { Get-StubApprovalRule -Set $_.Set }
             # An empty array is a deliberately invalid shape: -cne on an array filters instead of comparing.
-            if ($_.Contains('Set') -and $_.Set['0.type'] -ceq 'emptyArray') { $rules[0]['type'] = @() }
+            if ($_.Contains('Set')) {
+                foreach ($key in @('type', 'ruleset_source_type', 'ruleset_source')) {
+                    if ($_.Set["0.$key"] -ceq 'emptyArray') { $rules[0][$key] = @() }
+                }
+            }
 
-            Test-CatalogApprovalRule -Rule $rules | Should -BeFalse
+            Test-CatalogApprovalRule -Rule $rules -Organization $organization | Should -BeFalse
         }
     }
 
@@ -804,6 +828,7 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'has an empty receipt tag array'; Receipt = @{ Tag = 'emptyArray' }; Error = '*records tag*' }
             @{ Case = 'has a receipt tag array'; Receipt = @{ Tag = 'array:v4.2.2' }; Error = '*records tag*' }
             @{ Case = 'has an invalid receipt'; Setup = 'invalidJson'; Error = '*not a version 1 action receipt*' }
+            @{ Case = 'has a receipt wrapped in an array'; Setup = 'arrayReceipt'; Error = '*not a version 1 action receipt*' }
         ) {
             $receiptFields = $_['Receipt']
             $commit = switch ($_['Setup']) {
@@ -812,6 +837,8 @@ Describe 'Actions catalog module against the documented GitHub API' {
                 'diverged' { Add-StubCommit -Files @{ '.vendoring.json' = (Get-StubReceipt) } -Parent $repository.commits[$release].parent -Detached }
                 'noReceipt' { $repository.commits[$release].parent }
                 'invalidJson' { Add-StubCommit -Files @{ '.vendoring.json' = '{ not json' } }
+                # A singleton array around a valid receipt is a deliberately invalid shape.
+                'arrayReceipt' { Add-StubCommit -Files @{ '.vendoring.json' = "[$(Get-StubReceipt)]" } }
                 default {
                     $arguments = @{}
                     # Array receipt fields are deliberately invalid: -cne on an array filters instead of comparing.
