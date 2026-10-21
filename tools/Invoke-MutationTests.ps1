@@ -28,12 +28,14 @@ $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 $configuration = Import-PowerShellDataFile -LiteralPath $ConfigurationPath
 $markers = @(Get-SecurityCheckMarker -RepoPath $RepoPath)
 Assert-SecurityCheckConfiguration -Marker $markers -Configuration $configuration
+$inventory = @(Get-SecurityCheckMutant -RepoPath $RepoPath -Marker $markers)
+$mutants = $inventory
 if ($Check) {
     $unknown = @($Check | Where-Object { $_ -cnotin $markers.Name })
     if ($unknown.Count -gt 0) { throw "Unknown security checks: $($unknown -join ', ')." }
     $markers = @($markers | Where-Object { $_.Name -cin $Check })
+    $mutants = @($inventory | Where-Object { $_.Check -cin $Check })
 }
-$mutants = @(Get-SecurityCheckMutant -RepoPath $RepoPath -Marker $markers)
 $testsByCheck = @{}
 foreach ($item in @($configuration['Checks'])) { $testsByCheck[$item['Name']] = @($item['Tests']) }
 $workerScript = Join-Path $PSScriptRoot 'tests/Invoke-MutationWorker.ps1'
@@ -143,7 +145,8 @@ finally {
 }
 
 $exceptions = @($configuration['Exceptions'])
-if ($Check) { $exceptions = @($exceptions | Where-Object { @($results | Where-Object Id -ceq $_['Mutant']).Count -gt 0 }) }
+# Exceptions of unselected checks are dropped; an exception that matches no generated mutant stays and fails as stale.
+if ($Check) { $exceptions = @(Select-MutationException -Exception $exceptions -Inventory $inventory -Check $Check) }
 $resolved = Resolve-MutationResult -Result $results -Exception $exceptions
 $summary = @($resolved.Results | Group-Object Check | Sort-Object Name | ForEach-Object {
         [pscustomobject]@{

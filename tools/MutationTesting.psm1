@@ -184,9 +184,7 @@ function Get-FunctionMutant {
     foreach ($statement in $returns) {
         $pipeline = $statement.Pipeline
         if ($pipeline.Extent.Text -in @('$true', '$false')) { continue }
-        if ($pipeline -isnot [System.Management.Automation.Language.PipelineAst] -or $pipeline.PipelineElements.Count -ne 1 -or
-            $pipeline.PipelineElements[0] -isnot [System.Management.Automation.Language.CommandExpressionAst]) { continue }
-        $expression = $pipeline.PipelineElements[0].Expression
+        $expression = Get-InnerExpression -Node $pipeline
         $logical = $expression -is [System.Management.Automation.Language.BinaryExpressionAst] -or
             ($expression -is [System.Management.Automation.Language.UnaryExpressionAst] -and
             $expression.TokenKind -in @([System.Management.Automation.Language.TokenKind]::Not, [System.Management.Automation.Language.TokenKind]::Exclaim))
@@ -299,6 +297,25 @@ function Get-MutationJobStatus {
     return 'Survived', "$($Result['Passed']) tests passed."
 }
 
+function Select-MutationException {
+    <#
+    .SYNOPSIS
+    Keeps the exceptions of the selected checks and every exception that matches no generated mutant, so stale exceptions still fail.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [AllowEmptyCollection()][object[]] $Exception = @(),
+        [AllowEmptyCollection()][object[]] $Inventory = @(),
+        [Parameter(Mandatory)][string[]] $Check
+    )
+
+    foreach ($item in $Exception) {
+        $owner = @($Inventory | Where-Object { $_.Id -ceq $item['Mutant'] })
+        if ($owner.Count -eq 0 -or $owner[0].Check -cin $Check) { $item }
+    }
+}
+
 function Resolve-MutationResult {
     <#
     .SYNOPSIS
@@ -332,4 +349,4 @@ function Resolve-MutationResult {
     [pscustomobject]@{ Results = $Result; Problems = $problems.ToArray() }
 }
 
-Export-ModuleMember -Function Get-SecurityCheckMarker, Get-FunctionMutant, Get-SecurityCheckMutant, Assert-SecurityCheckConfiguration, Get-MutationJobStatus, Resolve-MutationResult
+Export-ModuleMember -Function Get-SecurityCheckMarker, Get-FunctionMutant, Get-SecurityCheckMutant, Assert-SecurityCheckConfiguration, Get-MutationJobStatus, Select-MutationException, Resolve-MutationResult

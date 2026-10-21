@@ -89,6 +89,17 @@ Describe 'Security check mutation testing' {
             $replacement | Should -Contain '$b=>($true)'
         }
 
+        It 'weakens a parenthesized allow return like an unparenthesized one' {
+            $plain = Get-TestFunctionAst -Text 'function Test-Sample { return $a -and $b }'
+            $wrapped = Get-TestFunctionAst -Text 'function Test-Sample { return ($a -and $b) }'
+
+            $plainKinds = @(Get-FunctionMutant -Function $plain | ForEach-Object Kind | Sort-Object)
+            $wrapped = @(Get-FunctionMutant -Function $wrapped)
+
+            @($wrapped | ForEach-Object Kind | Sort-Object) | Should -Be $plainKinds
+            @($wrapped | ForEach-Object { "$($_.Original)=>$($_.Replacement)" }) | Should -Contain '($a -and $b)=>$true'
+        }
+
         It 'does not weaken -and operands of a deny guard' {
             $function = Get-TestFunctionAst -Text "function Test-Sample { if (`$a -and `$b) { throw 'no' } }"
 
@@ -206,6 +217,34 @@ Describe 'Security check mutation testing' {
             $invalid.Issue = $Issue
 
             { Assert-SecurityCheckConfiguration -Marker $marker -Configuration (Get-TestConfiguration -Exception @($invalid)) } | Should -Throw '*must link an issue or pull request URL*'
+        }
+    }
+
+    Context 'exception selection' {
+        BeforeAll {
+            $script:Inventory = @(
+                [pscustomobject]@{ Id = 'A: one#1'; Check = 'first' }
+                [pscustomobject]@{ Id = 'B: two#1'; Check = 'second' }
+            )
+        }
+
+        It 'keeps the exceptions of the selected check' {
+            @(Select-MutationException -Exception @(@{ Mutant = 'A: one#1' }) -Inventory $script:Inventory -Check 'first').Count | Should -Be 1
+        }
+
+        It 'drops the exceptions of an unselected check' {
+            @(Select-MutationException -Exception @(@{ Mutant = 'B: two#1' }) -Inventory $script:Inventory -Check 'first').Count | Should -Be 0
+        }
+
+        It 'keeps a stale exception so that it fails as unmatched' {
+            $selected = @(Select-MutationException -Exception @(@{ Mutant = 'A: removed#1' }) -Inventory $script:Inventory -Check 'first')
+
+            $selected.Count | Should -Be 1
+            (Resolve-MutationResult -Result @(Get-TestResult -Id 'A: one#1') -Exception $selected).Problems -join ' ' | Should -Match 'matches no mutant'
+        }
+
+        It 'keeps an exception whose ID differs only in case' {
+            @(Select-MutationException -Exception @(@{ Mutant = 'b: two#1' }) -Inventory $script:Inventory -Check 'first').Count | Should -Be 1
         }
     }
 
