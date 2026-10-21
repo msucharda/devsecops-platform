@@ -4,6 +4,36 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'release-tag-commit'
+            Tests = @(
+                @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*tag-commit mismatch*', '*annotated tag whose tag object*') }
+            )
+        }
+        @{
+            Name = 'release-asset-digest'
+            Tests = @(
+                @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*published release with different content*', '*uploaded asset reports another digest*', '*replaces stale, partial and foreign assets*', '*identical published release*') }
+            )
+        }
+        @{
+            Name = 'release-published-state'
+            Tests = @(
+                @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*published release with different content*', '*publish response that does not match*', '*identical published release*') }
+            )
+        }
+        @{
+            Name = 'vendoring-commit-on-branch'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringSource.Tests.ps1'; FullName = @('*release commit*protected branch*') }
+            )
+        }
+        @{
+            Name = 'vendoring-required-attestation'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringSource.Tests.ps1'; FullName = @('*required*attestation*', '*required-attestation*', '*resolves the exact tag*') }
+            )
+        }
+        @{
             Name = 'github-app-owner'
             Tests = @(
                 @{ Path = 'tools/tests/GitHubAppOwner.Tests.ps1'; FullName = @('*') }

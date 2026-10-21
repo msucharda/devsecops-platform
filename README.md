@@ -348,8 +348,19 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 ## Release a upgrade
 
 - Release má jednu verzi SemVer pro všechny moduly (ADR 0013).
-- Jeden opakovaně použitelný workflow vendoringu importuje release platformy, akce i skilly. Workflow stáhne zdroj podle tagu, ověří attestaci, pokud existuje, a otevře PR s diffem.
+- Release vzniká pushem tagu `vMAJOR.MINOR.PATCH` na commit z `main`. Tag `vMAJOR.MINOR.PATCH-rc.N` vydá release candidate jako prerelease. Workflow `.github/workflows/release.yml` sestaví asset `platform-<tag>.zip`, vytvoří k němu build provenance attestaci a publikuje release. Publikovaný release se nemění; oprava vyžaduje nový tag.
+- Jeden opakovaně použitelný workflow vendoringu importuje release platformy, akce i skilly. Workflow stáhne zdroj podle tagu, ověří attestaci a otevře PR s diffem. Import release vyžaduje ověřenou attestaci z `release.yml` tohoto repozitáře.
+- Repozitář instance spustí import workflowem `import-release.yml` se vstupem `tag`. PR mění jen `platform/`.
 - PR otevírá installation token s oprávněními k cílovému repozitáři. Pokud privátní zdroj release není dostupný installation tokenem enterprise-owned App, import zůstává ruční do jeho zpřístupnění; workflow nepoužije osobní PAT ani OAuth token.
+
+### Přechod z upstream akcí na katalogové kopie
+
+Živé workflow instance po bootstrapu používají upstream akce připnuté na SHA. Přechod na kopie v organizaci akcí probíhá v tomto pořadí:
+
+1. Platformní tým importuje každou akci workflowem vendoringu (`kind: action`) do organizace akcí a security tým schválí PR (#15).
+2. Platformní tým zapíše SHA schválených merge commitů do `vendoring/actions.json`.
+3. Import release přepíše `uses` v šablonách pod `platform/` na katalogové kopie.
+4. Platformní tým samostatným PR povýší přepsané šablony z `platform/templates/instance/.github/workflows/` do `.github/workflows/`. Security tým schválí diff. Postup popisuje [Vendoring](docs/vendoring.md#ruční-povýšení-živých-workflow-v-16).
 
 ## Teardown
 

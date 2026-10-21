@@ -1,0 +1,54 @@
+name: Import platform release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Platform release tag, for example v1.2.0 or v1.2.0-rc.1
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve the attested release asset and actions organization
+    runs-on: ubuntu-latest
+    outputs:
+      source-repository: ${{ steps.resolve.outputs.source-repository }}
+      source-asset: ${{ steps.resolve.outputs.source-asset }}
+      actions-organization: ${{ steps.resolve.outputs.actions-organization }}
+    steps:
+      - name: Check out trusted main tools and instance configuration
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install trusted runtime dependencies
+        shell: pwsh
+        run: ./platform/tools/Install-ToolDependencies.ps1
+      - name: Validate the release tag and derive import inputs
+        id: resolve
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          PLATFORM_SOURCE_REPOSITORY: ${{ vars.PLATFORM_SOURCE_REPOSITORY }}
+        run: ./platform/tools/Resolve-PlatformReleaseImport.ps1 -Tag $env:RELEASE_TAG -InstancePath ./instance.yaml -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -GitHubOutputPath $env:GITHUB_OUTPUT
+
+  import:
+    name: Import the attested release under platform/
+    needs: resolve
+    uses: ./.github/workflows/vendor.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    with:
+      source-repository: ${{ needs.resolve.outputs.source-repository }}
+      source-tag: ${{ inputs.tag }}
+      source-api-url: https://api.github.com
+      source-asset: ${{ needs.resolve.outputs.source-asset }}
+      private-source: false
+      target-repository: ${{ github.repository }}
+      kind: release
+      actions-organization: ${{ needs.resolve.outputs.actions-organization }}

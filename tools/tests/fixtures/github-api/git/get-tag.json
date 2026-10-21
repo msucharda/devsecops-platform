@@ -1,0 +1,51 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/git/tags/{tag_sha}",
+    "operationId": "git/get-tag",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/tags#get-a-tag",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/paths/~1repos~1{owner}~1{repo}~1git~1tags~1{tag_sha}/get/responses/200"
+  },
+  "required": {
+    "": [
+      "sha",
+      "url",
+      "node_id",
+      "tagger",
+      "object",
+      "tag",
+      "message"
+    ],
+    "object": [
+      "sha",
+      "type",
+      "url"
+    ]
+  },
+  "body": {
+    "node_id": "MDM6VGFnOTQwYmQzMzYyNDhlZmFlMGY5ZWU1YmM3YjJkNWM5ODU4ODdiMTZhYw==",
+    "tag": "v0.0.1",
+    "sha": "940bd336248efae0f9ee5bc7b2d5c985887b16ac",
+    "url": "https://api.github.com/repos/octocat/Hello-World/git/tags/940bd336248efae0f9ee5bc7b2d5c985887b16ac",
+    "message": "initial version",
+    "tagger": {
+      "name": "Monalisa Octocat",
+      "email": "octocat@github.com",
+      "date": "2014-11-07T22:01:45Z"
+    },
+    "object": {
+      "type": "commit",
+      "sha": "c3d0be41ecbe669545ee3e94d31ed9a4bc91ee3c",
+      "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/c3d0be41ecbe669545ee3e94d31ed9a4bc91ee3c"
+    },
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  }
+}
