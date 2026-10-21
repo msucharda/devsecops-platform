@@ -41,9 +41,13 @@ SHA v příkladu je pouze placeholder. Platformní tým musí přes API cílové
 
 Nástroj spočítá SHA256 stažených bajtů a dotáže API attestací pro tento digest. Úspěšná odpověď s prázdnou kolekcí znamená `not-present`. Veřejné API github.com vrací pro neregistrovaný digest také HTTP 404; nástroj tento stav přijme jen po samostatném potvrzení identity a veřejné viditelnosti zdrojového repozitáře a vypíše varování o neověřené provenance. HTTP 404 u privátního zdroje nebo na GHE.com, jiná HTTP chyba, chybějící oprávnění ani nepodporované API nejsou důkazem absence a import zastaví. Nejednoznačný stav vyžaduje deklarovaný ruční import.
 
-Při existující attestaci `gh attestation verify` ověří podpis, digest artefaktu, zdrojový repozitář, `refs/tags/<tag>` a rozlišený source commit. Neplatná nebo neověřitelná attestace import zastaví ještě před rozbalením. Nástroj zaznamená `verified` až po úspěšném ověření. Dostupnost ověřovače, Sigstore a API na konkrétním GHE.com hostu musí potvrdit živý běh; fixture s náhradou CLI neprokazuje kryptografické ověření.
+Při existující attestaci nástroj stáhne bundle z `bundle_url` každé attestace bez autentizačních hlaviček. Přijme jen HTTPS URL bez přihlašovacích údajů a nejvýše 16 MiB staženého i dekódovaného obsahu. Bundle je komprimovaný formátem Snappy; nástroj ho dekóduje sám. Pak `gh attestation verify <zip> --bundle <soubor>` ověří podpis, digest artefaktu, zdrojový repozitář, `refs/tags/<tag>`, rozlišený source commit a hosted runner (`--deny-self-hosted-runners`). Import pokračuje, když projde aspoň jeden bundle. Neplatná nebo neověřitelná attestace import zastaví ještě před rozbalením. Nástroj zaznamená `verified` až po úspěšném ověření.
 
-Attestace platí pro stažený artefakt, nikoli pro všechny soubory libovolného release. Volající importu platformy proto musí uvést attestovaný ZIP asset vydaný v #16. Bezattestační release musí tuto absenci přiznat podle ADR 0012. Automatický zdrojový ZIP akce může mít stav `not-present`; tento stav nikdy neznamená ověřenou provenance (provenienci).
+Ověření z lokálního bundle nepotřebuje token, protože `gh` nevolá API attestací. Rozhodnutí: nástroj vždy používá `--bundle`. Probe na GitHub-hosted runneru `sucharda.ghe.com` (gh 2.102.0) ověřil attestaci z github.com i bez `--bundle` a bez tokenu, ale starší verze `gh` bez tokenu selžou. `--bundle` funguje v obou případech. Stejný probe potvrdil síťovou dostupnost github.com, API attestací, úložiště bundle a Sigstore trust root z runneru GHE.com a odmítnutí změněného artefaktu.
+
+Import release (`kind: release`) vyžaduje stav `verified` a signer workflow (podepisující workflow) `<zdroj>/.github/workflows/release.yml`. Stav `not-present` import release zastaví ještě před rozbalením. Signer workflow běží z otagovaného commitu, a proto jeho vlastní kontrola předka `main` nestačí. Import release proto nezávisle ověří přes `GET /repos/{owner}/{repo}/compare/main...{commit}`, že commit tagu je na `main`: `status` musí být `behind` nebo `identical` a `merge_base_commit.sha` musí být tento commit. Jinak se import zastaví před stažením assetu. Attestace platí pro stažený artefakt, nikoli pro všechny soubory release. Automatický zdrojový ZIP akce může mít stav `not-present`; tento stav nikdy neznamená ověřenou provenance (provenienci).
+
+Sdílená IP adresa hosted runneru může vyčerpat limit neautentizovaných požadavků; probe po jednom volání viděl `X-RateLimit-Remaining: 55`. Nástroj při HTTP 403 nebo 429 s vyčerpaným limitem čeká podle `retry-after` nebo `x-ratelimit-reset`, u secondary rate limit bez hlaviček 60, 120 a 240 s. Zkusí nejvýše 3 opakování a čeká nejvýše 300 s. Pak skončí chybou `rate limit for the source is exhausted`.
 
 `ConvertTo-VendoredSource.ps1` přepíše skutečné YAML hodnoty `uses` v composite akcích, včetně vnořených `action.yml` a `action.yaml`. Pro release přepíše kroky a reusable job references v `templates/instance/.github/workflows/`. Nepřepisuje text ve skriptech, komentáře, testovací fixtures ani zdrojové CI, které pod `platform/` neběží jako workflow instance. Subpath akce zachová a upstream ref nahradí katalogovým SHA. Chybějící katalogová akce způsobí chybu s jejím názvem ještě před vytvořením výstupu.
 
@@ -85,18 +89,34 @@ Pokud enterprise-owned App nemůže zdroj číst, automatický import skončí k
 
 Ruční PR musí uvést **Manual import; source access was not verified by the workflow; cloud plan NOT PERFORMED**. Stav `manual-not-verified` v receipt přiznává neověřený původ; nezaměňuje ho za absenci attestace ani úspěšné ověření. Po review a merge do chráněné `main` následuje plan před schváleným apply. Drift ani opakovatelnost ručně získaného zdroje nejsou automaticky ověřené.
 
+## Release platformy a import do instance
+
+Zdrojový repozitář vydává release workflow `.github/workflows/release.yml`. Spouští ho push tagu `vMAJOR.MINOR.PATCH` nebo `vMAJOR.MINOR.PATCH-rc.N`. Workflow:
+
+1. Odmítne jiný formát tagu, tag přesunutý po startu běhu a commit, který není předkem `main`.
+2. Sestaví `platform-<tag>.zip` příkazem `git archive` s jediným kořenovým adresářem `devsecops-platform-<verze>/`.
+3. Vytvoří build provenance attestaci akcí `actions/attest-build-provenance`.
+4. Spustí `tools/Publish-PlatformRelease.ps1`.
+
+`Publish-PlatformRelease.ps1` znovu ověří, že tag ukazuje na sestavený commit; annotated tag rozbalí. Release vytvoří jako draft, nahraje asset a zkontroluje, že GitHub vrátil `state: uploaded` a `digest` lokálního souboru. Teprve potom release publikuje. Release candidate je prerelease s `make_latest: false`. Opakovaný běh najde draft přes výpis release a dokončí ho: smaže neúplné, zastaralé a cizí assety. Publikovaný release s jiným obsahem nástroj nikdy nemění a skončí chybou; oprava vyžaduje nový tag. Každý zapisující krok pokrývá harness přerušení.
+
+Instance repository importuje release workflowem `import-release.yml` (`workflow_dispatch`, vstup `tag`). Job `resolve` spustí `Resolve-PlatformReleaseImport.ps1`: ověří formát tagu, odvodí asset `platform-<tag>.zip` a organizaci akcí z `instance.yaml` a názvu organizace platformy. Zdroj určuje proměnná `PLATFORM_SOURCE_REPOSITORY`, výchozí hodnota je `msucharda/devsecops-platform`. Job `import` volá `vendor.yml` s `kind: release`, veřejným zdrojem a `source-api-url: https://api.github.com`. Výsledkem je PR pod `platform/`; živé workflow povyšuje ruční krok výše.
+
 ## Offline a živé ověření
 
 Pester testy volají veřejné skripty. Fixtures ověřují přepis composite akcí, zachování lokálních odkazů a script textu, missing catalog error (chybu chybějící katalogové akce), release hranici, tag resolution (rozlišení tagu), attestation failure (selhání attestace), bezpečnost ZIP a omezení installation tokenu. PR test používá skutečný lokální Git a nahrazuje jen push a HTTP API.
 
 ```powershell
-Invoke-Pester -Path .\tools\tests\Vendoring*.Tests.ps1 -Output Detailed
+Invoke-Pester -Path .\tools\tests\Vendoring*.Tests.ps1, .\tools\tests\PlatformRelease*.Tests.ps1 -Output Detailed
+.\tools\Invoke-Tests.ps1 -Tag Interruption
 .\tools\Test-PowerShell.ps1
 ```
 
-Před uzavřením #14 musí platformní tým na Reference instance (referenční instanci) doložit cílový repozitář, dostupnost App installation a API, omezená oprávnění, PR s diffem, skutečné kryptografické ověření dostupné attestace a odmítnutí neplatné attestace. Musí doložit, že App PR nedostal cloudové credentials a po review a merge proběhl plan před schváleným apply. Dosavadní offline fixtures tento živý běh nenahrazují. Výsledek nesmí zveřejnit identifikátory ani credentials instance.
+Živé ověření přesunuté z #14 je součástí akceptace #16. Před uzavřením #16 musí platformní tým vydat první release candidate, ověřit jeho attestaci z runneru instance a importovat ho do Reference instance. Dále musí platformní tým na Reference instance (referenční instanci) doložit cílový repozitář, dostupnost App installation a API, omezená oprávnění, PR s diffem, skutečné kryptografické ověření dostupné attestace a odmítnutí neplatné attestace. Musí doložit, že App PR nedostal cloudové credentials a po review a merge proběhl plan před schváleným apply. Dosavadní offline fixtures tento živý běh nenahrazují. Výsledek nesmí zveřejnit identifikátory ani credentials instance.
 
 ## Zdroje
 
 - [ADR 0002](adr/0002-customers-vendor-releases.md), [ADR 0012](adr/0012-public-source-repository.md) a [ADR 0016](adr/0016-github-app-installation-tokens-for-instance-workflows.md).
-- [REST API attestací](https://docs.github.com/en/rest/repos/attestations), [GitHub CLI attestation verify](https://cli.github.com/manual/gh_attestation_verify) a [installation token scope](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app).
+- [REST API attestací](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/attestations#list-attestations), [GitHub CLI attestation verify](https://cli.github.com/manual/gh_attestation_verify) a [installation token scope](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app).
+- [REST API releases](https://docs.github.com/en/enterprise-cloud@latest/rest/releases/releases), [release assets](https://docs.github.com/en/enterprise-cloud@latest/rest/releases/assets) a [git refs](https://docs.github.com/en/enterprise-cloud@latest/rest/git/refs#get-a-reference), verze API `2026-03-10`.
+- [Rate limits pro REST API](https://docs.github.com/en/enterprise-cloud@latest/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit) a [artifact attestations](https://docs.github.com/en/enterprise-cloud@latest/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).

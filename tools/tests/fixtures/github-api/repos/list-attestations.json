@@ -1,0 +1,29 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/attestations/{subject_digest}",
+    "operationId": "repos/list-attestations",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/attestations#list-attestations",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/paths/~1repos~1{owner}~1{repo}~1attestations~1{subject_digest}/get/responses/200",
+    "note": "The schema declares no required fields, so required lists none; the tool rejects a missing attestations collection or bundle_url itself (fail-closed tests). No inline bundle; each item carries repository_id, bundle_url and initiator. bundle_url points to a snappy-compressed Sigstore bundle. An unauthenticated api.github.com request for a public repository returned the same shape on 2026-10-21."
+  },
+  "required": {
+    "": []
+  },
+  "body": {
+    "attestations": [
+      {
+        "repository_id": 1,
+        "bundle_url": "https://tmastaging.blob.core.windows.net/attestations/1/2024/11/08/4.json.sn?se=2024-11-09T17%3A13%3A43Z&sig=jPSbbJnIEshUyCjBLU5Ykq0uuGc5UYxTZE1%2FhdBNMXk%3D&sp=r&spr=https%2Chttp&sr=b&st=2024-11-08T17%3A13%3A43Z&sv=2024-08-04",
+        "initiator": "user"
+      },
+      {
+        "repository_id": 1,
+        "bundle_url": "https://tmastaging.blob.core.windows.net/attestations/1/2024/11/08/5.json.sn?se=2024-11-09T17%3A13%3A43Z&sig=jPSbbJnIEshUyCjBLU5Ykq0uuGc5UYxTZE1%2FhdBNMXk%3D&sp=r&spr=https%2Chttp&sr=b&st=2024-11-08T17%3A13%3A43Z&sv=2024-08-04",
+        "initiator": "user"
+      }
+    ]
+  }
+}

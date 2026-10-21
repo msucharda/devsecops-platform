@@ -114,7 +114,13 @@ jobs:
           ACTIONS_ORGANIZATION: ${{ inputs.actions-organization }}
           SOURCE_GITHUB_TOKEN: ${{ env.GH_TOKEN }}
         run: |
-          $source = ./platform/tools/Get-VendoringSource.ps1 -Repository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -ApiUrl $env:SOURCE_API_URL -AssetName $env:SOURCE_ASSET -WorkPath ./vendor/source
+          $verification = @{}
+          if ($env:IMPORT_KIND -ceq 'release') {
+            # A platform release is trusted only when its asset was attested by the source release workflow for this tag
+            # and the tagged commit is on the source main branch.
+            $verification = @{ RequireAttestation = $true; SignerWorkflow = "$env:SOURCE_REPOSITORY/.github/workflows/release.yml"; ProtectedBranch = 'main' }
+          }
+          $source = ./platform/tools/Get-VendoringSource.ps1 -Repository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -ApiUrl $env:SOURCE_API_URL -AssetName $env:SOURCE_ASSET -WorkPath ./vendor/source @verification
           ./platform/tools/ConvertTo-VendoredSource.ps1 -SourcePath $source.SourcePath -OutputPath ./vendor/prepared -CatalogPath ./vendoring/actions.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND -ModeManifestPath ./vendor/modes.json
       - name: Revoke source installation token
         if: ${{ always() && inputs.private-source && env.PLATFORM_GITHUB_TOKENS != '' }}

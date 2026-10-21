@@ -9,5 +9,5 @@ Zdrojový repozitář platformy na github.com je veřejný a má licenci MIT, st
 
 ## Consequences
 
-- Repozitář zůstane privátní, dokud zveřejnění neschválí zaměstnavatel autora. Soubor `LICENSE` vznikne při zveřejnění, protože držitele copyrightu určí schválení.
+- Repozitář je veřejný. Soubor `LICENSE` zatím chybí, protože držitele copyrightu určí schválení zaměstnavatele autora. Do jeho přidání release neuděluje licenci MIT.
 - Zdrojový repozitář nesmí obsahovat data žádné instance, například ID tenantu, ID subscription nebo název enterprise. Tato data patří do repozitáře instance.

@@ -1,0 +1,69 @@
+name: Platform release
+
+# A pushed SemVer tag on a commit of main publishes platform-<tag>.zip with a build provenance attestation.
+# Instance repositories import the release with import-release.yml, which verifies the attestation against
+# this workflow file (signer workflow) and the tag (source ref).
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+concurrency:
+  group: platform-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, attest and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check tag and build the release asset
+        id: build
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "::error::Tag $TAG must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rc.N."
+            exit 1
+          fi
+          commit="$(git rev-parse --verify "${GITHUB_SHA}^{commit}")"
+          if [ "$(git rev-parse --verify "refs/tags/${TAG}^{commit}")" != "$commit" ]; then
+            echo "::error::Tag $TAG moved after the workflow started."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::Tag $TAG must point to a commit of main."
+            exit 1
+          fi
+          mkdir -p artifacts
+          asset="artifacts/platform-${TAG}.zip"
+          git archive --format=zip --prefix="devsecops-platform-${TAG#v}/" --output="$asset" "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: ${{ steps.build.outputs.asset }}
+      - name: Publish release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ steps.build.outputs.commit }}
+          ASSET: ${{ steps.build.outputs.asset }}
+        run: |
+          $result = ./tools/Publish-PlatformRelease.ps1 -Repository $env:GITHUB_REPOSITORY -Tag $env:TAG -Commit $env:COMMIT -AssetPath $env:ASSET
+          "Release [$($result.Tag)]($($result.Url)): ``$($result.Asset)`` ``$($result.Digest)``" >> $env:GITHUB_STEP_SUMMARY
