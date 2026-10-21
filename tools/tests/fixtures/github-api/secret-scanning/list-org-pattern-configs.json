@@ -1,0 +1,57 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/secret-scanning/pattern-configurations",
+    "operationId": "secret-scanning/list-org-pattern-configs",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/secret-scanning/push-protection#list-organization-pattern-configurations",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/secret-scanning-pattern-configuration",
+    "note": "The schema declares no required properties; required lists the documented properties the module reads."
+  },
+  "required": {
+    "": [
+      "pattern_config_version",
+      "custom_pattern_overrides"
+    ],
+    "custom_pattern_overrides.[]": [
+      "token_type",
+      "custom_pattern_version",
+      "slug",
+      "setting"
+    ]
+  },
+  "body": {
+    "pattern_config_version": "0ujsswThIGTUYm2K8FjOOfXtY1K",
+    "provider_pattern_overrides": [
+      {
+        "token_type": "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "slug": "github_personal_access_token_legacy_v2",
+        "display_name": "GitHub Personal Access Token (Legacy v2)",
+        "alert_total": 15,
+        "alert_total_percentage": 36,
+        "false_positives": 2,
+        "false_positive_rate": 13,
+        "bypass_rate": 13,
+        "default_setting": "enabled",
+        "setting": "enabled",
+        "enterprise_setting": "enabled"
+      }
+    ],
+    "custom_pattern_overrides": [
+      {
+        "token_type": "cp_2",
+        "custom_pattern_version": "0ujsswThIGTUYm2K8FjOOfXtY1K",
+        "slug": "custom-api-key",
+        "display_name": "Custom API Key",
+        "alert_total": 15,
+        "alert_total_percentage": 36,
+        "false_positives": 3,
+        "false_positive_rate": 20,
+        "bypass_rate": 20,
+        "default_setting": "disabled",
+        "setting": "enabled"
+      }
+    ]
+  }
+}

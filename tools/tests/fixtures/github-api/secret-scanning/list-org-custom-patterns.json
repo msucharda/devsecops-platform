@@ -1,0 +1,55 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/secret-scanning/custom-patterns",
+    "operationId": "secret-scanning/list-org-custom-patterns",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/secret-scanning/custom-patterns#list-organization-custom-patterns",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/secret-scanning-custom-pattern"
+  },
+  "required": {
+    "[]": [
+      "id",
+      "name",
+      "pattern",
+      "slug",
+      "state",
+      "push_protection_enabled"
+    ]
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Example Custom Pattern",
+      "pattern": "[a-z]+_token_[0-9]+",
+      "slug": "example-custom-pattern",
+      "state": "published",
+      "push_protection_enabled": true,
+      "start_delimiter": null,
+      "end_delimiter": null,
+      "must_match": null,
+      "must_not_match": null,
+      "created_at": "2024-01-15T10:30:00Z",
+      "updated_at": "2024-01-15T10:30:00Z"
+    },
+    {
+      "id": 2,
+      "name": "Another Custom Pattern",
+      "pattern": "prefix_[a-zA-Z0-9]{32}",
+      "slug": "another-custom-pattern",
+      "state": "published",
+      "push_protection_enabled": false,
+      "start_delimiter": "\\b",
+      "end_delimiter": "\\b",
+      "must_match": [
+        "^prefix_prod"
+      ],
+      "must_not_match": [
+        "test"
+      ],
+      "created_at": "2024-01-16T14:20:00Z",
+      "updated_at": "2024-01-17T09:15:00Z"
+    }
+  ]
+}

@@ -6,14 +6,22 @@ terraform {
       source  = "Mastercard/restapi"
       version = "~> 3.0"
     }
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
   }
 
   backend "azurerm" {}
 }
 
-# The runner exports the job's installation token as REST_API_BEARER.
+locals {
+  github_api_url = "https://api.${var.instance.github.host}"
+}
+
+# The runner exports the job's installation token as REST_API_BEARER; the code security scripts read it too.
 provider "restapi" {
-  uri                  = "https://api.${var.instance.github.host}"
+  uri                  = local.github_api_url
   write_returns_object = true
   headers = {
     Accept                 = "application/vnd.github+json"

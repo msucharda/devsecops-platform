@@ -1,3 +1,6 @@
+# The code security scripts must not run in this file; code_security.tftest.hcl and the Pester stub tests cover them.
+mock_provider "external" {}
+
 # Plan runs see a compliant GitHub response; apply runs override it per case.
 mock_provider "restapi" {
   override_during = plan
@@ -30,6 +33,9 @@ variables {
   }
   prerequisites        = {}
   target_organizations = ["demo-platform", "demo-workloads"]
+  secret_scanning_bypass_reviewers = [
+    { reviewer_type = "TEAM", reviewer_id = 5678 },
+  ]
 }
 
 run "manages_each_instance_organization_with_idempotent_patch" {
@@ -163,6 +169,11 @@ run "rejects_a_github_host_outside_ghe_com" {
 run "accepts_a_github_response_with_the_enforced_baseline" {
   command   = apply
   state_key = "accepts_a_github_response_with_the_enforced_baseline"
+
+  # The terraform_data provisioners would call GitHub; this run checks only the organization settings.
+  plan_options {
+    target = [restapi_object.organization_settings]
+  }
 
   override_resource {
     target          = restapi_object.organization_settings
