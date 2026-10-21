@@ -387,6 +387,35 @@ function Get-InstanceOrganizationState {
     return [ordered]@{ exists = $true; login = $existing; installations = $installations }
 }
 
+function Get-OrganizationStateViolation {
+    <#
+    .SYNOPSIS
+    Lists the differences between the read organization state and the module state; an empty list means compliant.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $State,
+        [Parameter(Mandatory)][string] $Organization,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]] $ClientId
+    )
+
+    if ($State['exists'] -isnot [bool]) { throw "The state of organization '$Organization' is unreadable." }
+    if (-not $State['exists']) { return , [string[]] @("Organization '$Organization' does not exist in the enterprise.") }
+    $violations = [Collections.Generic.List[string]]::new()
+    $installed = @($State['installations'] | ForEach-Object { $_['client_id'] })
+    foreach ($id in $ClientId) {
+        if ($installed -cnotcontains $id) { $violations.Add("App '$id' is not installed in organization '$Organization'.") }
+    }
+    foreach ($installation in @($State['installations'])) {
+        if ($installation['repository_selection'] -cnotin @('selected', 'none')) {
+            $violations.Add("App '$($installation['client_id'])' has access to all repositories of organization '$Organization'.")
+        }
+    }
+    return , [string[]] $violations.ToArray()
+}
+
 Export-ModuleMember -Function Invoke-OrganizationsApi, Invoke-OrganizationsGraphQL, Get-EnterpriseOrganizationLogin,
 Find-EnterpriseOrganization, New-EnterpriseOrganization, Assert-EnterpriseOrganizationRemoved, Get-OrganizationAppInstallation,
-Find-OrganizationAppInstallation, Install-OrganizationApp, Uninstall-OrganizationApp, Get-InstanceOrganizationState
+Find-OrganizationAppInstallation, Install-OrganizationApp, Uninstall-OrganizationApp, Get-InstanceOrganizationState,
+Get-OrganizationStateViolation

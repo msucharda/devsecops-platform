@@ -551,6 +551,53 @@ Describe 'Organizations module against the documented GitHub API' {
             $state.installations[0].repository_selection | Should -BeExactly 'none'
         }
     }
+
+    Context 'Get-OrganizationStateViolation' {
+        BeforeEach {
+            $compliant = [ordered]@{
+                exists = $true; login = 'demo-a1b2c3-actions'
+                installations = @([ordered]@{ client_id = 'Iv23liExample01'; repository_selection = 'none' }, [ordered]@{ client_id = 'Iv23liOther01'; repository_selection = 'selected' })
+            }
+            $check = @{ Organization = 'demo-a1b2c3-actions'; ClientId = @('Iv23liExample01') }
+        }
+
+        It 'accepts the module state and Apps installed outside the module' {
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeNullOrEmpty
+        }
+
+        It 'reports a missing organization' {
+            $compliant.exists = $false
+
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeExactly @("Organization 'demo-a1b2c3-actions' does not exist in the enterprise.")
+        }
+
+        It 'fails closed on an unreadable existence: <Case>' -ForEach @(
+            @{ Case = 'null'; Value = $null }
+            @{ Case = 'string'; Value = 'true' }
+        ) {
+            $compliant.exists = $Value
+
+            { Get-OrganizationStateViolation -State $compliant @check } | Should -Throw '*unreadable*'
+        }
+
+        It 'reports a missing App' {
+            $check.ClientId = @('Iv23liExample01', 'Iv23liMissing01')
+
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeExactly @("App 'Iv23liMissing01' is not installed in organization 'demo-a1b2c3-actions'.")
+        }
+
+        It 'reports an App installed with another client ID case' {
+            $check.ClientId = @('IV23LIEXAMPLE01')
+
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeLike '*IV23LIEXAMPLE01*not installed*'
+        }
+
+        It 'reports an App with access to all repositories, also outside the module' {
+            $compliant.installations[1].repository_selection = 'all'
+
+            Get-OrganizationStateViolation -State $compliant @check | Should -BeExactly @("App 'Iv23liOther01' has access to all repositories of organization 'demo-a1b2c3-actions'.")
+        }
+    }
 }
 
 Describe 'Organizations Terraform programs' {
@@ -588,12 +635,25 @@ Describe 'Organizations Terraform programs' {
         @{ Key = 'api_url' }
         @{ Key = 'enterprise' }
         @{ Key = 'organization' }
+        @{ Key = 'client_ids' }
     ) {
-        $query = @{ api_url = 'https://api.example.ghe.com'; enterprise = 'example'; organization = 'demo-actions' }
+        $query = @{ api_url = 'https://api.example.ghe.com'; enterprise = 'example'; organization = 'demo-actions'; client_ids = '[]' }
         $query.Remove($Key)
 
         $output = ConvertTo-Json $query -Compress | pwsh -NoProfile -NonInteractive -File $read 2>&1
         $LASTEXITCODE | Should -Be 1
         ($output -join "`n") | Should -BeLike "*no '$Key'*"
+    }
+
+    It 'fails the state reader on client_ids <Case>' -ForEach @(
+        @{ Case = 'that are not an array'; Value = '"Iv23liExample01"' }
+        @{ Case = 'with an empty ID'; Value = '[""]' }
+        @{ Case = 'with a number'; Value = '[1]' }
+    ) {
+        $query = @{ api_url = 'https://api.example.ghe.com'; enterprise = 'example'; organization = 'demo-actions'; client_ids = $Value }
+
+        $output = ConvertTo-Json $query -Compress | pwsh -NoProfile -NonInteractive -File $read 2>&1
+        $LASTEXITCODE | Should -Be 1
+        ($output -join "`n") | Should -BeLike '*not a JSON array of client IDs*'
     }
 }

@@ -150,6 +150,7 @@ Describe 'Teardown workflow generation' {
         $runs = (Get-StepRun -Job destroy_application) -join "`n"
         $runs | Should -Match "New-PlatformGitHubToken\.ps1 -Module 'application' -Phase apply "
         $runs | Should -Match "Invoke-Module\.ps1 -Module 'application' -Action destroy "
+        $runs | Should -Match "-Action destroy .*-PlatformOrganization \`$env:GITHUB_REPOSITORY_OWNER"
         $text | Should -Not -Match '(?i)\bPAT\b|ADMIN_PAT|personal access'
         $secrets = [regex]::Matches($text, 'secrets\.[A-Z_]+') | ForEach-Object Value | Sort-Object -Unique
         $secrets | Should -Be @('secrets.PLATFORM_APP_PRIVATE_KEY')
