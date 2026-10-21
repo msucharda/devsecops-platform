@@ -79,6 +79,9 @@ function Invoke-CodeSecurityApi {
         if ($status -lt 200 -or $status -gt 299) { throw "GitHub returned HTTP $status for $Method $($Path.Split('?')[0])." }
         $content = if ($reply.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($reply.Content) } else { [string] $reply.Content }
         $parsed = if ([string]::IsNullOrWhiteSpace($content)) { $null } else { ConvertFrom-Json -InputObject $content -AsHashtable -Depth 100 -NoEnumerate }
+        if ($Method -ceq 'GET' -and $null -eq $parsed) {
+            throw "GitHub returned an empty successful GET response for $($Path.Split('?')[0]); only HTTP 404 proves absence."
+        }
         if (-not $AllPages) { return , $parsed }
         if ($ItemsProperty) {
             if ($parsed -isnot [System.Collections.IDictionary] -or $parsed[$ItemsProperty] -isnot [array]) {
