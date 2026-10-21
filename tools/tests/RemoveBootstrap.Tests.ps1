@@ -1054,13 +1054,13 @@ Describe 'Bootstrap removal' {
 
     Context 'requires the delete_repo scope' {
         It 'and accepts the scope list <Label>' -ForEach @(
-            @{ Label = 'without spaces'; Scopes = 'repo,delete_repo,admin:org' }
-            @{ Label = 'with only delete_repo'; Scopes = 'delete_repo' }
+            @{ Label = 'without spaces'; Scopes = 'repo,delete_repo,admin:org'; Header = 'X-OAuth-Scopes' }
+            @{ Label = 'with only delete_repo'; Scopes = 'delete_repo'; Header = 'X-OAuth-Scopes' }
             @{ Label = 'in a lowercase header'; Scopes = 'repo, delete_repo'; Header = 'x-oauth-scopes' }
-            @{ Label = 'split across header values'; Scopes = @('repo', 'delete_repo') }
+            @{ Label = 'split across header values'; Scopes = @('repo', 'delete_repo'); Header = 'X-OAuth-Scopes' }
         ) {
             $world.OAuthScopes = $Scopes
-            if ($Header) { $world.OAuthScopesHeader = $Header }
+            $world.OAuthScopesHeader = $Header
 
             (& $run).Completed | Should -BeTrue
         }

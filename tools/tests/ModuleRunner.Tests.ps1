@@ -537,7 +537,7 @@ terraform {
         $result.HasChanges | Should -BeFalse
         (Get-Content -LiteralPath $result.OutputsPath -Raw).Trim() | Should -Be '{}'
         $result.PSObject.Properties.Name | Should -Contain 'ManualPrerequisites'
-        @($result.ManualPrerequisites.Name) | Should -Be @($applied.ManualPrerequisites.Name)
+        @($result.ManualPrerequisites | ForEach-Object Name) | Should -Be @($applied.ManualPrerequisites | ForEach-Object Name)
     }
 
     It 'does not treat a state with only deposed instances as empty' {
