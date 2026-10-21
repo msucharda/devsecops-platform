@@ -1,0 +1,33 @@
+{
+  "source": {
+    "operation": "GET /roleManagement/directory/roleAssignments",
+    "api": "Microsoft Graph",
+    "apiVersion": "v1.0",
+    "documentation": "https://learn.microsoft.com/en-us/graph/api/rbacapplication-list-roleassignments?view=graph-rest-1.0#example-2-request-using-a-filter-on-principalid",
+    "status": 200,
+    "schema": "https://learn.microsoft.com/en-us/graph/api/resources/unifiedroleassignment?view=graph-rest-1.0"
+  },
+  "required": {
+    "": [
+      "value"
+    ],
+    "value.[]": [
+      "id",
+      "principalId",
+      "directoryScopeId",
+      "roleDefinitionId"
+    ]
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#roleManagement/directory/roleAssignments",
+    "value": [
+      {
+        "id": "lAPpYvVpN0KRkAEhdxReEHJ1hPGqSKpHlqMuxhkE9B8-1",
+        "principalId": "f1847572-48aa-47aa-96a3-2ec61904f41f",
+        "resourceScope": "/",
+        "directoryScopeId": "/",
+        "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10"
+      }
+    ]
+  }
+}
