@@ -673,6 +673,18 @@ function Test-SetupGraphQLRejected {
     return $Response.Status -eq 'Ok' -and $Response.Data -is [System.Collections.IDictionary] -and [bool] $Response.Data['errors']
 }
 
+function Get-SetupCreatedOrganization {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable] $Response)
+
+    # GraphQL can return errors next to partial data; any organization in the payload means it may exist.
+    $reply = $Response.Data
+    if ($reply -isnot [System.Collections.IDictionary] -or $reply['data'] -isnot [System.Collections.IDictionary]) { return $null }
+    $result = $reply['data']['createEnterpriseOrganization']
+    if ($result -isnot [System.Collections.IDictionary]) { return $null }
+    return $result['organization']
+}
+
 function Get-SetupGraphQLData {
     [CmdletBinding()]
     param(
@@ -2383,12 +2395,14 @@ function Invoke-StepProbeOrg {
             $probe['organization'] = $org
             $probe['organizationCreationPending'] = $true
             Save-SetupState -Setup $Setup
-            $creation = Invoke-SetupApi -Setup $Setup -Uri "$api/graphql" -Method POST -Body @{
+            # The mutation is not idempotent: a single attempt lets a rejection prove that this request created nothing.
+            $creation = Invoke-SetupApi -Setup $Setup -Uri "$api/graphql" -Method POST -NoRetry -Body @{
                 query = $mutation
                 variables = @{ input = @{ enterpriseId = $Setup.Facts.EnterpriseId; login = $org; profileName = $org; billingEmail = $billingEmail; adminLogins = @($login) } }
             }
-            if (Test-SetupGraphQLRejected -Response $creation) {
-                # GitHub refused the name, so no organization exists: the next run must offer another name.
+            if (-not $creationPending -and (Test-SetupGraphQLRejected -Response $creation) -and -not (Get-SetupCreatedOrganization -Response $creation)) {
+                # GitHub refused the name of a new request, so no organization exists: the next run must offer another name.
+                # A resumed creation stays pending, because the lost earlier request may have created the organization.
                 $probe.Remove('organizationCreationPending')
                 if ($previousOrganization) { $probe['organization'] = $previousOrganization } else { $probe.Remove('organization') }
                 Save-SetupState -Setup $Setup

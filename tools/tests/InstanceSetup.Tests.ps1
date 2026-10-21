@@ -707,13 +707,17 @@ Describe 'Instance setup wizard' {
             }
         }
 
-        It 'offers another name after GitHub rejects the organization name' {
+        It 'offers another name after GitHub rejects the organization name with <Case>' -ForEach @(
+            @{ Case = 'GraphQL errors'; Rejection = @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = $null }; errors = @(@{ type = 'UNPROCESSABLE'; message = 'Login is unavailable' }) } } }
+            @{ Case = 'a client error'; Rejection = @{ Status = 'Error'; Code = 422; Area = 'github'; Message = 'Login is unavailable'; Data = @{ message = 'Login is unavailable' } } }
+        ) {
             $setup = Get-TestSetup
             $setup.Facts.EnterpriseId = 'E_test'
             $setup.State.probe['organization'] = 'probe-deleted'
-            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Rejection = $Rejection } } {
                 param($Scenario)
                 $Setup = $Scenario.Setup
+                $Setup.Settings['testRejection'] = $Scenario.Rejection
                 $Setup.Settings['testCreated'] = [System.Collections.Generic.List[string]]::new()
                 Mock Confirm-SetupAction { $true }
                 Mock Add-SetupGitHubScope {}
@@ -723,18 +727,17 @@ Describe 'Instance setup wizard' {
                 Mock Read-SetupValue { if ($Setup.Settings['testCreated'].Count -eq 0) { 'probe-reserved' } else { 'probe-new' } }
                 Mock Invoke-SetupApi {
                     if ($Uri -like '*/graphql') {
+                        $NoRetry | Should -BeTrue
                         $name = $Body['variables']['input']['login']
                         $Setup.Settings['testCreated'].Add($name)
-                        if ($name -eq 'probe-reserved') {
-                            return @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = $null }; errors = @(@{ type = 'UNPROCESSABLE'; message = 'Login is unavailable' }) } }
-                        }
+                        if ($name -eq 'probe-reserved') { return $Setup.Settings['testRejection'] }
                         return @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = $name } } } } }
                     }
                     if ($Method -eq 'PUT') { return @{ Status = 'Ok'; Data = @{ state = 'active' } } }
                     if ($Method -eq 'POST') { return @{ Status = 'Ok'; Data = @{} } }
                     return @{ Status = 'Missing'; Data = $null }
                 }
-                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw '*Creating the organization probe-reserved failed*'
+                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw '*Creating the organization probe-reserved*'
                 $saved = ConvertFrom-Json (Get-Content -LiteralPath $Setup.StatePath -Raw) -AsHashtable
                 $saved['probe'].Contains('organizationCreationPending') | Should -BeFalse
                 $saved['probe']['organization'] | Should -Be 'probe-deleted'
@@ -743,6 +746,37 @@ Describe 'Instance setup wizard' {
                 @($Setup.Settings['testCreated']) | Should -Be @('probe-reserved', 'probe-new')
             }
             $setup.State.probe['organization'] | Should -Be 'probe-new'
+        }
+
+        It 'keeps the organization pending after <Case>' -ForEach @(
+            @{ Case = 'GraphQL errors with a created organization'; Resumed = $false; Response = @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = 'probe-test' } } }; errors = @(@{ type = 'UNPROCESSABLE'; message = 'Some admins could not be invited' }) } } }
+            @{ Case = 'a rejected retry of a lost creation'; Resumed = $true; Response = @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = $null }; errors = @(@{ type = 'UNPROCESSABLE'; message = 'Login has already been taken' }) } } }
+            @{ Case = 'a server error'; Resumed = $false; Response = @{ Status = 'Error'; Code = 503; Area = 'github'; Data = $null; Message = 'Service Unavailable' } }
+        ) {
+            $setup = Get-TestSetup
+            $setup.Facts.EnterpriseId = 'E_test'
+            # A stored organization that no longer exists makes the wizard ask for the new name probe-test.
+            $setup.State.probe['organization'] = if ($Resumed) { 'probe-test' } else { 'probe-deleted' }
+            if ($Resumed) { $setup.State.probe['organizationCreationPending'] = $true }
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Response = $Response } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                $Setup.Settings['testResponse'] = $Scenario.Response
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Show-SetupMessage {}
+                Mock Invoke-SetupProbeOrganizationSignIn {}
+                Mock Read-SetupValue { 'probe-test' }
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/graphql') { return $Setup.Settings['testResponse'] }
+                    return @{ Status = 'Missing'; Data = $null }
+                }
+                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw
+                Should -Invoke Invoke-SetupApi -Times 1 -Exactly -ParameterFilter { $Uri -like '*/graphql' }
+            }
+            $saved = ConvertFrom-Json (Get-Content -LiteralPath $setup.StatePath -Raw) -AsHashtable
+            $saved['probe']['organizationCreationPending'] | Should -BeTrue
+            $saved['probe']['organization'] | Should -Be 'probe-test'
         }
 
         It 'signs in to an organization whose creation response was lost' {
