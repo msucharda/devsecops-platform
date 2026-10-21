@@ -26,7 +26,6 @@ GHE.com název smazané organizace neuvolní ([ADR 0008](../../docs/adr/0008-dep
 | `admin_logins` | ano | Neprázdný seznam EMU loginů ownerů nové organizace (`alice_demo`). Jedinečné bez ohledu na velikost písmen. |
 | `billing_email` | ano | Billing email nové organizace. |
 | `app_client_ids` | ne | Client ID enterprise-owned Apps, které modul nainstaluje do obou organizací. Výchozí hodnota je prázdný seznam. |
-| `adopt_organizations` | ne | Druhy organizací (`actions`, `workloads`), které modul převezme bez identifikátoru nasazení. Určeno pro legacy instance. |
 
 - `admin_logins` a `billing_email` platí jen při tvorbě organizace. Jejich pozdější změna nic nezmění; modul ownery ani billing existující organizace nespravuje.
 - Instance schéma validuje parametry před spuštěním Terraformu. Terraform validace opakuje.
@@ -37,7 +36,7 @@ GHE.com název smazané organizace neuvolní ([ADR 0008](../../docs/adr/0008-dep
 
 1. Modul přečte organizace enterprise přes `GET /enterprises/{enterprise}/apps/installable_organizations` (stránkovaně) a hledá název bez ohledu na velikost písmen.
 2. Pokud organizace neexistuje, zjistí node ID enterprise (`enterprise(slug)`) a zavolá GraphQL mutaci `createEnterpriseOrganization` s `login`, `profileName`, `billingEmail` a `adminLogins`. Potom čeká, než se organizace objeví v enterprise seznamu.
-3. Pokud organizace existuje, modul ji převezme jen tehdy, když název obsahuje identifikátor nasazení, nebo když je její druh v `adopt_organizations`. Jinak běh skončí chybou (fail-closed).
+3. Pokud organizace existuje, modul ji převezme jen tehdy, když název obsahuje identifikátor nasazení. Náhodný identifikátor dokazuje, že organizace patří tomuto nasazení. Legacy název bez identifikátoru (`{name}-actions`, `{name}-workloads`) nic nedokazuje, proto existující legacy organizace ukončí běh chybou (fail-closed). Modul nemá výjimku pro převzetí legacy organizace.
 
 GraphQL odpověď HTTP 200 s `errors` je chyba. Odpověď bez `id` nebo s jiným `login` je chyba.
 
@@ -58,7 +57,7 @@ Nečitelná odpověď API ukončí čtení chybou; neznámý stav neprojde jako 
 
 ### Obnova po přerušení
 
-- Přerušení po mutaci a před uložením state: Terraform označí prostředek jako tainted a další apply ho nahradí. Destroy provisioner u tainted prostředku neběží, proto absenci organizace při destroy ověřuje i prostředek `removal_guard` (viz Destroy a teardown). Tvorba organizaci najde. S identifikátorem nasazení ji převezme. U legacy názvu bez `adopt_organizations` běh skončí chybou; operátor ověří, že organizace patří instanci, a doplní její druh do `adopt_organizations`.
+- Přerušení po mutaci a před uložením state: Terraform označí prostředek jako tainted a další apply ho nahradí. Destroy provisioner u tainted prostředku neběží, proto absenci organizace při destroy ověřuje i prostředek `removal_guard` (viz Destroy a teardown). Tvorba organizaci najde. S identifikátorem nasazení ji převezme. U legacy názvu běh skončí chybou; operátor organizaci smaže (je nová a prázdná) a spustí apply znovu.
 - Přerušení po instalaci App: další apply instalaci najde a převezme.
 - Změna identity organizace (host, enterprise, název) nahradí guard, organizaci i její instalace (`triggers_replace`). Destroy původních prostředků ověří, že původní organizace neexistuje; jinak apply skončí chybou dřív, než vytvoří novou organizaci stejného druhu. `terraform_data` mění `input` bez nahrazení, proto identita musí být i v `triggers_replace`.
 

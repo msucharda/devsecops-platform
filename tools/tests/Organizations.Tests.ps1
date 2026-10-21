@@ -279,7 +279,7 @@ Describe 'Organizations module against the documented GitHub API' {
         ) {
             Add-StubOrganization -Login $Login
 
-            { New-EnterpriseOrganization @target @create } | Should -Throw '*already exists*adopt_organizations*new identifier*'
+            { New-EnterpriseOrganization @target @create } | Should -Throw '*already exists*only when its name contains the deployment identifier*new identifier*'
             (Get-StubRequest createOrganization).Count | Should -Be 0
         }
 
@@ -781,6 +781,9 @@ Describe 'Organizations Terraform lifecycle' {
             'param([Parameter(Mandatory)][string] $Action)'
             '$organization = (ConvertFrom-Json $env:ORGANIZATIONS_INPUT).organization'
             'Add-Content -LiteralPath $env:FAKE_ORGANIZATIONS_LOG -Value "$Action $organization"'
+            'if ($Action -ceq ''CreateOrganization'') {'
+            '    Add-Content -LiteralPath $env:FAKE_ORGANIZATIONS_LOG -Value "AllowExisting $organization $((ConvertFrom-Json $env:ORGANIZATIONS_INPUT).allow_existing)"'
+            '}'
             'if ($Action -ceq ''CreateOrganization'' -and $env:FAKE_ORGANIZATIONS_FAIL_CREATE -ceq $organization) { throw ''interrupted'' }'
             'if ($Action -ceq ''AssertOrganizationRemoved'' -and ($env:FAKE_ORGANIZATIONS_EXISTING -split '','') -ccontains $organization) {'
             '    throw "Organization ''$organization'' still exists."'
@@ -861,6 +864,24 @@ Describe 'Organizations Terraform lifecycle' {
         $change.ExitCode | Should -Not -Be 0
         $change.Output | Should -BeLike "*Organization 'demo-actions' still exists*"
         Get-Content -LiteralPath $log | Should -Not -Contain 'CreateOrganization demo2-actions'
+    }
+
+    It 'adopts an existing organization only for a name with the deployment identifier: <Case>' -ForEach @(
+        @{ Case = 'deployment identifier'; Identifier = 'a1b2c3'; Actions = 'demo-a1b2c3-actions'; Allow = 'True' }
+        @{ Case = 'legacy name'; Identifier = $null; Actions = 'demo-actions'; Allow = 'False' }
+    ) {
+        $variables.instance.organizations = @{
+            deploymentIdentifier = $Identifier
+            platform             = $Actions -replace 'actions$', 'platform'
+            actions              = $Actions
+            workloads            = $Actions -replace 'actions$', 'workloads'
+        }
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json $variables -Depth 10)
+
+        $apply = Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color
+
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        Get-Content -LiteralPath $log | Should -Contain "AllowExisting $Actions $Allow"
     }
 
     It 'destroys after the organizations are removed and verifies each one twice' {

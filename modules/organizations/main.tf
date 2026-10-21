@@ -15,6 +15,7 @@ locals {
     }
   }
   # The random deployment identifier proves that an existing organization with this name belongs to this deployment.
+  # A legacy name without the identifier proves nothing, so an existing legacy organization fails closed.
   owns_existing = var.instance.organizations.deploymentIdentifier != null
   provisioner   = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-OrganizationChange.ps1", "-Action"]
 }
@@ -57,7 +58,7 @@ resource "terraform_data" "organization" {
       ORGANIZATIONS_INPUT = jsonencode(merge(each.value, {
         admin_logins   = var.admin_logins
         billing_email  = var.billing_email
-        allow_existing = local.owns_existing || contains(var.adopt_organizations, each.key)
+        allow_existing = local.owns_existing
       }))
     }
   }

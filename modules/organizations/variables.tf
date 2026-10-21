@@ -102,19 +102,3 @@ variable "app_client_ids" {
     error_message = "Each App client ID must be a GitHub App client ID."
   }
 }
-
-variable "adopt_organizations" {
-  description = "Kinds of organizations (actions, workloads) that may already exist without a deployment identifier and are adopted instead of created."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for kind in var.adopt_organizations : contains(["actions", "workloads"], kind)])
-    error_message = "Adopted organizations must be actions or workloads."
-  }
-
-  validation {
-    condition     = length(distinct(var.adopt_organizations)) == length(var.adopt_organizations)
-    error_message = "Adopted organizations must be unique."
-  }
-}

@@ -174,8 +174,8 @@ function New-EnterpriseOrganization {
     .SYNOPSIS
     Creates the organization in the enterprise, or adopts it when AllowExisting proves it belongs to this instance.
     .DESCRIPTION
-    A taken name fails closed unless AllowExisting is set. AllowExisting covers a run interrupted after the mutation
-    (the name contains the deployment identifier) and an explicit adoption in the instance configuration.
+    A taken name fails closed unless AllowExisting is set. The caller sets AllowExisting only when the name contains
+    the deployment identifier; it covers a run interrupted after the mutation. A legacy name never adopts.
     Owners and the billing email apply only when the organization is created.
     #>
     [CmdletBinding()]
@@ -197,7 +197,7 @@ function New-EnterpriseOrganization {
     $existing = Find-EnterpriseOrganization -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization
     if ($existing) {
         if (-not $AllowExisting) {
-            throw "Organization '$existing' already exists in enterprise '$Enterprise'. The module adopts an existing organization only with a deployment identifier or adopt_organizations. Delete it, add its kind to adopt_organizations, or bootstrap a new deployment with a new identifier."
+            throw "Organization '$existing' already exists in enterprise '$Enterprise'. The module adopts an existing organization only when its name contains the deployment identifier. Delete it, or bootstrap a new deployment with a new identifier."
         }
         Write-Information "Organization '$existing' already exists in enterprise '$Enterprise'; the module adopts it."
         return $existing

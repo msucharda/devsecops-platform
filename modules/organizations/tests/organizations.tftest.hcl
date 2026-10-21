@@ -192,16 +192,6 @@ run "rejects_an_invalid_billing_email" {
   expect_failures = [var.billing_email]
 }
 
-run "rejects_adopting_the_platform_organization" {
-  command = plan
-
-  variables {
-    adopt_organizations = ["platform"]
-  }
-
-  expect_failures = [var.adopt_organizations]
-}
-
 run "rejects_an_invalid_app_client_id" {
   command = plan
 

@@ -114,18 +114,17 @@ Describe 'Organizations module parameters' {
                 admin_logins = @('alice_demo', 'bob-smith_demo')
                 billing_email = 'billing@example.test'
                 app_client_ids = @('Iv23liExample01', 'Iv1.0123456789abcdef')
-                adopt_organizations = @('actions')
             }
         }
     }
 
-    It 'accepts explicit EMU owners, a billing email, App client IDs and adoption kinds' {
+    It 'accepts explicit EMU owners, a billing email and App client IDs' {
         $path = Write-OrganizationsInstance -Parameters (Get-DefaultOrganizationParameter)
 
         $validated = & $validator -InstancePath $path -ModulesPath $modulesPath | ConvertFrom-Json
 
         $validated.modules.organizations.parameters.admin_logins | Should -Be @('alice_demo', 'bob-smith_demo')
-        $validated.modules.organizations.parameters.adopt_organizations | Should -Be @('actions')
+        $validated.modules.organizations.parameters.app_client_ids | Should -Be @('Iv23liExample01', 'Iv1.0123456789abcdef')
     }
 
     It 'requires the organizations parameters <Missing>' -ForEach @(
@@ -155,8 +154,7 @@ Describe 'Organizations module parameters' {
         @{ Field = 'billing_email'; Case = 'empty'; Value = '' }
         @{ Field = 'app_client_ids'; Case = 'blank'; Value = @('') }
         @{ Field = 'app_client_ids'; Case = 'path characters'; Value = @('Iv1/../x') }
-        @{ Field = 'adopt_organizations'; Case = 'organization login'; Value = @('demo-actions') }
-        @{ Field = 'adopt_organizations'; Case = 'platform organization'; Value = @('platform') }
+        @{ Field = 'adopt_organizations'; Case = 'removed adoption escape hatch'; Value = @('actions') }
         @{ Field = 'unknown_parameter'; Case = 'undeclared'; Value = 'x' }
     ) {
         $parameters = Get-DefaultOrganizationParameter
