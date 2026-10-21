@@ -76,8 +76,8 @@ githubApps:
     installationId: '202'
     enterprise: example
     permissions:
-      enterprise_administration: write
       enterprise_organization_installations: write
+      enterprise_organizations: write
     resources:
       enterprise: true
 credentials:

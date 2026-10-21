@@ -131,7 +131,7 @@ Nejdřív enterprise owner přes UI zjistí GraphQL node ID enterprise. Ulož ho
 | Pokus | Oprávnění enterprise App | Očekávání a vyhodnocení |
 |---|---|---|
 | A | `enterprise_organization_installations: read` | Čtení `GET /enterprises/{enterprise}/apps/installable_organizations` vrátí 200. Tvorba by měla selhat bez nové organizace. Pokud uspěje, zaznamenej porušení předpokladu read-only planu a zastav návrh produkčního planu. |
-| B | `enterprise_administration: write` | Kandidát pro tvorbu, nikoli potvrzené minimum. Ověř tvorbu se stejnými vstupy a novým názvem. |
+| B | `enterprise_organizations: write` | Oprávnění, které pro tvorbu vyžaduje dokumentace GitHubu. Živě není ověřené. Ověř tvorbu se stejnými vstupy a novým názvem. |
 | C | B + `enterprise_organization_installations: write` | Jen po schválení, pokud B neuspěje. Pokud uspěje, jednotlivě odeber každé oprávnění a opakuj s novými tokeny i názvy. |
 
 Úspěšná širší sada bez negativního pokusu s odebraným oprávněním není důkaz minima. Pokud B ani C neuspějí, nepřidávej další práva pokusem naslepo; ulož důkaz a označ API/oprávnění za blokátor. Pokud UI nepovolí požadovanou sadu, zaznamenej tuto hranici místo předstíraného API pokusu.
@@ -216,7 +216,7 @@ Výsledek smí změnit člověk až po běhu. PR s výsledkem musí oddělit dol
 | Odstranění | Organizační App token, DELETE 204, nezávislé potvrzení nepřítomnosti, nový identifikátor pro další pokus | Neprovedeno |
 | Úklid | Revokace všech tokenů, odstranění probe a testovacích Apps/klíčů, případné zbytky | Neprovedeno |
 
-Rozhodnutí Q1–Q8 jsou v [komentáři #13](https://github.com/msucharda/devsecops-platform/issues/13#issuecomment-6312972204). Modul `organizations` je implementuje podle [specifikace modulu](../../modules/organizations/README.md). Manifest deklaruje pro apply kandidáta `enterprise_administration: write`. Tento runbook rozhodne, zda je kandidát minimum; jiný výsledek vyžaduje změnu manifestu.
+Rozhodnutí Q1–Q8 jsou v [komentáři #13](https://github.com/msucharda/devsecops-platform/issues/13#issuecomment-6312972204). Modul `organizations` je implementuje podle [specifikace modulu](../../modules/organizations/README.md). Manifest deklaruje pro apply `enterprise_organizations: write`, které pro `createEnterpriseOrganization` vyžaduje [dokumentace GitHubu](https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/content/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation.md). Tento runbook živě ověří, že je oprávnění minimum. Jiný výsledek vyžaduje změnu manifestu.
 
 ## Zdroje a hranice důkazu
 

@@ -97,7 +97,7 @@ Describe 'Organizations module parameters' {
             $instance.modules = @{ organizations = @{ parameters = $Parameters } }
             $instance.githubApps = @{
                 'organizations-reader' = @{ appId = '111'; installationId = '211'; enterprise = 'example'; permissions = @{ enterprise_organization_installations = 'read' }; resources = @{ enterprise = $true } }
-                'organizations-writer' = @{ appId = '112'; installationId = '212'; enterprise = 'example'; permissions = @{ enterprise_administration = 'write'; enterprise_organization_installations = 'write' }; resources = @{ enterprise = $true } }
+                'organizations-writer' = @{ appId = '112'; installationId = '212'; enterprise = 'example'; permissions = @{ enterprise_organization_installations = 'write'; enterprise_organizations = 'write' }; resources = @{ enterprise = $true } }
             }
             $instance.credentials = @{
                 organizations = @{

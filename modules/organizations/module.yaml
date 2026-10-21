@@ -23,11 +23,11 @@ permissions:
         enterprise_organization_installations: read
       resources:
         enterprise: true
-    # enterprise_administration is the unverified candidate for createEnterpriseOrganization; runbook C3 confirms the minimum.
+    # GitHub docs require enterprise_organizations: write for createEnterpriseOrganization; runbook C3 confirms the minimum live.
     apply:
       permissions:
-        enterprise_administration: write
         enterprise_organization_installations: write
+        enterprise_organizations: write
       resources:
         enterprise: true
   adminPat: []

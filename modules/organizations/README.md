@@ -82,9 +82,9 @@ Modul používá installation tokeny enterprise-owned Apps podle [ADR 0016](../.
 | Fáze | Oprávnění |
 |---|---|
 | plan | `enterprise_organization_installations: read` |
-| apply | `enterprise_organization_installations: write`, `enterprise_administration: write` |
+| apply | `enterprise_organization_installations: write`, `enterprise_organizations: write` |
 
-- `enterprise_administration: write` je neověřený kandidát pro `createEnterpriseOrganization`. Minimum potvrdí runbook C3.
+- `enterprise_organizations: write` vyžaduje pro `createEnterpriseOrganization` [dokumentace GitHubu](https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/content/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation.md). OpenAPI schéma `app-permissions` tuto permission neuvádí. Živé minimum potvrdí runbook C3.
 - `enterprise_organization_installations: write` dovoluje instalovat Apps do všech organizací enterprise. Riziko je přijaté s mitigací (Q7): samostatná App jen pro tento modul, token jen v apply environmentu s required reviewers, minimální oprávnění a krátká platnost.
 - Enterprise token nemá přístup k organizačním členům. Modul proto neověří, že owneři z `admin_logins` mají aktivní členství. GraphQL dokumentace uvádí, že chyba pozvánky ownera tvorbu organizace nevrátí zpět. Ověření ownerů je živé kritérium runbooku C3.
 
