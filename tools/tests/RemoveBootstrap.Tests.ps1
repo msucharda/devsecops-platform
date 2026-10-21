@@ -33,7 +33,7 @@ BeforeAll {
         Get-TestResponse -StatusCode 404 -Data @{ message = 'Not Found' }
     }
 
-    function New-TestIdentity {
+    function Get-TestIdentity {
         param([string] $Phase, [string] $PrincipalId)
         $name = "id-demo-emu-identity-$Phase"
         (Get-MicrosoftApiFixture -Name arm/user-assigned-identities-list-by-resource-group -Set @{
@@ -45,7 +45,7 @@ BeforeAll {
         })['value'][0]
     }
 
-    function New-TestRoleAssignment {
+    function Get-TestRoleAssignment {
         param([string] $Name, [string] $PrincipalId, [string] $Scope)
         (Get-MicrosoftApiFixture -Name arm/role-assignments-list-for-scope -Set @{
             'value.0.name' = $Name
@@ -56,7 +56,7 @@ BeforeAll {
         })['value'][0]
     }
 
-    function New-TestRoleDefinition {
+    function Get-TestRoleDefinition {
         param([string] $Id, [string] $Phase)
         (Get-MicrosoftApiFixture -Name graph/rbacapplication-list-roledefinitions -Set @{
             'value.0.id' = $Id
@@ -67,7 +67,7 @@ BeforeAll {
         })['value'][0]
     }
 
-    function New-TestDirectoryAssignment {
+    function Get-TestDirectoryAssignment {
         param([string] $Id, [string] $PrincipalId, [string] $RoleDefinitionId)
         (Get-MicrosoftApiFixture -Name graph/rbacapplication-list-roleassignments -Set @{
             'value.0.id' = $Id
@@ -78,7 +78,7 @@ BeforeAll {
         })['value'][0]
     }
 
-    function New-TestRunList {
+    function Get-TestRunList {
         param([string] $Workflow, [string] $Status = 'completed', [AllowNull()][string] $Conclusion = 'success', [datetime] $CreatedAt, [switch] $Empty)
         if ($Empty) {
             $list = Get-GitHubApiFixture -Name actions/list-workflow-runs -Set @{ total_count = 0 }
@@ -91,10 +91,12 @@ BeforeAll {
             'workflow_runs.0.status' = $Status
             'workflow_runs.0.conclusion' = $Conclusion
             'workflow_runs.0.created_at' = $CreatedAt.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            'workflow_runs.0.run_started_at' = $CreatedAt.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            'workflow_runs.0.updated_at' = $CreatedAt.AddMinutes(5).ToString('yyyy-MM-ddTHH:mm:ssZ')
         }
     }
 
-    function New-TestWorld {
+    function Get-TestWorld {
         $world = @{
             Repository = Get-GitHubApiFixture -Name repos/get -Set @{
                 full_name = $repository; name = 'instance'; private = $true; 'owner.login' = $organization
@@ -103,31 +105,32 @@ BeforeAll {
             Organization = Get-GitHubApiFixture -Name orgs/get -Set @{ login = $organization }
             ActiveRuns = @{ in_progress = 0; queued = 0; requested = 0; waiting = 0; pending = 0 }
             Runs = @{
-                'teardown.yml' = New-TestRunList -Workflow 'teardown.yml' -CreatedAt ([datetime]'2026-05-02T10:00:00Z')
-                'deploy.yml' = New-TestRunList -Workflow 'deploy.yml' -CreatedAt ([datetime]'2026-05-01T10:00:00Z')
+                'teardown.yml' = Get-TestRunList -Workflow 'teardown.yml' -CreatedAt ([datetime]'2026-05-02T10:00:00Z')
+                'deploy.yml' = Get-TestRunList -Workflow 'deploy.yml' -CreatedAt ([datetime]'2026-05-01T10:00:00Z')
             }
             ResourceGroup = Get-MicrosoftApiFixture -Name arm/resource-groups-get -Set @{
                 id = $resourceGroupId; name = 'rg-demo-bootstrap'; tags = @{ platformInstance = 'demo'; platformComponent = 'bootstrap' }
             }
             ResourceGroupDeletePolls = 1
             ResourceGroupDeleting = $false
+            RepeatRunPages = $false
             Lock = $true
             Identities = [System.Collections.Generic.List[object]]::new()
             RoleAssignments = [System.Collections.Generic.List[object]]::new()
             RoleDefinitions = [System.Collections.Generic.List[object]]::new()
             DirectoryAssignments = [System.Collections.Generic.List[object]]::new()
         }
-        $world.Identities.Add((New-TestIdentity -Phase plan -PrincipalId $planPrincipal))
-        $world.Identities.Add((New-TestIdentity -Phase apply -PrincipalId $applyPrincipal))
-        $world.RoleAssignments.Add((New-TestRoleAssignment -Name 'ra-sub' -PrincipalId $applyPrincipal -Scope "/subscriptions/$workloadSubscriptionId"))
-        $world.RoleAssignments.Add((New-TestRoleAssignment -Name 'ra-mg' -PrincipalId $applyPrincipal -Scope $managementGroupScope))
-        $world.RoleAssignments.Add((New-TestRoleAssignment -Name 'ra-plan' -PrincipalId $planPrincipal -Scope "/subscriptions/$subscriptionId"))
-        $world.RoleAssignments.Add((New-TestRoleAssignment -Name 'ra-state' -PrincipalId $applyPrincipal -Scope "$storageAccountId/blobServices/default/containers/emu-identity"))
-        $world.RoleAssignments.Add((New-TestRoleAssignment -Name 'ra-other' -PrincipalId 'cccccccc-0000-0000-0000-000000000001' -Scope "/subscriptions/$subscriptionId"))
-        $world.RoleDefinitions.Add((New-TestRoleDefinition -Id $applyRoleId -Phase apply))
-        $world.RoleDefinitions.Add((New-TestRoleDefinition -Id $planRoleId -Phase plan))
-        $world.DirectoryAssignments.Add((New-TestDirectoryAssignment -Id 'dra-apply' -PrincipalId $applyPrincipal -RoleDefinitionId $applyRoleId))
-        $world.DirectoryAssignments.Add((New-TestDirectoryAssignment -Id 'dra-plan' -PrincipalId $planPrincipal -RoleDefinitionId $planRoleId))
+        $world.Identities.Add((Get-TestIdentity -Phase plan -PrincipalId $planPrincipal))
+        $world.Identities.Add((Get-TestIdentity -Phase apply -PrincipalId $applyPrincipal))
+        $world.RoleAssignments.Add((Get-TestRoleAssignment -Name 'ra-sub' -PrincipalId $applyPrincipal -Scope "/subscriptions/$workloadSubscriptionId"))
+        $world.RoleAssignments.Add((Get-TestRoleAssignment -Name 'ra-mg' -PrincipalId $applyPrincipal -Scope $managementGroupScope))
+        $world.RoleAssignments.Add((Get-TestRoleAssignment -Name 'ra-plan' -PrincipalId $planPrincipal -Scope "/subscriptions/$subscriptionId"))
+        $world.RoleAssignments.Add((Get-TestRoleAssignment -Name 'ra-state' -PrincipalId $applyPrincipal -Scope "$storageAccountId/blobServices/default/containers/emu-identity"))
+        $world.RoleAssignments.Add((Get-TestRoleAssignment -Name 'ra-other' -PrincipalId 'cccccccc-0000-0000-0000-000000000001' -Scope "/subscriptions/$subscriptionId"))
+        $world.RoleDefinitions.Add((Get-TestRoleDefinition -Id $applyRoleId -Phase apply))
+        $world.RoleDefinitions.Add((Get-TestRoleDefinition -Id $planRoleId -Phase plan))
+        $world.DirectoryAssignments.Add((Get-TestDirectoryAssignment -Id 'dra-apply' -PrincipalId $applyPrincipal -RoleDefinitionId $applyRoleId))
+        $world.DirectoryAssignments.Add((Get-TestDirectoryAssignment -Id 'dra-plan' -PrincipalId $planPrincipal -RoleDefinitionId $planRoleId))
         return $world
     }
 
@@ -150,8 +153,14 @@ BeforeAll {
                 return Get-TestResponse -Data $list
             }
             if ($path -match "^/repos/$([regex]::Escape($repository))/actions/workflows/([a-z]+\.yml)/runs$") {
-                if (-not $World.Runs.Contains($Matches[1])) { return Get-TestNotFound }
-                return Get-TestResponse -Data $World.Runs[$Matches[1]]
+                $workflow = $Matches[1]
+                if (-not $World.Runs.Contains($workflow)) { return Get-TestNotFound }
+                if ($query -match '[?&]page=(\d+)' -and [int] $Matches[1] -gt 1 -and -not $World.RepeatRunPages) {
+                    $list = $World.Runs[$workflow].Clone()
+                    $list['workflow_runs'] = @()
+                    return Get-TestResponse -Data $list
+                }
+                return Get-TestResponse -Data $World.Runs[$workflow]
             }
             if ($path -ceq "/orgs/$organization") {
                 if (-not $World.Organization) { return Get-TestNotFound }
@@ -289,7 +298,7 @@ Describe 'Bootstrap removal' {
         }
         & $writeInventory
 
-        $world = New-TestWorld
+        $world = Get-TestWorld
         $requests = [System.Collections.Generic.List[object]]::new()
         $failure = @{ At = 0; After = $false; Count = 0 }
         $token = @{ tenant = $tenantId; accessToken = 'azure-token' }
@@ -345,6 +354,20 @@ Describe 'Bootstrap removal' {
             @($github | Where-Object { $_.Headers['X-GitHub-Api-Version'] -cne '2026-03-10' }) | Should -BeNullOrEmpty
             @($requests | Where-Object { $_.Uri -like "*$managementGroupScope/providers/Microsoft.Authorization/roleAssignments?*" }) | Should -Not -BeNullOrEmpty
             @($requests | Where-Object { $_.Uri -like "*/subscriptions/$workloadSubscriptionId/providers/Microsoft.Authorization/roleAssignments?*" }) | Should -Not -BeNullOrEmpty
+        }
+
+        It 'when the deploy workflow has no run' {
+            $world.Runs['deploy.yml'] = Get-TestRunList -Workflow 'deploy.yml' -Empty
+
+            $null = & $run
+
+            & $assertRemoved
+        }
+
+        It 'and records the managed identities that bind Azure resources to the inventory' {
+            $null = & $run
+
+            (& $readInventory).removal.azurePrincipals | Should -Be @($planPrincipal, $applyPrincipal | Sort-Object)
         }
 
         It 'nothing again when the inventory records a completed removal' {
@@ -420,6 +443,77 @@ Describe 'Bootstrap removal' {
             $null = & $run
 
             & $assertRemoved
+        }
+    }
+
+    Context 'binds Azure resources to the inventory' {
+        BeforeEach {
+            # The tenth mutating request deletes the state lock; the run stops before it.
+            $failure.At = 10
+            { & $run } | Should -Throw '*Simulated interruption*'
+            (& $readInventory).removal.steps['state-lock'] | Should -Be 'started'
+            $failure.At = 0
+            $requests.Clear()
+            $replacement = 'dddddddd-0000-0000-0000-000000000001'
+        }
+
+        It 'and refuses to resume when another deployment <Label>' -ForEach @(
+            @{ Label = 'replaced an identity'; Change = { $world.Identities[0] = Get-TestIdentity -Phase plan -PrincipalId $replacement } }
+            @{ Label = 'added an identity'; Change = { $world.Identities.Add((Get-TestIdentity -Phase plan -PrincipalId $replacement)) } }
+            @{ Label = 'left one identity'; Change = { $world.Identities.RemoveAt(0) } }
+            @{ Label = 'left no identity'; Change = { $world.Identities.Clear() } }
+        ) {
+            . $Change
+
+            { & $run } | Should -Throw '*differ from those this inventory recorded*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+            $world.Lock | Should -BeTrue
+        }
+
+
+        It 'and refuses to resume the resource group deletion when another deployment replaced an identity' {
+            $world.ResourceGroupDeletePolls = 5
+            { & $removeScript -InstancePath $instancePath -InventoryPath $inventoryPath -ModulesPath $modulesPath `
+                -ConfirmInstanceName demo -ResourceGroupPollCount 1 -Confirm:$false } | Should -Throw '*still being deleted*'
+            $world.ResourceGroupDeleting = $false
+            $world.Identities[0] = Get-TestIdentity -Phase plan -PrincipalId $replacement
+            $requests.Clear()
+
+            { & $run } | Should -Throw '*differ from those this inventory recorded*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+        }
+
+        It 'and resumes the resource group deletion when only recorded identities remain' {
+            $world.ResourceGroupDeletePolls = 5
+            { & $removeScript -InstancePath $instancePath -InventoryPath $inventoryPath -ModulesPath $modulesPath `
+                -ConfirmInstanceName demo -ResourceGroupPollCount 1 -Confirm:$false } | Should -Throw '*still being deleted*'
+            $world.Identities.RemoveAt(0)
+
+            $null = & $run
+
+            & $assertRemoved
+        }
+
+        It 'and refuses an inventory that recorded no identities before Azure steps finished' {
+            $stored = & $readInventory
+            $stored.removal.Remove('azurePrincipals')
+            ConvertTo-Json -InputObject $stored -Depth 20 | Set-Content -LiteralPath $inventoryPath
+
+            { & $run } | Should -Throw '*does not record the managed identities*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+        }
+
+        It 'and refuses an inventory with an invalid identity record <Label>' -ForEach @(
+            @{ Label = 'in upper case'; Value = @('AAAAAAAA-0000-0000-0000-000000000001') }
+            @{ Label = 'that is not a list'; Value = 'aaaaaaaa-0000-0000-0000-000000000001' }
+            @{ Label = 'that is not an id'; Value = @('x') }
+        ) {
+            $stored = & $readInventory
+            $stored.removal.azurePrincipals = $Value
+            ConvertTo-Json -InputObject $stored -Depth 20 | Set-Content -LiteralPath $inventoryPath
+
+            { & $run } | Should -Throw '*invalid removal record*'
+            $requests.Count | Should -Be 0
         }
     }
 
@@ -517,7 +611,7 @@ Describe 'Bootstrap removal' {
             @{ Label = 'the marker is missing'; Field = 'description'; Value = $null; Expected = '*not the private bootstrap-owned*' }
             @{ Label = 'the marker names another instance'; Field = 'description'; Value = 'Platform instance other; bootstrap-owned.'; Expected = '*not the private bootstrap-owned*' }
             @{ Label = 'the marker differs in case'; Field = 'description'; Value = 'platform instance demo; bootstrap-owned.'; Expected = '*not the private bootstrap-owned*' }
-            @{ Label = 'the full name differs'; Field = 'full_name'; Value = "$organization/other"; Expected = '*not the private bootstrap-owned*' }
+            @{ Label = 'the full name differs'; Field = 'full_name'; Value = 'demo-abc123-platform/other'; Expected = '*not the private bootstrap-owned*' }
             @{ Label = 'the owner differs'; Field = 'owner.login'; Value = 'demo-xyz789-platform'; Expected = '*not the private bootstrap-owned*' }
         ) {
             $fields = @{
@@ -554,7 +648,7 @@ Describe 'Bootstrap removal' {
             @{ Label = 'is not completed'; Status = 'in_progress'; Conclusion = $null }
             @{ Label = 'has a conclusion in another case'; Status = 'completed'; Conclusion = 'Success' }
         ) {
-            $world.Runs['teardown.yml'] = New-TestRunList -Workflow 'teardown.yml' -Status $Status -Conclusion $Conclusion -CreatedAt ([datetime]'2026-05-02T10:00:00Z')
+            $world.Runs['teardown.yml'] = Get-TestRunList -Workflow 'teardown.yml' -Status $Status -Conclusion $Conclusion -CreatedAt ([datetime]'2026-05-02T10:00:00Z')
 
             { & $run } | Should -Throw '*did not succeed*'
             @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
@@ -564,7 +658,7 @@ Describe 'Bootstrap removal' {
             @{ Label = 'is on another branch'; Field = 'workflow_runs.0.head_branch'; Value = 'feature'; Expected = '*did not succeed*' }
             @{ Label = 'is from another workflow file'; Field = 'workflow_runs.0.path'; Value = '.github/workflows/deploy.yml'; Expected = '*invalid run of teardown.yml*' }
         ) {
-            $world.Runs['teardown.yml'] = New-TestRunList -Workflow 'teardown.yml' -CreatedAt ([datetime]'2026-05-02T10:00:00Z')
+            $world.Runs['teardown.yml'] = Get-TestRunList -Workflow 'teardown.yml' -CreatedAt ([datetime]'2026-05-02T10:00:00Z')
             $world.Runs['teardown.yml'].workflow_runs[0][$Field.Split('.')[-1]] = $Value
 
             { & $run } | Should -Throw $Expected
@@ -572,7 +666,7 @@ Describe 'Bootstrap removal' {
         }
 
         It 'when no teardown run exists' {
-            $world.Runs['teardown.yml'] = New-TestRunList -Workflow 'teardown.yml' -Empty
+            $world.Runs['teardown.yml'] = Get-TestRunList -Workflow 'teardown.yml' -Empty
 
             { & $run } | Should -Throw '*did not succeed*'
             @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
@@ -589,9 +683,57 @@ Describe 'Bootstrap removal' {
             @{ Label = 'after'; CreatedAt = [datetime]'2026-05-03T10:00:00Z' }
             @{ Label = 'together with'; CreatedAt = [datetime]'2026-05-02T10:00:00Z' }
         ) {
-            $world.Runs['deploy.yml'] = New-TestRunList -Workflow 'deploy.yml' -CreatedAt $CreatedAt
+            $world.Runs['deploy.yml'] = Get-TestRunList -Workflow 'deploy.yml' -CreatedAt $CreatedAt
 
-            { & $run } | Should -Throw '*deploy workflow run started after*'
+            { & $run } | Should -Throw '*deploy workflow run changed after*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+        }
+
+        It 'when an older deploy run was rerun after the teardown started' {
+            $rerun = Get-TestRunList -Workflow 'deploy.yml' -CreatedAt ([datetime]'2026-04-01T10:00:00Z')
+            $rerun['workflow_runs'][0]['run_attempt'] = 2
+            $rerun['workflow_runs'][0]['run_started_at'] = '2026-05-03T10:00:00Z'
+            $rerun['workflow_runs'][0]['updated_at'] = '2026-05-03T10:05:00Z'
+            $list = $world.Runs['deploy.yml']
+            $list['workflow_runs'] = @($list['workflow_runs'][0], $rerun['workflow_runs'][0])
+            $list['total_count'] = 2
+
+            { & $run } | Should -Throw '*deploy workflow run changed after*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+            @($requests | Where-Object Uri -like '*deploy.yml/runs?per_page=100&page=1') | Should -HaveCount 1
+        }
+
+        It 'when <Label>' -ForEach @(
+            @{ Label = 'the teardown run has no attempt start time'; Workflow = 'teardown.yml'; Field = 'run_started_at'; Value = $null; Expected = '*start time of the latest teardown attempt*' }
+            @{ Label = 'a deploy run has no update time'; Workflow = 'deploy.yml'; Field = 'updated_at'; Value = $null; Expected = '*invalid run of deploy.yml*' }
+        ) {
+            # Intentionally invalid response: the field is removed to test the fail-closed check.
+            $world.Runs[$Workflow]['workflow_runs'][0][$Field] = $Value
+
+            { & $run } | Should -Throw $Expected
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+        }
+
+        It 'when the deploy run list is incomplete' {
+            $world.Runs['deploy.yml']['total_count'] = 2
+
+            { & $run } | Should -Throw '*incomplete run list*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+        }
+
+        It 'when the deploy workflow has more than 1000 runs' {
+            $world.Runs['deploy.yml']['total_count'] = 5000
+            $world.RepeatRunPages = $true
+
+            { & $run } | Should -Throw '*more than 1000 runs*'
+            @($requests | Where-Object Uri -like '*deploy.yml/runs*') | Should -HaveCount 10
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+        }
+
+        It 'when the deploy workflow does not exist' {
+            $world.Runs.Remove('deploy.yml')
+
+            { & $run } | Should -Throw '*HTTP 404*'
             @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
         }
 
@@ -723,7 +865,7 @@ Describe 'Bootstrap removal' {
         }
 
         It 'when the role name is ambiguous' {
-            $world.RoleDefinitions.Add((New-TestRoleDefinition -Id 'bbbbbbbb-0000-0000-0000-000000000003' -Phase apply))
+            $world.RoleDefinitions.Add((Get-TestRoleDefinition -Id 'bbbbbbbb-0000-0000-0000-000000000003' -Phase apply))
 
             { & $run } | Should -Throw '*ambiguous*'
             @($requests | Where-Object { $_.Method -cne 'GET' -and ([uri] $_.Uri).Host -ceq 'graph.microsoft.com' }) | Should -BeNullOrEmpty

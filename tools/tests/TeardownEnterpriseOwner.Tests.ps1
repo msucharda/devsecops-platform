@@ -17,7 +17,7 @@ BeforeAll {
         [pscustomobject]@{ StatusCode = $StatusCode; Content = (ConvertTo-Json -InputObject $Data -Depth 100 -Compress) }
     }
 
-    function New-TestAssignment {
+    function Get-TestAssignment {
         param(
             [string] $PrincipalId = $ownerId,
             [string] $PrincipalType = 'User',
@@ -67,8 +67,8 @@ Describe 'Teardown Enterprise Owner check' {
         $assignmentPages = [System.Collections.Generic.List[object]]::new()
         $assignmentPages.Add((Get-MicrosoftApiFixture -Name graph/serviceprincipal-list-approleassignedto))
         $assignmentPages[0].value = @(
-            New-TestAssignment -PrincipalId $leadId -AppRoleId $otherRoleId
-            New-TestAssignment -PrincipalId $ownerId
+            Get-TestAssignment -PrincipalId $leadId -AppRoleId $otherRoleId
+            Get-TestAssignment -PrincipalId $ownerId
         )
         $responses = @{}
         $requests = [System.Collections.Generic.List[object]]::new()
@@ -112,16 +112,16 @@ Describe 'Teardown Enterprise Owner check' {
             @($requests | Where-Object { $_.Method -cne 'GET' }) | Should -BeNullOrEmpty
             @($requests | ForEach-Object { ([uri] $_.Uri).Host } | Sort-Object -Unique) | Should -Be @('graph.microsoft.com')
             $requests[0].Headers.Authorization | Should -Be 'Bearer graph-token'
-            $requests[0].Uri | Should -BeLike "$graph/servicePrincipals/$spId?*select=id,appRoles"
+            $requests[0].Uri | Should -BeLike "$graph/servicePrincipals/${spId}?*select=id,appRoles"
         }
 
         It 'when the assignment is on a later Graph page' {
             $next = Get-MicrosoftApiFixture -Name graph/serviceprincipal-list-approleassignedto.next-page -Set @{
                 '@odata.nextLink' = "$graph/servicePrincipals/$spId/appRoleAssignedTo?`$skiptoken=1"
             }
-            $next.value = @(New-TestAssignment -PrincipalId $leadId -AppRoleId $otherRoleId)
+            $next.value = @(Get-TestAssignment -PrincipalId $leadId -AppRoleId $otherRoleId)
             $last = Get-MicrosoftApiFixture -Name graph/serviceprincipal-list-approleassignedto
-            $last.value = @(New-TestAssignment -PrincipalId $ownerId)
+            $last.value = @(Get-TestAssignment -PrincipalId $ownerId)
             $assignmentPages[0] = $next
             $assignmentPages.Add($last)
 
@@ -147,11 +147,11 @@ Describe 'Teardown Enterprise Owner check' {
 
     Context 'fails closed with the manual step' {
         It 'when <Case>' -ForEach @(
-            @{ Case = 'no platform member has the assignment'; Change = { $assignmentPages[0].value = @(New-TestAssignment -PrincipalId $leadId -AppRoleId $otherRoleId) } }
-            @{ Case = 'the assignment is inherited through a group'; Change = { $assignmentPages[0].value = @(New-TestAssignment -PrincipalId $ownerId -PrincipalType 'Group') } }
+            @{ Case = 'no platform member has the assignment'; Change = { $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $leadId -AppRoleId $otherRoleId) } }
+            @{ Case = 'the assignment is inherited through a group'; Change = { $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $ownerId -PrincipalType 'Group') } }
             @{ Case = 'the owner is not in teams.platform'; Change = { $instance.teams.platform = @('lead@contoso.test'); & $write } }
-            @{ Case = 'the assignment grants another app role'; Change = { $assignmentPages[0].value = @(New-TestAssignment -PrincipalId $ownerId -AppRoleId $otherRoleId) } }
-            @{ Case = 'the assignment belongs to another resource'; Change = { $assignmentPages[0].value = @(New-TestAssignment -PrincipalId $ownerId -ResourceId $otherRoleId) } }
+            @{ Case = 'the assignment grants another app role'; Change = { $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $ownerId -AppRoleId $otherRoleId) } }
+            @{ Case = 'the assignment belongs to another resource'; Change = { $assignmentPages[0].value = @(Get-TestAssignment -PrincipalId $ownerId -ResourceId $otherRoleId) } }
             @{ Case = 'the application has no assignments'; Change = { $assignmentPages[0].value = @() } }
             @{ Case = 'no platform member exists in Entra ID'; Change = { $users.Clear() } }
         ) {
@@ -227,7 +227,7 @@ Describe 'Teardown Enterprise Owner check' {
             @{ Case = 'leaves Graph v1.0'; Link = 'https://graph.microsoft.com/beta/servicePrincipals/x/appRoleAssignedTo?$skiptoken=1' }
         ) {
             $next = Get-MicrosoftApiFixture -Name graph/serviceprincipal-list-approleassignedto.next-page -Set @{ '@odata.nextLink' = $Link }
-            $next.value = @(New-TestAssignment -PrincipalId $leadId -AppRoleId $otherRoleId)
+            $next.value = @(Get-TestAssignment -PrincipalId $leadId -AppRoleId $otherRoleId)
             $assignmentPages[0] = $next
 
             { & $ownerCheck -InstancePath $instancePath -ModulesPath $modulesPath } | Should -Throw '*Untrusted Graph address*'

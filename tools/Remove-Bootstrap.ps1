@@ -25,6 +25,8 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 
+$requestPolicyHook = $RequestPolicy
+$resourceGroupPolls = $ResourceGroupPollCount
 $stepOrder = @('repository', 'organization', 'identity-role-assignments', 'directory-roles', 'state-lock', 'resource-group')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
@@ -82,6 +84,10 @@ foreach ($key in $removal['steps'].Keys) {
     if ($key -cnotin $stepOrder -or $removal['steps'][$key] -cnotin @('started', 'done')) {
         throw "The bootstrap inventory has an invalid removal step '$key'."
     }
+}
+if ($removal.Contains('azurePrincipals') -and ($removal['azurePrincipals'] -isnot [System.Collections.IList] -or
+        @($removal['azurePrincipals'] | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[0-9a-f-]{36}$' }).Count -gt 0)) {
+    throw 'The bootstrap inventory has an invalid removal record.'
 }
 
 function Save-RemovalInventory {
@@ -197,7 +203,7 @@ function Invoke-RemovalRequest {
     }
     $kind = if ($Method -ceq 'GET') { 'Read' } else { 'Reconcile' }
     for ($attempt = 1; ; $attempt++) {
-        Assert-PlatformBootstrapRequest -Uri $Uri -Method $Method -Kind $kind -RequestPolicy $RequestPolicy
+        Assert-PlatformBootstrapRequest -Uri $Uri -Method $Method -Kind $kind -RequestPolicy $requestPolicyHook
         $response = Invoke-WebRequest @arguments
         if ($response.StatusCode -in @(429, 503) -and $attempt -lt 6) {
             Write-Verbose "Retrying $Method '$Uri' after HTTP $($response.StatusCode)."
@@ -271,13 +277,34 @@ function Assert-RemovalPreflight {
         $teardown['conclusion'] -cne 'success') {
         throw "The latest teardown workflow run on main in '$repository' did not succeed. Run the teardown workflow before removing bootstrap."
     }
-    $deploy = Get-RemovalWorkflowRun -Workflow 'deploy.yml'
-    if ($deploy -and $deploy['created_at'] -ge $teardown['created_at']) {
-        throw "A deploy workflow run started after the latest successful teardown in '$repository'. Run the teardown workflow again."
+    if ($teardown['run_started_at'] -isnot [datetime]) {
+        throw "GitHub did not return the start time of the latest teardown attempt in '$repository'."
+    }
+    # A rerun keeps created_at of the original run, so every deploy run on any branch is compared by updated_at.
+    $listedDeployRuns = 0
+    for ($page = 1; ; $page++) {
+        if ($page -gt 10) { throw "The deploy workflow in '$repository' has more than 1000 runs; verify the teardown evidence manually." }
+        $runs = Invoke-RemovalRequest -Uri "https://$githubApi/repos/$repository/actions/workflows/deploy.yml/runs?per_page=100&page=$page"
+        if (($runs['total_count'] -isnot [long] -and $runs['total_count'] -isnot [int]) -or $runs['workflow_runs'] -isnot [System.Collections.IList]) {
+            throw "GitHub returned an invalid run list for deploy.yml."
+        }
+        foreach ($deploy in $runs['workflow_runs']) {
+            if ($deploy -isnot [System.Collections.IDictionary] -or $deploy['updated_at'] -isnot [datetime]) {
+                throw "GitHub returned an invalid run of deploy.yml."
+            }
+            if ($deploy['updated_at'] -ge $teardown['run_started_at']) {
+                throw "A deploy workflow run changed after the latest successful teardown started in '$repository'. Run the teardown workflow again."
+            }
+        }
+        $listedDeployRuns += $runs['workflow_runs'].Count
+        if ($listedDeployRuns -ge $runs['total_count'] -or $runs['workflow_runs'].Count -eq 0) {
+            if ($listedDeployRuns -lt $runs['total_count']) { throw "GitHub returned an incomplete run list for deploy.yml." }
+            break
+        }
     }
 }
 
-function Remove-RemovalRepository {
+function Invoke-RepositoryRemoval {
     [CmdletBinding()]
     param()
 
@@ -308,7 +335,7 @@ function Remove-RemovalRepository {
     Set-RemovalStepState -Step 'repository' -State 'done'
 }
 
-function Remove-RemovalOrganization {
+function Invoke-OrganizationRemoval {
     [CmdletBinding()]
     param()
 
@@ -357,21 +384,13 @@ function Get-RemovalResourceGroup {
     return $group
 }
 
-function Remove-RemovalIdentityRoleAssignment {
+function Get-RemovalIdentityPrincipal {
     [CmdletBinding()]
+    [OutputType([string])]
     param()
 
-    $state = Get-RemovalStepState -Step 'identity-role-assignments'
-    if ($state -ceq 'done') { return }
-    if (-not (Get-RemovalResourceGroup)) {
-        if ((Get-RemovalStepState -Step 'resource-group') -cne 'pending') {
-            Set-RemovalStepState -Step 'identity-role-assignments' -State 'done'
-            return
-        }
-        throw "Resource group '$resourceGroupName' is missing before the role assignments of module identities were removed. Remove orphaned role assignments manually."
-    }
     $identities = @(Get-RemovalCollection -Uri "$arm$resourceGroupId/providers/Microsoft.ManagedIdentity/userAssignedIdentities?api-version=2023-01-31")
-    $principals = foreach ($identity in $identities) {
+    foreach ($identity in $identities) {
         $identityTags = $identity['tags']
         $properties = $identity['properties']
         if ($identityTags -isnot [System.Collections.IDictionary] -or $identityTags['platformInstance'] -cne $instanceName -or
@@ -384,8 +403,50 @@ function Remove-RemovalIdentityRoleAssignment {
             $properties['principalId'] -isnot [string] -or $properties['principalId'] -notmatch '^[0-9a-fA-F-]{36}$') {
             throw "Managed identity '$($identity['id'])' has no usable principal in $.bootstrap.tenantId."
         }
-        $properties['principalId']
+        $properties['principalId'].ToLowerInvariant()
     }
+}
+
+function Assert-RemovalAzureGeneration {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [switch] $Record,
+        [switch] $AllowPartial
+    )
+
+    # Managed identities get a new principal ID when a deployment recreates them, so their set binds Azure resources to this inventory.
+    $principals = @(Get-RemovalIdentityPrincipal | Sort-Object -Unique)
+    if (-not $removal.Contains('azurePrincipals')) {
+        if (-not $Record) {
+            throw "The inventory does not record the managed identities of resource group '$resourceGroupName'; refusing to delete resources it cannot bind to this deployment."
+        }
+        $removal['azurePrincipals'] = $principals
+        Save-RemovalInventory
+        return $principals
+    }
+    $recorded = @($removal['azurePrincipals'])
+    $foreign = @($principals | Where-Object { $_ -cnotin $recorded })
+    if ($foreign.Count -gt 0 -or (-not $AllowPartial -and $principals.Count -ne $recorded.Count)) {
+        throw "The managed identities in resource group '$resourceGroupName' differ from those this inventory recorded; another deployment may have replaced it. Verify the resources manually."
+    }
+    return $principals
+}
+
+function Invoke-IdentityRoleAssignmentRemoval {
+    [CmdletBinding()]
+    param()
+
+    $state = Get-RemovalStepState -Step 'identity-role-assignments'
+    if ($state -ceq 'done') { return }
+    if (-not (Get-RemovalResourceGroup)) {
+        if ((Get-RemovalStepState -Step 'resource-group') -cne 'pending') {
+            Set-RemovalStepState -Step 'identity-role-assignments' -State 'done'
+            return
+        }
+        throw "Resource group '$resourceGroupName' is missing before the role assignments of module identities were removed. Remove orphaned role assignments manually."
+    }
+    $principals = Assert-RemovalAzureGeneration -Record:($state -ceq 'pending')
     $scopes = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($subscriptionId in $connection['subscriptionIds']) { $null = $scopes.Add("/subscriptions/$subscriptionId") }
     foreach ($module in $modules.Values) {
@@ -419,11 +480,12 @@ function Remove-RemovalIdentityRoleAssignment {
     Set-RemovalStepState -Step 'identity-role-assignments' -State 'done'
 }
 
-function Remove-RemovalDirectoryRole {
+function Invoke-DirectoryRoleRemoval {
     [CmdletBinding()]
     param()
 
     if ((Get-RemovalStepState -Step 'directory-roles') -ceq 'done') { return }
+    if (Get-RemovalResourceGroup) { $null = Assert-RemovalAzureGeneration }
     $definitions = foreach ($name in @($modules.Keys | Sort-Object)) {
         foreach ($phase in @('plan', 'apply')) {
             $displayName = "platform-$instanceName-$name-$phase"
@@ -457,12 +519,13 @@ function Remove-RemovalDirectoryRole {
     Set-RemovalStepState -Step 'directory-roles' -State 'done'
 }
 
-function Remove-RemovalStateLock {
+function Invoke-StateLockRemoval {
     [CmdletBinding()]
     param()
 
     if ((Get-RemovalStepState -Step 'state-lock') -ceq 'done') { return }
     if (Get-RemovalResourceGroup) {
+        $null = Assert-RemovalAzureGeneration
         Set-RemovalStepState -Step 'state-lock' -State 'started'
         $null = Invoke-RemovalRequest -Uri "$arm$storageAccountId/providers/Microsoft.Authorization/locks/lock-state?api-version=2016-09-01" `
             -Method DELETE -AllowNotFound -ExpectedStatus 200, 204
@@ -473,16 +536,17 @@ function Remove-RemovalStateLock {
     Set-RemovalStepState -Step 'state-lock' -State 'done'
 }
 
-function Remove-RemovalResourceGroup {
+function Invoke-ResourceGroupRemoval {
     [CmdletBinding()]
     param()
 
     if ((Get-RemovalStepState -Step 'resource-group') -ceq 'done') { return }
     if (Get-RemovalResourceGroup) {
+        $null = Assert-RemovalAzureGeneration -AllowPartial:((Get-RemovalStepState -Step 'resource-group') -ceq 'started')
         Set-RemovalStepState -Step 'resource-group' -State 'started'
         $null = Invoke-RemovalRequest -Uri "$arm$resourceGroupId`?api-version=2021-04-01" -Method DELETE -AllowNotFound -ExpectedStatus 200, 202
         $deleted = $false
-        for ($poll = 0; $poll -lt $ResourceGroupPollCount; $poll++) {
+        for ($poll = 0; $poll -lt $resourceGroupPolls; $poll++) {
             if (-not (Get-RemovalResourceGroup)) { $deleted = $true; break }
             Start-Sleep -Seconds 10
         }
@@ -499,12 +563,12 @@ function Remove-RemovalResourceGroup {
 if (-not $PSCmdlet.ShouldProcess("platform instance '$instanceName' ($repository, $resourceGroupId)", 'Remove bootstrap resources')) {
     return
 }
-Remove-RemovalRepository
-Remove-RemovalOrganization
-Remove-RemovalIdentityRoleAssignment
-Remove-RemovalDirectoryRole
-Remove-RemovalStateLock
-Remove-RemovalResourceGroup
+Invoke-RepositoryRemoval
+Invoke-OrganizationRemoval
+Invoke-IdentityRoleAssignmentRemoval
+Invoke-DirectoryRoleRemoval
+Invoke-StateLockRemoval
+Invoke-ResourceGroupRemoval
 $removal['completed'] = $true
 Save-RemovalInventory
 
