@@ -87,6 +87,22 @@ Describe 'Ruleset bypass visibility during drift detection' {
         }
     }
 
+    It 'checks an organization named <Organization> instead of a dictionary member' -ForEach @(
+        @{ Organization = 'keys' }
+        @{ Organization = 'count' }
+    ) {
+        $arguments.TokensJson = "{`"$Organization`":`"$Organization-token`"}"
+        Mock Invoke-RestMethod { return , @() } -ParameterFilter { $Uri -like "https://api.example.test/orgs/$Organization/rulesets``?*" }
+
+        $result = & $checker @arguments
+
+        $result.LocalRulesetsVerified | Should -Be 0
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq "https://api.example.test/orgs/$Organization/rulesets?includes_parents=true&per_page=100&page=1" -and
+            $Headers['Authorization'] -eq "Bearer $Organization-token"
+        }
+    }
+
     It 'treats a missing bypass actor field as incomplete, not as a ruleset without bypass' {
         $detail.Remove('bypass_actors')
 

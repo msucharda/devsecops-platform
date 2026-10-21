@@ -15,7 +15,7 @@ $tokens = $null
 if ($TokensJson) {
     try { $tokens = ConvertFrom-Json -InputObject $TokensJson -AsHashtable -ErrorAction Stop } catch { $tokens = $null }
 }
-if ($tokens -isnot [System.Collections.IDictionary] -or $tokens.Count -eq 0 -or -not $Enterprise -or
+if ($tokens -isnot [System.Collections.IDictionary] -or $tokens.PSBase.Count -eq 0 -or -not $Enterprise -or
     -not $ApiUrl -or ([uri] $ApiUrl).Scheme -cne 'https') {
     throw 'Ruleset bypass check requires the ruleset plan installation token map, the App enterprise and an HTTPS API URL.'
 }
@@ -46,7 +46,7 @@ function Invoke-RulesetRequest {
 
 $inherited = 0
 $verified = 0
-foreach ($organization in @($tokens.Keys | Sort-Object -CaseSensitive)) {
+foreach ($organization in @($tokens.PSBase.Keys | Sort-Object -CaseSensitive)) {
     $token = [string] $tokens[$organization]
     $escaped = [uri]::EscapeDataString($organization)
     $page = 1
