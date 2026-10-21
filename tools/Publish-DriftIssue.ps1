@@ -72,10 +72,11 @@ function Invoke-IssueRequest {
 
 function Assert-OpenIssue {
     [CmdletBinding()]
-    param([AllowNull()][object] $Issue, [string] $Operation)
+    param([AllowNull()][object] $Issue, [string] $Operation, [string] $ExpectedNumber)
 
     if ($Issue -isnot [System.Collections.IDictionary] -or $Issue.Contains('pull_request') -or
-        [string] $Issue['number'] -cnotmatch '^[1-9][0-9]*$' -or $Issue['state'] -cne 'open') {
+        [string] $Issue['number'] -cnotmatch '^[1-9][0-9]*$' -or $Issue['state'] -cne 'open' -or
+        ($ExpectedNumber -and [string] $Issue['number'] -cne $ExpectedNumber)) {
         throw "GitHub issues API $Operation did not return an open issue."
     }
 }
@@ -92,8 +93,10 @@ do {
             throw 'GitHub issues API returned an unknown issue list item.'
         }
         if ($item.Contains('pull_request') -or $null -eq $item['user']) { continue }
-        if ($item['user'] -isnot [System.Collections.IDictionary]) {
-            throw 'GitHub issues API returned an unknown issue list item.'
+        if ($item['user'] -isnot [System.Collections.IDictionary] -or
+            -not ($item['user']['login'] -is [string] -and $item['user']['login']) -or
+            -not ($item['user']['type'] -is [string] -and $item['user']['type'])) {
+            throw 'GitHub issues API returned an issue author without a readable login and type.'
         }
         if ($item['user']['login'] -ceq $botLogin -and $item['user']['type'] -ceq 'Bot' -and
             $item['body'] -is [string] -and $item['body'].StartsWith("$marker`n", [System.StringComparison]::Ordinal)) {
@@ -109,7 +112,7 @@ if ($matching.Count -gt 1) {
 if ($matching.Count -eq 1) {
     $number = [string] $matching[0]['number']
     $issue = Invoke-IssueRequest -Method PATCH -Path "$issuesPath/$number" -Body @{ body = $report }
-    Assert-OpenIssue -Issue $issue -Operation 'PATCH'
+    Assert-OpenIssue -Issue $issue -Operation 'PATCH' -ExpectedNumber $number
     $action = 'updated'
 }
 else {

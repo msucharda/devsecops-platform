@@ -127,7 +127,7 @@ Describe 'Drift issue publication' {
         @{ Case = 'listing issues fails'; Filter = { $Method -eq 'GET' }; Response = { throw 'list unavailable' }; Error = '*GET /repos/platform/instance/issues*failed*' }
         @{ Case = 'a list item is not an object'; Filter = { $Method -eq 'GET' -and $Uri -like '*page=1' }; Response = { return , @('text') }; Error = '*unknown issue list item*' }
         # Intentionally invalid: a non-null author that is not a simple user object.
-        @{ Case = 'an author is not an object'; Filter = { $Method -eq 'GET' -and $Uri -like '*page=1' }; Response = { return , @(@{ number = 3; user = 'octoapp[bot]'; body = 'x' }) }; Error = '*unknown issue list item*' }
+        @{ Case = 'an author is not an object'; Filter = { $Method -eq 'GET' -and $Uri -like '*page=1' }; Response = { return , @(@{ number = 3; user = 'octoapp[bot]'; body = 'x' }) }; Error = '*issue author without a readable login and type*' }
         # Intentionally invalid: the documented schema requires the user field.
         @{ Case = 'an item has no user field'; Filter = { $Method -eq 'GET' -and $Uri -like '*page=1' }; Response = { return , @(@{ number = 3; body = 'x' }) }; Error = '*unknown issue list item*' }
         @{ Case = 'the list never ends'; Filter = { $Method -eq 'GET' }; Response = { return , @(Get-ListedIssue -Number 3 -Login 'mona' -Type 'User' -Body 'x') }; Error = '*within 1000 pages*' }
@@ -136,6 +136,28 @@ Describe 'Drift issue publication' {
         Mock Invoke-RestMethod $Response -ParameterFilter $Filter
 
         { & $publisher @arguments } | Should -Throw $Error
+    }
+
+    It 'fails closed when the update response identifies another issue' {
+        $listed += Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nprevious"
+        $updated.number = 999
+
+        { & $publisher @arguments } | Should -Throw '*PATCH did not return an open issue*'
+    }
+
+    It 'fails closed without creating an issue when an author has <Case>' -ForEach @(
+        @{ Case = 'no login'; Change = { param($Item) $Item.user.Remove('login') } }
+        @{ Case = 'an empty login'; Change = { param($Item) $Item.user.login = '' } }
+        @{ Case = 'no type'; Change = { param($Item) $Item.user.Remove('type') } }
+        @{ Case = 'an empty type'; Change = { param($Item) $Item.user.type = '' } }
+        @{ Case = 'an unreadable type'; Change = { param($Item) $Item.user.type = @{ name = 'Bot' } } }
+    ) {
+        $item = Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nprevious"
+        & $Change $item
+        $listed += $item
+
+        { & $publisher @arguments } | Should -Throw '*issue author without a readable login and type*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
     }
 
     It 'shortens a report above the GitHub issue body limit and points to the run summary' {
