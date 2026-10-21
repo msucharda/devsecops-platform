@@ -577,6 +577,18 @@ Describe 'Organizations module against the documented GitHub API' {
             (Get-StubRequest deleteInstallation).Count | Should -Be 0
         }
 
+        It 'recovers when the run ends between the removal and its response' {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01'
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liOther0001'
+            $null = $stub.Drop.Add('deleteInstallation')
+
+            { Uninstall-OrganizationApp @target @install } | Should -Throw '*connection was closed*'
+            Uninstall-OrganizationApp @target @install
+
+            (Get-StubRequest deleteInstallation).Count | Should -Be 1
+            $stub.Installations['demo-a1b2c3-actions'].client_id | Should -Be @('Iv23liOther0001')
+        }
+
         It 'treats a documented 404 on removal as removed' {
             Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01'
             $stub.Override['deleteInstallation'] = {
