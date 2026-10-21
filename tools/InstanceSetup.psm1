@@ -40,8 +40,8 @@ $script:ConfigOrder = @(
 )
 $script:FlagOrder = @(
     'tenant', 'subscriptions', 'enterpriseOidc', 'enterpriseScim', 'enterpriseOwner', 'licenses',
-    'privateInternalForksDisabled', 'emuUserNamespacesRestricted', 'fineGrainedPatApprovalRequired',
-    'patMaxLifetime90Days', 'githubAppAvailabilityVerified'
+    'privateInternalForksDisabled', 'repositoryManagementPoliciesEnforced', 'emuUserNamespacesRestricted',
+    'fineGrainedPatApprovalRequired', 'patMaxLifetime90Days', 'githubAppAvailabilityVerified'
 )
 $script:ConfirmedPolicies = [ordered]@{
     emuUserNamespacesRestricted = @(
@@ -1910,6 +1910,8 @@ function Invoke-StepEnterprisePolicy {
         'Repository creation, Repository visibility change and Repository deletion and transfer = members cannot. Then choose [r].'
     )
     Show-SetupMessage -Message 'AUTOMATIC: The wizard checks four repository policies through the API and changes them only after your confirmation.'
+    # A retry must not keep a verification from an earlier attempt if this attempt fails.
+    $Setup.Facts.RepositoryPoliciesDisabled = $false
     $policies = Get-SetupEnterprisePolicy -Setup $Setup
     $pending = @($script:PolicySettings.Keys | Where-Object { $policies[$_] -ne 'DISABLED' })
     if ($pending.Count -gt 0) {
@@ -1932,7 +1934,7 @@ function Invoke-StepEnterprisePolicy {
     }
     Show-SetupMessage -Kind Ok -Message 'AUTOMATIC: Verified DISABLED through the API: private/internal repository forking, member repository creation, member visibility changes and member repository deletion and transfer.'
     Show-SetupMessage -Message 'The next three settings are separate USER ACTIONS: user namespace restrictions, fine-grained PAT approval and PAT maximum lifetimes. Do not change other policies.'
-    $Setup.Facts.ForksDisabled = $true
+    $Setup.Facts.RepositoryPoliciesDisabled = $true
     $unconfirmed = @(foreach ($name in $script:ConfirmedPolicies.Keys) {
         if (-not (Confirm-SetupPrerequisite -Setup $Setup -Name $name -Guidance $script:ConfirmedPolicies[$name] -Prompt "GitHub has no API for $name. Is it set?")) { $name }
     })
@@ -2557,7 +2559,8 @@ function Get-SetupFlag {
             'enterpriseScim' { Test-SetupStageOk -Setup $Setup -Id 'scim' }
             'enterpriseOwner' { Test-SetupStageOk -Setup $Setup -Id 'owner-assignment', 'github-owner' }
             'licenses' { (Test-SetupStageOk -Setup $Setup -Id 'entra-license', 'github-licenses') -and $confirmations.Contains('licenses') }
-            'privateInternalForksDisabled' { [bool] $Setup.Facts.ForksDisabled }
+            'privateInternalForksDisabled' { [bool] $Setup.Facts.RepositoryPoliciesDisabled }
+            'repositoryManagementPoliciesEnforced' { [bool] $Setup.Facts.RepositoryPoliciesDisabled }
             'githubAppAvailabilityVerified' { Test-SetupStageOk -Setup $Setup -Id 'probe-authorization', 'probe-admin' }
             default { $policiesRan -and $confirmations.Contains($flagName) }
         }
@@ -2835,7 +2838,7 @@ function Initialize-SetupContext {
         AddedScopes = [System.Collections.Generic.List[string]]::new()
         Facts = @{
             Me = $null; Upn = $null; OwnerRoleId = $null; UserRoleId = $null; OidcModeVerified = $false
-            ScimJobId = $null; Login = $null; EnterpriseId = $null; ForksDisabled = $false; AuthorizationProbePassed = $false
+            ScimJobId = $null; Login = $null; EnterpriseId = $null; RepositoryPoliciesDisabled = $false; AuthorizationProbePassed = $false
         }
     }
 }

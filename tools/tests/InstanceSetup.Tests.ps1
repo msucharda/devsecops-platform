@@ -379,6 +379,7 @@ Describe 'Instance setup wizard' {
                 Should -Invoke Confirm-SetupPrerequisite -Times 3 -Exactly
                 Should -Invoke Invoke-SetupGraphQL -Times 0 -Exactly
             }
+            $setup.Facts.RepositoryPoliciesDisabled | Should -BeTrue
 
             Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
                 $Object -like '*AUTOMATIC: Verified DISABLED through the API:*member repository deletion and transfer.*'
@@ -386,6 +387,45 @@ Describe 'Instance setup wizard' {
             Should -Invoke Write-Host -ModuleName InstanceSetup -Times 1 -Exactly -ParameterFilter {
                 $Object -like '*next three settings are separate USER ACTIONS*Do not change other policies*'
             }
+        }
+
+        It 'does not record repository policies as disabled when <Policy> stays enabled' -ForEach @(
+            @{ Policy = 'allowPrivateRepositoryForkingSetting' }
+            @{ Policy = 'membersCanCreateRepositoriesSetting' }
+            @{ Policy = 'membersCanChangeRepositoryVisibilitySetting' }
+            @{ Policy = 'membersCanDeleteRepositoriesSetting' }
+        ) {
+            $setup = Get-TestSetup
+            $setup.Facts.RepositoryPoliciesDisabled = $true
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup; Policy = $Policy } {
+                param($Setup, $Policy)
+                $script:testPolicies = @{
+                    allowPrivateRepositoryForkingSetting = 'DISABLED'
+                    membersCanCreateRepositoriesSetting = 'DISABLED'
+                    membersCanChangeRepositoryVisibilitySetting = 'DISABLED'
+                    membersCanDeleteRepositoriesSetting = 'DISABLED'
+                }
+                $script:testPolicies[$Policy] = 'ENABLED'
+                Mock Get-SetupEnterprisePolicy { $script:testPolicies }
+                Mock Show-SetupTable { }
+                Mock Confirm-SetupAction { $false }
+                Mock Invoke-SetupGraphQL { throw 'Declined policies must not be changed.' }
+                $policySetup = $Setup
+                { Invoke-StepEnterprisePolicy -Setup $policySetup } | Should -Throw '*not enforced*'
+            }
+            $setup.Facts.RepositoryPoliciesDisabled | Should -BeFalse
+        }
+
+        It 'withdraws a previous policy verification when the retried policy read fails' {
+            $setup = Get-TestSetup
+            $setup.Facts.RepositoryPoliciesDisabled = $true
+            InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Mock Get-SetupEnterprisePolicy { throw 'GitHub did not return the enterprise policies.' }
+                $policySetup = $Setup
+                { Invoke-StepEnterprisePolicy -Setup $policySetup } | Should -Throw '*did not return the enterprise policies*'
+            }
+            $setup.Facts.RepositoryPoliciesDisabled | Should -BeFalse
         }
 
         It 'reuses a stored confirmation without a prompt' {
@@ -422,7 +462,7 @@ Describe 'Instance setup wizard' {
                 'enterprise-app', 'scim', 'owner-assignment', 'github-owner', 'enterprise-policies', 'github-licenses', 'probe-authorization'
             )
             Write-TestStage -Setup $setup -Id 'probe-admin' -Status Error
-            $setup.Facts.ForksDisabled = $true
+            $setup.Facts.RepositoryPoliciesDisabled = $true
             $setup.State.confirmations['licenses'] = 'now'
             $setup.State.confirmations['emuUserNamespacesRestricted'] = 'now'
             $flags = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
@@ -432,12 +472,12 @@ Describe 'Instance setup wizard' {
 
             @($flags.Keys) | Should -Be @(
                 'tenant', 'subscriptions', 'enterpriseOidc', 'enterpriseScim', 'enterpriseOwner', 'licenses',
-                'privateInternalForksDisabled', 'emuUserNamespacesRestricted', 'fineGrainedPatApprovalRequired',
-                'patMaxLifetime90Days', 'githubAppAvailabilityVerified'
+                'privateInternalForksDisabled', 'repositoryManagementPoliciesEnforced', 'emuUserNamespacesRestricted',
+                'fineGrainedPatApprovalRequired', 'patMaxLifetime90Days', 'githubAppAvailabilityVerified'
             )
             @($flags.Keys | Where-Object { $flags[$_] }) | Should -Be @(
                 'tenant', 'subscriptions', 'enterpriseOidc', 'enterpriseScim', 'enterpriseOwner', 'licenses',
-                'privateInternalForksDisabled', 'emuUserNamespacesRestricted'
+                'privateInternalForksDisabled', 'repositoryManagementPoliciesEnforced', 'emuUserNamespacesRestricted'
             )
 
             Write-TestStage -Setup $setup -Id 'enterprise-policies' -Status Skipped
@@ -448,6 +488,14 @@ Describe 'Instance setup wizard' {
             }
             $flags['emuUserNamespacesRestricted'] | Should -BeFalse
             $flags['subscriptions'] | Should -BeFalse
+
+            $setup.Facts.RepositoryPoliciesDisabled = $false
+            $flags = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Get-SetupFlag -Setup $Setup
+            }
+            $flags['privateInternalForksDisabled'] | Should -BeFalse
+            $flags['repositoryManagementPoliciesEnforced'] | Should -BeFalse
         }
     }
 

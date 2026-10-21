@@ -52,6 +52,7 @@ Platform team (platformní tým) nastaví `true` až po ověření každé polo�
 | `subscriptions` | Všechny subscriptions instance existují, patří do tenantu a mají potřebné resource providers a oprávnění. |
 | `licenses` | Instance má Entra ID P1 nebo P2, GitHub Enterprise, Copilot a security licence potřebné pro vybrané moduly. |
 | `privateInternalForksDisabled` | Enterprise zakazuje private **i** internal forky. |
+| `repositoryManagementPoliciesEnforced` | Enterprise zakazuje členům zakládat repozitáře, měnit jejich viditelnost a mazat nebo přenášet repozitáře. |
 | `emuUserNamespacesRestricted` | Enterprise omezuje repozitáře v EMU user namespaces podle ADR 0016. |
 | `fineGrainedPatApprovalRequired` | Enterprise vyžaduje schválení fine-grained PAT. |
 | `patMaxLifetime90Days` | Enterprise omezuje maximální platnost PAT na 90 dní. |

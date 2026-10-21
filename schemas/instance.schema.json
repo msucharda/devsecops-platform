@@ -72,6 +72,7 @@
         "subscriptions": { "$ref": "#/definitions/confirmation" },
         "licenses": { "$ref": "#/definitions/confirmation" },
         "privateInternalForksDisabled": { "$ref": "#/definitions/confirmation" },
+        "repositoryManagementPoliciesEnforced": { "$ref": "#/definitions/confirmation" },
         "emuUserNamespacesRestricted": { "$ref": "#/definitions/confirmation" },
         "fineGrainedPatApprovalRequired": { "$ref": "#/definitions/confirmation" },
         "patMaxLifetime90Days": { "$ref": "#/definitions/confirmation" },

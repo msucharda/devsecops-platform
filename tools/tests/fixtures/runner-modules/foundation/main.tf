@@ -38,3 +38,11 @@ output "prerequisite_count" {
 output "entra_application" {
   value = try(var.instance.entra.enterpriseApplicationObjectId, "none")
 }
+
+output "github_host" {
+  value = try(var.instance.github.host, "none")
+}
+
+output "github_enterprise" {
+  value = try(var.instance.github.enterprise, "none")
+}

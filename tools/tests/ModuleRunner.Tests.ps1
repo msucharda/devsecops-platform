@@ -23,6 +23,27 @@ Describe 'Module runner with local Terraform' {
             ArtifactsPath = (Join-Path $directory 'outputs')
             JobSummaryPath = (Join-Path $directory 'summary.md')
         }
+        function Write-OrganizationBinding([string[]] $Organizations) {
+            $manifestPath = Join-Path $modules 'foundation/module.yaml'
+            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+            $manifest.permissions.githubApp = @{
+                plan = @{ permissions = @{ organization_administration = 'read' }; resources = @{ organizations = 'target_organizations' } }
+                apply = @{ permissions = @{ organization_administration = 'write' }; resources = @{ organizations = 'target_organizations' } }
+            }
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+            $instance.modules.foundation.parameters.target_organizations = $Organizations
+            $instance.githubApps = @{
+                reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{ organization_administration = 'read' }; resources = @{ organizations = $Organizations } }
+                writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = $Organizations } }
+            }
+            $instance.credentials = @{
+                foundation = @{
+                    plan = @{ environment = 'foundation-plan'; githubApp = 'reader' }
+                    apply = @{ environment = 'foundation-apply'; githubApp = 'writer' }
+                }
+            }
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        }
     }
 
     It 'applies a module in its root with instance data and module parameters' {
@@ -112,8 +133,120 @@ Describe 'Module runner with local Terraform' {
 
         $result = & $runner -Module foundation -Action plan @arguments 6>$null
 
-        (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).entra_application |
-            Should -Be '33333333-3333-3333-3333-333333333333'
+        $outputs = Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json
+        $outputs.entra_application | Should -Be '33333333-3333-3333-3333-333333333333'
+        $outputs.github_host | Should -Be 'example.ghe.com'
+        $outputs.github_enterprise | Should -Be 'example'
+    }
+
+    It 'passes no GitHub connection without a bootstrap section' {
+        $result = & $runner -Module foundation -Action plan @arguments 6>$null
+
+        (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).github_host | Should -Be 'none'
+    }
+
+    It 'exposes the installation token to Terraform as the REST provider bearer only during the run' {
+        $nativeTerraform = (Get-Command terraform -CommandType Application).Source
+        $previousToken = $env:GITHUB_TOKEN
+        $previousBearer = $env:REST_API_BEARER
+        $previousExitCode = $global:LASTEXITCODE
+        $observedBearers = [System.Collections.Generic.List[string]]::new()
+        function terraform {
+            $observedBearers.Add([string] $env:REST_API_BEARER)
+            & $nativeTerraform @args
+            $global:LASTEXITCODE = $LASTEXITCODE
+        }
+        try {
+            $env:GITHUB_TOKEN = 'installation-token'
+            $env:REST_API_BEARER = 'outer-value'
+
+            $null = & $runner -Module foundation -Action plan @arguments 6>$null
+
+            $observedBearers.Count | Should -BeGreaterThan 0
+            @($observedBearers | Sort-Object -Unique) | Should -Be @('installation-token')
+            $env:REST_API_BEARER | Should -BeExactly 'outer-value'
+        }
+        finally {
+            Remove-Item -LiteralPath Function:\terraform
+            $env:GITHUB_TOKEN = $previousToken
+            $env:REST_API_BEARER = $previousBearer
+            $global:LASTEXITCODE = $previousExitCode
+        }
+    }
+
+    It 'clears an outer REST provider bearer when no installation token is present and restores it after a failure' {
+        $nativeTerraform = (Get-Command terraform -CommandType Application).Source
+        $previousToken = $env:GITHUB_TOKEN
+        $previousBearer = $env:REST_API_BEARER
+        $previousExitCode = $global:LASTEXITCODE
+        $observedBearers = [System.Collections.Generic.List[string]]::new()
+        function terraform {
+            $observedBearers.Add([string] $env:REST_API_BEARER)
+            if ($args -contains 'plan') { $global:LASTEXITCODE = 1; return 'interrupted' }
+            & $nativeTerraform @args
+            $global:LASTEXITCODE = $LASTEXITCODE
+        }
+        try {
+            $env:GITHUB_TOKEN = $null
+            $env:REST_API_BEARER = 'unrelated-credential'
+
+            { & $runner -Module foundation -Action plan @arguments 6>$null } | Should -Throw '*Terraform plan failed*'
+
+            @($observedBearers | Sort-Object -Unique) | Should -Be @('')
+            $env:REST_API_BEARER | Should -BeExactly 'unrelated-credential'
+        }
+        finally {
+            Remove-Item -LiteralPath Function:\terraform
+            $env:GITHUB_TOKEN = $previousToken
+            $env:REST_API_BEARER = $previousBearer
+            $global:LASTEXITCODE = $previousExitCode
+        }
+    }
+
+    It '<Case> before Terraform for a REST provider root bound to <Count> target organizations' -ForEach @(
+        @{ Case = 'refuses'; Organizations = @('first', 'second'); Count = 2; Refused = $true }
+        @{ Case = 'proceeds'; Organizations = @('first'); Count = 1; Refused = $false }
+    ) {
+        Set-Content -LiteralPath (Join-Path $modules 'foundation/rest.tf') -Value @'
+terraform {
+  required_providers {
+    restapi = {
+      source = "Mastercard/restapi"
+    }
+  }
+}
+'@
+        Write-OrganizationBinding -Organizations $Organizations
+        $previousExitCode = $global:LASTEXITCODE
+        $terraformCalls = [System.Collections.Generic.List[string]]::new()
+        function terraform {
+            $terraformCalls.Add(($args -join ' '))
+            $global:LASTEXITCODE = 1
+            'stopped by test'
+        }
+        try {
+            if ($Refused) {
+                { & $runner -Module foundation -Action plan @arguments 6>$null } |
+                    Should -Throw "*exactly one organization in 'target_organizations' per run; got $Count*"
+                $terraformCalls.Count | Should -Be 0
+            }
+            else {
+                { & $runner -Module foundation -Action plan @arguments 6>$null } | Should -Throw '*Terraform init failed*'
+                $terraformCalls.Count | Should -Be 1
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath Function:\terraform
+            $global:LASTEXITCODE = $previousExitCode
+        }
+    }
+
+    It 'keeps multiple target organizations for a root without the REST provider' {
+        Write-OrganizationBinding -Organizations @('first', 'second')
+
+        $result = & $runner -Module foundation -Action plan @arguments 6>$null
+
+        $result.HasChanges | Should -BeTrue
     }
 
     It 'reports no changes after apply but publishes newly planned values without mutating state' {
@@ -233,6 +366,66 @@ Describe 'Module runner with local Terraform' {
         { & $runner -Module bootstrap -Action $Action @arguments 6>$null } |
             Should -Throw '*$.manualPrerequisites.privateInternalForksDisabled*'
         Test-Path -LiteralPath (Join-Path $arguments.StatePath 'bootstrap.tfstate') | Should -BeFalse
+    }
+
+    It 'blocks module <Action> when a declared enterprise prerequisite is <Case>' -ForEach @(
+        @{ Action = 'plan'; Case = 'false'; Remove = $false }
+        @{ Action = 'apply'; Case = 'false'; Remove = $false }
+        @{ Action = 'plan'; Case = 'missing'; Remove = $true }
+        @{ Action = 'apply'; Case = 'missing'; Remove = $true }
+    ) {
+        $manifestFile = Join-Path $modules 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestFile -Raw)
+        $manifest.manualPrerequisites = @('repositoryManagementPoliciesEnforced', 'privateInternalForksDisabled')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestFile
+        if ($Remove) { $instance.manualPrerequisites.Remove('repositoryManagementPoliciesEnforced') }
+        else { $instance.manualPrerequisites.repositoryManagementPoliciesEnforced = $false }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        { & $runner -Module foundation -Action $Action @arguments 6>$null } |
+            Should -Throw "*foundation*requires manual prerequisite confirmations*$.manualPrerequisites.repositoryManagementPoliciesEnforced*"
+        Test-Path -LiteralPath (Join-Path $arguments.StatePath 'foundation.tfstate') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json') | Should -BeFalse
+    }
+
+    It 'reports confirmed enterprise prerequisites as declarations, not as plan or drift evidence' {
+        $manifestFile = Join-Path $modules 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestFile -Raw)
+        $manifest.manualPrerequisites = @('repositoryManagementPoliciesEnforced', 'privateInternalForksDisabled')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestFile
+
+        $result = & $runner -Module foundation -Action plan @arguments 6>$null
+
+        @($result.ManualPrerequisites.Name) | Should -Be @('repositoryManagementPoliciesEnforced', 'privateInternalForksDisabled')
+        @($result.ManualPrerequisites | Where-Object { $_.Confirmed }).Count | Should -Be 2
+        @($result.ManualPrerequisites | Where-Object { $_.Verified }).Count | Should -Be 0
+        $summary = [IO.File]::ReadAllText($arguments.JobSummaryPath)
+        $summary | Should -Match 'CONFIRMED \(manual declaration only\).*\$\.manualPrerequisites\.repositoryManagementPoliciesEnforced'
+        $summary | Should -Match 'not read by plan or drift detection'
+        $summary | Should -Match 'not changed by teardown'
+        $summary | Should -Not -Match 'WARNING'
+    }
+
+    It 'destroys without requiring declared enterprise prerequisites and keeps them unchanged' {
+        $manifestFile = Join-Path $modules 'unknown/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestFile -Raw)
+        $manifest.manualPrerequisites = @('repositoryManagementPoliciesEnforced')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestFile
+        $instance.modules = @{ unknown = @{} }
+        $instance.teardown = @{ allowed = $true }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $null = & $runner -Module unknown -Action apply @arguments 6>$null
+        $instance.manualPrerequisites.repositoryManagementPoliciesEnforced = $false
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $configurationBefore = [IO.File]::ReadAllText($instancePath)
+
+        $result = & $runner -Module unknown -Action destroy @arguments 6>$null 3>$null
+
+        $result.HasChanges | Should -BeTrue
+        $result.ManualPrerequisites[0].Confirmed | Should -BeFalse
+        $result.ManualPrerequisites[0].Verified | Should -BeFalse
+        [IO.File]::ReadAllText($arguments.JobSummaryPath) | Should -Match 'WARNING \(unconfirmed\).*repositoryManagementPoliciesEnforced'
+        [IO.File]::ReadAllText($instancePath) | Should -BeExactly $configurationBefore
     }
 
     It 'denies destroy by default' {

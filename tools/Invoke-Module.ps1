@@ -141,11 +141,34 @@ if ($Action -eq 'destroy' -and -not $instance['teardown']['allowed']) {
 if ($Module -eq 'bootstrap' -and $Action -ne 'destroy') {
     Assert-PlatformManualPrerequisite -Instance $instance
 }
+[string[]] $declaredPrerequisites = @()
+if ($modules[$Module].Contains('manualPrerequisites')) {
+    $declaredPrerequisites = @($modules[$Module]['manualPrerequisites'])
+}
+if ($declaredPrerequisites.Count -gt 0 -and $Action -ne 'destroy') {
+    Assert-PlatformManualPrerequisite -Instance $instance -Name $declaredPrerequisites -Subject "Module '$Module'"
+}
 $manualStates = [System.Collections.Generic.List[object]]::new()
+$prerequisiteStates = [System.Collections.Generic.List[object]]::new()
 $summary = [System.Collections.Generic.List[string]]::new()
 $summary.Add("`n## Module ``$Module``: $Action")
 if ($Module -eq 'bootstrap' -and $Action -ne 'destroy') {
     $summary.Add('Required manual prerequisite confirmations are present. Live state is not automatically verified by this runner.')
+}
+if ($declaredPrerequisites.Count -gt 0) {
+    foreach ($prerequisite in @(Get-PlatformManualPrerequisite -Instance $instance -Name $declaredPrerequisites)) {
+        $prerequisiteStates.Add([pscustomobject]@{
+            Name = $prerequisite.Name
+            Confirmed = [bool] $prerequisite.Confirmed
+            Verified = $false
+        })
+        $status = if ($prerequisite.Confirmed) { 'CONFIRMED (manual declaration only)' } else { 'WARNING (unconfirmed)' }
+        $summary.Add("- **$status**: enterprise prerequisite ``$.manualPrerequisites.$($prerequisite.Name)``.")
+        if (-not $prerequisite.Confirmed) {
+            Write-Warning "Manual prerequisite '$($prerequisite.Name)' of module '$Module' is unconfirmed."
+        }
+    }
+    $summary.Add('Enterprise prerequisites are not read by plan or drift detection and are not changed by teardown.')
 }
 foreach ($step in $modules[$Module]['manualSteps']) {
     $confirmed = $instance['manualSteps'].Contains($Module) -and
@@ -218,6 +241,10 @@ if ($instance.Contains('bootstrap')) {
         tenantId = $instance['bootstrap']['tenantId']
         enterpriseApplicationObjectId = $instance['bootstrap']['enterpriseApplicationObjectId']
     }
+    $variables.instance.github = @{
+        host = $instance['bootstrap']['githubHost']
+        enterprise = $instance['bootstrap']['enterprise']
+    }
 }
 if ($instance['modules'].Contains($Module) -and $instance['modules'][$Module].Contains('parameters')) {
     foreach ($name in $instance['modules'][$Module]['parameters'].PSBase.Keys) {
@@ -244,13 +271,30 @@ foreach ($prerequisite in $modules[$Module]['prerequisites']) {
     $variables['prerequisites'][$prerequisite] = $values
 }
 
+$usesRestProvider = @(Get-ChildItem -LiteralPath $moduleRoot -Filter '*.tf' -File |
+    Select-String -Pattern 'source\s*=\s*"(registry\.terraform\.io/)?mastercard/restapi"').Count -gt 0
+if ($usesRestProvider -and $modules[$Module]['permissions'].Contains('githubApp')) {
+    # Organization tokens are issued per organization, but the REST provider accepts a single bearer per run.
+    foreach ($phase in $modules[$Module]['permissions']['githubApp'].PSBase.Values) {
+        if (-not $phase['resources'].Contains('organizations')) { continue }
+        $parameter = [string] $phase['resources']['organizations']
+        $count = @($variables[$parameter] | Where-Object { $null -ne $_ }).Count
+        if ($count -ne 1) {
+            throw "Module '$Module' uses the REST provider and supports exactly one organization in '$parameter' per run; got $count. Multi-organization runs need one installation token per organization and are not supported yet."
+        }
+    }
+}
+
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) "platform-module-$([guid]::NewGuid())"
 [IO.Directory]::CreateDirectory($temporaryDirectory) | Out-Null
 $previousDataDirectory = $env:TF_DATA_DIR
 $previousWorkspace = $env:TF_WORKSPACE
+$previousRestBearer = $env:REST_API_BEARER
 try {
     $env:TF_DATA_DIR = Join-Path $temporaryDirectory 'data'
     $env:TF_WORKSPACE = 'default'
+    # The REST provider reads its bearer from the environment; only the job's installation token may reach it.
+    $env:REST_API_BEARER = $env:GITHUB_TOKEN
     $variableFile = Join-Path $temporaryDirectory 'inputs.tfvars.json'
     [IO.File]::WriteAllText($variableFile, (ConvertTo-Json -InputObject $variables -Depth 100), [Text.UTF8Encoding]::new($false))
     $null = Invoke-ModuleTerraform -Arguments (@('init', '-input=false', '-no-color', '-reconfigure') + $backendArguments)
@@ -299,10 +343,12 @@ try {
         HasChanges = ($plan.ExitCode -eq 2)
         OutputsPath = $artifactFile
         ManualSteps = $manualStates.ToArray()
+        ManualPrerequisites = $prerequisiteStates.ToArray()
     }
 }
 finally {
     $env:TF_DATA_DIR = $previousDataDirectory
     $env:TF_WORKSPACE = $previousWorkspace
+    $env:REST_API_BEARER = $previousRestBearer
     [IO.Directory]::Delete($temporaryDirectory, $true)
 }
