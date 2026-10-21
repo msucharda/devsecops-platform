@@ -169,6 +169,30 @@ function Find-EnterpriseOrganization {
     return $null
 }
 
+function Assert-EnterpriseOrganizationAdoptable {
+    <#
+    .SYNOPSIS
+    Returns the actual login of an existing organization that the module may adopt, $null for a free name, and fails
+    for an existing organization without AllowExisting.
+    .DESCRIPTION
+    The removal guard runs this read-only check before Terraform stores it, so a rejected organization never becomes
+    a destroy obligation of the module.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][string] $Enterprise,
+        [Parameter(Mandatory)][string] $Organization,
+        [switch] $AllowExisting
+    )
+
+    $existing = Find-EnterpriseOrganization -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization
+    if ($existing -and -not $AllowExisting) {
+        throw "Organization '$existing' already exists in enterprise '$Enterprise'. The module adopts an existing organization only when its name contains the deployment identifier. GitHub retains deleted organization names, so retrying the same name does not help: clean up this deployment and bootstrap a new deployment with a new deployment identifier."
+    }
+    return $existing
+}
+
 function New-EnterpriseOrganization {
     <#
     .SYNOPSIS
@@ -194,11 +218,8 @@ function New-EnterpriseOrganization {
         throw 'The organization needs at least one owner in admin_logins, and no owner login may be empty.'
     }
     if ([string]::IsNullOrWhiteSpace($BillingEmail)) { throw 'The organization needs billing_email.' }
-    $existing = Find-EnterpriseOrganization -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization
+    $existing = Assert-EnterpriseOrganizationAdoptable -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -AllowExisting:$AllowExisting
     if ($existing) {
-        if (-not $AllowExisting) {
-            throw "Organization '$existing' already exists in enterprise '$Enterprise'. The module adopts an existing organization only when its name contains the deployment identifier. GitHub retains deleted organization names, so retrying the same name does not help: clean up this deployment and bootstrap a new deployment with a new deployment identifier."
-        }
         Write-Information "Organization '$existing' already exists in enterprise '$Enterprise'; the module adopts it."
         return $existing
     }
@@ -351,10 +372,14 @@ function Assert-OrganizationInstallationWithoutRepository {
     }
 }
 
-function Install-OrganizationApp {
+function Assert-OrganizationAppAdoptable {
     <#
     .SYNOPSIS
-    Installs a GitHub App into the organization without repository access. Repeating the call is idempotent.
+    Returns an existing installation of the App that the module may adopt, or $null. An existing installation with
+    repository access fails.
+    .DESCRIPTION
+    The installation guard runs this read-only check before Terraform stores it, so a rejected installation is never
+    uninstalled by the module.
     #>
     [CmdletBinding()]
     param(
@@ -368,8 +393,25 @@ function Install-OrganizationApp {
     $existing = Find-OrganizationAppInstallation -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -ClientId $ClientId
     if ($existing) {
         Assert-OrganizationInstallationWithoutRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -Installation $existing
-        return $existing
     }
+    return $existing
+}
+
+function Install-OrganizationApp {
+    <#
+    .SYNOPSIS
+    Installs a GitHub App into the organization without repository access. Repeating the call is idempotent.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][string] $Enterprise,
+        [Parameter(Mandatory)][string] $Organization,
+        [Parameter(Mandatory)][AllowEmptyString()][string] $ClientId
+    )
+
+    $existing = Assert-OrganizationAppAdoptable -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -ClientId $ClientId
+    if ($existing) { return $existing }
 
     # Request body of POST .../installations; 'none' needs an App without repository permissions.
     $reply = Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method POST -AcceptStatus @(200, 201) `
@@ -513,6 +555,6 @@ function ConvertTo-OrganizationStateResult {
 }
 
 Export-ModuleMember -Function Invoke-OrganizationsApi, Invoke-OrganizationsGraphQL, Get-EnterpriseOrganizationLogin,
-Find-EnterpriseOrganization, New-EnterpriseOrganization, Assert-EnterpriseOrganizationRemoved, Get-OrganizationAppInstallation,
-Find-OrganizationAppInstallation, Get-OrganizationInstallationRepository, Install-OrganizationApp, Uninstall-OrganizationApp,
+Find-EnterpriseOrganization, Assert-EnterpriseOrganizationAdoptable, New-EnterpriseOrganization, Assert-EnterpriseOrganizationRemoved, Get-OrganizationAppInstallation,
+Find-OrganizationAppInstallation, Get-OrganizationInstallationRepository, Assert-OrganizationAppAdoptable, Install-OrganizationApp, Uninstall-OrganizationApp,
 Get-InstanceOrganizationState, Get-OrganizationStateViolation, ConvertTo-OrganizationStateResult

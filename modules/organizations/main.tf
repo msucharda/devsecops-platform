@@ -21,8 +21,10 @@ locals {
 }
 
 # Verifies on destroy that the organization is gone, even when terraform_data.organization is tainted after an
-# interrupted creation (Terraform runs no destroy provisioner for a tainted resource). The guard has no create
-# provisioner, so it is never tainted; the organization depends on it, so the guard is created first and destroyed last.
+# interrupted creation (Terraform runs no destroy provisioner for a tainted resource). The organization depends on the
+# guard, so the guard is stored before the creation request and destroyed last. Its create provisioner only reads: it
+# rejects an existing organization that the module may not adopt before the guard is stored, so a rejected
+# organization never becomes a destroy obligation (a tainted guard runs no destroy check and creates nothing).
 resource "terraform_data" "removal_guard" {
   for_each = local.organizations
 
@@ -30,6 +32,14 @@ resource "terraform_data" "removal_guard" {
 
   # terraform_data updates input in place; a new identity must replace the resource so that destroy checks the old one.
   triggers_replace = each.value
+
+  provisioner "local-exec" {
+    interpreter = local.provisioner
+    command     = "AssertOrganizationAdoptable"
+    environment = {
+      ORGANIZATIONS_INPUT = jsonencode(merge(each.value, { allow_existing = local.owns_existing }))
+    }
+  }
 
   provisioner "local-exec" {
     when        = destroy
@@ -77,14 +87,24 @@ resource "terraform_data" "organization" {
 
 # Uninstalls the App on destroy, even when terraform_data.installation is tainted after an interrupted installation
 # (Terraform runs no destroy provisioner for a tainted resource). Without it, removing the client ID from
-# app_client_ids would forget a tainted installation and leave the App installed. The guard has no create provisioner,
-# so it is never tainted; the installation depends on it, so the guard is created first and destroyed last.
+# app_client_ids would forget a tainted installation and leave the App installed. The installation depends on the
+# guard, so the guard is stored before the installation request and destroyed last. Its create provisioner only reads:
+# it rejects an existing installation with repository access before the guard is stored, so the module never
+# uninstalls an installation that it did not create or adopt.
 resource "terraform_data" "installation_guard" {
   for_each = local.installations
 
   input = merge(local.organizations[each.value.kind], { client_id = each.value.client_id })
 
   triggers_replace = [terraform_data.organization[each.value.kind].id, local.organizations[each.value.kind], each.value.client_id]
+
+  provisioner "local-exec" {
+    interpreter = local.provisioner
+    command     = "AssertInstallationAdoptable"
+    environment = {
+      ORGANIZATIONS_INPUT = jsonencode(self.input)
+    }
+  }
 
   provisioner "local-exec" {
     when        = destroy

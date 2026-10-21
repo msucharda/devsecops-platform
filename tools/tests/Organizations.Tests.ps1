@@ -283,6 +283,24 @@ Describe 'Organizations module against the documented GitHub API' {
             (Get-StubRequest createOrganization).Count | Should -Be 0
         }
 
+        It 'checks adoption read-only: <Case>' -ForEach @(
+            @{ Case = 'free name'; Existing = $null; Allow = $false; Expected = $null }
+            @{ Case = 'existing name with AllowExisting'; Existing = 'Demo-A1B2C3-Actions'; Allow = $true; Expected = 'Demo-A1B2C3-Actions' }
+        ) {
+            if ($Existing) { Add-StubOrganization -Login $Existing }
+
+            Assert-EnterpriseOrganizationAdoptable @target -Organization 'demo-a1b2c3-actions' -AllowExisting:$Allow | Should -Be $Expected
+            @($stub.Requests | Where-Object { $_.Operation -cne 'listOrganizations' }).Count | Should -Be 0
+        }
+
+        It 'rejects an existing organization read-only without AllowExisting' {
+            Add-StubOrganization -Login 'demo-a1b2c3-actions'
+
+            { Assert-EnterpriseOrganizationAdoptable @target -Organization 'demo-a1b2c3-actions' } | Should -Throw '*already exists*only when its name contains the deployment identifier*'
+            (Get-StubRequest enterprise).Count | Should -Be 0
+            (Get-StubRequest createOrganization).Count | Should -Be 0
+        }
+
         It 'adopts an existing organization only with AllowExisting' {
             Add-StubOrganization -Login 'demo-a1b2c3-actions'
 
@@ -428,6 +446,25 @@ Describe 'Organizations module against the documented GitHub API' {
 
             (Install-OrganizationApp @target @install).repository_selection | Should -BeExactly $Selection
             (Get-StubRequest createInstallation).Count | Should -Be 0
+        }
+
+        It 'checks App adoption read-only: <Case>' -ForEach @(
+            @{ Case = 'no installation'; Selection = $null; Repositories = @(); Rejection = $null }
+            @{ Case = 'installation without repositories'; Selection = 'selected'; Repositories = @(); Rejection = $null }
+            @{ Case = 'installation with all repositories'; Selection = 'all'; Repositories = @(); Rejection = '*all repositories*' }
+            @{ Case = 'installation with a selected repository'; Selection = 'selected'; Repositories = @('demo-a1b2c3-actions/app'); Rejection = '*access to 1 repositories*' }
+        ) {
+            if ($Selection) { Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection $Selection -Repositories $Repositories }
+
+            if ($Rejection) {
+                { Assert-OrganizationAppAdoptable @target @install } | Should -Throw $Rejection
+            }
+            else {
+                $result = Assert-OrganizationAppAdoptable @target @install
+                if ($Selection) { $result.client_id | Should -BeExactly 'Iv23liExample01' } else { $result | Should -BeNullOrEmpty }
+            }
+            (Get-StubRequest createInstallation).Count | Should -Be 0
+            (Get-StubRequest deleteInstallation).Count | Should -Be 0
         }
 
         It 'refuses an existing installation with access to all repositories' {
@@ -838,13 +875,20 @@ Describe 'Organizations Terraform lifecycle' {
             '    }'
             '}'
             'Write-FakeLog "$Action $organization"'
-            'if ($Action -cin @(''InstallApp'', ''UninstallApp'')) { Write-FakeLog "$Action $organization/$($resourceInput.client_id)" }'
+            '$existing = ($env:FAKE_ORGANIZATIONS_EXISTING -split '','') -ccontains $organization'
+            'if ($Action -cin @(''AssertOrganizationAdoptable'', ''CreateOrganization'') -and $existing -and -not $resourceInput.allow_existing) {'
+            '    throw "Organization ''$organization'' already exists."'
+            '}'
+            'if ($Action -cin @(''AssertInstallationAdoptable'', ''InstallApp'') -and $env:FAKE_ORGANIZATIONS_REJECT_INSTALL -ceq "$organization/$($resourceInput.client_id)") {'
+            '    throw "App ''$($resourceInput.client_id)'' has access to 1 repositories in ''$organization''."'
+            '}'
+            'if ($Action -cin @(''AssertInstallationAdoptable'', ''InstallApp'', ''UninstallApp'')) { Write-FakeLog "$Action $organization/$($resourceInput.client_id)" }'
             'if ($Action -ceq ''InstallApp'' -and $env:FAKE_ORGANIZATIONS_FAIL_INSTALL -ceq "$organization/$($resourceInput.client_id)") { throw ''interrupted'' }'
             'if ($Action -ceq ''CreateOrganization'') {'
             '    Write-FakeLog "AllowExisting $organization $((ConvertFrom-Json $env:ORGANIZATIONS_INPUT).allow_existing)"'
             '}'
             'if ($Action -ceq ''CreateOrganization'' -and $env:FAKE_ORGANIZATIONS_FAIL_CREATE -ceq $organization) { throw ''interrupted'' }'
-            'if ($Action -ceq ''AssertOrganizationRemoved'' -and ($env:FAKE_ORGANIZATIONS_EXISTING -split '','') -ccontains $organization) {'
+            'if ($Action -ceq ''AssertOrganizationRemoved'' -and $existing) {'
             '    throw "Organization ''$organization'' still exists."'
             '}'
         )
@@ -882,6 +926,7 @@ Describe 'Organizations Terraform lifecycle' {
         $env:FAKE_ORGANIZATIONS_FAIL_CREATE = ''
         $env:FAKE_ORGANIZATIONS_EXISTING = ''
         $env:FAKE_ORGANIZATIONS_FAIL_INSTALL = ''
+        $env:FAKE_ORGANIZATIONS_REJECT_INSTALL = ''
 
         function Invoke-LifecycleTerraform {
             $output = & $nativeTerraform "-chdir=$root" @args 2>&1
@@ -893,7 +938,7 @@ Describe 'Organizations Terraform lifecycle' {
     }
 
     AfterEach {
-        Remove-Item Env:\FAKE_ORGANIZATIONS_LOG, Env:\FAKE_ORGANIZATIONS_FAIL_CREATE, Env:\FAKE_ORGANIZATIONS_EXISTING, Env:\FAKE_ORGANIZATIONS_FAIL_INSTALL -ErrorAction SilentlyContinue
+        Remove-Item Env:\FAKE_ORGANIZATIONS_LOG, Env:\FAKE_ORGANIZATIONS_FAIL_CREATE, Env:\FAKE_ORGANIZATIONS_EXISTING, Env:\FAKE_ORGANIZATIONS_FAIL_INSTALL, Env:\FAKE_ORGANIZATIONS_REJECT_INSTALL -ErrorAction SilentlyContinue
     }
 
     It 'uninstalls an App after an interrupted installation when its client ID is removed' {
@@ -911,6 +956,38 @@ Describe 'Organizations Terraform lifecycle' {
         $apply.ExitCode | Should -Be 0 -Because $apply.Output
         Get-Content -LiteralPath $log | Should -Contain 'UninstallApp demo-actions/Iv23liAAAAAAAAAAAAAA'
         (Invoke-LifecycleTerraform state list -no-color).Output | Should -Not -BeLike '*installation*'
+    }
+
+    It 'preserves an existing installation that the apply rejected when its client ID is removed' {
+        $variables.app_client_ids = @('Iv23liAAAAAAAAAAAAAA')
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json $variables -Depth 10)
+        $env:FAKE_ORGANIZATIONS_REJECT_INSTALL = 'demo-actions/Iv23liAAAAAAAAAAAAAA'
+        $rejected = Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color
+        $rejected.ExitCode | Should -Not -Be 0
+        $rejected.Output | Should -BeLike '*has access to 1 repositories*'
+        Get-Content -LiteralPath $log | Should -Not -Contain 'InstallApp demo-actions/Iv23liAAAAAAAAAAAAAA'
+
+        $variables.app_client_ids = @()
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json $variables -Depth 10)
+        $apply = Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color
+
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        Get-Content -LiteralPath $log | Should -Not -Contain 'UninstallApp demo-actions/Iv23liAAAAAAAAAAAAAA'
+        (Invoke-LifecycleTerraform state list -no-color).Output | Should -Not -BeLike '*installation*'
+    }
+
+    It 'rejects an existing legacy organization before it becomes a destroy obligation' {
+        $env:FAKE_ORGANIZATIONS_EXISTING = 'demo-actions'
+        $rejected = Invoke-LifecycleTerraform apply -auto-approve -input=false -no-color
+        $rejected.ExitCode | Should -Not -Be 0
+        $rejected.Output | Should -BeLike "*Organization 'demo-actions' already exists*"
+        Get-Content -LiteralPath $log | Should -Not -Contain 'CreateOrganization demo-actions'
+
+        $destroy = Invoke-LifecycleTerraform destroy -auto-approve -input=false -no-color
+
+        $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
+        Get-Content -LiteralPath $log | Should -Not -Contain 'AssertOrganizationRemoved demo-actions'
+        (Invoke-LifecycleTerraform state list -no-color).Output | Should -BeNullOrEmpty
     }
 
     It 'fails destroy while an organization exists after an interrupted creation' {
