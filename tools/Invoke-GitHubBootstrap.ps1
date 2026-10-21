@@ -60,6 +60,7 @@ if (-not $ResourcesOnly -and (-not $AppKeysPath -or -not $AuthorizationApp)) {
 if ($connection['githubHost'] -cne "$($connection['enterprise']).ghe.com") {
     throw '$.bootstrap.githubHost must match $.bootstrap.enterprise on GHE.com.'
 }
+# security-check: bootstrap-external-path
 function Assert-GitHubBootstrapExternalPath {
     [CmdletBinding()]
     [OutputType([string])]
@@ -704,6 +705,8 @@ foreach ($name in $selected) {
             }
         }
         foreach ($credentialName in $desired.Keys) {
+            # Record the intent before the write, so a lost PUT response cannot hide the credential from teardown.
+            Register-GitHubBootstrapResource -Path "$path/$credentialName"
             if (-not $current.ContainsKey($credentialName)) {
                 $null = Invoke-GitHubBootstrapAzure -Path "$path/$credentialName`?api-version=2023-01-31" -Method PUT -Body $desired[$credentialName]
             }

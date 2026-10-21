@@ -514,7 +514,6 @@ Describe 'Instance setup wizard' {
                 Mock Confirm-SetupAction { $true }
                 Mock Add-SetupGitHubScope {}
                 Mock Wait-SetupCondition { $true }
-                Mock Invoke-SetupGraphQL {}
                 Mock Invoke-SetupGitHubLogin {
                     $Setup.State.probe['organizationSignInPending'] | Should -BeTrue
                     $saved = ConvertFrom-Json (Get-Content -LiteralPath $Setup.StatePath -Raw) -AsHashtable
@@ -529,6 +528,9 @@ Describe 'Instance setup wizard' {
                     }
                     if ($Existing -and $NeedsSignIn -and -not $Setup.Settings['testSignedIn']) {
                         return @{ Status = 'Forbidden'; Area = 'github'; Message = 'Resource protected by organization SAML enforcement.' }
+                    }
+                    if ($Uri -like '*/graphql') {
+                        return @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = 'probe-test' } } } } }
                     }
                     if ($Method -eq 'POST') {
                         if ($NeedsSignIn -and -not $Setup.Settings['testSignedIn']) {
@@ -545,7 +547,7 @@ Describe 'Instance setup wizard' {
 
                 $null = Invoke-StepProbeOrg -Setup $Setup
                 Should -Invoke Invoke-SetupGitHubLogin -Times ([int] $NeedsSignIn) -Exactly
-                Should -Invoke Invoke-SetupGraphQL -Times ([int] (-not $Existing)) -Exactly
+                Should -Invoke Invoke-SetupApi -Times ([int] (-not $Existing)) -Exactly -ParameterFilter { $Uri -like '*/graphql' }
                 Should -Invoke Add-SetupGitHubScope -Times (1 + [int] $NeedsSignIn) -Exactly
             }
             $setup.State.probe['organizationSignInPending'] | Should -Not -BeTrue
@@ -643,8 +645,11 @@ Describe 'Instance setup wizard' {
                 Mock Wait-SetupCondition { $true }
                 Mock Invoke-SetupProbeOrganizationSignIn {}
                 Mock Show-SetupMessage {}
-                Mock Invoke-SetupGraphQL { $Setup.Settings['testCreatedOrg'] = $Variables['input']['login'] }
                 Mock Invoke-SetupApi {
+                    if ($Uri -like '*/graphql') {
+                        $Setup.Settings['testCreatedOrg'] = $Body['variables']['input']['login']
+                        return @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = $Body['variables']['input']['login'] } } } } }
+                    }
                     if ($Method -eq 'PUT') { return @{ Status = 'Ok'; Data = @{ state = 'active' } } }
                     if ($Method -eq 'POST') { return @{ Status = 'Ok'; Data = @{} } }
                     return @{ Status = 'Missing'; Data = $null }
@@ -673,11 +678,240 @@ Describe 'Instance setup wizard' {
                 $Setup = $Scenario.Setup
                 Mock Invoke-SetupProbeOrganizationSignIn {}
                 Mock Read-SetupValue { throw 'The created organization must not be renamed.' }
-                Mock Invoke-SetupGraphQL { throw 'The organization must not be created again.' }
-                Mock Invoke-SetupApi { @{ Status = 'Missing'; Data = $null } }
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/graphql') { throw 'The organization must not be created again.' }
+                    @{ Status = 'Missing'; Data = $null }
+                }
                 { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw '*probe-test was created but is not readable yet*'
             }
             $setup.State.probe['organization'] | Should -Be 'probe-test'
+        }
+
+        It 'saves the organization before the creation request' {
+            $setup = Get-TestSetup
+            $setup.Facts.EnterpriseId = 'E_test'
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Invoke-SetupApi {
+                    if ($Uri -notlike '*/graphql') { return @{ Status = 'Missing'; Data = $null } }
+                    $saved = ConvertFrom-Json (Get-Content -LiteralPath $Setup.StatePath -Raw) -AsHashtable
+                    $saved['probe']['organization'] | Should -Be $Body['variables']['input']['login']
+                    $saved['probe']['organizationCreationPending'] | Should -BeTrue
+                    throw 'The response of the creation was lost.'
+                }
+                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw '*response of the creation was lost*'
+                Should -Invoke Invoke-SetupApi -Times 1 -Exactly -ParameterFilter { $Uri -like '*/graphql' }
+            }
+        }
+
+        It 'offers another name after GitHub rejects the organization name with <Case>' -ForEach @(
+            @{ Case = 'GraphQL errors'; Rejection = @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = $null }; errors = @(@{ type = 'UNPROCESSABLE'; message = 'Login is unavailable' }) } } }
+            @{ Case = 'a client error'; Rejection = @{ Status = 'Error'; Code = 422; Area = 'github'; Message = 'Login is unavailable'; Data = @{ message = 'Login is unavailable' } } }
+        ) {
+            $setup = Get-TestSetup
+            $setup.Facts.EnterpriseId = 'E_test'
+            $setup.State.probe['organization'] = 'probe-deleted'
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Rejection = $Rejection } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                $Setup.Settings['testRejection'] = $Scenario.Rejection
+                $Setup.Settings['testCreated'] = [System.Collections.Generic.List[string]]::new()
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Show-SetupMessage {}
+                Mock Wait-SetupCondition { $true }
+                Mock Invoke-SetupProbeOrganizationSignIn {}
+                Mock Read-SetupValue { if ($Setup.Settings['testCreated'].Count -eq 0) { 'probe-reserved' } else { 'probe-new' } }
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/graphql') {
+                        $NoRetry | Should -BeTrue
+                        $name = $Body['variables']['input']['login']
+                        $Setup.Settings['testCreated'].Add($name)
+                        if ($name -eq 'probe-reserved') { return $Setup.Settings['testRejection'] }
+                        return @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = $name } } } } }
+                    }
+                    if ($Method -eq 'PUT') { return @{ Status = 'Ok'; Data = @{ state = 'active' } } }
+                    if ($Method -eq 'POST') { return @{ Status = 'Ok'; Data = @{} } }
+                    return @{ Status = 'Missing'; Data = $null }
+                }
+                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw '*Creating the organization probe-reserved*'
+                $saved = ConvertFrom-Json (Get-Content -LiteralPath $Setup.StatePath -Raw) -AsHashtable
+                $saved['probe'].Contains('organizationCreationPending') | Should -BeFalse
+                $saved['probe']['organization'] | Should -Be 'probe-deleted'
+
+                $null = Invoke-StepProbeOrg -Setup $Setup
+                @($Setup.Settings['testCreated']) | Should -Be @('probe-reserved', 'probe-new')
+            }
+            $setup.State.probe['organization'] | Should -Be 'probe-new'
+        }
+
+        It 'keeps the organization pending after <Case>' -ForEach @(
+            @{ Case = 'GraphQL errors with a created organization'; Resumed = $false; Response = @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = 'probe-test' } } }; errors = @(@{ type = 'UNPROCESSABLE'; message = 'Some admins could not be invited' }) } } }
+            @{ Case = 'a rejected retry of a lost creation'; Resumed = $true; Response = @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = $null }; errors = @(@{ type = 'UNPROCESSABLE'; message = 'Login has already been taken' }) } } }
+            @{ Case = 'a server error'; Resumed = $false; Response = @{ Status = 'Error'; Code = 503; Area = 'github'; Data = $null; Message = 'Service Unavailable' } }
+        ) {
+            $setup = Get-TestSetup
+            $setup.Facts.EnterpriseId = 'E_test'
+            # A stored organization that no longer exists makes the wizard ask for the new name probe-test.
+            $setup.State.probe['organization'] = if ($Resumed) { 'probe-test' } else { 'probe-deleted' }
+            if ($Resumed) { $setup.State.probe['organizationCreationPending'] = $true }
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup; Response = $Response } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                $Setup.Settings['testResponse'] = $Scenario.Response
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Show-SetupMessage {}
+                Mock Invoke-SetupProbeOrganizationSignIn {}
+                Mock Read-SetupValue { 'probe-test' }
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/graphql') { return $Setup.Settings['testResponse'] }
+                    return @{ Status = 'Missing'; Data = $null }
+                }
+                { Invoke-StepProbeOrg -Setup $Setup } | Should -Throw
+                Should -Invoke Invoke-SetupApi -Times 1 -Exactly -ParameterFilter { $Uri -like '*/graphql' }
+            }
+            $saved = ConvertFrom-Json (Get-Content -LiteralPath $setup.StatePath -Raw) -AsHashtable
+            $saved['probe']['organizationCreationPending'] | Should -BeTrue
+            $saved['probe']['organization'] | Should -Be 'probe-test'
+        }
+
+        It 'signs in to an organization whose creation response was lost' {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['organizationCreationPending'] = $true
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Read-SetupValue { throw 'The created organization must not be renamed.' }
+                Mock Invoke-SetupProbeOrganizationSignIn {
+                    $saved = ConvertFrom-Json (Get-Content -LiteralPath $Setup.StatePath -Raw) -AsHashtable
+                    $saved['probe']['organizationSignInPending'] | Should -BeTrue
+                    $Setup.Settings['testSignedIn'] = $true
+                }
+                Mock Invoke-SetupApi {
+                    param($Uri, $Method)
+                    if ($Uri -like '*/graphql') { throw 'The organization must not be created again.' }
+                    if (-not $Setup.Settings['testSignedIn']) {
+                        return @{ Status = 'Forbidden'; Area = 'github'; Message = 'Resource protected by organization SAML enforcement.' }
+                    }
+                    if ($Method -eq 'PUT') { return @{ Status = 'Ok'; Data = @{ state = 'active' } } }
+                    if ($Method -eq 'POST') { return @{ Status = 'Ok'; Data = @{} } }
+                    if ($Uri -match '/orgs/probe-test$') { return @{ Status = 'Ok'; Data = @{} } }
+                    return @{ Status = 'Missing'; Data = $null }
+                }
+                $null = Invoke-StepProbeOrg -Setup $Setup
+                Should -Invoke Invoke-SetupProbeOrganizationSignIn -Times 1 -Exactly
+            }
+            $saved = ConvertFrom-Json (Get-Content -LiteralPath $setup.StatePath -Raw) -AsHashtable
+            $saved['probe']['organization'] | Should -Be 'probe-test'
+            $saved['probe'].Contains('organizationCreationPending') | Should -BeFalse
+            $saved['probe']['organizationSignInPending'] | Should -BeFalse
+        }
+
+        It 'creates the organization again when the creation request did not reach GitHub' {
+            $setup = Get-TestSetup
+            $setup.Facts.EnterpriseId = 'E_test'
+            $setup.State.probe['organization'] = 'probe-test'
+            $setup.State.probe['organizationCreationPending'] = $true
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                Mock Confirm-SetupAction { $true }
+                Mock Add-SetupGitHubScope {}
+                Mock Wait-SetupCondition { $true }
+                Mock Invoke-SetupProbeOrganizationSignIn {}
+                Mock Read-SetupValue { throw 'The pending organization must not be renamed.' }
+                Mock Invoke-SetupApi {
+                    if ($Uri -like '*/graphql') {
+                        $Setup.Settings['testCreatedOrg'] = $Body['variables']['input']['login']
+                        return @{ Status = 'Ok'; Code = 200; Data = @{ data = @{ createEnterpriseOrganization = @{ organization = @{ login = $Body['variables']['input']['login'] } } } } }
+                    }
+                    if ($Method -eq 'PUT') { return @{ Status = 'Ok'; Data = @{ state = 'active' } } }
+                    if ($Method -eq 'POST') { return @{ Status = 'Ok'; Data = @{} } }
+                    return @{ Status = 'Missing'; Data = $null }
+                }
+                $null = Invoke-StepProbeOrg -Setup $Setup
+                $Setup.Settings['testCreatedOrg'] | Should -Be 'probe-test'
+            }
+            $setup.State.probe.Contains('organizationCreationPending') | Should -BeFalse
+        }
+    }
+
+    Context 'Probe organization admin access' {
+        It 'reports an error and does not record the probe when the probe ruleset is not deleted <Case>' -ForEach @(
+            @{ Case = 'in a first run'; Passed = $false }
+            @{ Case = 'while reconfirming an earlier pass'; Passed = $true }
+        ) {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            if ($Passed) {
+                $setup.State.probe['adminPassed'] = '2026-01-01T00:00:00Z'
+                $setup.Reconfirm = $true
+            }
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                Mock Show-SetupMessage {}
+                Mock Get-SetupProbeApp { @{ AppId = '1'; InstallationId = '2'; Slug = 'probe-admin'; KeyPath = 'probe-admin.pem' } }
+                Mock Get-SetupInstallationToken { 'ghs_test' }
+                Mock Revoke-SetupInstallationToken {}
+                Mock Invoke-SetupApi {
+                    param($Uri, $Method)
+                    if ($Method -eq 'DELETE') { return @{ Status = 'Error'; Area = 'github'; Code = 500; Message = 'HTTP 500.' } }
+                    if ($Method -eq 'POST') { return @{ Status = 'Ok'; Code = 201; Data = (Get-GitHubApiFixture -Name repos/create-org-ruleset -Set @{ id = 7; name = 'instance-setup-probe'; source = 'probe-test' }) } }
+                    if ($Uri -like '*/rulesets/7') {
+                        return @{ Status = 'Ok'; Code = 200; Data = (Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{ id = 7; name = 'instance-setup-probe'; source = 'probe-test'; bypass_actors = @(@{ actor_id = $null; actor_type = 'OrganizationAdmin'; bypass_mode = 'always' }) }) }
+                    }
+                    if ($Uri -like '*/rulesets') { return @{ Status = 'Ok'; Code = 200; Data = @() } }
+                    return @{ Status = 'Ok'; Code = 200; Data = @{} }
+                }
+                { Invoke-StepProbeAdmin -Setup $Setup } | Should -Throw '*instance-setup-probe in probe-test was not deleted*'
+                Should -Invoke Revoke-SetupInstallationToken -Times 1 -Exactly
+                if (Test-Path -LiteralPath $Setup.StatePath) {
+                    $saved = ConvertFrom-Json (Get-Content -LiteralPath $Setup.StatePath -Raw) -AsHashtable
+                    $saved['probe'].Contains('adminPassed') | Should -BeFalse
+                }
+
+                # A resumed run without -Reconfirm repeats the probe instead of skipping it.
+                $Setup.Reconfirm = $false
+                { Invoke-StepProbeAdmin -Setup $Setup } | Should -Throw '*instance-setup-probe in probe-test was not deleted*'
+                Should -Invoke Get-SetupProbeApp -Times 2 -Exactly
+            }
+            $setup.State.probe.Contains('adminPassed') | Should -BeFalse
+        }
+
+        It 'deletes a stale probe ruleset before it creates a new one' {
+            $setup = Get-TestSetup
+            $setup.State.probe['organization'] = 'probe-test'
+            InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
+                param($Scenario)
+                $Setup = $Scenario.Setup
+                $Setup.Settings['testCalls'] = [System.Collections.Generic.List[string]]::new()
+                Mock Show-SetupMessage {}
+                Mock Get-SetupProbeApp { @{ AppId = '1'; InstallationId = '2'; Slug = 'probe-admin'; KeyPath = 'probe-admin.pem' } }
+                Mock Get-SetupInstallationToken { 'ghs_test' }
+                Mock Revoke-SetupInstallationToken {}
+                Mock Invoke-SetupApi {
+                    param($Uri, $Method)
+                    if ($Method -in @('DELETE', 'POST')) { $Setup.Settings['testCalls'].Add("$Method $($Uri -replace '^.*/rulesets', 'rulesets')") }
+                    if ($Method -eq 'DELETE') { return @{ Status = 'Ok'; Data = $null } }
+                    if ($Method -eq 'POST') { return @{ Status = 'Ok'; Code = 201; Data = (Get-GitHubApiFixture -Name repos/create-org-ruleset -Set @{ id = 8; name = 'instance-setup-probe'; source = 'probe-test' }) } }
+                    if ($Uri -like '*/rulesets/8') {
+                        return @{ Status = 'Ok'; Code = 200; Data = (Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{ id = 8; name = 'instance-setup-probe'; source = 'probe-test'; bypass_actors = @(@{ actor_id = $null; actor_type = 'OrganizationAdmin'; bypass_mode = 'always' }) }) }
+                    }
+                    if ($Uri -like '*/rulesets') { return @{ Status = 'Ok'; Code = 200; Data = (Get-GitHubApiFixture -Name repos/get-org-rulesets -Set @{ '0.id' = 7; '0.name' = 'instance-setup-probe'; '0.source' = 'probe-test' }) } }
+                    return @{ Status = 'Ok'; Code = 200; Data = @{} }
+                }
+                $null = Invoke-StepProbeAdmin -Setup $Setup
+                @($Setup.Settings['testCalls']) | Should -Be @('DELETE rulesets/7', 'POST rulesets', 'DELETE rulesets/8')
+            }
+            $setup.State.probe['adminPassed'] | Should -Not -BeNullOrEmpty
         }
     }
 
@@ -861,6 +1095,18 @@ Describe 'Instance setup wizard' {
                 Test-SetupAppPermission -Actual $null -Expected $expected
             }
             $results | Should -Be @($true, $false, $false, $false)
+        }
+
+        It 'compares App permission <Case>' -ForEach @(
+            @{ Case = 'values case-sensitively'; Actual = @{ members = 'Read' }; Expected = @{ members = 'read' }; Result = $false }
+            @{ Case = 'metadata write as an extra permission'; Actual = @{ members = 'read'; metadata = 'write' }; Expected = @{ members = 'read' }; Result = $false }
+            @{ Case = 'expected metadata read exactly'; Actual = @{ members = 'read'; metadata = 'read' }; Expected = @{ members = 'read'; metadata = 'read' }; Result = $true }
+            @{ Case = 'missing expected metadata read'; Actual = @{ members = 'read' }; Expected = @{ members = 'read'; metadata = 'read' }; Result = $false }
+        ) {
+            InModuleScope InstanceSetup -Parameters @{ Actual = $Actual; Expected = $Expected } {
+                param($Actual, $Expected)
+                Test-SetupAppPermission -Actual $Actual -Expected $Expected
+            } | Should -Be $Result
         }
 
         It 'signs an App JWT with the private key' {

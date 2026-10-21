@@ -63,6 +63,41 @@ Pravidla se týkají každé operace, která mění stav: volání externího AP
 - Při obnově přerušeného běhu (resume) vyřeš čekající kroky před prvním čtením, které na nich závisí. Příklad #34: obnovený běh řešil čekající SAML sign-in (`organizationSignInPending`) až po org-scoped probe, a proto nejdřív dostal 403.
 - Každá taková operace musí mít regresní test, který simuluje přerušení mezi kroky.
 
+### Mechanické kontroly v CI
+
+CI workflow `Source CI` spouští dva joby navíc k Pester testům. Oba běží offline proti stubům a mají oprávnění jen `contents: read`.
+
+#### Harness přerušení
+
+- Job `Interruption harness` spouští testy s tagem `Interruption` ve 4 shardech (`INTERRUPTION_SHARD=<index>/4`). `tools/Invoke-Tests.ps1` bez parametru `-Tag` tyto testy vynechá. Lokální běh: `./tools/Invoke-Tests.ps1 -Tag Interruption`.
+- Harness je v `tools/tests/InterruptionHarness.psm1`. `Invoke-InterruptionMatrix` spustí nástroj jednou a spočítá zapisující kroky. Pak pro každý krok spustí dvě varianty: `BeforeApply` (požadavek selže před zápisem) a `LoseResponse` (stub zápis provede a odpověď se ztratí). Každou variantu ukončí dvěma způsoby:
+  - `Error`: stub vrátí chybovou odpověď a v nástroji proběhnou bloky `catch` a `finally`.
+  - `Abrupt`: proces skončí přímo na hranici přerušení. Harness vrátí lokální stav, který zachytil na hranici, a zahodí zápisy z `catch` a `finally`. Stav stubu zůstane.
+
+  Po každém přerušení harness spustí nástroj znovu a vyžaduje:
+  - opakovaný běh skončí úspěchem;
+  - snapshot stavu stubu a lokálního stavu se rovná referenčnímu běhu;
+  - žádné vytvoření objektu neproběhlo víckrát než v referenčním běhu.
+- Nový nástroj, který mění stav, zapoj do harnessu takto:
+  1. Ve stubu API pošli každý zapisující požadavek přes `Invoke-InterruptionStep`. U vytvoření, které API při opakování neodmítne, předej `-Identity`.
+  2. Napiš `Reset` (počáteční stav stubu a lokálních souborů), `Run` a `Snapshot`. `Snapshot` vynechá hodnoty, které se mezi běhy legitimně liší (generovaná ID, časy). Napiš `CaptureLocal` (vrátí uložený lokální stav, například text stavového souboru) a `RestoreLocal` (zapíše zachycený stav zpět).
+  3. Přidej `Describe` s tagem `Interruption` a sharduj přes `Get-InterruptionShard`. Vzor: `tools/tests/GitHubBootstrap.Interruption.Tests.ps1`.
+
+#### Mutační testy bezpečnostních kontrol
+
+- Job `Security check mutation tests` spouští `tools/Invoke-MutationTests.ps1`. Skript oslabí každou označenou kontrolu a vyžaduje, aby pro každého mutanta selhal aspoň jeden test.
+- Mutanti (mutants):
+  - podmínka guardu s `throw`, `return $false`, `Write-Error` nebo `Exit-SetupStage` se změní na `$false` a na negaci;
+  - podmínka s `continue` nebo `return $true` a logický `return` se změní na `$true` a na negaci;
+  - každý operand `-or` v zamítací podmínce se změní na `$false`, každý operand `-and` v povolovací podmínce na `$true`;
+  - case-sensitive operátor (`-ceq`, `-cne`, `-clike` a další) se změní na case-insensitive, pokud tím kontrola přijme víc hodnot.
+- Novou bezpečnostní nebo identitní kontrolu označ takto:
+  1. Na řádek přímo před funkci kontroly napiš `# security-check: <name>`. Název je kebab-case a je unikátní.
+  2. Do `tools/tests/security-checks.psd1` přidej položku `Checks` s názvem a testy (`Path` a filtr `FullName`). Filtr porovnává nerozbalený název testu, tedy včetně `<Case>`.
+  3. Lokálně spusť `./tools/Invoke-MutationTests.ps1 -Check <name>`.
+- Přeživší mutant (survived) je chybějící negativní test. Doplň test. Výjimku v `Exceptions` přidej jen pro ekvivalentního mutanta, který nemůže změnit chování. Výjimka musí mít přesné ID mutanta z reportu, důvod a URL issue nebo PR.
+- Běh selže při nesouladu markerů a konfigurace, při chybě baseline, při chybě mutanta, při přeživším mutantovi bez výjimky a při zastaralé výjimce.
+
 ### Security checkpoint během implementace
 
 Spouštěč: návrh bezpečnostní nebo identitní kontroly je hotový včetně testů, celá změna ještě ne. Checkpoint se týká validace vlastníka, instalace, oprávnění, hranic, revokace tokenu a mazání. Netýká se dokumentace ani refaktoringu beze změny chování.

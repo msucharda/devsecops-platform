@@ -131,12 +131,23 @@ Describe 'Drift issue publication' {
         # Intentionally invalid: the documented schema requires the user field.
         @{ Case = 'an item has no user field'; Filter = { $Method -eq 'GET' -and $Uri -like '*page=1' }; Response = { return , @(@{ number = 3; body = 'x' }) }; Error = '*unknown issue list item*' }
         @{ Case = 'the list never ends'; Filter = { $Method -eq 'GET' }; Response = { return , @(Get-ListedIssue -Number 3 -Login 'mona' -Type 'User' -Body 'x') }; Error = '*within 1000 pages*' }
-        @{ Case = 'the created item has no issue number'; Filter = { $Method -eq 'POST' }; Response = { Get-GitHubApiFixture -Name issues/create -Set @{ number = 'x' } }; Error = '*POST did not return an open issue*' }
-        @{ Case = 'the created issue is closed'; Filter = { $Method -eq 'POST' }; Response = { Get-GitHubApiFixture -Name issues/create -Set @{ number = 41; state = 'closed' } }; Error = '*POST did not return an open issue*' }
     ) {
         Mock Invoke-RestMethod $Response -ParameterFilter $Filter
 
         { & $publisher @arguments } | Should -Throw $Error
+    }
+
+    It 'fails closed when the created response is not an open issue: <Case>' -ForEach @(
+        @{ Case = 'no issue number'; Response = { Get-GitHubApiFixture -Name issues/create -Set @{ number = 'x' } } }
+        @{ Case = 'a closed issue'; Response = { Get-GitHubApiFixture -Name issues/create -Set @{ number = 41; state = 'closed' } } }
+        @{ Case = 'a state in another case'; Response = { Get-GitHubApiFixture -Name issues/create -Set @{ number = 41; state = 'OPEN' } } }
+        # Intentionally invalid: the documented response is an issue object, not a list.
+        @{ Case = 'not an object'; Response = { return , @(41) } }
+        @{ Case = 'a pull request'; Response = { $issue = Get-GitHubApiFixture -Name issues/create -Set @{ number = 41 }; $issue.pull_request = @{ url = 'https://api.example.ghe.com/repos/platform/instance/pulls/41' }; $issue } }
+    ) {
+        Mock Invoke-RestMethod $Response -ParameterFilter { $Method -eq 'POST' }
+
+        { & $publisher @arguments } | Should -Throw '*POST did not return an open issue*'
     }
 
     It 'fails closed when the update response identifies another issue' {

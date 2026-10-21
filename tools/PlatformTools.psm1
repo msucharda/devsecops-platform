@@ -2,6 +2,7 @@
 Set-StrictMode -Version Latest
 Import-Module powershell-yaml -RequiredVersion 0.4.12
 
+# security-check: github-app-owner
 function Test-PlatformGitHubAppOwner {
     [CmdletBinding()]
     [OutputType([bool])]
@@ -542,6 +543,7 @@ function Assert-PlatformManualPrerequisite {
     }
 }
 
+# security-check: bootstrap-request-policy
 function Assert-PlatformBootstrapRequest {
     [CmdletBinding()]
     param(

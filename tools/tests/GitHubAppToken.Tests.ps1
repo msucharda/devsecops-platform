@@ -504,6 +504,14 @@ Describe 'Enterprise App key and installation token isolation' {
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
         }
 
+        It 'rejects a drift report App permission level that differs only in case' {
+            $actualPermissions = @{ issues = 'Write'; metadata = 'read' }
+
+            { & $issuer -DriftReport -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*Actual GitHub App permissions differ*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
         It 'rejects a drift report App with access to all repositories' {
             $repositorySelection = 'all'
 

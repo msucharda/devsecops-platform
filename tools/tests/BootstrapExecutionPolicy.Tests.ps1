@@ -13,6 +13,16 @@ Describe 'Supported bootstrap request policy' {
         { Assert-PlatformBootstrapRequest -Uri 'https://example.invalid/resource' -Method PUT -NoChanges -RequestPolicy { $true } } |
             Should -Throw '*NoChanges refuses*'
     }
+    It 'allows a read-only POST in no-change mode only for the exact POST method' {
+        { Assert-PlatformBootstrapRequest -Uri 'https://example.invalid/graphql' -Method POST -NoChanges -ReadOnlyPost } | Should -Not -Throw
+        { Assert-PlatformBootstrapRequest -Uri 'https://example.invalid/resource' -Method GET -NoChanges } | Should -Not -Throw
+    }
+    It 'rejects <Method> in no-change mode even for a read-only POST request' -ForEach @(
+        @{ Method = 'PUT' }, @{ Method = 'DELETE' }, @{ Method = 'post' }, @{ Method = 'get' }
+    ) {
+        { Assert-PlatformBootstrapRequest -Uri 'https://example.invalid/resource' -Method $Method -NoChanges -ReadOnlyPost } |
+            Should -Throw '*NoChanges refuses*'
+    }
     It 'requires exactly one boolean true from the request supervisor (<Case>)' -ForEach @(
         @{ Case = 'empty'; Policy = {} }
         @{ Case = 'false'; Policy = { $false } }

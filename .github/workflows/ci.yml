@@ -64,6 +64,45 @@ jobs:
           path: artifacts/pester.xml
           if-no-files-found: error
 
+  interruption:
+    name: Interruption harness (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      INTERRUPTION_SHARD: ${{ matrix.shard }}/4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install tool dependencies
+        shell: pwsh
+        run: ./tools/Install-ToolDependencies.ps1 -Development
+      - name: Interrupt every state-changing step
+        shell: pwsh
+        run: ./tools/Invoke-Tests.ps1 -Tag Interruption
+
+  mutation:
+    name: Security check mutation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install tool dependencies
+        shell: pwsh
+        run: ./tools/Install-ToolDependencies.ps1 -Development
+      - name: Weaken every marked security check
+        shell: pwsh
+        run: ./tools/Invoke-MutationTests.ps1 -ReportPath ./artifacts/mutation-report.json
+      - name: Upload mutation report
+        if: ${{ !cancelled() && hashFiles('artifacts/mutation-report.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mutation-report
+          path: artifacts/mutation-report.json
+          if-no-files-found: error
+
   terraform:
     name: Terraform (${{ matrix.root }})
     needs: platform
