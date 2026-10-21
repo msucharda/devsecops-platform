@@ -310,6 +310,8 @@ data "external" "code_security_state" {
         @{ Case = 'pattern regex changed'; Message = 'missing or differs from customPatterns'; Drift = { param($s) $s.Patterns[0]['pattern'] = 'itk_.*' } }
         @{ Case = 'pattern deleted'; Message = 'missing or differs from customPatterns'; Drift = { param($s) $s.Patterns.RemoveAt(0) } }
         @{ Case = 'push protection disabled'; Message = 'push protection disabled'; Drift = { param($s) $s.Patterns[0]['push_protection_enabled'] = $false } }
+        @{ Case = 'pattern unpublished'; Message = 'is not published or has push protection disabled'; Drift = {
+            param($s) $s.Patterns[0]['state'] = 'unpublished'; $s.Patterns[0]['push_protection_enabled'] | Should -BeTrue } }
     ) {
         $apply = Invoke-StubTerraform apply -input=false -auto-approve
         $apply.ExitCode | Should -Be 0 -Because $apply.Output
@@ -351,5 +353,57 @@ data "external" "code_security_state" {
             ($plan.Output -replace '\s+', ' ') | Should -Not -BeLike '*bypass reviewers*'
         }
         $restoredPlan.ExitCode | Should -Be 0 -Because $restoredPlan.Output
+    }
+
+    It 'fails the plan when the bypass reviewers drift: <Case>' -ForEach @(
+        @{ Case = 'reviewer type changed'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'][0]['reviewer_type'] = 'ROLE' } }
+        @{ Case = 'mode EXEMPT'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'][0]['mode'] = 'EXEMPT' } }
+        @{ Case = 'extra reviewer'; Drift = {
+            param($c) $o = $c['secret_scanning_delegated_bypass_options']; $o['reviewers'] = @($o['reviewers']) + @(@{ reviewer_type = 'ROLE'; reviewer_id = 4; mode = 'ALWAYS' }) } }
+        @{ Case = 'duplicate reviewer'; Drift = {
+            param($c) $o = $c['secret_scanning_delegated_bypass_options']; $o['reviewers'] = @($o['reviewers']) + @(@{} + $o['reviewers'][0]) } }
+        @{ Case = 'reviewer removed'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'] = @() } }
+        @{ Case = 'reviewer_type missing'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'][0].Remove('reviewer_type') } }
+        @{ Case = 'reviewer_id missing'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'][0].Remove('reviewer_id') } }
+        @{ Case = 'reviewers list missing'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options'].Remove('reviewers') } }
+        @{ Case = 'bypass options missing'; Drift = { param($c) $c.Remove('secret_scanning_delegated_bypass_options') } }
+    ) {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        & $Drift ($stubState.CodeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })
+
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+
+        $plan.ExitCode | Should -Be 1 -Because $plan.Output
+        ($plan.Output -replace '\s+', ' ') | Should -BeLike '*bypass reviewers*'
+        ($plan.Output -replace '\s+', ' ') | Should -Not -BeLike '*does not match the managed settings*'
+    }
+
+    It 'accepts a bypass reviewer without mode as the documented default ALWAYS' {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        $configuration = $stubState.CodeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }
+        $configuration['secret_scanning_delegated_bypass_options']['reviewers'][0].Remove('mode')
+
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+
+        $plan.ExitCode | Should -Be 0 -Because $plan.Output
+    }
+
+    It 'fails the plan when the custom pattern field <Field> drifts' -ForEach @(
+        @{ Field = 'start_delimiter'; Value = 'key=' }
+        @{ Field = 'end_delimiter'; Value = '\s' }
+        @{ Field = 'must_match'; Value = @('itk_[0-9]{32}') }
+        @{ Field = 'must_not_match'; Value = @('itk_0{32}') }
+    ) {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        $stubState.CodeSecurity.Patterns[0][$Field] = $Value
+
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+
+        $plan.ExitCode | Should -Be 1 -Because $plan.Output
+        ($plan.Output -replace '\s+', ' ') | Should -BeLike '*missing or differs from customPatterns*'
+        ($plan.Output -replace '\s+', ' ') | Should -Not -BeLike '*push protection disabled*'
     }
 }
