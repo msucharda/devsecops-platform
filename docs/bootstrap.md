@@ -262,7 +262,7 @@ Bootstrap odmítne převzít prostředek se shodným názvem bez odpovídající
 
 Požadavky s HTTP 429 nebo 503 bootstrap opakuje podle stavového kódu, i když odpověď obsahuje prostý text nebo HTML místo JSON. Provede nejvýše 12 pokusů s prodlevou 5 sekund. Po vyčerpání pokusů vrátí chybu s HTTP stavem a tělem poslední odpovědi. Ostatní odpovědi musí splnit původní požadavky na JSON.
 
-Nástroj sám nic neodstraňuje. Moduly odstraní workflow `teardown` a prostředky bootstrapu skript `tools/Remove-Bootstrap.ps1` ([Teardown](../README.md#teardown)). Oba zachovají tenant, enterprise, OIDC, SCIM, subscriptions, licence a enterprise kontroly. Před teardownem administrátor obnoví přímé přiřazení Enterprise Owner, které po prvním nasazení odebral ruční krok `emu-identity`. Lock odstraní až `Remove-Bootstrap.ps1` po úspěšném workflow `teardown`.
+Nástroj sám nic neodstraňuje. Moduly odstraní workflow `teardown` a prostředky bootstrapu skript `tools/Remove-Bootstrap.ps1` ([Teardown](../README.md#teardown)). Skript navíc vyžaduje OAuth scope `delete_repo`, který login bootstrapu nemá. Oba zachovají tenant, enterprise, OIDC, SCIM, subscriptions, licence a enterprise kontroly. Před teardownem administrátor obnoví přímé přiřazení Enterprise Owner, které po prvním nasazení odebral ruční krok `emu-identity`. Lock odstraní až `Remove-Bootstrap.ps1` po úspěšném workflow `teardown`.
 
 ## Ověření na Reference instance (referenční instanci)
 

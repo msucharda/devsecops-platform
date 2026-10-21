@@ -525,7 +525,7 @@ terraform {
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
         $null = & $runner -Module foundation -Action apply @arguments 6>$null
         $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
-        $null = & $runner -Module application -Action apply @arguments 6>$null
+        $applied = & $runner -Module application -Action apply @arguments 6>$null
         $null = & $runner -Module application -Action destroy @arguments 6>$null
         $null = & $runner -Module foundation -Action destroy @arguments 6>$null
         $null = & $runner -Module foundation -Action output @arguments 6>$null
@@ -536,6 +536,31 @@ terraform {
 
         $result.HasChanges | Should -BeFalse
         (Get-Content -LiteralPath $result.OutputsPath -Raw).Trim() | Should -Be '{}'
+        $result.PSObject.Properties.Name | Should -Contain 'ManualPrerequisites'
+        @($result.ManualPrerequisites.Name) | Should -Be @($applied.ManualPrerequisites.Name)
+    }
+
+    It 'does not treat a state with only deposed instances as empty' {
+        $instance.modules = @{ application = @{} }
+        $instance.teardown = @{ allowed = $true }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        Add-Content -LiteralPath (Join-Path $modules 'application/main.tf') -Value 'resource "terraform_data" "fixture" { input = var.instance.name }'
+        $null = & $runner -Module foundation -Action apply @arguments 6>$null
+        $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
+        $null = & $runner -Module application -Action apply @arguments 6>$null
+        Remove-Item -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json')
+        # An interrupted create_before_destroy replacement leaves the old object deposed and no current object or output.
+        $statePath = Join-Path $arguments.StatePath 'application.tfstate'
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+        @($state['resources']).Count | Should -BeGreaterThan 0
+        foreach ($resource in $state['resources']) {
+            foreach ($object in $resource['instances']) { $object['deposed'] = '00000001' }
+        }
+        $state['outputs'] = @{}
+        $state['serial']++
+        [IO.File]::WriteAllText($statePath, (ConvertTo-Json $state -Depth 100))
+
+        { & $runner -Module application -Action destroy @arguments 6>$null } | Should -Throw "*Missing prerequisite outputs for 'foundation'*"
     }
 
     It 'requires prerequisite outputs to destroy a dependent with remaining resources' {

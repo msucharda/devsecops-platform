@@ -376,13 +376,14 @@ Workflow neodstraní `bootstrap`. Organizační politiky, rulesety, code securit
 
 ### Lokální odstranění bootstrapu
 
-Skript spusť až po úspěšném workflow `teardown`. Potřebuje inventory `bootstrap-resources.json` z bootstrapu, OAuth login `gh auth login --hostname <enterprise>.ghe.com` a `az login --tenant <tenantId>` uživatele platformního týmu s přímou rolí Enterprise Owner:
+Skript spusť až po úspěšném workflow `teardown`. Potřebuje inventory `bootstrap-resources.json` z bootstrapu, OAuth login `gh auth login --hostname <enterprise>.ghe.com` se scope `delete_repo` a `az login --tenant <tenantId>` uživatele platformního týmu s přímou rolí Enterprise Owner. Login z bootstrapu scope `delete_repo` nemá; doplň ho příkazem `gh auth refresh --hostname <enterprise>.ghe.com --scopes delete_repo`:
 
 ```powershell
 .\tools\Remove-Bootstrap.ps1 -InstancePath .\instance.yaml -InventoryPath ..\secure\bootstrap-resources.json -ConfirmInstanceName demo
 ```
 
 - Skript odmítne `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` a jiný GitHub token než OAuth token (`gho_`). Odmítne inventory uvnitř source checkoutu.
+- Před prvním zápisem ověří scope `delete_repo` v hlavičce `X-OAuth-Scopes` odpovědi `GET /user`. Chybějící hlavičku nebo scope odmítne, protože smazání repozitáře by selhalo až po vypnutí Actions.
 - Před prvním krokem zapíše do inventory ID přihlášeného uživatele GitHub (`GET /user`). Obnovený běh jiného uživatele odmítne, protože GitHub skrývá prostředky bez přístupu odpovědí 404. Inventory se zahájenými kroky bez ID uživatele odmítne.
 - Před smazáním repozitáře ověří, že poslední běh `teardown.yml` na `main` skončil úspěchem a v repozitáři neběží ani nečeká žádný workflow run. Ověří také, že se po startu posledního pokusu teardownu nezměnil žádný běh `deploy.yml` na žádné větvi. Porovnává `updated_at`, protože opakovaný běh (rerun) zachová `created_at` původního běhu. Apps proto zůstanou, dokud běží workflow, která je potřebují.
 - Potom zapíše krok `started`, vypne GitHub Actions v repozitáři instance a kontrolu zopakuje. Nový workflow run proto nemůže začít mezi kontrolou a smazáním. Pokud druhá kontrola selže, Actions zůstanou vypnuté; před novým spuštěním workflow `teardown` je zapni.

@@ -188,7 +188,8 @@ function Invoke-RemovalRequest {
         [ValidateSet('GET', 'PUT', 'DELETE')][string] $Method = 'GET',
         [System.Collections.IDictionary] $Body,
         [switch] $AllowNotFound,
-        [int[]] $ExpectedStatus = @(200)
+        [int[]] $ExpectedStatus = @(200),
+        [System.Collections.IDictionary] $ResponseHeaders
     )
 
     $address = [uri] $Uri
@@ -219,6 +220,9 @@ function Invoke-RemovalRequest {
             continue
         }
         break
+    }
+    if ($null -ne $ResponseHeaders -and $null -ne $response.Headers) {
+        foreach ($name in $response.Headers.Keys) { $ResponseHeaders[$name] = @($response.Headers[$name]) -join ',' }
     }
     if ($response.StatusCode -eq 404 -and $AllowNotFound) { return $null }
     if ($response.StatusCode -notin $ExpectedStatus) {
@@ -622,10 +626,16 @@ if (-not $PSCmdlet.ShouldProcess("platform instance '$instanceName' ($repository
     return
 }
 # GitHub hides resources from users without access, so a 404 counts as deletion evidence only for the user that started the removal.
-$githubUser = Invoke-RemovalRequest -Uri "https://$githubApi/user"
+$githubUserHeaders = [System.Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
+$githubUser = Invoke-RemovalRequest -Uri "https://$githubApi/user" -ResponseHeaders $githubUserHeaders
 if (($githubUser['id'] -isnot [long] -and $githubUser['id'] -isnot [int]) -or $githubUser['id'] -le 0 -or
     $githubUser['login'] -isnot [string] -or [string]::IsNullOrWhiteSpace($githubUser['login'])) {
     throw 'GitHub did not return the authenticated user.'
+}
+# Repository deletion needs delete_repo; check it before Actions are disabled so a missing scope cannot strand the instance.
+$githubScopes = if ($githubUserHeaders.ContainsKey('X-OAuth-Scopes')) { @($githubUserHeaders['X-OAuth-Scopes'] -split ',' | ForEach-Object { $_.Trim() }) } else { @() }
+if ($githubScopes -cnotcontains 'delete_repo') {
+    throw "The GitHub OAuth token lacks the delete_repo scope required to delete the instance repository. Run gh auth refresh --hostname $($connection['githubHost']) --scopes delete_repo and rerun."
 }
 if ($removal['steps'].Count -gt 0) {
     if (-not $removal.Contains('githubUserId')) {

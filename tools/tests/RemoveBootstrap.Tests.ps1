@@ -24,9 +24,11 @@ BeforeAll {
     $managementGroupScope = '/providers/Microsoft.Management/managementGroups/mg-platform'
 
     function Get-TestResponse {
-        param([int] $StatusCode = 200, $Data)
+        param([int] $StatusCode = 200, $Data, [hashtable] $Headers = @{})
         $content = if ($PSBoundParameters.ContainsKey('Data')) { ConvertTo-Json -InputObject $Data -Depth 100 -Compress } else { '' }
-        [pscustomobject]@{ StatusCode = $StatusCode; Content = $content }
+        $responseHeaders = @{}
+        foreach ($name in $Headers.Keys) { $responseHeaders[$name] = [string[]] @($Headers[$name]) }
+        [pscustomobject]@{ StatusCode = $StatusCode; Content = $content; Headers = $responseHeaders }
     }
 
     function Get-TestNotFound {
@@ -104,6 +106,7 @@ BeforeAll {
             }
             Organization = Get-GitHubApiFixture -Name orgs/get -Set @{ login = $organization }
             User = Get-GitHubApiFixture -Name users/get-authenticated-user.private-user -Set @{ id = 4242; login = 'lead_contoso' }
+            OAuthScopes = 'admin:enterprise, admin:org, delete_repo, repo, workflow'
             ActionsEnabled = $true
             ActiveRuns = @{ in_progress = 0; queued = 0; requested = 0; waiting = 0; pending = 0 }
             Runs = @{
@@ -145,7 +148,10 @@ BeforeAll {
         $path = [uri]::UnescapeDataString($address.AbsolutePath)
         $query = [uri]::UnescapeDataString($address.Query)
         if ($address.Host -ceq 'api.contoso.ghe.com') {
-            if ($path -ceq '/user' -and $Method -ceq 'GET') { return Get-TestResponse -Data $World.User }
+            if ($path -ceq '/user' -and $Method -ceq 'GET') {
+                $headers = if ($null -eq $World.OAuthScopes) { @{} } else { @{ 'X-OAuth-Scopes' = $World.OAuthScopes } }
+                return Get-TestResponse -Data $World.User -Headers $headers
+            }
             if ($path -ceq "/repos/$repository/actions/permissions") {
                 if (-not $World.Repository) { return Get-TestNotFound }
                 if ($Method -ceq 'PUT') {
@@ -1042,6 +1048,44 @@ Describe 'Bootstrap removal' {
             { & $run } | Should -Throw '*did not return the authenticated user*'
             @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
             (& $readInventory).Contains('removal') | Should -BeFalse
+        }
+    }
+
+    Context 'requires the delete_repo scope' {
+        It 'and accepts the scope list <Label>' -ForEach @(
+            @{ Label = 'without spaces'; Scopes = 'repo,delete_repo,admin:org' }
+            @{ Label = 'with only delete_repo'; Scopes = 'delete_repo' }
+        ) {
+            $world.OAuthScopes = $Scopes
+
+            (& $run).Completed | Should -BeTrue
+        }
+
+        It 'and refuses before any change when the token <Label>' -ForEach @(
+            @{ Label = 'returns no X-OAuth-Scopes header'; Scopes = $null }
+            @{ Label = 'has no scope'; Scopes = '' }
+            @{ Label = 'lacks delete_repo'; Scopes = 'admin:enterprise, admin:org, repo, workflow' }
+            @{ Label = 'has only a longer scope name'; Scopes = 'admin:org, delete_repository' }
+            @{ Label = 'has delete_repo in another case'; Scopes = 'admin:org, DELETE_REPO' }
+        ) {
+            $world.OAuthScopes = $Scopes
+
+            { & $run } | Should -Throw '*lacks the delete_repo scope*gh auth refresh*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+            (& $readInventory).Contains('removal') | Should -BeFalse
+            $world.ActionsEnabled | Should -BeTrue
+        }
+
+        It 'and refuses to resume without it' {
+            $failure.At = 2
+            { & $run } | Should -Throw '*Simulated interruption*'
+            $failure.At = 0
+            $world.OAuthScopes = 'admin:org, repo'
+            $requests.Clear()
+
+            { & $run } | Should -Throw '*lacks the delete_repo scope*'
+            @($requests | Where-Object Method -cne 'GET') | Should -BeNullOrEmpty
+            $world.Repository | Should -Not -BeNullOrEmpty
         }
     }
 

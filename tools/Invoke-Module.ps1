@@ -363,6 +363,7 @@ try {
             HasChanges = $false
             OutputsPath = $artifactFile
             ManualSteps = $manualStates.ToArray()
+            ManualPrerequisites = $prerequisiteStates.ToArray()
         }
     }
     if ($Action -eq 'destroy') { Import-ModulePrerequisiteOutput -Name $prerequisites -Path $PrerequisiteOutputsPath -Target $variables['prerequisites'] }
