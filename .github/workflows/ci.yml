@@ -48,8 +48,10 @@ jobs:
         run: |
           ./tools/Generate-DeploymentWorkflow.ps1 -Check
           ./tools/Generate-DeploymentWorkflow.ps1 -ModulesPath ./tools/tests/fixtures/modules -OutputPath ./tools/tests/fixtures/deploy.yml -Check
+          ./tools/Generate-TeardownWorkflow.ps1 -Check
+          ./tools/Generate-TeardownWorkflow.ps1 -ModulesPath ./tools/tests/fixtures/modules -OutputPath ./tools/tests/fixtures/teardown.yml -Check
       - name: Validate deployment workflow syntax
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml templates/instance/.github/workflows/deploy.yml templates/instance/.github/workflows/drift.yml templates/instance/.github/workflows/vendor.yml tools/tests/fixtures/deploy.yml tools/tests/fixtures/drift.yml tools/acceptance/github/bootstrap-acceptance.yml
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml templates/instance/.github/workflows/deploy.yml templates/instance/.github/workflows/drift.yml templates/instance/.github/workflows/teardown.yml templates/instance/.github/workflows/vendor.yml tools/tests/fixtures/deploy.yml tools/tests/fixtures/drift.yml tools/tests/fixtures/teardown.yml tools/acceptance/github/bootstrap-acceptance.yml
       - name: Discover Terraform roots
         id: terraform-roots
         shell: pwsh

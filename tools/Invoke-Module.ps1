@@ -3,7 +3,7 @@
 [OutputType([pscustomobject])]
 param(
     [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')][string] $Module,
-    [Parameter(Mandatory)][ValidateSet('plan', 'apply', 'destroy')][string] $Action,
+    [Parameter(Mandatory)][ValidateSet('plan', 'apply', 'destroy', 'output')][string] $Action,
     [switch] $Rulesets,
     [Parameter(Mandatory)][string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
@@ -114,6 +114,34 @@ function Get-ModulePublicOutput {
         $values[$name] = $record['value']
     }
     return $values
+}
+
+function Test-ModuleStateEmpty {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    $state = ConvertFrom-Json -InputObject (Invoke-ModuleTerraform -Arguments @('show', '-json') -Json).Text -AsHashtable
+    if (-not $state.Contains('values') -or $null -eq $state['values']) {
+        return $true
+    }
+    if ($state['values'].Contains('outputs') -and @($state['values']['outputs'].PSBase.Keys).Count -gt 0) {
+        return $false
+    }
+    $pending = [System.Collections.Generic.Stack[object]]::new()
+    if ($state['values'].Contains('root_module')) {
+        $pending.Push($state['values']['root_module'])
+    }
+    while ($pending.Count -gt 0) {
+        $node = $pending.Pop()
+        if ($node.Contains('resources') -and @($node['resources']).Count -gt 0) {
+            return $false
+        }
+        if ($node.Contains('child_modules')) {
+            foreach ($child in $node['child_modules']) { $pending.Push($child) }
+        }
+    }
+    return $true
 }
 
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
@@ -255,7 +283,11 @@ if ($instance['modules'].Contains($Module) -and $instance['modules'][$Module].Co
         $variables[$name] = $instance['modules'][$Module]['parameters'][$name]
     }
 }
-foreach ($prerequisite in $modules[$Module]['prerequisites']) {
+$prerequisites = @($modules[$Module]['prerequisites'])
+if ($Action -eq 'output') {
+    $prerequisites = @()
+}
+foreach ($prerequisite in $prerequisites) {
     if (-not $PrerequisiteOutputsPath) {
         throw "Missing prerequisite outputs for '$prerequisite': supply -PrerequisiteOutputsPath."
     }
@@ -309,6 +341,25 @@ try {
     $metadata = Get-Content -LiteralPath $backendMetadataPath -Raw | ConvertFrom-Json -AsHashtable
     if ($metadata['backend']['type'] -cne $Backend) {
         throw "Module '$Module' declares a different backend than '$Backend'."
+    }
+    $readOnly = $Action -eq 'output'
+    if ($Action -eq 'destroy' -and (Test-ModuleStateEmpty)) {
+        # A repeated teardown after an interruption finds nothing left; planning would need outputs of destroyed prerequisites.
+        Write-Information "Module '$Module' has no resources or outputs in state; nothing to destroy." -InformationAction Continue
+        $readOnly = $true
+    }
+    if ($readOnly) {
+        $output = Invoke-ModuleTerraform -Arguments @('output', '-json') -Json
+        $outputs = Get-ModulePublicOutput -Outputs (ConvertFrom-Json -InputObject $output.Text -AsHashtable)
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($artifactFile)) | Out-Null
+        [IO.File]::WriteAllText($artifactFile, (ConvertTo-Json -InputObject $outputs -Depth 100), [Text.UTF8Encoding]::new($false))
+        return [pscustomobject]@{
+            Module = $Module
+            Action = $Action
+            HasChanges = $false
+            OutputsPath = $artifactFile
+            ManualSteps = $manualStates.ToArray()
+        }
     }
     $planFile = Join-Path $temporaryDirectory 'module.tfplan'
     $planArguments = @('plan', '-input=false', '-no-color', '-detailed-exitcode', "-var-file=$variableFile", "-out=$planFile")

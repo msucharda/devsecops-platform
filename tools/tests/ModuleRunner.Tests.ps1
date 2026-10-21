@@ -475,6 +475,80 @@ terraform {
         @($state.resources).Count | Should -Be 0
     }
 
+    It 'reads applied outputs from state without planning, locking or changing state' {
+        $null = & $runner -Module foundation -Action apply @arguments 6>$null
+        $stateFile = Join-Path $arguments.StatePath 'foundation.tfstate'
+        $stateBefore = [IO.File]::ReadAllText($stateFile)
+        $instance.modules.foundation.parameters.message = 'changed-after-apply'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        $result = & $runner -Module foundation -Action output @arguments 6>$null
+
+        $outputs = Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json
+        $outputs.foundation_name | Should -Be 'demo-foundation'
+        $outputs.message | Should -Be 'hello'
+        $result.HasChanges | Should -BeFalse
+        [IO.File]::ReadAllText($stateFile) | Should -BeExactly $stateBefore
+    }
+
+    It 'reads outputs of a dependent module without requiring prerequisite artifacts' {
+        $instance.modules = @{ application = @{} }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        $result = & $runner -Module application -Action output @arguments 6>$null
+
+        (Get-Content -LiteralPath $result.OutputsPath -Raw).Trim() | Should -Be '{}'
+    }
+
+    It 'refuses sensitive outputs in state for output and leaves no stale artifact' {
+        $instance.modules = @{ sensitive = @{} }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        New-Item -ItemType Directory -Path $arguments.StatePath | Out-Null
+        $state = [ordered]@{
+            version = 4; terraform_version = '1.9.0'; serial = 1; lineage = [guid]::NewGuid().ToString()
+            outputs = @{ restricted = @{ value = 'secret'; type = 'string'; sensitive = $true } }
+            resources = @(); check_results = $null
+        }
+        [IO.File]::WriteAllText((Join-Path $arguments.StatePath 'sensitive.tfstate'), (ConvertTo-Json $state -Depth 10))
+        New-Item -ItemType Directory -Path $arguments.ArtifactsPath | Out-Null
+        $artifact = Join-Path $arguments.ArtifactsPath 'sensitive.json'
+        [IO.File]::WriteAllText($artifact, '{"stale":true}')
+
+        { & $runner -Module sensitive -Action output @arguments 6>$null } |
+            Should -Throw '*Sensitive output*restricted*'
+        Test-Path -LiteralPath $artifact | Should -BeFalse
+    }
+
+    It 'completes a repeated destroy of an already destroyed dependent after its prerequisite is gone' {
+        $instance.modules = @{ application = @{} }
+        $instance.teardown = @{ allowed = $true }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $null = & $runner -Module foundation -Action apply @arguments 6>$null
+        $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
+        $null = & $runner -Module application -Action apply @arguments 6>$null
+        $null = & $runner -Module application -Action destroy @arguments 6>$null
+        $null = & $runner -Module foundation -Action destroy @arguments 6>$null
+        $null = & $runner -Module foundation -Action output @arguments 6>$null
+
+        $result = & $runner -Module application -Action destroy @arguments 6>$null
+
+        $result.HasChanges | Should -BeFalse
+        (Get-Content -LiteralPath $result.OutputsPath -Raw).Trim() | Should -Be '{}'
+    }
+
+    It 'still destroys a dependent with remaining resources rather than skipping it' {
+        $instance.modules = @{ unknown = @{} }
+        $instance.teardown = @{ allowed = $true }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $null = & $runner -Module unknown -Action apply @arguments 6>$null
+
+        $result = & $runner -Module unknown -Action destroy @arguments 6>$null
+
+        $result.HasChanges | Should -BeTrue
+        $again = & $runner -Module unknown -Action destroy @arguments 6>$null
+        $again.HasChanges | Should -BeFalse
+    }
+
     It 'does not silently fall back to an implicit local backend' {
         $rootFile = Join-Path $modules 'foundation/main.tf'
         (Get-Content -LiteralPath $rootFile -Raw).Replace('backend "local" {}', '') |
