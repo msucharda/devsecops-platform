@@ -10,12 +10,18 @@ function Test-PlatformGitHubAppOwner {
         [Parameter(Mandatory)][string] $Enterprise
     )
 
+    # GET /app documents owner as oneOf simple-user or enterprise. GHE.com returns simple-user with
+    # type 'enterprise' for enterprise-owned Apps. Any other shape fails closed.
     if ($Owner -isnot [System.Collections.IDictionary]) { return $false }
+    $id = $Owner['id']
+    $identified = ($id -is [int] -or $id -is [long]) -and $id -gt 0 -and
+        $Owner['node_id'] -is [string] -and -not [string]::IsNullOrWhiteSpace($Owner['node_id'])
+    if (-not $identified) { return $false }
     if ($Owner.Contains('login')) {
-        return $Owner['type'] -ieq 'enterprise' -and $Owner['login'] -ieq $Enterprise
+        return $Owner['type'] -is [string] -and $Owner['type'] -ieq 'enterprise' -and
+            $Owner['login'] -is [string] -and $Owner['login'] -ieq $Enterprise
     }
-    return -not $Owner.Contains('type') -and $Owner['slug'] -ceq $Enterprise -and
-        [string] $Owner['id'] -cmatch '^[1-9][0-9]*$' -and -not [string]::IsNullOrWhiteSpace($Owner['node_id'])
+    return -not $Owner.Contains('type') -and $Owner['slug'] -is [string] -and $Owner['slug'] -ceq $Enterprise
 }
 
 function Get-PlatformYaml {
