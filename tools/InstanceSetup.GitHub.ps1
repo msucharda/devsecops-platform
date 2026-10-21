@@ -247,6 +247,7 @@ function Invoke-StepAcceptanceRuleset {
     return 'Disabled probe ruleset recorded for removal; the workflow must read its real bypass actors.'
 }
 
+# security-check: acceptance-run-evidence
 function Test-SetupAcceptanceRunEvidence {
     [CmdletBinding()]
     param(

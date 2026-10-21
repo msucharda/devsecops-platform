@@ -70,6 +70,7 @@ function Invoke-IssueRequest {
     }
 }
 
+# security-check: drift-open-issue
 function Assert-OpenIssue {
     [CmdletBinding()]
     param([AllowNull()][object] $Issue, [string] $Operation, [string] $ExpectedNumber)

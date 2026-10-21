@@ -60,6 +60,7 @@ if (-not $ResourcesOnly -and (-not $AppKeysPath -or -not $AuthorizationApp)) {
 if ($connection['githubHost'] -cne "$($connection['enterprise']).ghe.com") {
     throw '$.bootstrap.githubHost must match $.bootstrap.enterprise on GHE.com.'
 }
+# security-check: bootstrap-external-path
 function Assert-GitHubBootstrapExternalPath {
     [CmdletBinding()]
     [OutputType([string])]

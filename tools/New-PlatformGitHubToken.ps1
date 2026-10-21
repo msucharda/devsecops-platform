@@ -118,6 +118,7 @@ function ConvertTo-JwtSegment {
     [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 }
 
+# security-check: token-app-permission
 function Assert-AppPermission {
     [CmdletBinding()]
     param([Parameter(Mandatory)][System.Collections.IDictionary] $Actual)

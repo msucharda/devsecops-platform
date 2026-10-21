@@ -999,6 +999,18 @@ Describe 'Instance setup wizard' {
             $results | Should -Be @($true, $false, $false, $false)
         }
 
+        It 'compares App permission <Case>' -ForEach @(
+            @{ Case = 'values case-sensitively'; Actual = @{ members = 'Read' }; Expected = @{ members = 'read' }; Result = $false }
+            @{ Case = 'metadata write as an extra permission'; Actual = @{ members = 'read'; metadata = 'write' }; Expected = @{ members = 'read' }; Result = $false }
+            @{ Case = 'expected metadata read exactly'; Actual = @{ members = 'read'; metadata = 'read' }; Expected = @{ members = 'read'; metadata = 'read' }; Result = $true }
+            @{ Case = 'missing expected metadata read'; Actual = @{ members = 'read' }; Expected = @{ members = 'read'; metadata = 'read' }; Result = $false }
+        ) {
+            InModuleScope InstanceSetup -Parameters @{ Actual = $Actual; Expected = $Expected } {
+                param($Actual, $Expected)
+                Test-SetupAppPermission -Actual $Actual -Expected $Expected
+            } | Should -Be $Result
+        }
+
         It 'signs an App JWT with the private key' {
             $rsa = [System.Security.Cryptography.RSA]::Create(2048)
             try {

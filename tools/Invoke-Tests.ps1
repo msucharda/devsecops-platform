@@ -1,6 +1,10 @@
 #Requires -Version 7.4
 [CmdletBinding()]
-param([switch] $CI)
+param(
+    [switch] $CI,
+    # Runs only tests with these tags. Without it, the interruption harness is excluded because its own CI job runs it in shards.
+    [string[]] $Tag
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -10,6 +14,8 @@ $configuration = New-PesterConfiguration
 $configuration.Run.Path = Join-Path $PSScriptRoot 'tests'
 $configuration.Run.PassThru = $true
 $configuration.Output.Verbosity = 'Detailed'
+if ($Tag) { $configuration.Filter.Tag = $Tag }
+else { $configuration.Filter.ExcludeTag = 'Interruption' }
 if ($CI) {
     $configuration.TestResult.Enabled = $true
     $configuration.TestResult.OutputPath = Join-Path $PSScriptRoot '../artifacts/pester.xml'

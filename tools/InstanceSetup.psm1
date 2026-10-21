@@ -1989,6 +1989,7 @@ function Format-SetupPermission {
     return (@($Permission.Keys | Sort-Object | ForEach-Object { "$_=$($Permission[$_])" }) -join ', ')
 }
 
+# security-check: setup-app-permission
 function Test-SetupAppPermission {
     [CmdletBinding()]
     [OutputType([bool])]

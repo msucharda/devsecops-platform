@@ -215,6 +215,7 @@ function Test-BootstrapDesiredValue {
     return $Actual -ceq $Desired
 }
 
+# security-check: azure-unconditional-role
 function Assert-BootstrapUnconditionalRole {
     [CmdletBinding()]
     param([Parameter(Mandatory)][System.Collections.IDictionary] $Assignment)

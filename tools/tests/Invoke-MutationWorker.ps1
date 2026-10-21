@@ -1,0 +1,58 @@
+#Requires -Version 7.4
+<#
+.SYNOPSIS
+Runs mutation jobs in one process: writes each mutant into the repository copy, runs the configured tests and restores the file.
+
+.DESCRIPTION
+Each job holds the check, the file, the mutated text (null for a baseline) and the Pester tests. Before every job the worker
+removes the modules loaded from the copy so that the tests import the current file. Results are appended as JSON lines,
+so a killed worker keeps the results of finished jobs.
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string] $RepoPath,
+    [Parameter(Mandatory)][string] $JobsPath,
+    [Parameter(Mandatory)][string] $ResultPath
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$requirements = Import-PowerShellDataFile (Join-Path $RepoPath 'tools/requirements.psd1')
+Import-Module Pester -RequiredVersion $requirements.Development.Pester
+
+$RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
+$prefix = $RepoPath.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+$jobs = @(Get-Content -LiteralPath $JobsPath -Raw | ConvertFrom-Json -AsHashtable)
+foreach ($job in $jobs) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $result = [ordered]@{ Id = $job['Id']; Passed = 0; Failed = 0; Errors = 0; Failures = @(); Seconds = 0 }
+    $target = Join-Path $RepoPath $job['File']
+    $original = [IO.File]::ReadAllBytes($target)
+    try {
+        Get-Module | Where-Object { $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) } | Remove-Module -Force
+        if ($null -ne $job['Text']) { [IO.File]::WriteAllText($target, $job['Text'], [Text.UTF8Encoding]::new($false)) }
+        foreach ($test in @($job['Tests'])) {
+            $configuration = New-PesterConfiguration
+            $configuration.Run.Path = Join-Path $RepoPath $test['Path']
+            $configuration.Run.PassThru = $true
+            $configuration.Run.SkipRemainingOnFailure = 'Run'
+            $configuration.Filter.FullName = [string[]] @($test['FullName'])
+            $configuration.Output.Verbosity = 'None'
+            $run = Invoke-Pester -Configuration $configuration
+            $result.Passed += $run.PassedCount
+            $result.Failed += $run.FailedCount
+            $result.Errors += $run.FailedContainersCount + $run.FailedBlocksCount
+            $result.Failures += @($run.Failed | Select-Object -First 1 | ForEach-Object { $_.ExpandedPath })
+            if ($run.FailedCount -gt 0) { break }
+        }
+    }
+    catch {
+        $result.Errors += 1
+        $result.Failures += @($_.Exception.Message)
+    }
+    finally {
+        [IO.File]::WriteAllBytes($target, $original)
+    }
+    $result.Seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1)
+    Add-Content -LiteralPath $ResultPath -Value (ConvertTo-Json -InputObject $result -Depth 5 -Compress)
+}
