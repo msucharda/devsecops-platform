@@ -47,6 +47,8 @@ function Initialize-CodeSecurityStub {
         AttachStatus          = 'attached'
         AttachSkip            = @()
         PushProtectionIgnored = $false
+        AttachHiddenReads     = 0
+        ConcurrentPatternWrites = 0
         TotalCountOffset      = 0
         Requests              = [Collections.Generic.List[string]]::new()
         Bodies                = [Collections.Generic.List[object]]::new()
@@ -258,6 +260,10 @@ function Invoke-StubRoute {
         else {
             foreach ($repository in $State.Repositories.Values) { if ($repository.status -ceq 'attaching') { $repository.status = $State.AttachStatus } }
         }
+        if ($State.AttachHiddenReads -gt 0) {
+            $State.AttachHiddenReads--
+            return Get-StubPage -State $State -Path $Path -Query $Query -Items @()
+        }
         $items = @(foreach ($entry in $State.Repositories.GetEnumerator()) {
             if ($entry.Value.configuration -ne $id) { continue }
             $item = (Get-GitHubApiFixture -Name code-security/get-repositories-for-configuration)[0]
@@ -336,6 +342,11 @@ function Invoke-StubRoute {
         return ConvertTo-StubReply -Status 200 -Body $reply
     }
     if ($route -cmatch "^PATCH /orgs/$org/secret-scanning/pattern-configurations$") {
+        if ($State.ConcurrentPatternWrites -gt 0) {
+            # Another writer changed the organization pattern configuration between the read and this write.
+            $State.ConcurrentPatternWrites--
+            $State.PatternConfigVersion++
+        }
         if ($Request['pattern_config_version'] -cne "p$($State.PatternConfigVersion)") { return ConvertTo-StubReply -Status 409 -Body @{ message = 'Conflict' } }
         foreach ($setting in @($Request['custom_pattern_settings'])) {
             $pattern = $State.Patterns | Where-Object { "cp_$($_['id'])" -ceq $setting['token_type'] } | Select-Object -First 1

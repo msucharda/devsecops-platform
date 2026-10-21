@@ -239,8 +239,16 @@ Describe 'CodeSecurity module against the documented GitHub API' {
         It 'fails when the attach leaves a repository of the installation without the configuration' {
             $stub.AttachSkip = @('demo/lib')
 
-            { Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration) } |
+            { Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration) -AttachmentTimeoutSeconds 0 } |
                 Should -Throw '*is not attached to: demo/lib.'
+        }
+
+        It 'waits until the attachment records of the asynchronous attach appear' {
+            $stub.AttachHiddenReads = 2
+
+            Set-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Configuration (Get-TestConfiguration) -AttachmentIntervalSeconds 0
+
+            Should -Invoke -ModuleName CodeSecurity Start-Sleep -Times 2 -Exactly
         }
 
         It 'waits until no repository is attaching' {
@@ -381,6 +389,22 @@ Describe 'CodeSecurity module against the documented GitHub API' {
 
             $stub.Patterns[0]['push_protection_enabled'] | Should -BeTrue
             @($stub.Bodies | Where-Object { $_.Method -cne 'GET' }) | Should -BeNullOrEmpty
+        }
+
+        It 'retries push protection after a concurrent change of the pattern configuration' {
+            $stub.ConcurrentPatternWrites = 2
+
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+
+            $stub.Patterns[0]['push_protection_enabled'] | Should -BeTrue
+            @(Get-StubWrite PATCH '/pattern-configurations$').Count | Should -Be 3
+        }
+
+        It 'fails after five conflicting writes of the pattern configuration' {
+            $stub.ConcurrentPatternWrites = 5
+
+            { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } | Should -Throw '*HTTP 409*'
+            @(Get-StubWrite PATCH '/pattern-configurations$').Count | Should -Be 5
         }
 
         It 'fails when the pattern does not report push protection after it was enabled' {

@@ -14,6 +14,7 @@ $script:SuccessfulAttachmentStatuses = @('attached', 'enforced')
 # Documented enum of the attachment status; any other value is unreadable state.
 $script:AttachmentStatuses = @('attached', 'attaching', 'detached', 'removed', 'enforced', 'failed', 'updating', 'removed_by_enterprise', 'enterprise_enforced')
 $script:BypassModes = @('ALWAYS', 'EXEMPT')
+$script:PatternConfigAttempts = 5
 # Documented defaults of POST /orgs/{org}/secret-scanning/custom-patterns; a null delimiter means the default.
 $script:DefaultStartDelimiter = '\A|[^0-9A-Za-z]'
 $script:DefaultEndDelimiter = '\z|[^0-9A-Za-z]'
@@ -321,19 +322,21 @@ function Wait-CodeSecurityAttachment {
     while ($true) {
         $repositories = Get-CodeSecurityConfigurationRepository -ApiUrl $ApiUrl -Organization $Organization -ConfigurationId $ConfigurationId
         $pending = @($repositories | Where-Object { $_['status'] -cin $script:PendingAttachmentStatuses })
+        $uncovered = @()
         if ($pending.Count -eq 0) {
             $unsuccessful = @($repositories | Where-Object { $_['status'] -cnotin $script:SuccessfulAttachmentStatuses } | ForEach-Object { "$($_['repository']) ($($_['status']))" })
             if ($unsuccessful.Count -gt 0) {
                 throw "Configuration $ConfigurationId in '$Organization' did not attach to: $($unsuccessful -join ', ')."
             }
+            # The attach is asynchronous (HTTP 202); a repository without a record yet may still appear, so keep polling until the deadline.
             $uncovered = Get-UncoveredRepository -Inventory (Get-CodeSecurityRepositoryInventory -ApiUrl $ApiUrl -Organization $Organization) -Attached $repositories
-            if ($uncovered.Count -gt 0) {
-                throw "Configuration $ConfigurationId in '$Organization' is not attached to: $($uncovered -join ', ')."
-            }
-            return
+            if ($uncovered.Count -eq 0) { return }
         }
         if ([DateTime]::UtcNow -ge $deadline) {
-            throw "Configuration $ConfigurationId in '$Organization' still has $($pending.Count) repositories attaching or updating."
+            if ($pending.Count -gt 0) {
+                throw "Configuration $ConfigurationId in '$Organization' still has $($pending.Count) repositories attaching or updating."
+            }
+            throw "Configuration $ConfigurationId in '$Organization' is not attached to: $($uncovered -join ', ')."
         }
         Start-Sleep -Seconds $IntervalSeconds
     }
@@ -439,17 +442,27 @@ function Set-CustomPattern {
     $current = (Get-CustomPatternByName -ApiUrl $ApiUrl -Organization $Organization)[$name]
     if (-not $current) { throw "Custom pattern '$name' is missing in '$Organization' after it was written." }
     if ($current['push_protection_enabled'] -eq $true) { return }
-    $found = Get-CustomPatternOverride -ApiUrl $ApiUrl -Organization $Organization -Pattern $current
-    if (-not $found.Override -or -not $found.Override['token_type'] -or -not $found.Version) {
-        throw "Custom pattern '$name' in '$Organization' has no push protection setting; it is in state '$($current['state'])'. Publish the pattern and rerun the apply."
+    # pattern_config_version guards the organization-wide configuration; Terraform writes patterns in parallel, so a 409 means re-read and retry.
+    for ($attempt = 1; ; $attempt++) {
+        $found = Get-CustomPatternOverride -ApiUrl $ApiUrl -Organization $Organization -Pattern $current
+        if (-not $found.Override -or -not $found.Override['token_type'] -or -not $found.Version) {
+            throw "Custom pattern '$name' in '$Organization' has no push protection setting; it is in state '$($current['state'])'. Publish the pattern and rerun the apply."
+        }
+        $setting = [ordered]@{ token_type = $found.Override['token_type'] }
+        if ($found.Override['custom_pattern_version']) { $setting['custom_pattern_version'] = $found.Override['custom_pattern_version'] }
+        $setting['push_protection_setting'] = 'enabled'
+        try {
+            $null = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method PATCH -Path "/orgs/$Organization/secret-scanning/pattern-configurations" -Body ([ordered]@{
+                    pattern_config_version  = $found.Version
+                    custom_pattern_settings = @($setting)
+                })
+            break
+        }
+        catch {
+            if ($attempt -ge $script:PatternConfigAttempts -or $_.Exception.Message -cnotlike '*HTTP 409*') { throw }
+            Start-Sleep -Seconds (Get-Random -Minimum 1 -Maximum 4)
+        }
     }
-    $setting = [ordered]@{ token_type = $found.Override['token_type'] }
-    if ($found.Override['custom_pattern_version']) { $setting['custom_pattern_version'] = $found.Override['custom_pattern_version'] }
-    $setting['push_protection_setting'] = 'enabled'
-    $null = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method PATCH -Path "/orgs/$Organization/secret-scanning/pattern-configurations" -Body ([ordered]@{
-            pattern_config_version  = $found.Version
-            custom_pattern_settings = @($setting)
-        })
     $verified = (Get-CustomPatternByName -ApiUrl $ApiUrl -Organization $Organization)[$name]
     if (-not $verified -or $verified['push_protection_enabled'] -ne $true) {
         throw "Custom pattern '$name' in '$Organization' does not report push protection after it was enabled."
