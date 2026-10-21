@@ -205,12 +205,13 @@ function Get-CustomPatternByName {
     param([Parameter(Mandatory)][string] $ApiUrl, [Parameter(Mandatory)][string] $Organization)
 
     $patterns = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method GET -AllPages -Path "/orgs/$Organization/secret-scanning/custom-patterns"
-    $byName = [ordered]@{}
+    # Terraform keys patterns by name case-sensitively; [ordered] would match a differently cased GitHub pattern.
+    $byName = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     foreach ($pattern in $patterns) {
         $name = [string] $pattern['name']
         if (-not $name) { throw "Organization '$Organization' returned a custom pattern without name." }
         Assert-CodeSecurityId -Value $pattern['id'] -Description "Custom pattern '$name' in '$Organization'"
-        if ($byName.Contains($name)) { throw "Organization '$Organization' has more than one custom pattern named '$name'." }
+        if ($byName.ContainsKey($name)) { throw "Organization '$Organization' has more than one custom pattern named '$name'." }
         $byName[$name] = $pattern
     }
     return $byName
@@ -289,7 +290,7 @@ function Get-CodeSecurityState {
         [ordered]@{ default_for_new_repos = [string] $default['default_for_new_repos']; configuration_id = [string] $default['configuration']['id'] }
     })
 
-    $patterns = [ordered]@{}
+    $patterns = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     foreach ($entry in (Get-CustomPatternByName -ApiUrl $ApiUrl -Organization $Organization).GetEnumerator()) {
         $content = ConvertTo-CustomPatternContent -Pattern $entry.Value
         $content['slug'] = [string] $entry.Value['slug']

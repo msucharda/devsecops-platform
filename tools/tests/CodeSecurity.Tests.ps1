@@ -434,6 +434,22 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } | Should -Throw '*more than one custom pattern*'
         }
 
+        It 'does not adopt a pattern whose name differs only in case' {
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+            $original = $stub.Patterns[0]
+            $stub.Bodies.Clear()
+            $pattern = Get-TestPattern -Pattern 'plat_[a-z]{40}'
+            $pattern['name'] = 'platform token'
+
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern $pattern
+
+            $stub.Patterns.Count | Should -Be 2
+            $original['name'] | Should -BeExactly 'Platform token'
+            $original['pattern'] | Should -Be 'plat_[A-Za-z0-9]{32}'
+            Get-StubWrite PATCH '/custom-patterns/' | Should -BeNullOrEmpty
+            (Get-StubWrite POST '/custom-patterns$')[0].Body['patterns'][0]['name'] | Should -BeExactly 'platform token'
+        }
+
         It 'refuses a pattern without <Field>' -ForEach @(@{ Field = 'name' }, @{ Field = 'pattern' }) {
             $pattern = Get-TestPattern
             $pattern[$Field] = ''
@@ -462,6 +478,16 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             Remove-CustomPattern -ApiUrl $apiUrl -Organization demo -Name 'Platform token'
 
             @($stub.Bodies | Where-Object { $_.Method -cne 'GET' }) | Should -BeNullOrEmpty
+        }
+
+        It 'does not delete a pattern whose name differs only in case' {
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+            $stub.Bodies.Clear()
+
+            Remove-CustomPattern -ApiUrl $apiUrl -Organization demo -Name 'platform token'
+
+            $stub.Patterns.Count | Should -Be 1
+            Get-StubWrite DELETE '/custom-patterns$' | Should -BeNullOrEmpty
         }
 
         It 'can be repeated when the delete response is lost' {
@@ -551,6 +577,22 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             $state.custom_patterns['Platform token'].pattern | Should -Be 'plat_[A-Za-z0-9]{32}'
             $state.custom_patterns['Platform token'].state | Should -Be 'published'
             $state.custom_patterns['Platform token'].push_protection_enabled | Should -BeTrue
+        }
+
+        It 'keeps custom patterns whose names differ only in case apart in the serialized state' {
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+            $lower = Get-TestPattern -Pattern 'plat_[a-z]{40}'
+            $lower['name'] = 'platform token'
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern $lower
+
+            $state = Get-CodeSecurityState -ApiUrl $apiUrl -Organization demo -ConfigurationName platform-baseline
+            # Same serialization as Read-CodeSecurityState.ps1; System.Text.Json keeps keys case-sensitive.
+            $json = [Text.Json.JsonDocument]::Parse((ConvertTo-Json -InputObject $state -Depth 50 -Compress))
+            $patterns = $json.RootElement.GetProperty('custom_patterns')
+
+            @($patterns.EnumerateObject() | ForEach-Object Name) | Should -BeExactly @('Platform token', 'platform token')
+            $patterns.GetProperty('Platform token').GetProperty('pattern').GetString() | Should -Be 'plat_[A-Za-z0-9]{32}'
+            $patterns.GetProperty('platform token').GetProperty('pattern').GetString() | Should -Be 'plat_[a-z]{40}'
         }
 
         It 'reports repositories bound to another configuration' {

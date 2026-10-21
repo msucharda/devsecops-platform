@@ -284,9 +284,13 @@ function Invoke-StubRoute {
             if (@($State.Patterns | Where-Object { $_['name'] -ceq $item['name'] }).Count) {
                 return ConvertTo-StubReply -Status 422 -Body @{ message = 'Validation failed'; validation_errors = @() }
             }
+            $id = ++$State.NextId
+            # The slug format is undocumented; the stub keeps it unique so that only the name decides the match.
+            $slug = $item['name'].ToLowerInvariant() -replace '[^a-z0-9]+', '-'
+            if (@($State.Patterns | Where-Object { $_['slug'] -ceq $slug }).Count) { $slug = "$slug-$id" }
             $pattern = @{
-                id = ++$State.NextId; revision = 1; name = $item['name']; pattern = $item['pattern']
-                slug = ($item['name'].ToLowerInvariant() -replace '[^a-z0-9]+', '-'); state = $State.CreatedPatternState
+                id = $id; revision = 1; name = $item['name']; pattern = $item['pattern']
+                slug = $slug; state = $State.CreatedPatternState
                 push_protection_enabled = $false; start_delimiter = $item['start_delimiter']; end_delimiter = $item['end_delimiter']
                 must_match = $item['must_match']; must_not_match = $item['must_not_match']
             }
