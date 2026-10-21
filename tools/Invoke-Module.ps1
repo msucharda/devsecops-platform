@@ -14,7 +14,9 @@ param(
     [string] $PrerequisiteOutputsPath,
     [string] $ArtifactsPath = (Join-Path (Get-Location) 'artifacts/module-outputs'),
     [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY,
-    [string] $GitHubOutputPath
+    [string] $GitHubOutputPath,
+    # Owner of the instance repository; the organizations of the instance are derived from it.
+    [string] $PlatformOrganization
 )
 
 Set-StrictMode -Version Latest
@@ -149,6 +151,10 @@ $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
 if ($Module -cnotin (Get-PlatformModuleSelection -Instance $instance -Modules $modules)) {
     throw "Module '$Module' is not selected in $.modules or required by a selected module."
 }
+$organizations = $null
+if ($PSBoundParameters.ContainsKey('PlatformOrganization')) {
+    $organizations = Get-PlatformInstanceOrganization -InstanceName $instance['instance']['name'] -PlatformOrganization $PlatformOrganization
+}
 $moduleRoot = [IO.Path]::GetFullPath((Join-Path $ModulesPath $Module))
 $outputName = $Module
 $stateKey = 'terraform.tfstate'
@@ -277,6 +283,9 @@ if ($instance.Contains('bootstrap')) {
         host = $instance['bootstrap']['githubHost']
         enterprise = $instance['bootstrap']['enterprise']
     }
+}
+if ($organizations) {
+    $variables.instance.organizations = $organizations
 }
 if ($instance['modules'].Contains($Module) -and $instance['modules'][$Module].Contains('parameters')) {
     foreach ($name in $instance['modules'][$Module]['parameters'].PSBase.Keys) {

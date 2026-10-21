@@ -167,7 +167,7 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'emu-identity' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'emu-identity' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -235,7 +235,7 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -303,7 +303,7 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -Rulesets
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -Rulesets
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -398,7 +398,7 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'emu-identity' -Action apply -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'emu-identity' -Action apply -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -466,12 +466,12 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action apply -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action apply -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
       - name: Apply the complete rulesets root including bypass configuration
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action apply -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -Rulesets
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action apply -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -Rulesets
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

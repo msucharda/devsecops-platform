@@ -87,6 +87,76 @@ Describe 'Offline schema reference boundary through instance validation' {
     }
 }
 
+Describe 'Organizations module parameters' {
+    BeforeAll {
+        $modulesPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules'
+        function Write-OrganizationsInstance {
+            param([System.Collections.IDictionary] $Parameters)
+
+            $instance = ConvertFrom-Yaml (Get-Content -LiteralPath $example -Raw)
+            $instance.modules = @{ organizations = @{ parameters = $Parameters } }
+            $path = Join-Path $TestDrive "organizations-$([guid]::NewGuid().ToString('N')).yaml"
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+            $path
+        }
+        function New-OrganizationsParameters {
+            [ordered]@{
+                admin_logins = @('alice_demo', 'bob-smith_demo')
+                billing_email = 'billing@example.test'
+                app_client_ids = @('Iv23liExample01', 'Iv1.0123456789abcdef')
+                adopt_organizations = @('actions')
+            }
+        }
+    }
+
+    It 'accepts explicit EMU owners, a billing email, App client IDs and adoption kinds' {
+        $path = Write-OrganizationsInstance -Parameters (New-OrganizationsParameters)
+
+        $validated = & $validator -InstancePath $path -ModulesPath $modulesPath | ConvertFrom-Json
+
+        $validated.modules.organizations.parameters.admin_logins | Should -Be @('alice_demo', 'bob-smith_demo')
+        $validated.modules.organizations.parameters.adopt_organizations | Should -Be @('actions')
+    }
+
+    It 'requires the organizations parameters <Missing>' -ForEach @(
+        @{ Missing = 'parameters' }
+        @{ Missing = 'admin_logins' }
+        @{ Missing = 'billing_email' }
+    ) {
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath $example -Raw)
+        $parameters = New-OrganizationsParameters
+        $instance.modules = @{ organizations = @{ parameters = $parameters } }
+        if ($Missing -eq 'parameters') { $instance.modules.organizations.Remove('parameters') } else { $parameters.Remove($Missing) }
+        $path = Join-Path $TestDrive 'missing.yaml'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+
+        { & $validator -InstancePath $path -ModulesPath $modulesPath } | Should -Throw "*$Missing*"
+    }
+
+    It 'rejects organizations parameter <Field> = <Case>' -ForEach @(
+        @{ Field = 'admin_logins'; Case = 'empty list'; Value = @() }
+        @{ Field = 'admin_logins'; Case = 'duplicate'; Value = @('alice_demo', 'alice_demo') }
+        @{ Field = 'admin_logins'; Case = 'no EMU shortcode'; Value = @('alice') }
+        @{ Field = 'admin_logins'; Case = 'empty login'; Value = @('') }
+        @{ Field = 'admin_logins'; Case = 'trailing hyphen'; Value = @('alice-_demo') }
+        @{ Field = 'admin_logins'; Case = 'too long'; Value = @(('a' * 35) + '_demo') }
+        @{ Field = 'admin_logins'; Case = 'string instead of list'; Value = 'alice_demo' }
+        @{ Field = 'billing_email'; Case = 'no domain'; Value = 'billing@example' }
+        @{ Field = 'billing_email'; Case = 'empty'; Value = '' }
+        @{ Field = 'app_client_ids'; Case = 'blank'; Value = @('') }
+        @{ Field = 'app_client_ids'; Case = 'path characters'; Value = @('Iv1/../x') }
+        @{ Field = 'adopt_organizations'; Case = 'organization login'; Value = @('demo-actions') }
+        @{ Field = 'adopt_organizations'; Case = 'platform organization'; Value = @('platform') }
+        @{ Field = 'unknown_parameter'; Case = 'undeclared'; Value = 'x' }
+    ) {
+        $parameters = New-OrganizationsParameters
+        $parameters[$Field] = $Value
+        $path = Write-OrganizationsInstance -Parameters $parameters
+
+        { & $validator -InstancePath $path -ModulesPath $modulesPath } | Should -Throw '*$.modules.organizations.parameters*'
+    }
+}
+
 Describe 'Instance configuration validation' {
     It 'resolves trusted sibling schema definitions through the public instance validator without runtime defaults' {
         $module = Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'PlatformTools.psm1') -Force -PassThru

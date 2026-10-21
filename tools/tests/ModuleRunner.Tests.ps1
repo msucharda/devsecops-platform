@@ -145,6 +145,33 @@ Describe 'Module runner with local Terraform' {
         (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).github_host | Should -Be 'none'
     }
 
+    It 'passes the instance organizations derived from the platform organization <Organization>' -ForEach @(
+        @{ Organization = 'demo-a1b2c3-platform'; Identifier = 'a1b2c3'; Actions = 'demo-a1b2c3-actions'; Workloads = 'demo-a1b2c3-workloads' }
+        @{ Organization = 'demo-platform'; Identifier = $null; Actions = 'demo-actions'; Workloads = 'demo-workloads' }
+    ) {
+        $result = & $runner -Module foundation -Action plan -PlatformOrganization $Organization @arguments 6>$null
+
+        $organizations = (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).organizations
+        $organizations.deploymentIdentifier | Should -Be $Identifier
+        $organizations.platform | Should -BeExactly $Organization
+        $organizations.actions | Should -BeExactly $Actions
+        $organizations.workloads | Should -BeExactly $Workloads
+    }
+
+    It 'refuses a platform organization of another instance before Terraform' {
+        function terraform { throw 'Terraform must not run.' }
+
+        { & $runner -Module foundation -Action plan -PlatformOrganization 'other-a1b2c3-platform' @arguments 6>$null } |
+            Should -Throw "*does not match instance.name 'demo'*"
+        Test-Path -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json') | Should -BeFalse
+    }
+
+    It 'passes no instance organizations without a platform organization' {
+        $result = & $runner -Module foundation -Action plan @arguments 6>$null
+
+        (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).organizations | Should -Be 'none'
+    }
+
     It 'exposes the installation token to Terraform as the REST provider bearer only during the run' {
         $nativeTerraform = (Get-Command terraform -CommandType Application).Source
         $previousToken = $env:GITHUB_TOKEN

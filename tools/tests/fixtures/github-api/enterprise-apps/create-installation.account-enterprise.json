@@ -1,0 +1,86 @@
+{
+  "source": {
+    "operation": "POST /enterprises/{enterprise}/apps/organizations/{org}/installations",
+    "operationId": "enterprise-apps/create-installation",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/organization-installations#install-a-github-app-on-an-enterprise-owned-organization",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 201,
+    "schema": "#/components/schemas/installation",
+    "variant": "account: anyOf[1] #/components/schemas/enterprise",
+    "note": "Documented account variant without login and type. The module rejects it because an organization installation must belong to the target organization."
+  },
+  "required": {
+    "": [
+      "id",
+      "app_id",
+      "app_slug",
+      "target_id",
+      "target_type",
+      "single_file_name",
+      "repository_selection",
+      "access_tokens_url",
+      "html_url",
+      "repositories_url",
+      "events",
+      "account",
+      "permissions",
+      "created_at",
+      "updated_at",
+      "suspended_by",
+      "suspended_at"
+    ],
+    "account": [
+      "id",
+      "node_id",
+      "name",
+      "slug",
+      "html_url",
+      "created_at",
+      "updated_at",
+      "avatar_url"
+    ]
+  },
+  "body": {
+    "id": 1,
+    "account": {
+      "id": 42,
+      "node_id": "MDEwOkVudGVycHJpc2U0Mg==",
+      "name": "Octo Business",
+      "slug": "octo-business",
+      "html_url": "https://github.com/enterprises/octo-business",
+      "created_at": "2019-01-26T19:01:12Z",
+      "updated_at": "2019-01-26T19:14:43Z",
+      "avatar_url": "https://github.com/images/error/octocat_happy.gif",
+      "website_url": "https://octo-business.example.com",
+      "description": "Enterprise example"
+    },
+    "access_tokens_url": "https://api.github.com/app/installations/1/access_tokens",
+    "repositories_url": "https://api.github.com/installation/repositories",
+    "html_url": "https://github.com/organizations/github/settings/installations/1",
+    "app_id": 1,
+    "target_id": 1,
+    "target_type": "Organization",
+    "permissions": {
+      "checks": "write",
+      "metadata": "read",
+      "contents": "read"
+    },
+    "events": [
+      "push",
+      "pull_request"
+    ],
+    "single_file_name": "config.yaml",
+    "has_multiple_single_files": true,
+    "single_file_paths": [
+      "config.yml",
+      ".github/issue_TEMPLATE.md"
+    ],
+    "repository_selection": "selected",
+    "created_at": "2017-07-08T22:18:44+02:00",
+    "updated_at": "2017-07-08T22:18:44+02:00",
+    "app_slug": "github-actions",
+    "suspended_at": null,
+    "suspended_by": null
+  }
+}
