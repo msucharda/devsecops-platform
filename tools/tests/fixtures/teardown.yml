@@ -274,7 +274,18 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Read whether every module state is empty before issuing GitHub tokens
+        id: state
+        shell: pwsh
+        run: |
+          $results = @(
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -Rulesets
+          )
+          $empty = $results.Count -eq 2 -and @($results | Where-Object { $_.Empty -isnot [bool] -or -not $_.Empty }).Count -eq 0
+          "empty=$($empty.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
       - name: Issue an apply-scoped enterprise App installation token
+        if: ${{ steps.state.outputs.empty != 'true' }}
         shell: pwsh
         env:
           PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -283,26 +294,31 @@ jobs:
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
         run: ./instance/platform/tools/New-PlatformGitHubToken.ps1 -Module 'enterprise-baseline' -Phase apply -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
       - name: Download outputs of service
+        if: ${{ steps.state.outputs.empty != 'true' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: teardown-outputs-service
           path: ./artifacts/prerequisites
       - name: Require main to still point to the dispatched commit
+        if: ${{ steps.state.outputs.empty != 'true' }}
         shell: pwsh
         env:
           TEARDOWN_MAIN_TOKEN: ${{ github.token }}
         run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
       - name: Destroy the isolated rulesets root first
+        if: ${{ steps.state.outputs.empty != 'true' }}
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
         run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action destroy -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -Rulesets
       - name: Require main to still point to the dispatched commit
+        if: ${{ steps.state.outputs.empty != 'true' }}
         shell: pwsh
         env:
           TEARDOWN_MAIN_TOKEN: ${{ github.token }}
         run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
       - name: Destroy module
+        if: ${{ steps.state.outputs.empty != 'true' }}
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}

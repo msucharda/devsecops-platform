@@ -35,7 +35,8 @@ variable "instance" {
   }
 }
 
-# The runner always passes this contract variable; #18 adds actions-catalog.
+# The runner always passes this contract variable; the module orders after organizations but does not read its outputs yet.
+# #18 adds actions-catalog.
 # tflint-ignore: terraform_unused_declarations
 variable "prerequisites" {
   description = "Public outputs of prerequisite modules supplied by the module runner."

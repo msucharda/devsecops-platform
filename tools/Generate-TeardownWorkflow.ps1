@@ -253,6 +253,27 @@ foreach ($manifest in $reversed) {
     }
     Add-ModuleJobPreamble -Job "destroy_$suffix" -Title "$name (destroy)" -Needs $needs -Condition $condition `
         -Environment "fromJSON(needs.select.outputs.applyEnvironments)['$name']"
+    $hasRulesets = $manifest['permissions']['githubApp'].Contains('rulesetPlan')
+    # Organization-scoped tokens fail once the organizations are deleted; a repeated teardown must still pass an already destroyed module.
+    $organizationScoped = @($manifest['permissions']['githubApp'].PSBase.Values |
+        Where-Object { $_['resources'].Contains('organizations') }).Count -gt 0
+    if ($organizationScoped) {
+        $stateRunner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action state $runnerArguments"
+        $stateCalls = @($stateRunner)
+        if ($hasRulesets) { $stateCalls += "$stateRunner -Rulesets" }
+        Add-WorkflowBlock @"
+      - name: Read whether every module state is empty before issuing GitHub tokens
+        id: state
+        shell: pwsh
+        run: |
+          `$results = @(
+$(($stateCalls | ForEach-Object { "            $_" }) -join "`n")
+          )
+          `$empty = `$results.Count -eq $($stateCalls.Count) -and @(`$results | Where-Object { `$_.Empty -isnot [bool] -or -not `$_.Empty }).Count -eq 0
+          "empty=`$(`$empty.ToString().ToLowerInvariant())" >> `$env:GITHUB_OUTPUT
+"@
+    }
+    $firstGuardedLine = $lines.Count
     Add-WorkflowBlock @"
       - name: Issue an apply-scoped enterprise App installation token
         shell: pwsh
@@ -273,7 +294,7 @@ foreach ($manifest in $reversed) {
 "@
     }
     $runner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action destroy $runnerArguments -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER"
-    if ($manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
+    if ($hasRulesets) {
         Add-TeardownMainCheck
         Add-WorkflowBlock @"
       - name: Destroy the isolated rulesets root first
@@ -290,6 +311,16 @@ foreach ($manifest in $reversed) {
         env:
           GITHUB_TOKEN: `${{ env.GH_TOKEN }}
         run: $runner
+"@
+    if ($organizationScoped) {
+        # Only the explicit result 'true' skips the token and destroy steps; a missing or other value runs them.
+        for ($index = $lines.Count - 1; $index -ge $firstGuardedLine; $index--) {
+            if ($lines[$index] -like '      - name: *') {
+                $lines.Insert($index + 1, "        if: `${{ steps.state.outputs.empty != 'true' }}")
+            }
+        }
+    }
+    Add-WorkflowBlock @"
       - name: Revoke the job installation tokens
         if: `${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh

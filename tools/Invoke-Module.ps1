@@ -3,7 +3,7 @@
 [OutputType([pscustomobject])]
 param(
     [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')][string] $Module,
-    [Parameter(Mandatory)][ValidateSet('plan', 'apply', 'destroy', 'output')][string] $Action,
+    [Parameter(Mandatory)][ValidateSet('plan', 'apply', 'destroy', 'output', 'state')][string] $Action,
     [switch] $Rulesets,
     [Parameter(Mandatory)][string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
@@ -166,7 +166,7 @@ if (-not (Test-Path -LiteralPath $moduleRoot -PathType Container)) {
     throw "Terraform root '$moduleRoot' does not exist."
 }
 $artifactFile = [IO.Path]::GetFullPath((Join-Path $ArtifactsPath "$outputName.json"))
-if (Test-Path -LiteralPath $artifactFile -PathType Leaf) {
+if ($Action -ne 'state' -and (Test-Path -LiteralPath $artifactFile -PathType Leaf)) {
     [IO.File]::Delete($artifactFile)
 }
 $organizations = $null
@@ -183,7 +183,7 @@ if ($Module -eq 'bootstrap' -and $Action -ne 'destroy') {
 if ($modules[$Module].Contains('manualPrerequisites')) {
     $declaredPrerequisites = @($modules[$Module]['manualPrerequisites'])
 }
-if ($declaredPrerequisites.Count -gt 0 -and $Action -ne 'destroy') {
+if ($declaredPrerequisites.Count -gt 0 -and $Action -notin @('destroy', 'state')) {
     Assert-PlatformManualPrerequisite -Instance $instance -Name $declaredPrerequisites -Subject "Module '$Module'"
 }
 $manualStates = [System.Collections.Generic.List[object]]::new()
@@ -293,7 +293,7 @@ if ($instance['modules'].Contains($Module) -and $instance['modules'][$Module].Co
     }
 }
 $prerequisites = @($modules[$Module]['prerequisites'])
-if ($Action -eq 'output') {
+if ($Action -in @('output', 'state')) {
     $prerequisites = @()
 }
 function Import-ModulePrerequisiteOutput {
@@ -354,6 +354,14 @@ try {
     $metadata = Get-Content -LiteralPath $backendMetadataPath -Raw | ConvertFrom-Json -AsHashtable
     if ($metadata['backend']['type'] -cne $Backend) {
         throw "Module '$Module' declares a different backend than '$Backend'."
+    }
+    if ($Action -eq 'state') {
+        # Teardown reads this before issuing GitHub tokens; only an empty state lets it skip the module.
+        return [pscustomobject]@{
+            Module = $Module
+            Action = $Action
+            Empty = [bool] (Test-ModuleStateEmpty)
+        }
     }
     $readOnly = $Action -eq 'output'
     if ($Action -eq 'destroy' -and (Test-ModuleStateEmpty)) {

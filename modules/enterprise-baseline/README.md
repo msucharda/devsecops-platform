@@ -2,7 +2,7 @@
 
 Modul nastaví automatizované kontroly v organizacích instance podle ADR 0016. Název modulu zachováváme. Enterprise kontroly, které App-only automatizace nepokrývá, jsou povinné ruční předpoklady, ne Terraform prostředky modulu.
 
-Předpoklady: `actions-catalog`. Manifest ho zatím nedeklaruje; doplní ho politika akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)).
+Předpoklady: `organizations` a `actions-catalog`. Manifest deklaruje `organizations`. Graf modulů proto spustí plan a apply tohoto modulu až po úspěšném modulu `organizations` a teardown ho odstraní před destroy modulu `organizations`. Pořadí nezávisí na názvech modulů. Modul výstupy `organizations` zatím nečte. Předpoklad `actions-catalog` manifest zatím nedeklaruje; doplní ho politika akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)).
 
 ## Stav implementace
 

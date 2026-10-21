@@ -1,6 +1,7 @@
 name: enterprise-baseline
 description: Organization controls of the instance organizations; enterprise controls outside App-only automation are manual prerequisites.
-prerequisites: []
+prerequisites:
+  - organizations
 manualPrerequisites:
   - privateInternalForksDisabled
   - repositoryManagementPoliciesEnforced

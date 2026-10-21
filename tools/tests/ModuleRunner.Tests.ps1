@@ -593,6 +593,79 @@ terraform {
         { & $runner -Module application -Action destroy @arguments 6>$null } | Should -Throw "*Missing prerequisite outputs for 'foundation'*"
     }
 
+    It 'reads whether a dependent state is empty without tokens, prerequisite outputs or manual confirmations' {
+        $manifestFile = Join-Path $modules 'application/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestFile -Raw)
+        $manifest.manualPrerequisites = @('repositoryManagementPoliciesEnforced')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestFile
+        $instance.modules = @{ application = @{} }
+        $instance.teardown = @{ allowed = $true }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        Add-Content -LiteralPath (Join-Path $modules 'application/main.tf') -Value 'resource "terraform_data" "fixture" { input = var.instance.name }'
+        $null = & $runner -Module foundation -Action apply @arguments 6>$null
+        $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
+        $null = & $runner -Module application -Action apply @arguments 6>$null
+        Remove-Item -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json')
+        $artifact = Join-Path $arguments.ArtifactsPath 'application.json'
+        $artifactBefore = [IO.File]::ReadAllText($artifact)
+        $instance.manualPrerequisites.repositoryManagementPoliciesEnforced = $false
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $statePath = Join-Path $arguments.StatePath 'application.tfstate'
+        $stateBefore = [IO.File]::ReadAllText($statePath)
+        $previousToken = $env:GITHUB_TOKEN
+        $env:GITHUB_TOKEN = $null
+        try {
+            $applied = & $runner -Module application -Action state @arguments 6>$null 3>$null
+        }
+        finally {
+            $env:GITHUB_TOKEN = $previousToken
+        }
+
+        $applied.Module | Should -Be 'application'
+        $applied.Action | Should -Be 'state'
+        $applied.Empty | Should -BeExactly $false
+        [IO.File]::ReadAllText($statePath) | Should -BeExactly $stateBefore
+        [IO.File]::ReadAllText($artifact) | Should -BeExactly $artifactBefore
+
+        $null = & $runner -Module foundation -Action output @arguments 6>$null
+        $null = & $runner -Module application -Action destroy @arguments 6>$null 3>$null
+        Remove-Item -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json')
+
+        $destroyed = & $runner -Module application -Action state @arguments 6>$null 3>$null
+
+        $destroyed.Empty | Should -BeExactly $true
+    }
+
+    It 'reads a never applied module state as empty' {
+        $instance.modules = @{ unknown = @{} }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        $result = & $runner -Module unknown -Action state @arguments 6>$null
+
+        $result.Empty | Should -BeExactly $true
+    }
+
+    It 'does not read a state with only deposed instances as empty' {
+        $instance.modules = @{ application = @{} }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        Add-Content -LiteralPath (Join-Path $modules 'application/main.tf') -Value 'resource "terraform_data" "fixture" { input = var.instance.name }'
+        $null = & $runner -Module foundation -Action apply @arguments 6>$null
+        $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
+        $null = & $runner -Module application -Action apply @arguments 6>$null
+        $statePath = Join-Path $arguments.StatePath 'application.tfstate'
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+        foreach ($resource in $state['resources']) {
+            foreach ($object in $resource['instances']) { $object['deposed'] = '00000001' }
+        }
+        $state['outputs'] = @{}
+        $state['serial']++
+        [IO.File]::WriteAllText($statePath, (ConvertTo-Json $state -Depth 100))
+
+        $result = & $runner -Module application -Action state @arguments 6>$null
+
+        $result.Empty | Should -BeExactly $false
+    }
+
     It 'requires prerequisite outputs to destroy a dependent with remaining resources' {
         $instance.modules = @{ application = @{} }
         $instance.teardown = @{ allowed = $true }
