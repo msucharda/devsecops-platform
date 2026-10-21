@@ -409,7 +409,8 @@ Describe 'Instance setup wizard' {
                 Mock Show-SetupTable { }
                 Mock Confirm-SetupAction { $false }
                 Mock Invoke-SetupGraphQL { throw 'Declined policies must not be changed.' }
-                { Invoke-StepEnterprisePolicy -Setup $Setup } | Should -Throw '*not enforced*'
+                $policySetup = $Setup
+                { Invoke-StepEnterprisePolicy -Setup $policySetup } | Should -Throw '*not enforced*'
             }
             $setup.Facts.RepositoryPoliciesDisabled | Should -BeFalse
         }

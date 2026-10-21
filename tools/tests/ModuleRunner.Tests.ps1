@@ -23,6 +23,27 @@ Describe 'Module runner with local Terraform' {
             ArtifactsPath = (Join-Path $directory 'outputs')
             JobSummaryPath = (Join-Path $directory 'summary.md')
         }
+        function Write-OrganizationBinding([string[]] $Organizations) {
+            $manifestPath = Join-Path $modules 'foundation/module.yaml'
+            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+            $manifest.permissions.githubApp = @{
+                plan = @{ permissions = @{ organization_administration = 'read' }; resources = @{ organizations = 'target_organizations' } }
+                apply = @{ permissions = @{ organization_administration = 'write' }; resources = @{ organizations = 'target_organizations' } }
+            }
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+            $instance.modules.foundation.parameters.target_organizations = $Organizations
+            $instance.githubApps = @{
+                reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{ organization_administration = 'read' }; resources = @{ organizations = $Organizations } }
+                writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = $Organizations } }
+            }
+            $instance.credentials = @{
+                foundation = @{
+                    plan = @{ environment = 'foundation-plan'; githubApp = 'reader' }
+                    apply = @{ environment = 'foundation-apply'; githubApp = 'writer' }
+                }
+            }
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        }
     }
 
     It 'applies a module in its root with instance data and module parameters' {
@@ -129,9 +150,9 @@ Describe 'Module runner with local Terraform' {
         $previousToken = $env:GITHUB_TOKEN
         $previousBearer = $env:REST_API_BEARER
         $previousExitCode = $global:LASTEXITCODE
-        $global:observedBearers = [System.Collections.Generic.List[string]]::new()
+        $observedBearers = [System.Collections.Generic.List[string]]::new()
         function terraform {
-            $global:observedBearers.Add([string] $env:REST_API_BEARER)
+            $observedBearers.Add([string] $env:REST_API_BEARER)
             & $nativeTerraform @args
             $global:LASTEXITCODE = $LASTEXITCODE
         }
@@ -141,8 +162,8 @@ Describe 'Module runner with local Terraform' {
 
             $null = & $runner -Module foundation -Action plan @arguments 6>$null
 
-            $global:observedBearers.Count | Should -BeGreaterThan 0
-            @($global:observedBearers | Sort-Object -Unique) | Should -Be @('installation-token')
+            $observedBearers.Count | Should -BeGreaterThan 0
+            @($observedBearers | Sort-Object -Unique) | Should -Be @('installation-token')
             $env:REST_API_BEARER | Should -BeExactly 'outer-value'
         }
         finally {
@@ -158,9 +179,9 @@ Describe 'Module runner with local Terraform' {
         $previousToken = $env:GITHUB_TOKEN
         $previousBearer = $env:REST_API_BEARER
         $previousExitCode = $global:LASTEXITCODE
-        $global:observedBearers = [System.Collections.Generic.List[string]]::new()
+        $observedBearers = [System.Collections.Generic.List[string]]::new()
         function terraform {
-            $global:observedBearers.Add([string] $env:REST_API_BEARER)
+            $observedBearers.Add([string] $env:REST_API_BEARER)
             if ($args -contains 'plan') { $global:LASTEXITCODE = 1; return 'interrupted' }
             & $nativeTerraform @args
             $global:LASTEXITCODE = $LASTEXITCODE
@@ -171,7 +192,7 @@ Describe 'Module runner with local Terraform' {
 
             { & $runner -Module foundation -Action plan @arguments 6>$null } | Should -Throw '*Terraform plan failed*'
 
-            @($global:observedBearers | Sort-Object -Unique) | Should -Be @('')
+            @($observedBearers | Sort-Object -Unique) | Should -Be @('')
             $env:REST_API_BEARER | Should -BeExactly 'unrelated-credential'
         }
         finally {
@@ -180,6 +201,52 @@ Describe 'Module runner with local Terraform' {
             $env:REST_API_BEARER = $previousBearer
             $global:LASTEXITCODE = $previousExitCode
         }
+    }
+
+    It '<Case> before Terraform for a REST provider root bound to <Count> target organizations' -ForEach @(
+        @{ Case = 'refuses'; Organizations = @('first', 'second'); Count = 2; Refused = $true }
+        @{ Case = 'proceeds'; Organizations = @('first'); Count = 1; Refused = $false }
+    ) {
+        Set-Content -LiteralPath (Join-Path $modules 'foundation/rest.tf') -Value @'
+terraform {
+  required_providers {
+    restapi = {
+      source = "Mastercard/restapi"
+    }
+  }
+}
+'@
+        Write-OrganizationBinding -Organizations $Organizations
+        $previousExitCode = $global:LASTEXITCODE
+        $terraformCalls = [System.Collections.Generic.List[string]]::new()
+        function terraform {
+            $terraformCalls.Add(($args -join ' '))
+            $global:LASTEXITCODE = 1
+            'stopped by test'
+        }
+        try {
+            if ($Refused) {
+                { & $runner -Module foundation -Action plan @arguments 6>$null } |
+                    Should -Throw "*exactly one organization in 'target_organizations' per run; got $Count*"
+                $terraformCalls.Count | Should -Be 0
+            }
+            else {
+                { & $runner -Module foundation -Action plan @arguments 6>$null } | Should -Throw '*Terraform init failed*'
+                $terraformCalls.Count | Should -Be 1
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath Function:\terraform
+            $global:LASTEXITCODE = $previousExitCode
+        }
+    }
+
+    It 'keeps multiple target organizations for a root without the REST provider' {
+        Write-OrganizationBinding -Organizations @('first', 'second')
+
+        $result = & $runner -Module foundation -Action plan @arguments 6>$null
+
+        $result.HasChanges | Should -BeTrue
     }
 
     It 'reports no changes after apply but publishes newly planned values without mutating state' {

@@ -271,6 +271,20 @@ foreach ($prerequisite in $modules[$Module]['prerequisites']) {
     $variables['prerequisites'][$prerequisite] = $values
 }
 
+$usesRestProvider = @(Get-ChildItem -LiteralPath $moduleRoot -Filter '*.tf' -File |
+    Select-String -Pattern 'source\s*=\s*"(registry\.terraform\.io/)?mastercard/restapi"').Count -gt 0
+if ($usesRestProvider -and $modules[$Module]['permissions'].Contains('githubApp')) {
+    # Organization tokens are issued per organization, but the REST provider accepts a single bearer per run.
+    foreach ($phase in $modules[$Module]['permissions']['githubApp'].PSBase.Values) {
+        if (-not $phase['resources'].Contains('organizations')) { continue }
+        $parameter = [string] $phase['resources']['organizations']
+        $count = @($variables[$parameter] | Where-Object { $null -ne $_ }).Count
+        if ($count -ne 1) {
+            throw "Module '$Module' uses the REST provider and supports exactly one organization in '$parameter' per run; got $count. Multi-organization runs need one installation token per organization and are not supported yet."
+        }
+    }
+}
+
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) "platform-module-$([guid]::NewGuid())"
 [IO.Directory]::CreateDirectory($temporaryDirectory) | Out-Null
 $previousDataDirectory = $env:TF_DATA_DIR
