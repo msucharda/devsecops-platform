@@ -1,6 +1,6 @@
 # Zdrojový repozitář platformy je veřejný
 
-Zdrojový repozitář platformy na github.com je veřejný a má licenci MIT, stejně jako AVM a `Azure/alz`. Zákazník stáhne release bez přihlašovacích údajů. Attestaci release podepisuje veřejná instance Sigstore. Autor tak nespravuje přístup jednotlivých zákazníků.
+Zdrojový repozitář platformy na github.com je veřejný. Plánovaná licence je MIT, stejně jako u AVM a `Azure/alz`; do přidání souboru `LICENSE` repozitář licenci neuděluje. Zákazník stáhne release bez přihlašovacích údajů. Attestaci release podepisuje veřejná instance Sigstore. Autor tak nespravuje přístup jednotlivých zákazníků.
 
 ## Considered Options
 
