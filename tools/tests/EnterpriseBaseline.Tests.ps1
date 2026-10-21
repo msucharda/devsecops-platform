@@ -300,10 +300,6 @@ data "external" "code_security_state" {
             $null = $s.Configurations.Remove($c)
             $s.Defaults.public = $null; $s.Defaults.private_and_internal = $null
             foreach ($repository in $s.Repositories.Values) { $repository.configuration = $null; $repository.status = $null } } }
-        @{ Case = 'setting changed'; Message = 'does not match the managed settings'; Drift = {
-            param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['dependabot_alerts'] = 'disabled' } }
-        @{ Case = 'enforcement removed'; Message = 'does not match the managed settings'; Drift = {
-            param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['enforcement'] = 'unenforced' } }
         @{ Case = 'bypass reviewer changed'; Message = 'bypass reviewers'; Drift = {
             param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['secret_scanning_delegated_bypass_options']['reviewers'][0]['reviewer_id'] = 43 } }
         @{ Case = 'default removed for public repositories'; Message = 'not the only default'; Drift = { param($s) $s.Defaults.public = $null } }
@@ -323,5 +319,37 @@ data "external" "code_security_state" {
 
         $plan.ExitCode | Should -Be 1 -Because $plan.Output
         ($plan.Output -replace '\s+', ' ') | Should -BeLike "*$Message*"
+    }
+
+    It 'fails the plan when the managed setting <Field> is changed or missing' -ForEach @(
+        @{ Field = 'advanced_security'; Changed = 'disabled' }
+        @{ Field = 'dependency_graph'; Changed = 'disabled' }
+        @{ Field = 'dependabot_alerts'; Changed = 'disabled' }
+        @{ Field = 'dependabot_security_updates'; Changed = 'not_set' }
+        @{ Field = 'code_scanning_default_setup'; Changed = 'disabled' }
+        @{ Field = 'secret_scanning'; Changed = 'disabled' }
+        @{ Field = 'secret_scanning_push_protection'; Changed = 'disabled' }
+        @{ Field = 'secret_scanning_validity_checks'; Changed = 'not_set' }
+        @{ Field = 'secret_scanning_delegated_bypass'; Changed = 'disabled' }
+        @{ Field = 'enforcement'; Changed = 'unenforced' }
+    ) {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        $configuration = $stubState.CodeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }
+        $managed = $configuration[$Field]
+
+        $configuration[$Field] = $Changed
+        $changedPlan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+        $configuration.Remove($Field)
+        $missingPlan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+        $configuration[$Field] = $managed
+        $restoredPlan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+
+        foreach ($plan in $changedPlan, $missingPlan) {
+            $plan.ExitCode | Should -Be 1 -Because $plan.Output
+            ($plan.Output -replace '\s+', ' ') | Should -BeLike '*does not match the managed settings*'
+            ($plan.Output -replace '\s+', ' ') | Should -Not -BeLike '*bypass reviewers*'
+        }
+        $restoredPlan.ExitCode | Should -Be 0 -Because $restoredPlan.Output
     }
 }
