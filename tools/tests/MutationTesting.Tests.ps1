@@ -89,6 +89,26 @@ Describe 'Security check mutation testing' {
             $replacement | Should -Contain '$b=>($true)'
         }
 
+        It 'weakens the operands of a logical value that a <Case> guard checks' -ForEach @(
+            @{ Case = 'negated'; Guard = 'if (-not $ok) { return $false }' }
+            @{ Case = 'positive'; Guard = 'if ($ok) { return $true }' }
+        ) {
+            $function = Get-TestFunctionAst -Text "function Test-Sample { `$ok = (`$id -is [int]) -and `$id -gt 0 -and `$node -ceq 'X'; $Guard; return `$false }"
+
+            $mutants = @(Get-FunctionMutant -Function $function | ForEach-Object { "$($_.Original)=>$($_.Replacement)" })
+
+            $mutants | Should -Contain '($id -is [int])=>($true)'
+            $mutants | Should -Contain '$id -gt 0=>($true)'
+            $mutants | Should -Contain "`$node -ceq 'X'=>(`$true)"
+            $mutants | Should -Contain '-ceq=>-ieq'
+        }
+
+        It 'does not weaken a logical value that no guard checks' {
+            $function = Get-TestFunctionAst -Text 'function Test-Sample { $ok = $a -and $b; if (-not $c) { return $false }; return $ok }'
+
+            @(Get-FunctionMutant -Function $function | Where-Object { $_.Original -in @('$a', '$b') }) | Should -BeNullOrEmpty
+        }
+
         It 'weakens a parenthesized allow return like an unparenthesized one' {
             $plain = Get-TestFunctionAst -Text 'function Test-Sample { return $a -and $b }'
             $wrapped = Get-TestFunctionAst -Text 'function Test-Sample { return ($a -and $b) }'

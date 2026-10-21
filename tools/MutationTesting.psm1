@@ -90,6 +90,7 @@ function Get-InnerExpression {
     param($Node)
 
     while ($true) {
+        if ($Node -is [System.Management.Automation.Language.CommandExpressionAst]) { $Node = $Node.Expression; continue }
         $pipeline = if ($Node -is [System.Management.Automation.Language.ParenExpressionAst]) { $Node.Pipeline }
         elseif ($Node -is [System.Management.Automation.Language.PipelineAst]) { $Node }
         else { return $Node }
@@ -162,6 +163,22 @@ function Get-ClausePolarity {
     return $null
 }
 
+function Get-GuardVariable {
+    # A guard on a bare variable checks the logical value assigned to it; returns the variable with the polarity of that value.
+    param($Expression, [ValidateSet('Allow', 'Deny')][string] $Polarity)
+
+    $node = Get-InnerExpression -Node $Expression
+    if ($node -is [System.Management.Automation.Language.UnaryExpressionAst] -and
+        $node.TokenKind -in @([System.Management.Automation.Language.TokenKind]::Not, [System.Management.Automation.Language.TokenKind]::Exclaim)) {
+        $flip = if ($Polarity -eq 'Allow') { 'Deny' } else { 'Allow' }
+        Get-GuardVariable -Expression $node.Child -Polarity $flip
+        return
+    }
+    if ($node -is [System.Management.Automation.Language.VariableExpressionAst]) {
+        [pscustomobject]@{ Name = $node.VariablePath.UserPath; Polarity = $Polarity }
+    }
+}
+
 function Get-FunctionMutant {
     <#
     .SYNOPSIS
@@ -172,6 +189,7 @@ function Get-FunctionMutant {
     param([Parameter(Mandatory)][System.Management.Automation.Language.FunctionDefinitionAst] $Function)
 
     $mutants = [System.Collections.Generic.List[object]]::new()
+    $guardVariables = [System.Collections.Generic.List[object]]::new()
     $ifStatements = $Function.Body.FindAll({ param($node) $node -is [System.Management.Automation.Language.IfStatementAst] }, $true)
     foreach ($statement in $ifStatements) {
         foreach ($clause in $statement.Clauses) {
@@ -181,6 +199,19 @@ function Get-FunctionMutant {
             $mutants.Add((ConvertTo-MutantRecord -Extent $clause.Item1.Extent -Replacement "($value)" -Kind 'condition' -Description "condition '$($clause.Item1.Extent.Text)' -> $value"))
             $mutants.Add((ConvertTo-MutantRecord -Extent $clause.Item1.Extent -Replacement "(-not ($($clause.Item1.Extent.Text)))" -Kind 'negation' -Description "condition '$($clause.Item1.Extent.Text)' negated"))
             foreach ($mutant in @(Get-ExpressionMutant -Expression $clause.Item1 -Polarity $polarity)) { $mutants.Add($mutant) }
+            foreach ($variable in @(Get-GuardVariable -Expression $clause.Item1 -Polarity $polarity)) { $guardVariables.Add($variable) }
+        }
+    }
+    foreach ($variable in $guardVariables) {
+        $assignments = $Function.Body.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $node.Operator -eq [System.Management.Automation.Language.TokenKind]::Equals -and
+                $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $node.Left.VariablePath.UserPath -eq $variable.Name
+            }, $true)
+        foreach ($assignment in $assignments) {
+            foreach ($mutant in @(Get-ExpressionMutant -Expression $assignment.Right -Polarity $variable.Polarity)) { $mutants.Add($mutant) }
         }
     }
     $returns = $Function.Body.FindAll({ param($node) $node -is [System.Management.Automation.Language.ReturnStatementAst] -and $node.Pipeline }, $true)

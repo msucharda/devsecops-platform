@@ -844,9 +844,16 @@ Describe 'Instance setup wizard' {
     }
 
     Context 'Probe organization admin access' {
-        It 'reports an error and does not record the probe when the probe ruleset is not deleted' {
+        It 'reports an error and does not record the probe when the probe ruleset is not deleted <Case>' -ForEach @(
+            @{ Case = 'in a first run'; Passed = $false }
+            @{ Case = 'while reconfirming an earlier pass'; Passed = $true }
+        ) {
             $setup = Get-TestSetup
             $setup.State.probe['organization'] = 'probe-test'
+            if ($Passed) {
+                $setup.State.probe['adminPassed'] = '2026-01-01T00:00:00Z'
+                $setup.Reconfirm = $true
+            }
             InModuleScope InstanceSetup -Parameters @{ Scenario = @{ Setup = $setup } } {
                 param($Scenario)
                 $Setup = $Scenario.Setup
@@ -866,6 +873,15 @@ Describe 'Instance setup wizard' {
                 }
                 { Invoke-StepProbeAdmin -Setup $Setup } | Should -Throw '*instance-setup-probe in probe-test was not deleted*'
                 Should -Invoke Revoke-SetupInstallationToken -Times 1 -Exactly
+                if (Test-Path -LiteralPath $Setup.StatePath) {
+                    $saved = ConvertFrom-Json (Get-Content -LiteralPath $Setup.StatePath -Raw) -AsHashtable
+                    $saved['probe'].Contains('adminPassed') | Should -BeFalse
+                }
+
+                # A resumed run without -Reconfirm repeats the probe instead of skipping it.
+                $Setup.Reconfirm = $false
+                { Invoke-StepProbeAdmin -Setup $Setup } | Should -Throw '*instance-setup-probe in probe-test was not deleted*'
+                Should -Invoke Get-SetupProbeApp -Times 2 -Exactly
             }
             $setup.State.probe.Contains('adminPassed') | Should -BeFalse
         }

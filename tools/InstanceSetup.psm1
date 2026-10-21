@@ -2524,6 +2524,11 @@ function Invoke-StepProbeAdmin {
 
     $probe = $Setup.State.probe
     if ($probe['adminPassed'] -and -not $Setup.Reconfirm) { return "The organization API probe passed on $($probe['adminPassed']). Keep App B for phase C." }
+    if ($probe['adminPassed']) {
+        # -Reconfirm repeats the probe; a failed recheck must not leave the earlier pass behind for the next run.
+        $probe.Remove('adminPassed')
+        Save-SetupState -Setup $Setup
+    }
     $api = "https://api.$($Setup.Settings['githubHost'])"
     $org = $probe['organization']
     $rulesetName = 'instance-setup-probe'
