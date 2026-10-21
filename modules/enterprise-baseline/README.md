@@ -6,7 +6,7 @@ Předpoklady: `actions-catalog`. Manifest ho zatím nedeklaruje; doplní ho poli
 
 ## Stav implementace
 
-[#17](https://github.com/msucharda/devsecops-platform/issues/17) implementuje organizační oprávnění a ruční enterprise předpoklady. [#19](https://github.com/msucharda/devsecops-platform/issues/19) implementuje code security configuration a custom patterns. Politika akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)) a rulesety ([#20](https://github.com/msucharda/devsecops-platform/issues/20)) zatím implementované nejsou. Ruleset root `rulesets/` je prázdný; existuje kvůli oddělenému ruleset jobu v manifestu.
+[#17](https://github.com/msucharda/devsecops-platform/issues/17) implementuje organizační oprávnění a ruční enterprise předpoklady. [#19](https://github.com/msucharda/devsecops-platform/issues/19) implementuje code security configuration a custom patterns. Samostatný root `rulesets/` implementuje organizační rulesety podle [#20](https://github.com/msucharda/devsecops-platform/issues/20). Politika akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)) zatím implementovaná není.
 
 ## Spravovaná organizační nastavení
 
@@ -63,13 +63,25 @@ Platformní tým příznaky nastaví před bootstrapem. O omezení classic PAT z
 
 ## Organizační ruleset pro výchozí větev
 
-Každá organizace instance má ruleset pro své repozitáře.
+Samostatný root `rulesets/` spravuje v každé organizaci z `target_organizations` aktivní ruleset `platform-default-branch`. Podmínka `repository_name.include: ["~ALL"]` zahrnuje všechny repozitáře; `ref_name.include: ["~DEFAULT_BRANCH"]` sleduje jejich aktuální výchozí větev. Oba seznamy `exclude` jsou prázdné.
 
 - Změna jen přes PR s jedním schválením. Nový commit schválení zruší.
 - PR vyžaduje review od CODEOWNERS.
 - Force push a smazání větve jsou zakázané.
-- Výsledky code scanningu nesmí obsahovat nález úrovně high nebo vyšší.
-- Bypass nemá nikdo.
+- Pravidlo `code_scanning` vyžaduje CodeQL s `security_alerts_threshold: high_or_higher`. Obecné alerty bez bezpečnostní závažnosti neblokuje (`alerts_threshold: none`).
+- `bypass_actors` je explicitně prázdné pole. Bypass nemá ani platformní tým, organization owner nebo importní App.
+
+Root používá [organizační ruleset REST API](https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/rules), verzi `2026-03-10`: seznam `GET /orgs/{org}/rulesets`, detail `GET /orgs/{org}/rulesets/{ruleset_id}`, vytvoření `POST /orgs/{org}/rulesets`, změnu `PUT /orgs/{org}/rulesets/{ruleset_id}` a odstranění `DELETE /orgs/{org}/rulesets/{ruleset_id}`.
+
+- Runner ho spouští přes `Invoke-Module.ps1 -Module enterprise-baseline -Rulesets` s akcí `plan`, `apply` nebo `destroy`. Má oddělený state `terraform.rulesets.tfstate`.
+- Root nevyužívá provider `restapi`. Skript pro každý požadavek vybere installation token cílové organizace z `PLATFORM_GITHUB_TOKENS`. Na rozdíl od běžného rootu proto podporuje více organizací v jednom běhu; běžný root nadále podporuje jen jednu.
+- Identitní prostředek `terraform_data.ruleset` se uloží před vzdáleným zápisem. Obsahový prostředek `terraform_data.ruleset_content` hledá objekt podle stabilního názvu; po ztracené odpovědi na `POST` ho další apply upraví místo vytvoření duplikátu. Změna obsahu vyvolá `PUT`, nikoli smazání ochrany. Destroy identitního prostředku smaže jen místní ruleset tohoto názvu a následným čtením ověří jeho nepřítomnost. Ztracenou odpověď na `PUT` nebo `DELETE` řeší opakovaný běh.
+- Duplicitní název, kolize velikosti písmen názvu, neznámý typ zdroje a neshodná identita v detailu zastaví čtení i zápis. Zděděný enterprise ruleset stejného názvu skript nepřevezme ani nesmaže.
+- Každý plan a ověření po apply čte úplný detail. Chybějící, `null` nebo nepolové `bypass_actors` je chyba, ne důkaz prázdného bypassu. Bypass navíc, vypnutí vynucování, změna podmínek nebo pravidel zastaví plan jako drift. Pořadí pravidel a merge metod se ignoruje; prázdné serverové `required_reviewers` a vypnuté `dismissal_restriction` s prázdnými aktéry se považují za ekvivalent.
+- Spravovaný ruleset podporuje jen variantu podmínek `repository_name` s `ref_name`. Varianty `repository_id` a `repository_property` odmítne s chybou. Ostatní místní rulesety nespravuje. Detaily zděděných enterprise rulesetů tento root neověřuje; noční kontrola jejich počet vykazuje jako nepokrytou oblast podle ADR 0016.
+- Drift se automaticky neopravuje. Operátor obnoví požadovaný stav nebo zopakuje schválený apply s `-replace=terraform_data.ruleset_content["<organization>"]`. Běžný plan nemění vzdálené prostředky.
+
+Importní PR podléhají stejnému review i skenování. Ruleset nevyžaduje vlastní CI status check cloudového planu; jeho neprovedení u App-created PR proto není samo o sobě blokací merge. Import nesmí dostat bypass. Skutečný průchod importu akce a release, chování CodeQL pro jejich obsah a čtení `bypass_actors` installation tokenem musí potvrdit živá akceptace na GHE.com. Offline testy to nedokazují.
 
 ## Code security configuration
 
