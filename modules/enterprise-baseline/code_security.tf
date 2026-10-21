@@ -142,7 +142,8 @@ resource "terraform_data" "custom_pattern_content" {
 }
 
 # Reads the actual state. Without pending changes the plan reads it and fails on drift; with pending changes the read
-# waits for apply and verifies the result. A read error fails the run.
+# waits for apply and verifies the result. A read error fails the run. Only its postconditions consume the result.
+# tflint-ignore: terraform_unused_declarations
 data "external" "code_security_state" {
   for_each = toset(var.target_organizations)
 
