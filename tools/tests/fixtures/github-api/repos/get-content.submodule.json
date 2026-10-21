@@ -1,0 +1,49 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/contents/{path}",
+    "operationId": "repos/get-content",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/contents#get-repository-content",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/content-submodule",
+    "variant": "oneOf content-submodule"
+  },
+  "required": {
+    "": [
+      "_links",
+      "git_url",
+      "html_url",
+      "download_url",
+      "name",
+      "path",
+      "sha",
+      "size",
+      "type",
+      "url",
+      "submodule_git_url"
+    ],
+    "_links": [
+      "git",
+      "html",
+      "self"
+    ]
+  },
+  "body": {
+    "type": "submodule",
+    "submodule_git_url": "git://github.com/jquery/qunit.git",
+    "size": 0,
+    "name": "qunit",
+    "path": "test/qunit",
+    "sha": "6ca3721222109997540bd6d9ccd396902e0ad2f9",
+    "url": "https://api.github.com/repos/jquery/jquery/contents/test/qunit?ref=master",
+    "git_url": "https://api.github.com/repos/jquery/qunit/git/trees/6ca3721222109997540bd6d9ccd396902e0ad2f9",
+    "html_url": "https://github.com/jquery/qunit/tree/6ca3721222109997540bd6d9ccd396902e0ad2f9",
+    "download_url": null,
+    "_links": {
+      "git": "https://api.github.com/repos/jquery/qunit/git/trees/6ca3721222109997540bd6d9ccd396902e0ad2f9",
+      "self": "https://api.github.com/repos/jquery/jquery/contents/test/qunit?ref=master",
+      "html": "https://github.com/jquery/qunit/tree/6ca3721222109997540bd6d9ccd396902e0ad2f9"
+    }
+  }
+}

@@ -88,12 +88,12 @@ CI workflow `Source CI` spouští dva joby navíc k Pester testům. Oba běží 
 
 - Job `Security check mutation tests` spouští `tools/Invoke-MutationTests.ps1`. Skript oslabí každou označenou kontrolu a vyžaduje, aby pro každého mutanta selhal aspoň jeden test.
 - Mutanti (mutants):
-  - podmínka guardu s `throw`, `return $false`, `Write-Error` nebo `Exit-SetupStage` se změní na `$false` a na negaci;
+  - podmínka guardu s `throw`, `return $false`, `Write-Error`, `Exit-SetupStage` nebo výstupem textového literálu důvodu (kontrola, která vrací seznam důvodů zamítnutí) se změní na `$false` a na negaci;
   - podmínka s `continue` nebo `return $true` a logický `return` se změní na `$true` a na negaci;
   - každý operand `-or` v zamítací podmínce se změní na `$false`, každý operand `-and` v povolovací podmínce na `$true`;
   - case-sensitive operátor (`-ceq`, `-cne`, `-clike` a další) se změní na case-insensitive, pokud tím kontrola přijme víc hodnot.
 - Novou bezpečnostní nebo identitní kontrolu označ takto:
-  1. Na řádek přímo před funkci kontroly napiš `# security-check: <name>`. Název je kebab-case a je unikátní.
+  1. Na řádek přímo před funkci kontroly napiš `# security-check: <name>`. Název je kebab-case a je unikátní. Skript hledá markery ve skriptech v `tools/` a `modules/` mimo adresáře `tests/`.
   2. Do `tools/tests/security-checks.psd1` přidej položku `Checks` s názvem a testy (`Path` a filtr `FullName`). Filtr porovnává nerozbalený název testu, tedy včetně `<Case>`.
   3. Lokálně spusť `./tools/Invoke-MutationTests.ps1 -Check <name>`.
 - Přeživší mutant (survived) je chybějící negativní test. Doplň test. Výjimku v `Exceptions` přidej jen pro ekvivalentního mutanta, který nemůže změnit chování. Výjimka musí mít přesné ID mutanta z reportu, důvod a URL issue nebo PR.

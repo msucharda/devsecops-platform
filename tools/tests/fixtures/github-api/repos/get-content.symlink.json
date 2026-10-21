@@ -1,0 +1,49 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/contents/{path}",
+    "operationId": "repos/get-content",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/contents#get-repository-content",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/content-symlink",
+    "variant": "oneOf content-symlink"
+  },
+  "required": {
+    "": [
+      "_links",
+      "git_url",
+      "html_url",
+      "download_url",
+      "name",
+      "path",
+      "sha",
+      "size",
+      "type",
+      "url",
+      "target"
+    ],
+    "_links": [
+      "git",
+      "html",
+      "self"
+    ]
+  },
+  "body": {
+    "type": "symlink",
+    "target": "/path/to/symlink/target",
+    "size": 23,
+    "name": "some-symlink",
+    "path": "bin/some-symlink",
+    "sha": "452a98979c88e093d682cab404a3ec82babebb48",
+    "url": "https://api.github.com/repos/octokit/octokit.rb/contents/bin/some-symlink",
+    "git_url": "https://api.github.com/repos/octokit/octokit.rb/git/blobs/452a98979c88e093d682cab404a3ec82babebb48",
+    "html_url": "https://github.com/octokit/octokit.rb/blob/master/bin/some-symlink",
+    "download_url": "https://raw.githubusercontent.com/octokit/octokit.rb/master/bin/some-symlink",
+    "_links": {
+      "git": "https://api.github.com/repos/octokit/octokit.rb/git/blobs/452a98979c88e093d682cab404a3ec82babebb48",
+      "self": "https://api.github.com/repos/octokit/octokit.rb/contents/bin/some-symlink",
+      "html": "https://github.com/octokit/octokit.rb/blob/master/bin/some-symlink"
+    }
+  }
+}

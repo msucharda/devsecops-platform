@@ -1,0 +1,45 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/rules/branches/{branch}",
+    "operationId": "repos/get-branch-rules",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-rules-for-a-branch",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/repository-rule-pull-request",
+    "variant": "oneOf repository-rule-pull-request with repository-rule-ruleset-info",
+    "note": "The documented example has no pull_request rule; this body follows the pull_request schema and the ruleset info schema field by field."
+  },
+  "required": {
+    "[]": [
+      "type"
+    ],
+    "[].parameters": [
+      "dismiss_stale_reviews_on_push",
+      "require_code_owner_review",
+      "require_last_push_approval",
+      "required_approving_review_count",
+      "required_review_thread_resolution"
+    ]
+  },
+  "body": [
+    {
+      "type": "pull_request",
+      "ruleset_source_type": "Organization",
+      "ruleset_source": "my-org",
+      "ruleset_id": 73,
+      "parameters": {
+        "allowed_merge_methods": [
+          "merge",
+          "squash",
+          "rebase"
+        ],
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": true,
+        "require_last_push_approval": true,
+        "required_approving_review_count": 1,
+        "required_review_thread_resolution": true
+      }
+    }
+  ]
+}

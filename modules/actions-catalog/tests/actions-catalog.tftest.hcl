@@ -1,0 +1,302 @@
+# Runs never call GitHub: plan runs defer the data source until after the pending resources. The output run overrides
+# the resources and the live state during plan, so no provisioner runs. Terraform defers the postcondition of a data
+# source that depends on pending resources to apply, where overridden resources still run their provisioners; the
+# violation list behind it is covered by the Pester tests of Read-CatalogState.ps1.
+variables {
+  instance = {
+    name = "demo"
+    github = {
+      host       = "example.ghe.com"
+      enterprise = "example"
+    }
+    organizations = {
+      deploymentIdentifier = "a1b2c3"
+      platform             = "demo-a1b2c3-platform"
+      actions              = "demo-a1b2c3-actions"
+      workloads            = "demo-a1b2c3-workloads"
+    }
+  }
+  prerequisites        = {}
+  target_organizations = ["demo-a1b2c3-actions"]
+  security_team        = "actions-security"
+}
+
+run "creates_a_repository_for_every_default_catalog_entry" {
+  command = plan
+
+  assert {
+    condition = toset(keys(terraform_data.repository)) == toset([
+      "actions/checkout", "actions/upload-artifact", "actions/download-artifact",
+      "actions/create-github-app-token", "azure/login", "hashicorp/setup-terraform",
+    ])
+    error_message = "The default catalog must contain the six actions of the platform workflows."
+  }
+
+  assert {
+    condition = terraform_data.repository["azure/login"].input == {
+      api_url = "https://api.example.ghe.com", organization = "demo-a1b2c3-actions", upstream = "azure/login", security_team = "actions-security"
+    }
+    error_message = "A repository must carry only its identity and the security team in the resource input."
+  }
+
+  assert {
+    condition     = length(terraform_data.release_tag) == 0
+    error_message = "No release means no tag."
+  }
+
+  assert {
+    condition     = toset(keys(data.external.catalog_state)) == toset(keys(terraform_data.repository))
+    error_message = "The state reader must check every catalog repository."
+  }
+
+  assert {
+    condition     = data.external.catalog_state["azure/login"].query.tag == "" && data.external.catalog_state["azure/login"].query.commit == ""
+    error_message = "The state reader must check no tag without a release."
+  }
+
+  assert {
+    condition     = output.organization == "demo-a1b2c3-actions"
+    error_message = "The output must expose the actions organization."
+  }
+}
+
+run "tags_an_approved_release" {
+  command = plan
+
+  variables {
+    releases = {
+      "actions/checkout" = { tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
+    }
+  }
+
+  assert {
+    condition     = toset(keys(terraform_data.release_tag)) == toset(["actions/checkout"])
+    error_message = "Each release must have one tag."
+  }
+
+  assert {
+    condition = terraform_data.release_tag["actions/checkout"].input == {
+      api_url       = "https://api.example.ghe.com", organization = "demo-a1b2c3-actions", upstream = "actions/checkout"
+      security_team = "actions-security", tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683"
+    }
+    error_message = "A release tag must carry the repository identity, the tag and the commit."
+  }
+
+  assert {
+    condition = (
+      data.external.catalog_state["actions/checkout"].query.tag == "v4.2.2" &&
+      data.external.catalog_state["actions/checkout"].query.commit == "11bd71901bbe5b1630ceea73d27597364c9af683"
+    )
+    error_message = "The state reader must verify the released tag."
+  }
+}
+
+run "exposes_repositories_and_releases_of_a_compliant_catalog" {
+  command = plan
+
+  variables {
+    catalog = ["actions/checkout", "azure/login"]
+    releases = {
+      "actions/checkout" = { tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
+    }
+  }
+
+  override_resource {
+    target          = terraform_data.repository
+    override_during = plan
+  }
+
+  override_resource {
+    target          = terraform_data.release_tag
+    override_during = plan
+  }
+
+  override_data {
+    target          = data.external.catalog_state
+    override_during = plan
+    values = {
+      result = { state = "{}", violations = "[]" }
+    }
+  }
+
+  assert {
+    condition = output.repositories == {
+      "actions/checkout" = "demo-a1b2c3-actions/actions-checkout", "azure/login" = "demo-a1b2c3-actions/azure-login"
+    }
+    error_message = "The output must expose the vendored repository of each action."
+  }
+
+  assert {
+    condition = output.releases == {
+      "actions/checkout" = { tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
+    }
+    error_message = "The output must expose the verified release."
+  }
+}
+
+run "requires_the_platform_organization_from_the_runner" {
+  command = plan
+
+  variables {
+    instance = {
+      name = "demo"
+      github = {
+        host       = "example.ghe.com"
+        enterprise = "example"
+      }
+    }
+  }
+
+  # Terraform skips the target_organizations validation while the instance it references is invalid.
+  expect_failures = [var.instance]
+}
+
+run "rejects_another_target_organization" {
+  command = plan
+
+  variables {
+    target_organizations = ["demo-a1b2c3-workloads"]
+  }
+
+  expect_failures = [var.target_organizations]
+}
+
+run "rejects_more_target_organizations" {
+  command = plan
+
+  variables {
+    target_organizations = ["demo-a1b2c3-actions", "demo-a1b2c3-workloads"]
+  }
+
+  expect_failures = [var.target_organizations]
+}
+
+run "rejects_an_invalid_security_team" {
+  command = plan
+
+  variables {
+    security_team = "Actions Security"
+  }
+
+  expect_failures = [var.security_team]
+}
+
+run "rejects_an_empty_catalog" {
+  command = plan
+
+  variables {
+    catalog = []
+  }
+
+  expect_failures = [var.catalog]
+}
+
+run "rejects_a_duplicate_catalog_entry" {
+  command = plan
+
+  variables {
+    catalog = ["actions/checkout", "actions/checkout"]
+  }
+
+  expect_failures = [var.catalog]
+}
+
+run "rejects_an_upper_case_catalog_entry" {
+  command = plan
+
+  variables {
+    catalog = ["Actions/Checkout"]
+  }
+
+  expect_failures = [var.catalog]
+}
+
+run "rejects_a_catalog_entry_with_a_path" {
+  command = plan
+
+  variables {
+    catalog = ["actions/checkout/sub"]
+  }
+
+  expect_failures = [var.catalog]
+}
+
+run "rejects_a_dot_repository" {
+  command = plan
+
+  variables {
+    catalog = ["actions/.."]
+  }
+
+  expect_failures = [var.catalog]
+}
+
+run "rejects_colliding_repository_names" {
+  command = plan
+
+  variables {
+    catalog = ["actions/checkout-x", "actions-checkout/x"]
+  }
+
+  expect_failures = [var.catalog]
+}
+
+run "rejects_a_release_outside_the_catalog" {
+  command = plan
+
+  variables {
+    releases = {
+      "evil/checkout" = { tag = "v1", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
+    }
+  }
+
+  expect_failures = [var.releases]
+}
+
+run "rejects_an_invalid_release_tag" {
+  command = plan
+
+  variables {
+    releases = {
+      "actions/checkout" = { tag = "refs/tags/v4", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
+    }
+  }
+
+  expect_failures = [var.releases]
+}
+
+run "rejects_a_release_tag_ending_with_lock" {
+  command = plan
+
+  variables {
+    releases = {
+      "actions/checkout" = { tag = "v4.lock", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
+    }
+  }
+
+  expect_failures = [var.releases]
+}
+
+run "rejects_an_abbreviated_release_commit" {
+  command = plan
+
+  variables {
+    releases = {
+      "actions/checkout" = { tag = "v4.2.2", commit = "11bd719" }
+    }
+  }
+
+  expect_failures = [var.releases]
+}
+
+run "rejects_an_upper_case_release_commit" {
+  command = plan
+
+  variables {
+    releases = {
+      "actions/checkout" = { tag = "v4.2.2", commit = "11BD71901BBE5B1630CEEA73D27597364C9AF683" }
+    }
+  }
+
+  expect_failures = [var.releases]
+}

@@ -7,7 +7,7 @@
     "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
     "schema": "#/components/schemas/commit-comparison",
-    "note": "status is one of diverged, ahead, behind, identical. With base main and head a commit, behind or identical means the commit is reachable from main and merge_base_commit is that commit. The documented example is used unchanged."
+    "note": "status is one of diverged, ahead, behind, identical. With base main and head a commit, behind or identical means the commit is reachable from main and merge_base_commit is that commit. With base a commit and head main, ahead or identical means the same. The documented example is used unchanged."
   },
   "required": {
     "": [
@@ -23,6 +23,86 @@
       "behind_by",
       "total_commits",
       "commits"
+    ],
+    "base_commit": [
+      "url",
+      "sha",
+      "node_id",
+      "html_url",
+      "comments_url",
+      "commit",
+      "author",
+      "committer",
+      "parents"
+    ],
+    "base_commit.commit": [
+      "author",
+      "committer",
+      "comment_count",
+      "message",
+      "tree",
+      "url"
+    ],
+    "base_commit.parents.[]": [
+      "sha",
+      "url"
+    ],
+    "merge_base_commit": [
+      "url",
+      "sha",
+      "node_id",
+      "html_url",
+      "comments_url",
+      "commit",
+      "author",
+      "committer",
+      "parents"
+    ],
+    "merge_base_commit.commit": [
+      "author",
+      "committer",
+      "comment_count",
+      "message",
+      "tree",
+      "url"
+    ],
+    "merge_base_commit.parents.[]": [
+      "sha",
+      "url"
+    ],
+    "commits.[]": [
+      "url",
+      "sha",
+      "node_id",
+      "html_url",
+      "comments_url",
+      "commit",
+      "author",
+      "committer",
+      "parents"
+    ],
+    "commits.[].commit": [
+      "author",
+      "committer",
+      "comment_count",
+      "message",
+      "tree",
+      "url"
+    ],
+    "commits.[].parents.[]": [
+      "sha",
+      "url"
+    ],
+    "files.[]": [
+      "additions",
+      "blob_url",
+      "changes",
+      "contents_url",
+      "deletions",
+      "filename",
+      "raw_url",
+      "sha",
+      "status"
     ]
   },
   "body": {
