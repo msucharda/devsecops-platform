@@ -17,7 +17,7 @@ param(
     [Parameter(Mandatory)][string] $ConfirmInstanceName,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
     [scriptblock] $RequestPolicy,
-    [ValidateRange(1, 1000)][int] $ResourceGroupPollCount = 60
+    [ValidateRange(1, 1000)][int] $DeletionPollCount = 60
 )
 
 Set-StrictMode -Version Latest
@@ -26,7 +26,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 
 $requestPolicyHook = $RequestPolicy
-$resourceGroupPolls = $ResourceGroupPollCount
+$deletionPolls = $DeletionPollCount
 $stepOrder = @('repository', 'organization', 'identity-role-assignments', 'directory-roles', 'state-lock', 'resource-group')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
@@ -358,6 +358,19 @@ function Invoke-OrganizationRemoval {
     }
     Set-RemovalStepState -Step 'organization' -State 'started'
     $null = Invoke-RemovalRequest -Uri "https://$githubApi/orgs/$organization" -Method DELETE -AllowNotFound -ExpectedStatus 202
+    # GitHub deletes the organization asynchronously; the step stays started until it disappears.
+    $deleted = $false
+    for ($poll = 0; $poll -lt $deletionPolls; $poll++) {
+        $org = Invoke-RemovalRequest -Uri "https://$githubApi/orgs/$organization" -AllowNotFound
+        if (-not $org) { $deleted = $true; break }
+        if ($org['login'] -cne $organization) {
+            throw "GitHub returned organization '$($org['login'])' for '$organization' during its deletion."
+        }
+        Start-Sleep -Seconds 10
+    }
+    if (-not $deleted) {
+        throw "Organization '$organization' is still being deleted. Rerun with the same inventory to continue."
+    }
     Set-RemovalStepState -Step 'organization' -State 'done'
 }
 
@@ -446,7 +459,7 @@ function Invoke-IdentityRoleAssignmentRemoval {
         }
         throw "Resource group '$resourceGroupName' is missing before the role assignments of module identities were removed. Remove orphaned role assignments manually."
     }
-    $principals = Assert-RemovalAzureGeneration -Record:($state -ceq 'pending')
+    $principals = Assert-RemovalAzureGeneration
     $scopes = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($subscriptionId in $connection['subscriptionIds']) { $null = $scopes.Add("/subscriptions/$subscriptionId") }
     foreach ($module in $modules.Values) {
@@ -546,7 +559,7 @@ function Invoke-ResourceGroupRemoval {
         Set-RemovalStepState -Step 'resource-group' -State 'started'
         $null = Invoke-RemovalRequest -Uri "$arm$resourceGroupId`?api-version=2021-04-01" -Method DELETE -AllowNotFound -ExpectedStatus 200, 202
         $deleted = $false
-        for ($poll = 0; $poll -lt $resourceGroupPolls; $poll++) {
+        for ($poll = 0; $poll -lt $deletionPolls; $poll++) {
             if (-not (Get-RemovalResourceGroup)) { $deleted = $true; break }
             Start-Sleep -Seconds 10
         }
@@ -563,6 +576,8 @@ function Invoke-ResourceGroupRemoval {
 if (-not $PSCmdlet.ShouldProcess("platform instance '$instanceName' ($repository, $resourceGroupId)", 'Remove bootstrap resources')) {
     return
 }
+# Bind the Azure resources before the first deletion; a later first binding could adopt a replacement deployment.
+if ($removal['steps'].Count -eq 0 -and (Get-RemovalResourceGroup)) { $null = Assert-RemovalAzureGeneration -Record }
 Invoke-RepositoryRemoval
 Invoke-OrganizationRemoval
 Invoke-IdentityRoleAssignmentRemoval

@@ -114,6 +114,8 @@ BeforeAll {
             ResourceGroupDeletePolls = 1
             ResourceGroupDeleting = $false
             RepeatRunPages = $false
+            OrganizationDeleting = $false
+            OrganizationDeletePolls = 0
             Lock = $true
             Identities = [System.Collections.Generic.List[object]]::new()
             RoleAssignments = [System.Collections.Generic.List[object]]::new()
@@ -164,7 +166,11 @@ BeforeAll {
             }
             if ($path -ceq "/orgs/$organization") {
                 if (-not $World.Organization) { return Get-TestNotFound }
-                if ($Method -ceq 'DELETE') { $World.Organization = $null; return Get-TestResponse -StatusCode 202 -Data @{} }
+                if ($Method -ceq 'DELETE') { $World.OrganizationDeleting = $true; return Get-TestResponse -StatusCode 202 -Data @{} }
+                if ($World.OrganizationDeleting -and $World.OrganizationDeletePolls-- -le 0) {
+                    $World.Organization = $null
+                    return Get-TestNotFound
+                }
                 return Get-TestResponse -Data $World.Organization
             }
         }
@@ -428,6 +434,34 @@ Describe 'Bootstrap removal' {
             (& $readInventory).removal.steps.Values | Should -Not -Contain 'started'
         }
 
+        It 'when the organization is still being deleted' {
+            $world.OrganizationDeletePolls = 5
+
+            { & $removeScript -InstancePath $instancePath -InventoryPath $inventoryPath -ModulesPath $modulesPath `
+                -ConfirmInstanceName demo -DeletionPollCount 2 -Confirm:$false } | Should -Throw '*still being deleted*'
+            (& $readInventory).removal.steps['organization'] | Should -Be 'started'
+            @($requests | Where-Object { $_.Method -cne 'GET' -and ([uri] $_.Uri).Host -cne 'api.contoso.ghe.com' }) | Should -BeNullOrEmpty
+
+            $null = & $run
+
+            & $assertRemoved
+        }
+
+        It 'and refuses Azure resources of a replacement deployment after an interruption at <Label>' -ForEach @(
+            @{ Label = 'the repository deletion'; At = 1 }
+            @{ Label = 'the organization deletion'; At = 2 }
+        ) {
+            $failure.At = $At
+            { & $run } | Should -Throw '*Simulated interruption*'
+            (& $readInventory).removal.azurePrincipals | Should -Be @($planPrincipal, $applyPrincipal | Sort-Object)
+            $failure.At = 0
+            $world.Identities[1] = Get-TestIdentity -Phase apply -PrincipalId 'dddddddd-0000-0000-0000-000000000002'
+            $requests.Clear()
+
+            { & $run } | Should -Throw '*differ from those this inventory recorded*'
+            @($requests | Where-Object { $_.Method -cne 'GET' -and ([uri] $_.Uri).Host -cne 'api.contoso.ghe.com' }) | Should -BeNullOrEmpty
+        }
+
         It 'covers every mutating request of a full run' {
             $null = & $run
             $failure.Count | Should -Be 11
@@ -437,7 +471,7 @@ Describe 'Bootstrap removal' {
             $world.ResourceGroupDeletePolls = 5
 
             { & $removeScript -InstancePath $instancePath -InventoryPath $inventoryPath -ModulesPath $modulesPath `
-                -ConfirmInstanceName demo -ResourceGroupPollCount 2 -Confirm:$false } | Should -Throw '*still being deleted*'
+                -ConfirmInstanceName demo -DeletionPollCount 2 -Confirm:$false } | Should -Throw '*still being deleted*'
             (& $readInventory).removal.steps['resource-group'] | Should -Be 'started'
 
             $null = & $run
@@ -474,7 +508,7 @@ Describe 'Bootstrap removal' {
         It 'and refuses to resume the resource group deletion when another deployment replaced an identity' {
             $world.ResourceGroupDeletePolls = 5
             { & $removeScript -InstancePath $instancePath -InventoryPath $inventoryPath -ModulesPath $modulesPath `
-                -ConfirmInstanceName demo -ResourceGroupPollCount 1 -Confirm:$false } | Should -Throw '*still being deleted*'
+                -ConfirmInstanceName demo -DeletionPollCount 1 -Confirm:$false } | Should -Throw '*still being deleted*'
             $world.ResourceGroupDeleting = $false
             $world.Identities[0] = Get-TestIdentity -Phase plan -PrincipalId $replacement
             $requests.Clear()
@@ -486,13 +520,14 @@ Describe 'Bootstrap removal' {
         It 'and resumes the resource group deletion when only recorded identities remain' {
             $world.ResourceGroupDeletePolls = 5
             { & $removeScript -InstancePath $instancePath -InventoryPath $inventoryPath -ModulesPath $modulesPath `
-                -ConfirmInstanceName demo -ResourceGroupPollCount 1 -Confirm:$false } | Should -Throw '*still being deleted*'
+                -ConfirmInstanceName demo -DeletionPollCount 1 -Confirm:$false } | Should -Throw '*still being deleted*'
             $world.Identities.RemoveAt(0)
 
             $null = & $run
 
             & $assertRemoved
         }
+
 
         It 'and refuses an inventory that recorded no identities before Azure steps finished' {
             $stored = & $readInventory
@@ -770,6 +805,22 @@ Describe 'Bootstrap removal' {
 
             { & $run } | Should -Throw '*refusing to delete it*'
             @($requests | Where-Object { $_.Method -cne 'GET' -and $_.Uri -like '*/orgs/*' }) | Should -BeNullOrEmpty
+        }
+
+        It 'when GitHub returns another login while the organization is being deleted' {
+            $world.OrganizationDeletePolls = 5
+            Mock Invoke-WebRequest {
+                $Method = ([string] $Method).ToUpperInvariant()
+                $requests.Add([pscustomobject]@{ Uri = [string] $Uri; Method = $Method })
+                $response = Invoke-TestApi -World $world -Uri $Uri -Method $Method
+                if ($world.OrganizationDeleting -and $Method -ceq 'GET' -and $Uri -like '*/orgs/*') {
+                    return Get-TestResponse -Data (Get-GitHubApiFixture -Name orgs/get -Set @{ login = 'Demo-abc123-platform' })
+                }
+                return $response
+            }
+
+            { & $run } | Should -Throw '*during its deletion*'
+            (& $readInventory).removal.steps['organization'] | Should -Be 'started'
         }
 
         It 'when the organization is missing but its removal never started' {
