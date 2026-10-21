@@ -65,6 +65,8 @@ Describe 'Organization ruleset detail contract' {
         @{ Case = 'missing rules'; Field = 'rules'; Missing = $true; Error = "*no 'rules'*" }
         @{ Case = 'null conditions'; Field = 'conditions'; Value = $null; Error = "*no 'conditions'*" }
     ) {
+        param([bool] $Missing = $false)
+
         # Deliberately invalid identity or incomplete response; all other fixture properties remain valid.
         if ($Missing) { $detail.Remove($Field) } else { $detail[$Field] = $Value }
         { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
@@ -81,6 +83,8 @@ Describe 'Organization ruleset detail contract' {
         @{ Case = 'missing source type'; Field = 'source_type'; Missing = $true; Error = '*mismatched source*' }
         @{ Case = 'different name case'; Field = 'name'; Value = 'PLATFORM-DEFAULT-BRANCH'; Error = '*differently cased*' }
     ) {
+        param([bool] $Missing = $false)
+
         # Deliberately invalid metadata; an incomplete list cannot prove absence before a POST or DELETE.
         if ($Missing) { $listed[0].Remove($Field) } else { $listed[0][$Field] = $Value }
         { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
