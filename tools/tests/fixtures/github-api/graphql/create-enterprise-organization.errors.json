@@ -1,0 +1,41 @@
+{
+  "source": {
+    "operation": "mutation createEnterpriseOrganization",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/mutations#createenterpriseorganization",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "CreateEnterpriseOrganizationPayload (nullable) with GraphQL errors",
+    "variant": "data.createEnterpriseOrganization null with errors",
+    "errors": "https://spec.graphql.org/October2021/#sec-Errors",
+    "note": "GraphQL reports a rejected mutation with HTTP 200 and errors. The message is an example; the module does not parse error types and fails on any error."
+  },
+  "required": {
+    "": [
+      "data",
+      "errors"
+    ],
+    "errors.[]": [
+      "message"
+    ]
+  },
+  "body": {
+    "data": {
+      "createEnterpriseOrganization": null
+    },
+    "errors": [
+      {
+        "type": "UNPROCESSABLE",
+        "path": [
+          "createEnterpriseOrganization"
+        ],
+        "locations": [
+          {
+            "line": 2,
+            "column": 3
+          }
+        ],
+        "message": "Login has already been taken"
+      }
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "source": {
+    "operation": "GET /enterprises/{enterprise}/apps/organizations/{org}/installations/{installation_id}/repositories",
+    "operationId": "enterprise-apps/organization-installation-repositories",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/organization-installations#get-the-repositories-accessible-to-a-given-github-app-installation",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "array of #/components/schemas/accessible-repository",
+    "note": "The fixture keeps the first documented example item. The second documented item has login instead of the required name."
+  },
+  "required": {
+    "[]": [
+      "full_name",
+      "id",
+      "name"
+    ]
+  },
+  "body": [
+    {
+      "id": 1,
+      "name": "Hello World",
+      "full_name": "octocat/Hello-World"
+    }
+  ]
+}

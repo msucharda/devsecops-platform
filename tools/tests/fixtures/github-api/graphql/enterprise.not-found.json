@@ -1,0 +1,41 @@
+{
+  "source": {
+    "operation": "query enterprise(slug:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#enterprise",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.enterprise: Enterprise (nullable) with GraphQL errors",
+    "variant": "data.enterprise null with errors",
+    "errors": "https://spec.graphql.org/October2021/#sec-Errors",
+    "note": "GraphQL returns HTTP 200 with errors when the enterprise is not visible to the token. The error type value is an example from GitHub GraphQL responses, not a documented enum."
+  },
+  "required": {
+    "": [
+      "data",
+      "errors"
+    ],
+    "errors.[]": [
+      "message"
+    ]
+  },
+  "body": {
+    "data": {
+      "enterprise": null
+    },
+    "errors": [
+      {
+        "type": "NOT_FOUND",
+        "path": [
+          "enterprise"
+        ],
+        "locations": [
+          {
+            "line": 1,
+            "column": 7
+          }
+        ],
+        "message": "Could not resolve to an Enterprise with the URL slug of 'octo-business'."
+      }
+    ]
+  }
+}

@@ -29,6 +29,7 @@ Pravidla platí pro implementaci i code review. Code review je ověřuje podle s
 #### Sdílené fixtures GitHub API
 
 - Fixtures jsou v `tools/tests/fixtures/github-api/<kategorie>/<operace>[.<varianta>].json`. Jedna fixture obsahuje jeden tvar odpovědi.
+- GraphQL fixtures jsou v kategorii `graphql/`. Zdrojem schématu je GraphQL SDL připnuté na commit (`github/docs`, `src/graphql/data/ghec/schema.docs.graphql`).
 - Fixture má tři části:
   - `source`: `operation`, `operationId`, `documentation` (URL), `apiVersion`, `description` (OpenAPI popis z `github/rest-api-description` připnutý na commit), `status`, `schema`, volitelně `variant` a `note`.
   - `required`: cesta v těle odpovědi a seznam povinných polí podle schématu.

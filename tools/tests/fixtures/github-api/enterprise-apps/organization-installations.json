@@ -1,0 +1,43 @@
+{
+  "source": {
+    "operation": "GET /enterprises/{enterprise}/apps/organizations/{org}/installations",
+    "operationId": "enterprise-apps/organization-installations",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/organization-installations#list-github-apps-installed-on-an-enterprise-owned-organization",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "array of #/components/schemas/enterprise-organization-installation",
+    "note": "The documented example omits the required client_id; the fixture adds it with the schema example value. The schema enum of repository_selection is all or selected, although the create operation accepts none."
+  },
+  "required": {
+    "[]": [
+      "id",
+      "client_id",
+      "repository_selection",
+      "repositories_url",
+      "permissions",
+      "created_at",
+      "updated_at"
+    ]
+  },
+  "body": [
+    {
+      "id": 1,
+      "app_slug": "monalisa/orbit",
+      "client_id": "Iv1.ab1112223334445c",
+      "repository_selection": "selected",
+      "repositories_url": "https://api.github.com/enterprises/acme-corp/apps/organizations/some-org/installations/1/repositories",
+      "permissions": {
+        "checks": "write",
+        "metadata": "read",
+        "contents": "read"
+      },
+      "events": [
+        "push",
+        "pull_request"
+      ],
+      "created_at": "2017-07-08T22:18:44+02:00",
+      "updated_at": "2017-07-08T22:18:44+02:00"
+    }
+  ]
+}

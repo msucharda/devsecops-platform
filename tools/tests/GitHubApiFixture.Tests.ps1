@@ -18,7 +18,19 @@ Describe 'GitHub API contract fixture <Name>' -ForEach $fixtureCases {
         $contract = Get-GitHubApiFixtureContract -Name $Name
     }
 
-    It 'cites the primary documentation and the API version the tools send' {
+    It 'cites the primary GraphQL documentation and the pinned schema' -Skip:(-not $Name.StartsWith('graphql/')) {
+        $contract.source.operation | Should -Match '^(query|mutation) [A-Za-z]+(\([a-zA-Z:,]*\))?$'
+        $contract.source.documentation | Should -Match '^https://docs\.github\.com/en/enterprise-cloud@latest/graphql/reference/(queries|mutations)#[a-z]+$'
+        $contract.source.description | Should -Match '^https://github\.com/github/docs/blob/[0-9a-f]{40}/src/graphql/data/ghec/schema\.docs\.graphql$'
+        $contract.source.status | Should -Be 200
+        $contract.source.schema | Should -Not -BeNullOrEmpty
+        $contract.body.Contains('data') | Should -BeTrue -Because 'every GraphQL response contains data'
+        if ($contract.body.Contains('errors')) {
+            $contract.source.errors | Should -Be 'https://spec.graphql.org/October2021/#sec-Errors'
+        }
+    }
+
+    It 'cites the primary documentation and the API version the tools send' -Skip:($Name.StartsWith('graphql/')) {
         $contract.source.operation | Should -Match '^(GET|POST|PUT|PATCH|DELETE) /\S+$'
         $contract.source.operationId | Should -Match '^[a-z-]+/[a-z0-9-]+$'
         $contract.source.documentation | Should -Match '^https://docs\.github\.com/en/enterprise-cloud@latest/rest/\S+#\S+$'

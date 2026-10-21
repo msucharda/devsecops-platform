@@ -272,7 +272,7 @@ foreach ($manifest in $reversed) {
           path: ./artifacts/prerequisites
 "@
     }
-    $runner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action destroy $runnerArguments -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs"
+    $runner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action destroy $runnerArguments -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER"
     if ($manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
         Add-TeardownMainCheck
         Add-WorkflowBlock @"

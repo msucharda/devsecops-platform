@@ -591,4 +591,42 @@ function Get-PlatformOrganizationName {
     "$InstanceName-$DeploymentIdentifier-$Kind"
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName
+function Get-PlatformInstanceOrganization {
+    <#
+    .SYNOPSIS
+    Derives the deployment identifier and organization names from the platform organization that owns the instance repository.
+    .DESCRIPTION
+    {name}-{deployment}-platform yields the identifier; the legacy {name}-platform has none and keeps {name}-actions and {name}-workloads.
+    #>
+    [CmdletBinding()]
+    [OutputType([System.Collections.Specialized.OrderedDictionary])]
+    param(
+        [Parameter(Mandatory)][string] $InstanceName,
+        [Parameter(Mandatory)][AllowEmptyString()][string] $PlatformOrganization
+    )
+
+    if ($InstanceName -cnotmatch '^[a-z][a-z0-9]{1,7}$') {
+        throw 'Organization names require instance.name with 2-8 lowercase alphanumeric characters.'
+    }
+    if ($PlatformOrganization -ceq "$InstanceName-platform") {
+        return [ordered]@{
+            deploymentIdentifier = $null
+            platform = $PlatformOrganization
+            actions = "$InstanceName-actions"
+            workloads = "$InstanceName-workloads"
+        }
+    }
+    $match = [regex]::Match($PlatformOrganization, "^$InstanceName-([a-z0-9]{6})-platform\z")
+    if (-not $match.Success) {
+        throw "Platform organization '$PlatformOrganization' does not match instance.name '$InstanceName': expected '$InstanceName-{deployment}-platform' with a 6-character lowercase alphanumeric deployment identifier, or the legacy '$InstanceName-platform'."
+    }
+    $identifier = $match.Groups[1].Value
+    [ordered]@{
+        deploymentIdentifier = $identifier
+        platform = $PlatformOrganization
+        actions = Get-PlatformOrganizationName -InstanceName $InstanceName -DeploymentIdentifier $identifier -Kind actions
+        workloads = Get-PlatformOrganizationName -InstanceName $InstanceName -DeploymentIdentifier $identifier -Kind workloads
+    }
+}
+
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization

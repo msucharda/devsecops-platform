@@ -46,3 +46,7 @@ output "github_host" {
 output "github_enterprise" {
   value = try(var.instance.github.enterprise, "none")
 }
+
+output "organizations" {
+  value = try(var.instance.organizations, "none")
+}

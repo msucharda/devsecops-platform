@@ -1,0 +1,33 @@
+name: organizations
+description: Actions and workloads organizations of the instance created in the enterprise, with enterprise-owned Apps installed without repository access.
+prerequisites: []
+manualSteps:
+  - id: delete-instance-organizations
+    owner: platform
+    description: >-
+      Before the organizations module is destroyed, an enterprise owner deletes the actions and workloads
+      organizations of the instance in the enterprise settings. GitHub offers no organization deletion with
+      the enterprise installation token; the module destroy only verifies that both organizations are gone
+      and fails otherwise. Their names stay blocked; a new deployment needs a new bootstrap with a new
+      deployment identifier.
+    limitations:
+      plan: The plan does not show the deletion; it reads only whether each organization exists and which Apps it has.
+      drift: Drift detection reports a deleted organization as a failed plan, not as a planned deletion.
+      teardown: The teardown workflow stops at the organizations destroy until both organizations are deleted; delete them and run the teardown again.
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp:
+    plan:
+      permissions:
+        enterprise_organization_installations: read
+      resources:
+        enterprise: true
+    # GitHub docs require enterprise_organizations: write for createEnterpriseOrganization; runbook C3 confirms the minimum live.
+    apply:
+      permissions:
+        enterprise_organization_installations: write
+        enterprise_organizations: write
+      resources:
+        enterprise: true
+  adminPat: []

@@ -150,7 +150,7 @@ function Add-DeploymentJob {
 "@
     }
     $action = if ($Phase -eq 'apply') { 'apply' } else { 'plan' }
-    $runner = "./candidate/platform/tools/Invoke-Module.ps1 -Module '$name' -Action $action -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs"
+    $runner = "./candidate/platform/tools/Invoke-Module.ps1 -Module '$name' -Action $action -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER"
     $rulesetArgument = if ($Phase -eq 'rulesetPlan') { ' -Rulesets' } else { '' }
     if ($Drift) { $rulesetArgument += ' -GitHubOutputPath $env:GITHUB_OUTPUT' }
     $lines.Add('      - name: Run module')

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "operation": "query enterprise(slug:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#enterprise",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.enterprise: Enterprise",
+    "note": "The query selects only id."
+  },
+  "required": {
+    "data.enterprise": [
+      "id"
+    ]
+  },
+  "body": {
+    "data": {
+      "enterprise": {
+        "id": "E_kgDOAAAAAQ"
+      }
+    }
+  }
+}

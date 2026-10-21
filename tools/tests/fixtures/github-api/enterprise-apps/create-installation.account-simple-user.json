@@ -1,0 +1,104 @@
+{
+  "source": {
+    "operation": "POST /enterprises/{enterprise}/apps/organizations/{org}/installations",
+    "operationId": "enterprise-apps/create-installation",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/organization-installations#install-a-github-app-on-an-enterprise-owned-organization",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 201,
+    "schema": "#/components/schemas/installation",
+    "variant": "account: anyOf[0] #/components/schemas/simple-user",
+    "note": "The documented example account is a user; the fixture uses an organization login and type Organization because the operation installs into an organization."
+  },
+  "required": {
+    "": [
+      "id",
+      "app_id",
+      "app_slug",
+      "target_id",
+      "target_type",
+      "single_file_name",
+      "repository_selection",
+      "access_tokens_url",
+      "html_url",
+      "repositories_url",
+      "events",
+      "account",
+      "permissions",
+      "created_at",
+      "updated_at",
+      "suspended_by",
+      "suspended_at"
+    ],
+    "account": [
+      "avatar_url",
+      "events_url",
+      "followers_url",
+      "following_url",
+      "gists_url",
+      "gravatar_id",
+      "html_url",
+      "id",
+      "node_id",
+      "login",
+      "organizations_url",
+      "received_events_url",
+      "repos_url",
+      "site_admin",
+      "starred_url",
+      "subscriptions_url",
+      "type",
+      "url"
+    ]
+  },
+  "body": {
+    "id": 1,
+    "account": {
+      "login": "octo-org",
+      "id": 1,
+      "node_id": "MDQ6VXNlcjE=",
+      "avatar_url": "https://github.com/images/error/octocat_happy.gif",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/octo-org",
+      "html_url": "https://github.com/octo-org",
+      "followers_url": "https://api.github.com/users/octocat/followers",
+      "following_url": "https://api.github.com/users/octocat/following{/other_user}",
+      "gists_url": "https://api.github.com/users/octocat/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/octocat/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/octocat/subscriptions",
+      "organizations_url": "https://api.github.com/users/octocat/orgs",
+      "repos_url": "https://api.github.com/users/octocat/repos",
+      "events_url": "https://api.github.com/users/octocat/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/octocat/received_events",
+      "type": "Organization",
+      "site_admin": false
+    },
+    "access_tokens_url": "https://api.github.com/app/installations/1/access_tokens",
+    "repositories_url": "https://api.github.com/installation/repositories",
+    "html_url": "https://github.com/organizations/github/settings/installations/1",
+    "app_id": 1,
+    "target_id": 1,
+    "target_type": "Organization",
+    "permissions": {
+      "checks": "write",
+      "metadata": "read",
+      "contents": "read"
+    },
+    "events": [
+      "push",
+      "pull_request"
+    ],
+    "single_file_name": "config.yaml",
+    "has_multiple_single_files": true,
+    "single_file_paths": [
+      "config.yml",
+      ".github/issue_TEMPLATE.md"
+    ],
+    "repository_selection": "selected",
+    "created_at": "2017-07-08T22:18:44+02:00",
+    "updated_at": "2017-07-08T22:18:44+02:00",
+    "app_slug": "github-actions",
+    "suspended_at": null,
+    "suspended_by": null
+  }
+}

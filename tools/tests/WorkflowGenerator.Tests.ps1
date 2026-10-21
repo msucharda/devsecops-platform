@@ -126,6 +126,7 @@ Describe 'Deployment workflow generation' {
         $run = $job.steps | Where-Object { $_['name'] -eq 'Run module' }
         $run.run | Should -Match '-PrerequisiteOutputsPath ./artifacts/prerequisites'
         $run.run | Should -Match '-ArtifactsPath ./artifacts/module-outputs'
+        $run.run | Should -Match '-PlatformOrganization \$env:GITHUB_REPOSITORY_OWNER'
         $upload = $job.steps | Where-Object { $_['uses'] -like 'actions/upload-artifact@*' }
         $upload.with.path | Should -Be './artifacts/module-outputs/application.json'
         $upload.with.'if-no-files-found' | Should -Be 'error'
@@ -474,6 +475,7 @@ Describe 'Drift workflow generation' {
             $run = $job.steps | Where-Object { $_['name'] -eq 'Run module' }
             $run.id | Should -Be 'run'
             $run.run | Should -Match '-Action plan .*-GitHubOutputPath \$env:GITHUB_OUTPUT'
+            $run.run | Should -Match '-PlatformOrganization \$env:GITHUB_REPOSITORY_OWNER'
             $job.permissions.Keys | Sort-Object | Should -Be @('contents', 'id-token')
             $job.permissions.contents | Should -Be 'read'
             (ConvertTo-Json $job -Depth 20) | Should -Not -Match 'Publish-DriftIssue|-DriftReport|issues'

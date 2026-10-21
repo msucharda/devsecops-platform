@@ -1,0 +1,26 @@
+{
+  "source": {
+    "operation": "mutation createEnterpriseOrganization",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/mutations#createenterpriseorganization",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "CreateEnterpriseOrganizationPayload",
+    "note": "The mutation selects organization { id login }. Organization.id and Organization.login are non-null in the schema; the payload organization is nullable."
+  },
+  "required": {
+    "data.createEnterpriseOrganization.organization": [
+      "id",
+      "login"
+    ]
+  },
+  "body": {
+    "data": {
+      "createEnterpriseOrganization": {
+        "organization": {
+          "id": "O_kgDOAAAAAg",
+          "login": "demo-a1b2c3-actions"
+        }
+      }
+    }
+  }
+}
