@@ -731,7 +731,11 @@ Describe 'Merge gate check functions' {
         @{ Case = 'quoted permission values'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,2 @@`n permissions:`n-  contents: `"read`"`n+  contents: `"write`"" }; Expected = @('.github/workflows/ci.yml: -  contents: "read"', '.github/workflows/ci.yml: +  contents: "write"') }
         @{ Case = 'quoted permission keys'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,2 @@`n permissions:`n-  'contents': 'read'`n+  'contents': 'write'" }; Expected = @(".github/workflows/ci.yml: -  'contents': 'read'", ".github/workflows/ci.yml: +  'contents': 'write'") }
         @{ Case = 'an indexed secret'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,2 @@`n     env:`n+      TOKEN: `${{ secrets['DEPLOY_TOKEN'] }}" }; Expected = @(".github/workflows/ci.yml: +      TOKEN: `${{ secrets['DEPLOY_TOKEN'] }}") }
-        @{ Case = 'a rename into the workflow directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = 'docs/publish.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.yml: renamed into the workflow directory from docs/publish.yml') }
+        @{ Case = 'a rename into the workflow directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = 'docs/publish.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.yml: renamed from docs/publish.yml') }
+        @{ Case = 'a rename from an action directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = '.github/actions/archive/publish.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.yml: renamed from .github/actions/archive/publish.yml') }
+        @{ Case = 'a rename from an inactive file name'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = '.github/workflows/publish.txt'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.yml: renamed from .github/workflows/publish.txt') }
+        @{ Case = 'a rename to an inactive file name'; File = @{ filename = '.github/workflows/publish.txt'; previous_filename = '.github/workflows/publish.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.txt: renamed from .github/workflows/publish.yml') }
+        @{ Case = 'a copy of a workflow'; File = @{ filename = '.github/workflows/publish.yaml'; previous_filename = '.github/workflows/release.yml'; status = 'copied'; patch = "@@ -1,1 +1,1 @@`n-name: release`n+name: publish" }; Expected = @('.github/workflows/publish.yaml: copied from .github/workflows/release.yml') }
         @{ Case = 'a rename inside the workflow directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = '.github/workflows/release.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @() }
         @{ Case = 'a scalar permission on the next line'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,3 +1,3 @@`n permissions:`n   contents:`n-    read`n+    write" }; Expected = @('.github/workflows/ci.yml: -    read', '.github/workflows/ci.yml: +    write') }
         @{ Case = 'a quoted secrets key'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,2 @@`n     uses: ./.github/workflows/deploy.yml`n+    `"secrets`": inherit" }; Expected = @('.github/workflows/ci.yml: +    "secrets": inherit') }
@@ -758,7 +762,7 @@ Describe 'Merge gate check functions' {
                 @{ filename = 'templates/instance/.github/workflows/deploy.yml'; patch = '+permissions: write-all' }
             )
             $change.WorkflowFiles | Should -Be @('docs/ci.yml')
-            $change.SensitiveLines | Should -Be @('docs/ci.yml: patch unavailable')
+            $change.SensitiveLines | Should -Be @('docs/ci.yml: renamed from .github/workflows/ci.yml', 'docs/ci.yml: patch unavailable')
             $change.OtherGitHubFiles | Should -Be @('.github/agents/ci-runner.agent.md')
             $change.TemplateWorkflowFiles | Should -Be @('templates/instance/.github/workflows/deploy.yml')
         }
@@ -857,6 +861,23 @@ Describe 'Invoke-GatedMerge' {
         $result.mergeCommit | Should -Be $stub.PullRequest.mergeCommit.oid
         $result.postVerify.verified | Should -BeTrue
         @($stub.Calls | Where-Object { $_[0] -eq 'pr' }).Count | Should -Be 0
+    }
+
+    It 'verifies the evaluated base after a lost merge response of a retargeted pull request' {
+        Mock -ModuleName MergeGate Invoke-MergeGateGh {
+            $response = Invoke-MergeGateStub -Stub $stub -Arguments $Arguments
+            if ($Arguments[0] -eq 'pr') {
+                $stub.PullRequest.baseRefName = 'release'
+                throw 'gh pr merge failed with exit code 1: connection reset'
+            }
+            $response
+        }
+        $result = Invoke-GatedMerge @merge
+
+        $stub.Merges | Should -Be 1
+        $result.reason | Should -Be 'already-merged'
+        $result.postVerify.verified | Should -BeFalse
+        $result.exitCode | Should -Be 5
     }
 
     It 'fails the verification of an already merged pull request without a passing rule suite (exit 5)' {

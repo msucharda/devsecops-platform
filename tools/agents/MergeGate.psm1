@@ -719,9 +719,11 @@ function Get-MergeGateSensitiveLine {
     [OutputType([string])]
     param([Parameter(Mandatory)][System.Collections.IDictionary] $File)
 
-    # A file renamed or copied into the workflow directory activates content that the patch does not show.
-    if ($File['status'] -in @('renamed', 'copied') -and -not (Test-MergeGateWorkflowPath -Path ([string] $File['previous_filename']))) {
-        "$($File['filename']): $($File['status']) into the workflow directory from $($File['previous_filename'])"
+    # A copy, or a rename other than between two workflow files, can activate content that the patch does not show.
+    $direct = '^\.github/workflows/[^/]+\.ya?ml$'
+    if ($File['status'] -ceq 'copied' -or
+        ($File['status'] -ceq 'renamed' -and -not ([string] $File['previous_filename'] -match $direct -and [string] $File['filename'] -match $direct))) {
+        "$($File['filename']): $($File['status']) from $($File['previous_filename'])"
     }
     $patch = $File['patch']
     if ($patch -isnot [string] -or $patch -eq '') {
@@ -1287,11 +1289,13 @@ function Complete-MergeGateAlreadyMerged {
     param(
         [Parameter(Mandatory)][System.Collections.Specialized.OrderedDictionary] $Output,
         [Parameter(Mandatory)][hashtable] $Target,
-        [Parameter(Mandatory)][int] $Number
+        [Parameter(Mandatory)][int] $Number,
+        # The base branch evaluated before a merge attempt; empty when the pull request was already merged before.
+        [AllowEmptyString()][string] $BaseRef
     )
 
     $Output['reason'] = 'already-merged'
-    $Output['postVerify'] = Get-MergeGatePostMerge -Target $Target -Number $Number -TimePeriod 'day'
+    $Output['postVerify'] = Get-MergeGatePostMerge -Target $Target -Number $Number -TimePeriod 'day' -BaseRef $BaseRef
     $Output['mergeCommit'] = $Output['postVerify']['mergeCommit']
     $Output['mergedBy'] = $Output['postVerify']['mergedBy']
     # A merge that bypassed the rules, or whose rule suite cannot be found, is not a verified outcome.
@@ -1350,6 +1354,8 @@ function Invoke-GatedMerge {
         return $output
     }
 
+    # The base the gate evaluated; recovery after a lost merge response verifies against it too.
+    $evaluatedBase = [string] $gate['details']['base']['baseRef']
     try {
         Invoke-MergeGatePullRequestMerge -Target $target -Number $Pr -HeadSha $gate['headSha']
     }
@@ -1358,14 +1364,14 @@ function Invoke-GatedMerge {
         $mergeError = $_.Exception.Message
         $gate = Invoke-MergeGate @gateParameters
         $output['gate'] = ConvertTo-MergeGateOutput -Result $gate
-        if ($gate['verdict'] -ceq 'already-merged') { return Complete-MergeGateAlreadyMerged -Output $output -Target $target -Number $Pr }
+        if ($gate['verdict'] -ceq 'already-merged') { return Complete-MergeGateAlreadyMerged -Output $output -Target $target -Number $Pr -BaseRef $evaluatedBase }
         $output['reason'] = "merge-refused: $mergeError"
         $output['exitCode'] = if ($gate['exitCode'] -eq 0) { 1 } else { $gate['exitCode'] }
         return $output
     }
 
     $output['action'] = 'merged'
-    $output['postVerify'] = Get-MergeGatePostMerge -Target $target -Number $Pr -BaseRef ([string] $gate['details']['base']['baseRef'])
+    $output['postVerify'] = Get-MergeGatePostMerge -Target $target -Number $Pr -BaseRef $evaluatedBase
     $output['mergeCommit'] = $output['postVerify']['mergeCommit']
     $output['exitCode'] = if ($output['postVerify']['verified']) { 0 } else { 5 }
     return $output
