@@ -41,7 +41,7 @@ $script:ConfigOrder = @(
 $script:FlagOrder = @(
     'tenant', 'subscriptions', 'enterpriseOidc', 'enterpriseScim', 'enterpriseOwner', 'licenses',
     'privateInternalForksDisabled', 'repositoryManagementPoliciesEnforced', 'emuUserNamespacesRestricted',
-    'fineGrainedPatApprovalRequired', 'patMaxLifetime90Days', 'githubAppAvailabilityVerified'
+    'fineGrainedPatApprovalRequired', 'patMaxLifetime90Days', 'githubAppAvailabilityVerified', 'liveWorkflowsPromoted'
 )
 $script:ConfirmedPolicies = [ordered]@{
     emuUserNamespacesRestricted = @(
@@ -2632,6 +2632,14 @@ function Get-SetupFlag {
             'privateInternalForksDisabled' { [bool] $Setup.Facts.RepositoryPoliciesDisabled }
             'repositoryManagementPoliciesEnforced' { [bool] $Setup.Facts.RepositoryPoliciesDisabled }
             'githubAppAvailabilityVerified' { Test-SetupStageOk -Setup $Setup -Id 'probe-authorization', 'probe-admin' }
+            # The wizard runs before live workflows exist; keep the platform team's later confirmation.
+            'liveWorkflowsPromoted' {
+                $existing = $Setup.Existing
+                $existing -is [System.Collections.IDictionary] -and
+                    $existing['manualPrerequisites'] -is [System.Collections.IDictionary] -and
+                    $existing['manualPrerequisites'][$flagName] -is [bool] -and
+                    $existing['manualPrerequisites'][$flagName]
+            }
             default { $policiesRan -and $confirmations.Contains($flagName) }
         }
     }

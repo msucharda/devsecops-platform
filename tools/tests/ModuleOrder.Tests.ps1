@@ -35,6 +35,21 @@ Describe 'Released module order' {
         $graph['enterprise-baseline'].prerequisites | Should -Contain 'organizations'
     }
 
+    It 'orders enterprise-baseline after actions-catalog, so the catalog exists before the actions policy blocks upstream actions' {
+        $deployPath = Join-Path $TestDrive 'deploy-catalog.yml'
+        $driftPath = Join-Path $TestDrive 'drift-catalog.yml'
+        $teardownPath = Join-Path $TestDrive 'teardown-catalog.yml'
+        & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $released -OutputPath $deployPath -DriftOutputPath $driftPath
+        & (Join-Path $toolsPath 'Generate-TeardownWorkflow.ps1') -ModulesPath $released -OutputPath $teardownPath
+        $deploy = ConvertFrom-Yaml (Get-Content -LiteralPath $deployPath -Raw)
+        $teardown = ConvertFrom-Yaml (Get-Content -LiteralPath $teardownPath -Raw)
+
+        $deploy.jobs.apply_enterprise_baseline.needs | Should -Contain 'apply_actions_catalog'
+        $deploy.jobs.apply_enterprise_baseline.if | Should -Match "needs\.apply_actions_catalog\.result == 'success'"
+        $teardown.jobs.destroy_actions_catalog.needs | Should -Contain 'destroy_enterprise_baseline'
+        $teardown.jobs.destroy_enterprise_baseline.needs | Should -Not -Contain 'destroy_actions_catalog'
+    }
+
     It 'orders enterprise-baseline after <Name> in deploy, drift and teardown regardless of module names' -ForEach @(
         @{ Name = 'organizations' }
         @{ Name = 'aa-organizations' }

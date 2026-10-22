@@ -2,12 +2,14 @@ name: enterprise-baseline
 description: Organization controls of the instance organizations; enterprise controls outside App-only automation are manual prerequisites.
 prerequisites:
   - organizations
+  - actions-catalog
 manualPrerequisites:
   - privateInternalForksDisabled
   - repositoryManagementPoliciesEnforced
   - emuUserNamespacesRestricted
   - fineGrainedPatApprovalRequired
   - patMaxLifetime90Days
+  - liveWorkflowsPromoted
 manualSteps: []
 permissions:
   azure: []

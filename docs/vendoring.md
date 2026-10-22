@@ -82,6 +82,8 @@ Uživatel schválil zachování omezených App oprávnění: automatický import
 
 Po review release platformní tým připraví samostatný PR s povýšením schválených šablon do `.github/workflows`. Security tým schválí diff a platformní tým zajistí, že workflow používají katalogové SHA a zachovávají authorization gates (autorizační podmínky), environmenty a pořadí plan → approval → apply. Tento ruční krok z #16 se nesmí vykázat jako automaticky ověřený běh. Rozhodnutí upřesňuje acceptance criteria (akceptační kritéria) v [#16](https://github.com/msucharda/devsecops-platform/issues/16#issuecomment-6148995640).
 
+Po mergi povýšení platformní tým nastaví v `instance.yaml` příznak `manualPrerequisites.liveWorkflowsPromoted: true`. Bez příznaku runner zastaví plan a apply modulu `enterprise-baseline`, protože jeho politika akcí by zablokovala workflow s upstream akcemi.
+
 ## Nedostupný privátní zdroj: Manual step (ruční krok)
 
 Pokud enterprise-owned App nemůže zdroj číst, automatický import skončí konkrétní chybou. Workflow nesmí použít osobní PAT, OAuth token ani širší App scope. Platformní tým provede deklarovaný ruční import do zpřístupnění zdroje:

@@ -120,6 +120,12 @@
                 @{ Path = 'tools/tests/ActionsCatalog.Tests.ps1'; FullName = @('*Get-CatalogStateViolation*') }
             )
         }
+        @{
+            Name = 'actions-policy-state'
+            Tests = @(
+                @{ Path = 'tools/tests/ActionsPolicy.Tests.ps1'; FullName = @('*Get-ActionsPolicyStateViolation*') }
+            )
+        }
     )
 
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.

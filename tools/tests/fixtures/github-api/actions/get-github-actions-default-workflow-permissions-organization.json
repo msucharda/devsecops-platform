@@ -1,0 +1,21 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/actions/permissions/workflow",
+    "operationId": "actions/get-github-actions-default-workflow-permissions-organization",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions#get-default-workflow-permissions-for-an-organization",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/actions-get-default-workflow-permissions"
+  },
+  "required": {
+    "": [
+      "default_workflow_permissions",
+      "can_approve_pull_request_reviews"
+    ]
+  },
+  "body": {
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": true
+  }
+}

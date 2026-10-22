@@ -500,14 +500,19 @@ function Get-PlatformModuleSelection {
     return ,$names
 }
 
+# Confirmed only after the instance repository exists, so bootstrap cannot require them.
+$script:PostBootstrapManualPrerequisite = @('liveWorkflowsPromoted')
+
 function Get-PlatformManualPrerequisiteName {
     [CmdletBinding()]
     [OutputType([string])]
-    param()
+    param([ValidateSet('All', 'Bootstrap')][string] $Scope = 'All')
 
     $schema = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../schemas/instance.schema.json') -Raw |
         ConvertFrom-Json -AsHashtable
-    $schema['properties']['manualPrerequisites']['properties'].PSBase.Keys
+    $names = $schema['properties']['manualPrerequisites']['properties'].PSBase.Keys
+    if ($Scope -eq 'Bootstrap') { $names = $names | Where-Object { $_ -cnotin $script:PostBootstrapManualPrerequisite } }
+    $names
 }
 
 function Get-PlatformManualPrerequisite {
@@ -515,10 +520,11 @@ function Get-PlatformManualPrerequisite {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)][System.Collections.IDictionary] $Instance,
-        [string[]] $Name
+        [string[]] $Name,
+        [ValidateSet('All', 'Bootstrap')][string] $Scope = 'All'
     )
 
-    $names = if ($PSBoundParameters.ContainsKey('Name')) { $Name } else { Get-PlatformManualPrerequisiteName }
+    $names = if ($PSBoundParameters.ContainsKey('Name')) { $Name } else { Get-PlatformManualPrerequisiteName -Scope $Scope }
     foreach ($prerequisite in $names) {
         [pscustomobject]@{
             Name = $prerequisite
@@ -535,7 +541,7 @@ function Assert-PlatformManualPrerequisite {
         [string] $Subject = 'Bootstrap'
     )
 
-    $arguments = @{ Instance = $Instance }
+    $arguments = @{ Instance = $Instance; Scope = 'Bootstrap' }
     if ($PSBoundParameters.ContainsKey('Name')) { $arguments.Name = $Name }
     $missing = @(Get-PlatformManualPrerequisite @arguments | Where-Object { -not $_.Confirmed } | ForEach-Object { $_.Name })
     if ($missing.Count -gt 0) {

@@ -42,7 +42,7 @@ Describe 'Deployment workflow generation' {
         @($manifest.permissions.azure) | Should -BeNullOrEmpty
         @($manifest.permissions.microsoftGraph) | Should -BeNullOrEmpty
         @($manifest.manualPrerequisites | Sort-Object) | Should -Be @(
-            'emuUserNamespacesRestricted', 'fineGrainedPatApprovalRequired', 'patMaxLifetime90Days',
+            'emuUserNamespacesRestricted', 'fineGrainedPatApprovalRequired', 'liveWorkflowsPromoted', 'patMaxLifetime90Days',
             'privateInternalForksDisabled', 'repositoryManagementPoliciesEnforced')
         Test-Path -LiteralPath (Join-Path $released 'enterprise-baseline/rulesets/versions.tf') | Should -BeTrue
     }

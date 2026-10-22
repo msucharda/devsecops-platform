@@ -92,6 +92,54 @@ jobs:
       - name: Require a platform-team member with a direct Enterprise Owner assignment
         shell: pwsh
         run: ./instance/platform/tools/Test-TeardownEnterpriseOwner.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+  outputs_actions_catalog:
+    name: 'actions-catalog (read outputs before teardown)'
+    runs-on: ubuntu-latest
+    needs: [select, enterprise_owner]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'actions-catalog') }}
+    environment: ${{ fromJSON(needs.select.outputs.environments)['actions-catalog'] }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: 'true'
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
+      PLATFORM_STATE_RESOURCE_GROUP: ${{ vars.PLATFORM_STATE_RESOURCE_GROUP }}
+    steps:
+      - name: Check out the dispatched main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: instance
+          persist-credentials: false
+      - name: Install runtime dependencies
+        shell: pwsh
+        run: ./instance/platform/tools/Install-ToolDependencies.ps1
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - name: Sign in to Azure with the phase managed identity
+        uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Read public outputs from state without planning
+        shell: pwsh
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'actions-catalog' -Action output -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -ArtifactsPath ./artifacts/module-outputs
+      - name: Upload public module outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: teardown-outputs-actions-catalog
+          path: ./artifacts/module-outputs/actions-catalog.json
+          if-no-files-found: error
+          retention-days: 1
   outputs_organizations:
     name: 'organizations (read outputs before teardown)'
     runs-on: ubuntu-latest
@@ -140,11 +188,108 @@ jobs:
           path: ./artifacts/module-outputs/organizations.json
           if-no-files-found: error
           retention-days: 1
+  destroy_enterprise_baseline:
+    name: 'enterprise-baseline (destroy)'
+    runs-on: ubuntu-latest
+    needs: [select, approve_teardown, enterprise_owner, outputs_actions_catalog, outputs_organizations]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.outputs_actions_catalog.result == 'success' && needs.outputs_organizations.result == 'success' }}
+    environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: 'true'
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
+      PLATFORM_STATE_RESOURCE_GROUP: ${{ vars.PLATFORM_STATE_RESOURCE_GROUP }}
+    steps:
+      - name: Check out the dispatched main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          path: instance
+          persist-credentials: false
+      - name: Install runtime dependencies
+        shell: pwsh
+        run: ./instance/platform/tools/Install-ToolDependencies.ps1
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - name: Sign in to Azure with the phase managed identity
+        uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Read whether every module state is empty before issuing GitHub tokens
+        id: state
+        shell: pwsh
+        run: |
+          $results = @(
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -Rulesets
+          )
+          $empty = $results.Count -eq 2 -and @($results | Where-Object { $_.Empty -isnot [bool] -or -not $_.Empty }).Count -eq 0
+          "empty=$($empty.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+      - name: Issue an apply-scoped enterprise App installation token
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+        run: ./instance/platform/tools/New-PlatformGitHubToken.ps1 -Module 'enterprise-baseline' -Phase apply -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+      - name: Download outputs of actions-catalog
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: teardown-outputs-actions-catalog
+          path: ./artifacts/prerequisites
+      - name: Download outputs of organizations
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: teardown-outputs-organizations
+          path: ./artifacts/prerequisites
+      - name: Require main to still point to the dispatched commit
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
+      - name: Destroy the isolated rulesets root first
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ env.GH_TOKEN }}
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action destroy -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -Rulesets
+      - name: Require main to still point to the dispatched commit
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
+      - name: Destroy module
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ env.GH_TOKEN }}
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action destroy -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
+      - name: Revoke the job installation tokens
+        if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
+        shell: pwsh
+        run: ./instance/platform/tools/Remove-PlatformGitHubToken.ps1
   destroy_actions_catalog:
     name: 'actions-catalog (destroy)'
     runs-on: ubuntu-latest
-    needs: [select, approve_teardown, enterprise_owner, outputs_organizations]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'actions-catalog') && needs.outputs_organizations.result == 'success' }}
+    needs: [select, approve_teardown, enterprise_owner, outputs_organizations, destroy_enterprise_baseline]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'actions-catalog') && needs.outputs_organizations.result == 'success' && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline'))) }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['actions-catalog'] }}
     permissions:
       contents: read
@@ -214,97 +359,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
         run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'actions-catalog' -Action destroy -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
-      - name: Revoke the job installation tokens
-        if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
-        shell: pwsh
-        run: ./instance/platform/tools/Remove-PlatformGitHubToken.ps1
-  destroy_enterprise_baseline:
-    name: 'enterprise-baseline (destroy)'
-    runs-on: ubuntu-latest
-    needs: [select, approve_teardown, enterprise_owner, outputs_organizations]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.outputs_organizations.result == 'success' }}
-    environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      TF_IN_AUTOMATION: 'true'
-      ARM_USE_OIDC: 'true'
-      ARM_USE_AZUREAD: 'true'
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
-      PLATFORM_STATE_RESOURCE_GROUP: ${{ vars.PLATFORM_STATE_RESOURCE_GROUP }}
-    steps:
-      - name: Check out the dispatched main commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ github.sha }}
-          path: instance
-          persist-credentials: false
-      - name: Install runtime dependencies
-        shell: pwsh
-        run: ./instance/platform/tools/Install-ToolDependencies.ps1
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
-        with:
-          terraform_version: 1.16.5
-          terraform_wrapper: false
-      - name: Sign in to Azure with the phase managed identity
-        uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Read whether every module state is empty before issuing GitHub tokens
-        id: state
-        shell: pwsh
-        run: |
-          $results = @(
-            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
-            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -Rulesets
-          )
-          $empty = $results.Count -eq 2 -and @($results | Where-Object { $_.Empty -isnot [bool] -or -not $_.Empty }).Count -eq 0
-          "empty=$($empty.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-      - name: Issue an apply-scoped enterprise App installation token
-        if: ${{ steps.state.outputs.empty != 'true' }}
-        shell: pwsh
-        env:
-          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
-          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
-          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
-          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
-        run: ./instance/platform/tools/New-PlatformGitHubToken.ps1 -Module 'enterprise-baseline' -Phase apply -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
-      - name: Download outputs of organizations
-        if: ${{ steps.state.outputs.empty != 'true' }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: teardown-outputs-organizations
-          path: ./artifacts/prerequisites
-      - name: Require main to still point to the dispatched commit
-        if: ${{ steps.state.outputs.empty != 'true' }}
-        shell: pwsh
-        env:
-          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
-        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
-      - name: Destroy the isolated rulesets root first
-        if: ${{ steps.state.outputs.empty != 'true' }}
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action destroy -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -Rulesets
-      - name: Require main to still point to the dispatched commit
-        if: ${{ steps.state.outputs.empty != 'true' }}
-        shell: pwsh
-        env:
-          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
-        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
-      - name: Destroy module
-        if: ${{ steps.state.outputs.empty != 'true' }}
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action destroy -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
       - name: Revoke the job installation tokens
         if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh
