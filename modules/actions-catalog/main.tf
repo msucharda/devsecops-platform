@@ -14,12 +14,12 @@ locals {
   vendoring_path = coalesce(var.vendoring_catalog_path, "${path.module}/../../../vendoring/actions.json")
   vendoring      = try(jsondecode(file(local.vendoring_path)), null)
   vendored       = try({ for upstream, copy in local.vendoring.actions : upstream => copy }, {})
-  # Missing or non-string fields become empty strings, which the preconditions of the releases output reject.
+  # Missing, null, number and boolean fields become empty strings; Terraform equality never matches a string with another type, so tostring cannot coerce them, which the preconditions of the releases output reject.
   releases = {
     for upstream, copy in local.vendored : upstream => {
-      repository = try(copy.repository == null ? "" : tostring(copy.repository), "")
-      tag        = try(copy.tag == null ? "" : tostring(copy.tag), "")
-      commit     = try(copy.sha == null ? "" : tostring(copy.sha), "")
+      repository = try(copy.repository == tostring(copy.repository) ? copy.repository : "", "")
+      tag        = try(copy.tag == tostring(copy.tag) ? copy.tag : "", "")
+      commit     = try(copy.sha == tostring(copy.sha) ? copy.sha : "", "")
     }
   }
   # Only entries of the catalog reach a resource; any other entry fails the plan through the releases output.

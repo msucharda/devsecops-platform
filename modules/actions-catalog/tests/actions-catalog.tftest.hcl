@@ -366,3 +366,33 @@ run "rejects_a_vendoring_catalog_path_of_another_file" {
 
   expect_failures = [var.vendoring_catalog_path]
 }
+
+run "rejects_a_boolean_release_tag" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/boolean-tag/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_numeric_release_tag" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/numeric-tag/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_numeric_release_commit" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/numeric-commit/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
