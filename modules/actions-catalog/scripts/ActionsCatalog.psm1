@@ -499,7 +499,11 @@ function Initialize-CatalogRepository {
     if ($current -cne $codeOwners) {
         throw "$($script:CodeOwnersPath) on main of '$Organization/$name' does not name only the security team; change it through a reviewed PR."
     }
-    # Sharing comes last, so a repository that fails adoption is never opened to the enterprise.
+    $rules = Invoke-CatalogApi -ApiUrl $ApiUrl -Method GET -Path "/repos/$Organization/$name/rules/branches/$($script:DefaultBranch)?per_page=100" -AllPages
+    if (-not (Test-CatalogApprovalRule -Rule $rules.Body -Organization $Organization)) {
+        throw "Main of '$Organization/$name' has no active organization rule that requires an approving code owner review; its actions stay closed to the enterprise."
+    }
+    # Sharing comes last, so a repository that fails adoption or lacks the approval rule is never opened to the enterprise.
     if ((Get-CatalogAccessLevel -ApiUrl $ApiUrl -Organization $Organization -Repository $name) -cne 'enterprise') {
         $null = Invoke-CatalogApi -ApiUrl $ApiUrl -Method PUT -Path "/repos/$Organization/$name/actions/permissions/access" `
             -Body @{ access_level = 'enterprise' } -AcceptStatus @(204)

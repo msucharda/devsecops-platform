@@ -80,8 +80,7 @@ Describe 'Actions catalog interruption harness' -Tag 'Interruption' {
     It 'recovers from an interruption at every mutating step of an adopted repository' {
         $reset = {
             & $resetStub {
-                $repository = Add-StubRepository -Files @{ '.github/CODEOWNERS' = $codeOwners }
-                $repository.rules.Add((Get-StubApprovalRule)[0])
+                $null = Add-StubRepository -Files @{ '.github/CODEOWNERS' = $codeOwners }
             }
         }
         $run = { Initialize-CatalogRepository @target }

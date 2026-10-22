@@ -59,7 +59,8 @@ Prostředek `terraform_data.repository` pro každou akci katalogu spustí `Invok
 2. Modul převezme jen repozitář organizace akcí s přesným názvem, viditelností `internal`, bez archivace, který není fork a má výchozí větev `main`. Jiný repozitář ukončí běh chybou (fail-closed).
 3. Pokud security tým nemá `push`, modul ho přidá (`PUT /orgs/{org}/teams/{team}/repos/{org}/{repo}`). Chybějící tým nebo tým s jinou viditelností než `closed` ukončí běh chybou. CODEOWNERS tajný (`secret`) tým ignoruje.
 4. Prázdný repozitář dostane první commit `.github/CODEOWNERS` (`PUT /repos/{org}/{repo}/contents/.github/CODEOWNERS`). Pokud `main` existuje a CODEOWNERS se liší, modul soubor nepřepíše a skončí chybou. Změna musí projít PR se schválením.
-5. Pokud `access_level` není `enterprise`, modul ho nastaví (`PUT /repos/{org}/{repo}/actions/permissions/access`). Krok je poslední, proto repozitář, který neprošel převzetím, zůstane pro enterprise uzavřený.
+5. Modul přečte aktivní pravidla `main` (`GET /repos/{org}/{repo}/rules/branches/main`, všechny stránky). Pokud chybí schvalovací pravidlo rulesetu organizace podle [kontroly stavu](#kontrola-stavu), modul skončí chybou a `access_level` nezmění.
+6. Pokud `access_level` není `enterprise`, modul ho nastaví (`PUT /repos/{org}/{repo}/actions/permissions/access`). Krok je poslední, proto repozitář, který neprošel převzetím nebo nemá schvalovací pravidlo, zůstane pro enterprise uzavřený.
 
 ### Tag releasu
 

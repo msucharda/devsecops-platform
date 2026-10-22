@@ -34,6 +34,8 @@ BeforeAll {
         $state = @{
             Organization = $organization
             OrganizationDefaultBranch = 'main'
+            # Rules of the organization ruleset that every new repository of the organization inherits on main.
+            OrganizationRules = [object[]] @((Get-StubApprovalRule)[0])
             Teams = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
             Repositories = @{}
             NextSha = 1
@@ -53,7 +55,7 @@ BeforeAll {
             id = $stub.NextId++; name = $Name; owner = $Owner; visibility = 'internal'; archived = $false; fork = $false
             default_branch = $stub.OrganizationDefaultBranch; access = 'none'; teams = @{}
             commits = @{}; heads = @{}; tags = @{}
-            rules = [Collections.Generic.List[object]]::new()
+            rules = [Collections.Generic.List[object]]::new([object[]] @($stub.OrganizationRules))
         }
         foreach ($key in $Property.Keys) { $repository[$key] = $Property[$key] }
         $stub.Repositories[$Name.ToLowerInvariant()] = $repository
@@ -261,7 +263,6 @@ BeforeAll {
         $repository = Add-StubRepository -Files @{ '.github/CODEOWNERS' = $codeOwners }
         $repository.access = 'enterprise'
         $repository.teams[$securityTeam] = 'push'
-        $repository.rules.Add((Get-StubApprovalRule)[0])
         if ($Files) { $null = Add-StubCommit -Files $Files }
         $repository
     }
@@ -464,6 +465,31 @@ Describe 'Actions catalog module against the documented GitHub API' {
 
             Initialize-CatalogRepository @target
 
+            $repository.access | Should -BeExactly 'enterprise'
+        }
+
+        It 'keeps a <Kind> repository closed to the enterprise when main <Case>' -ForEach @(
+            @{ Kind = 'new'; Case = 'has no rule'; Rules = @() }
+            @{ Kind = 'new'; Case = 'has only a repository rule'; Rules = @(@{ '0.ruleset_source_type' = 'Repository' }) }
+            @{ Kind = 'new'; Case = 'has a rule without code owner review'; Rules = @(@{ '0.parameters.require_code_owner_review' = $false }) }
+            @{ Kind = 'adopted'; Case = 'has no rule'; Rules = @() }
+            @{ Kind = 'adopted'; Case = 'has a rule of another organization'; Rules = @(@{ '0.ruleset_source' = 'other-org' }) }
+            @{ Kind = 'adopted'; Case = 'has a rule without approvals'; Rules = @(@{ '0.parameters.required_approving_review_count' = 0 }) }
+        ) {
+            $stub.OrganizationRules = [object[]] @(foreach ($set in $Rules) { (Get-StubApprovalRule -Set $set)[0] })
+            if ($Kind -ceq 'adopted') { $null = Add-StubRepository -Files @{ '.github/CODEOWNERS' = $codeOwners } }
+
+            { Initialize-CatalogRepository @target } | Should -Throw '*no active organization rule that requires an approving code owner review*'
+            (Get-StubRequest setAccess).Count | Should -Be 0
+            $stub.Repositories[$repositoryName].access | Should -BeExactly 'none'
+        }
+
+        It 'keeps the access level of a shared repository whose approval rule was removed' {
+            $repository = Add-StubCompliantRepository
+            $repository.rules.Clear()
+
+            { Initialize-CatalogRepository @target } | Should -Throw '*no active organization rule*'
+            (Get-StubWrite).Count | Should -Be 0
             $repository.access | Should -BeExactly 'enterprise'
         }
 
@@ -913,7 +939,6 @@ Describe 'Actions catalog module against the documented GitHub API' {
     Context 'Get-CatalogRepositoryState' {
         It 'reads a converged repository without violations' {
             Initialize-CatalogRepository @target
-            $stub.Repositories[$repositoryName].rules.Add((Get-StubApprovalRule)[0])
             $release = Add-StubCommit -Files @{ '.vendoring.json' = (Get-StubReceipt) }
             New-CatalogReleaseTag @target -Tag 'v4.2.2' -Commit $release
             $stub.Requests.Clear()
