@@ -31,7 +31,7 @@ PR importu vytvořený App nemá nárok na automatický cloudový plan. Po jeho 
 
 Zápis issue driftu provede samostatný reporting job s installation tokenem omezeným na potřebný zápis v repozitáři instance. Běžný plan kvůli reportování nesmí získat oprávnění k zápisu.
 
-Pravidla schválení apply neměníme: platformní tým schvaluje celý běh a apply modulu `enterprise-baseline` navíc schvaluje security tým.
+Pravidla schválení apply neměníme: platformní tým schvaluje celý běh a apply modulů `enterprise-baseline` a `organization-rulesets` navíc schvaluje security tým.
 
 ## Hranice vynucování a ruční operace
 

@@ -195,9 +195,9 @@ Proměnná Terraformu `github_tokens` musí mít `type = map(string)` a `sensiti
 
 Job stáhne výstupy každého přímého předpokladu ze stejné fáze. Publikuje jen `<module>.json` jako `plan-outputs-<module>` nebo `apply-outputs-<module>`, s retencí jeden den. Ruleset plan publikuje oddělený `<module>.rulesets.json`. Plan, proměnné a state se nenahrávají. Chybějící artifact nebo selhání runneru zastaví větev.
 
-Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFORMED`. Pro autorizovaný běh vyžaduje úspěch všech vybraných planů včetně rulesetů; chybějící job zastaví stale workflow. Teprve na `main` následuje jediné schválení platformním týmem v `approve-apply`. Apply joby poté běží ve svých environmentech; `enterprise-baseline-apply` navíc vyžaduje security tým. Pravidla environmentů nastaví `tools/Invoke-GitHubBootstrap.ps1`; [runbook](docs/bootstrap.md#github-část-bootstrapu) popisuje přípravu, ověření Apps, OIDC vazby a rotaci klíčů. Kontrakt environmentů popisuje [šablona](templates/instance/README.md).
+Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFORMED`. Pro autorizovaný běh vyžaduje úspěch všech vybraných planů včetně rulesetů; chybějící job zastaví stale workflow. Teprve na `main` následuje jediné schválení platformním týmem v `approve-apply`. Apply joby poté běží ve svých environmentech; `enterprise-baseline-apply` a `organization-rulesets-apply` navíc vyžadují security tým. Pravidla environmentů nastaví `tools/Invoke-GitHubBootstrap.ps1`; [runbook](docs/bootstrap.md#github-část-bootstrapu) popisuje přípravu, ověření Apps, OIDC vazby a rotaci klíčů. Kontrakt environmentů popisuje [šablona](templates/instance/README.md).
 
-**Současný rozsah:** manifest a Terraform mají z produkčních modulů jen `emu-identity`, `enterprise-baseline` a `organizations`. Ostatní produkční adresáře obsahují jen specifikace. Produkční šablona proto obsahuje autorizaci, validaci, výběr, plan a apply těchto modulů včetně ruleset jobu `enterprise-baseline` a reportování. Ruleset root `enterprise-baseline` zatím nespravuje žádný ruleset; rulesety doplní [#20](https://github.com/msucharda/devsecops-platform/issues/20). Šablona očekává release v `platform/`; CODEOWNERS určuje platformní tým a bootstrap nahradí jeho ukázkový slug. Průvodce `tools\Start-InstanceSetup.ps1 -GitHubAcceptance` ověří bootstrap, read-only API a OIDC na izolovaném kandidátovi pro [#11](https://github.com/msucharda/devsecops-platform/issues/11). První produkční modul `emu-identity` ověří [#12](https://github.com/msucharda/devsecops-platform/issues/12). Produkční operace `enterprise-baseline` ověří jeho vlastní issues, počínaje [#17](https://github.com/msucharda/devsecops-platform/issues/17); probe manifesty je nenahrazují.
+**Současný rozsah:** manifest a Terraform mají z produkčních modulů jen `emu-identity`, `organizations`, `organization-rulesets`, `actions-catalog` a `enterprise-baseline`. Ostatní produkční adresáře obsahují jen specifikace. Produkční šablona proto obsahuje autorizaci, validaci, výběr, plan a apply těchto modulů včetně ruleset jobu `organization-rulesets` a reportování. Ruleset root `organization-rulesets` spravuje ruleset `platform-default-branch` v organizaci akcí ([#20](https://github.com/msucharda/devsecops-platform/issues/20), [#73](https://github.com/msucharda/devsecops-platform/issues/73)). Šablona očekává release v `platform/`; CODEOWNERS určuje platformní tým a bootstrap nahradí jeho ukázkový slug. Průvodce `tools\Start-InstanceSetup.ps1 -GitHubAcceptance` ověří bootstrap, read-only API a OIDC na izolovaném kandidátovi pro [#11](https://github.com/msucharda/devsecops-platform/issues/11). První produkční modul `emu-identity` ověří [#12](https://github.com/msucharda/devsecops-platform/issues/12). Produkční operace `enterprise-baseline` ověří jeho vlastní issues, počínaje [#17](https://github.com/msucharda/devsecops-platform/issues/17); probe manifesty je nenahrazují.
 
 ### Detekce driftu
 
@@ -284,8 +284,9 @@ foreach ($root in $roots) {
 | `bootstrap` | State backend, identity modulů pro plan a apply, organizace platformy, repozitář instance a zapojení enterprise-owned GitHub Apps. Člen platformního týmu ho spustí jednou lokálně; registrace Apps a vložení klíčů mohou být ruční. | – |
 | `emu-identity` | Skupiny a přiřazení app rolí v enterprise aplikaci GHE: platformní tým (Enterprise Owner), security tým (User) a uživatelé Copilotu (User). SCIM ze skupin zřídí IdP skupiny. Propojení týmů a enterprise tým s licencí Copilot jsou ruční kroky. | `bootstrap` |
 | `organizations` | Organizace akcí a organizace workloadů. | `emu-identity` |
-| `actions-catalog` | Vendorované akce v organizaci akcí. | `organizations` |
-| `enterprise-baseline` | Organizační rulesety, code security configurations, politika akcí a custom patterns. Neautomatizované enterprise kontroly jsou ruční předpoklad. | `actions-catalog` |
+| `organization-rulesets` | Organizační ruleset výchozí větve s review od CODEOWNERS a bez bypassu. | `organizations` |
+| `actions-catalog` | Vendorované akce v organizaci akcí. | `organization-rulesets` |
+| `enterprise-baseline` | Code security configurations, politika akcí a custom patterns. Neautomatizované enterprise kontroly jsou ruční předpoklad. | `actions-catalog` |
 | `required-workflows` | Povinná workflow vynucená rulesetem. | `enterprise-baseline` |
 | `copilot-catalog` | Vendorované skilly a agenti pro Copilot. | `organizations` |
 | `copilot-workstation` | Copilot app a spravovaná nastavení přes Intune. | `emu-identity` |
@@ -302,7 +303,7 @@ Modul `lz-vending` (subscription pro workload) přijde později.
 
 ## Pořadí implementace
 
-1. GitHub governance: `bootstrap`, `emu-identity`, `organizations`, `actions-catalog`, `enterprise-baseline`. Přírůstek končí testem teardownu.
+1. GitHub governance: `bootstrap`, `emu-identity`, `organizations`, `organization-rulesets`, `actions-catalog`, `enterprise-baseline`. Přírůstek končí testem teardownu.
 2. SLZ: `slz-core`, `slz-management`, `slz-connectivity`, `audit-streaming`.
 3. Dodávka: `shared-app-lz`, `runner-pool`, `required-workflows`, `image-promotion`, `workload-onboarding`.
 4. Copilot: `copilot-catalog`, `copilot-workstation`.
@@ -319,7 +320,7 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - Automatický PR plan s přihlašovacími údaji smí běžet jen pro PR platformního týmu v repozitáři instance. Forky, jiní autoři ani PR vytvořené App je automaticky nedostanou. Po review a merge PR importu proběhne plan na chráněné větvi `main` před apply.
 - Běžný plan je read-only. Plan organizačních rulesetů běží v samostatném jobu s výslovnou výjimkou `Organization Administration: write`; toto oprávnění nesmějí dostat ostatní plan joby.
 - Workflow zapíše nepotvrzené ruční kroky do job summary jako varování. Platformní tým potvrdí ruční krok v `instance.yaml` přes PR.
-- Po merge PR schválí platformní tým jednou celý běh apply. Běh modulu `enterprise-baseline` navíc schvaluje security tým.
+- Po merge PR schválí platformní tým jednou celý běh apply. Běhy modulů `enterprise-baseline` a `organization-rulesets` navíc schvaluje security tým.
 - Každou noc proběhne plan všech modulů na větvi `main`. Pokud plan najde drift, workflow otevře nebo aktualizuje issue v repozitáři instance.
 - Issue driftu zapisuje samostatný reporting job s installation tokenem pro potřebný zápis v repozitáři instance. Plan joby kvůli němu nezískají oprávnění k zápisu.
 

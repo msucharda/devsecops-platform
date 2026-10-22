@@ -386,7 +386,7 @@ try {
     if ($Action -eq 'destroy') { Import-ModulePrerequisiteOutput -Name $prerequisites -Path $PrerequisiteOutputsPath -Target $variables['prerequisites'] }
     $variableFile = Join-Path $temporaryDirectory 'inputs.tfvars.json'
     [IO.File]::WriteAllText($variableFile, (ConvertTo-Json -InputObject $variables -Depth 100), [Text.UTF8Encoding]::new($false))
-    if ($Rulesets -and $Module -ceq 'enterprise-baseline' -and $Action -ceq 'destroy') {
+    if ($Rulesets -and $Action -ceq 'destroy') {
         & (Join-Path $PSScriptRoot 'Restore-RulesetState.ps1') -TerraformRoot $moduleRoot -VariableFile $variableFile
     }
     $planFile = Join-Path $temporaryDirectory 'module.tfplan'

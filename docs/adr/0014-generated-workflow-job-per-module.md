@@ -12,4 +12,4 @@ CI zdrojového repozitáře vygeneruje z manifestů modulů workflow nasazení, 
 
 - Výstupy modulu nesmí obsahovat citlivé hodnoty, protože jdou do artifactu.
 - Autorizovaný běh planu spustí plan všech vybraných modulů, aby závislé moduly dostaly aktuální výstupy. PR bez oprávnění k přihlašovacím údajům má neprovedený cloudový plan podle ADR 0016.
-- Modul `enterprise-baseline` má podle ADR 0016 samostatný plan job rulesetů s odděleným environmentem a credentialem. Výjimka s oprávněním k zápisu nesmí rozšířit oprávnění ostatních plan jobů; výběr modulu a jeho předpoklady se vztahují i na tento job.
+- Modul `organization-rulesets` má podle ADR 0016 samostatný plan job rulesetů s odděleným environmentem a credentialem (do [#73](https://github.com/msucharda/devsecops-platform/issues/73) modul `enterprise-baseline`). Výjimka s oprávněním k zápisu nesmí rozšířit oprávnění ostatních plan jobů; výběr modulu a jeho předpoklady se vztahují i na tento job.

@@ -2,7 +2,7 @@
 
 Modul spravuje repozitáře vendorovaných akcí v organizaci akcí (actions). Workflow v instanci smí používat jen akce z tohoto katalogu, pinované na SHA commitu.
 
-Předpoklady: `organizations`. Ruční kroky: `create-actions-security-team` a `require-catalog-code-owner-review` (viz [Ruční kroky](#ruční-kroky)).
+Předpoklady: `organizations` a `organization-rulesets`. Ruční krok: `create-actions-security-team` (viz [Ruční kroky](#ruční-kroky)).
 
 ## Stav implementace
 
@@ -112,9 +112,14 @@ Destroy nic nemaže. Repozitáře, tagy a CODEOWNERS zůstanou, dokud člověk n
 ## Ruční kroky
 
 - `create-actions-security-team`: owner organizace akcí vytvoří viditelný (`closed`) security tým před prvním apply a přidá do něj reviewery. Modul tým ani členy nespravuje.
-- `require-catalog-code-owner-review`: owner organizace akcí vytvoří ruleset organizace pro výchozí větev repozitářů katalogu. Ruleset vyžaduje PR s aspoň 1 schválením a review code ownera bez bypassu. Nový push do PR schválení zruší (`dismiss_stale_reviews_on_push`). Modul nesmí mít credential pro zápis rulesetů (ADR 0016), proto ruleset jen čte.
 
-Omezení: endpoint `rules/branches` vrací jen aktivní pravidla. Bypass actory nevrací, proto modul bypass neověří.
+## Ruleset organizace akcí
+
+Ruleset `platform-default-branch` v organizaci akcí spravuje modul [`organization-rulesets`](../organization-rulesets/README.md) ([#73](https://github.com/msucharda/devsecops-platform/issues/73)). Ruleset vyžaduje na výchozí větvi všech repozitářů PR s aspoň 1 schválením a review code ownera. Nový push do PR schválení zruší (`dismiss_stale_reviews_on_push`). Bypass nemá nikdo. Výchozí větev repozitářů katalogu musí být `main`.
+
+- Modul nesmí mít credential pro zápis rulesetů (ADR 0016), proto ruleset jen čte.
+- Plan modulu selže, pokud výstup `organizations` modulu `organization-rulesets` neobsahuje organizaci akcí. Chybějící výstup, prázdný seznam nebo jiný typ plan také zastaví.
+- Endpoint `rules/branches` vrací jen aktivní pravidla a bypass actory nevrací. Absenci bypassu ověřuje plan modulu `organization-rulesets`, který čte úplný detail rulesetu.
 
 ## Identita
 
@@ -139,6 +144,7 @@ Návrh: `actions/create-github-app-token` verze `v3.3.0` (commit `64ab729a629400
 - Apply a druhý plan bez změny na referenční instanci.
 - Výchozí větev nového prázdného repozitáře a tvorba `main` prvním `PUT contents`.
 - Oprávnění, které vyžaduje `GET rules/branches` (předpoklad: `metadata: read`).
+- Apply katalogu po apply modulu `organization-rulesets` v organizaci akcí bez ručního rulesetu.
 - Workflow v organizaci workloadů s akcí pinovanou na SHA.
 
 ## Zdroje

@@ -1,0 +1,26 @@
+name: organization-rulesets
+description: Organization rulesets of the instance in an isolated rulesets root; dependent modules require their organizations in its outputs.
+prerequisites:
+  - organizations
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp:
+    plan:
+      permissions:
+        organization_administration: read
+      resources:
+        organizations: target_organizations
+    apply:
+      permissions:
+        organization_administration: write
+      resources:
+        organizations: target_organizations
+    rulesetPlan:
+      permissions:
+        organization_administration: write
+      resources:
+        organizations: target_organizations
+      purpose: organization-rulesets-full-read
+  adminPat: []

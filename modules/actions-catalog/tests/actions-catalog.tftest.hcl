@@ -16,7 +16,7 @@ variables {
       workloads            = "demo-a1b2c3-workloads"
     }
   }
-  prerequisites        = {}
+  prerequisites        = { "organization-rulesets" = { organizations = ["demo-a1b2c3-actions"] } }
   target_organizations = ["demo-a1b2c3-actions"]
   security_team        = "actions-security"
   # The instance repository of a test has no catalog; each run reads a fixture of vendoring/actions.json.
@@ -157,6 +157,90 @@ run "rejects_another_target_organization" {
   }
 
   expect_failures = [var.target_organizations]
+}
+
+run "accepts_the_ruleset_of_organization_rulesets_with_another_letter_case" {
+  command = plan
+
+  variables {
+    prerequisites = { "organization-rulesets" = { organizations = ["Demo-A1B2C3-Actions"] } }
+  }
+}
+
+# Each run changes one field of the valid organization-rulesets outputs.
+run "requires_the_ruleset_of_organization_rulesets_in_the_actions_organization" {
+  command = plan
+
+  variables {
+    prerequisites = { "organization-rulesets" = { organizations = ["demo-a1b2c3-platform"] } }
+  }
+
+  expect_failures = [var.prerequisites]
+}
+
+run "requires_the_organization_rulesets_outputs" {
+  command = plan
+
+  variables {
+    prerequisites = { organizations = { organizations = { actions = "demo-a1b2c3-actions" } } }
+  }
+
+  expect_failures = [var.prerequisites]
+}
+
+run "requires_the_organizations_output_of_organization_rulesets" {
+  command = plan
+
+  variables {
+    prerequisites = { "organization-rulesets" = { custom_patterns = [] } }
+  }
+
+  expect_failures = [var.prerequisites]
+}
+
+run "rejects_an_empty_organizations_output_of_organization_rulesets" {
+  command = plan
+
+  variables {
+    prerequisites = { "organization-rulesets" = { organizations = [] } }
+  }
+
+  expect_failures = [var.prerequisites]
+}
+
+# Intentionally invalid input: an empty actions organization must not match an empty output entry.
+run "rejects_an_empty_actions_organization" {
+  command = plan
+
+  variables {
+    instance = {
+      name = "demo"
+      github = {
+        host       = "example.ghe.com"
+        enterprise = "example"
+      }
+      organizations = {
+        platform  = "demo-a1b2c3-platform"
+        actions   = ""
+        workloads = "demo-a1b2c3-workloads"
+      }
+    }
+    target_organizations = [""]
+    prerequisites        = { "organization-rulesets" = { organizations = [""] } }
+  }
+
+  expect_failures = [var.prerequisites]
+}
+
+# Intentionally invalid input: the output is a list, not a map whose value names the organization.
+run "rejects_an_organizations_output_that_is_not_a_list" {
+  command = plan
+
+  variables {
+    prerequisites = { "organization-rulesets" = { organizations = { actions = "demo-a1b2c3-actions" } } }
+  }
+
+  expect_failures = [var.prerequisites]
 }
 
 run "rejects_more_target_organizations" {

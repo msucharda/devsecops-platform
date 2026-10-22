@@ -50,6 +50,27 @@ Describe 'Released module order' {
         $teardown.jobs.destroy_enterprise_baseline.needs | Should -Not -Contain 'destroy_actions_catalog'
     }
 
+    It 'orders actions-catalog after organization-rulesets, so the actions organization ruleset exists before the catalog apply' {
+        $deployPath = Join-Path $TestDrive 'deploy-rulesets.yml'
+        $driftPath = Join-Path $TestDrive 'drift-rulesets.yml'
+        $teardownPath = Join-Path $TestDrive 'teardown-rulesets.yml'
+        & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $released -OutputPath $deployPath -DriftOutputPath $driftPath
+        & (Join-Path $toolsPath 'Generate-TeardownWorkflow.ps1') -ModulesPath $released -OutputPath $teardownPath
+        $deploy = ConvertFrom-Yaml (Get-Content -LiteralPath $deployPath -Raw)
+        $drift = ConvertFrom-Yaml (Get-Content -LiteralPath $driftPath -Raw)
+        $teardown = ConvertFrom-Yaml (Get-Content -LiteralPath $teardownPath -Raw)
+
+        foreach ($workflow in @($deploy, $drift)) {
+            $workflow.jobs.module_actions_catalog.needs | Should -Contain 'module_organization_rulesets'
+            $workflow.jobs.module_actions_catalog.needs | Should -Contain 'ruleset_plan_organization_rulesets'
+            $workflow.jobs.ContainsKey('ruleset_plan_enterprise_baseline') | Should -BeFalse
+        }
+        $deploy.jobs.apply_actions_catalog.needs | Should -Contain 'apply_organization_rulesets'
+        $deploy.jobs.apply_actions_catalog.if | Should -Match "needs\.apply_organization_rulesets\.result == 'success'"
+        $teardown.jobs.destroy_organization_rulesets.needs | Should -Contain 'destroy_actions_catalog'
+        $teardown.jobs.destroy_actions_catalog.needs | Should -Not -Contain 'destroy_organization_rulesets'
+    }
+
     It 'orders enterprise-baseline after <Name> in deploy, drift and teardown regardless of module names' -ForEach @(
         @{ Name = 'organizations' }
         @{ Name = 'aa-organizations' }
@@ -69,7 +90,8 @@ Describe 'Released module order' {
         foreach ($workflow in @($deploy, $drift)) {
             $workflow.jobs.module_enterprise_baseline.needs | Should -Contain "module_$suffix"
             $workflow.jobs.module_enterprise_baseline.if | Should -Match "needs\.module_$suffix\.result == 'success'"
-            $workflow.jobs.ruleset_plan_enterprise_baseline.needs | Should -Contain "module_$suffix"
+            $workflow.jobs.ContainsKey('ruleset_plan_enterprise_baseline') | Should -BeFalse
+            $workflow.jobs.ruleset_plan_organization_rulesets.needs | Should -Contain "module_$suffix"
         }
         $deploy.jobs.apply_enterprise_baseline.needs | Should -Contain "apply_$suffix"
         $deploy.jobs.apply_enterprise_baseline.if | Should -Match "needs\.apply_$suffix\.result == 'success'"

@@ -1,5 +1,5 @@
 BeforeAll {
-    $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline'
+    $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/organization-rulesets'
     $stubModule = Join-Path $PSScriptRoot 'RulesetsStub.psm1'
     Import-Module $stubModule -Force
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -87,7 +87,7 @@ data "external" "ruleset_plan_state" {
 }
 '@
         }
-        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value '{"instance":{"github":{"host":"example.ghe.com"}},"prerequisites":{},"target_organizations":["demo"]}'
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value '{"instance":{"github":{"host":"example.ghe.com"},"organizations":{"actions":"demo"}},"prerequisites":{},"target_organizations":["demo"]}'
         $server.State = Initialize-RulesetsStub -Origin "http://127.0.0.1:$port"
         $init = Invoke-RulesetTerraform init -input=false
         $init.Code | Should -Be 0 -Because $init.Text
@@ -120,6 +120,18 @@ data "external" "ruleset_plan_state" {
         $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
         $destroy.Code | Should -Be 0 -Because $destroy.Text
         $server.State.Items.Count | Should -Be 0
+    }
+
+    It 'fails the plan closed without any write when the ruleset was deleted outside Terraform' {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.Items.Clear()
+        $writes = $server.State.Writes.Count
+        $plan = Invoke-RulesetTerraform plan -input=false -detailed-exitcode
+        $plan.Code | Should -Be 1 -Because $plan.Text
+        $plan.Text | Should -Match 'mismatched identity'
+        $server.State.Items.Count | Should -Be 0
+        $server.State.Writes.Count | Should -Be $writes
     }
 
     It 'removes the recorded remote ID even when the managed ruleset was renamed outside Terraform' {

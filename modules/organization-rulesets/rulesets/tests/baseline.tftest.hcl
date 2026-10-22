@@ -6,9 +6,12 @@ mock_provider "external" {
 mock_provider "restapi" {}
 
 variables {
-  instance = { github = { host = "example.ghe.com" } }
+  instance = {
+    github        = { host = "example.ghe.com" }
+    organizations = { actions = "demo-actions" }
+  }
   prerequisites        = {}
-  target_organizations = ["demo-platform"]
+  target_organizations = ["demo-actions"]
 }
 
 run "protects_default_branches_without_bypass" {
@@ -61,4 +64,24 @@ run "protects_default_branches_without_bypass" {
     ])
     error_message = "The baseline must require one fresh CODEOWNER approval and CodeQL high-or-higher, and deny deletion and force push."
   }
+}
+
+run "rejects_an_organization_other_than_the_actions_organization" {
+  command = plan
+
+  variables {
+    target_organizations = ["demo-workloads"]
+  }
+
+  expect_failures = [var.target_organizations]
+}
+
+run "rejects_an_instance_without_organizations" {
+  command = plan
+
+  variables {
+    instance = { github = { host = "example.ghe.com" } }
+  }
+
+  expect_failures = [var.instance]
 }

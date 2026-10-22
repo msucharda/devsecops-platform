@@ -1,6 +1,6 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
-    $scripts = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline/scripts'
+    $scripts = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/organization-rulesets/scripts'
     Import-Module (Join-Path $scripts 'Rulesets.psm1') -Force
 }
 
@@ -14,7 +14,7 @@ Describe 'Organization ruleset detail contract' {
         $detail = Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{
             name = 'platform-default-branch'; source = 'demo'
         }
-        Mock -ModuleName CodeSecurity Invoke-WebRequest {
+        Mock -ModuleName Rulesets Invoke-WebRequest {
             $json = if ($Uri -like '*/rulesets`?*') {
                 ConvertTo-Json -InputObject @($listed) -Depth 50 -Compress
             } else { ConvertTo-Json -InputObject $detail -Depth 50 -Compress }
@@ -29,7 +29,7 @@ Describe 'Organization ruleset detail contract' {
 
         $state.bypass_actors.Count | Should -Be 1
         $state.bypass_actors[0].actor_type | Should -Be 'Team'
-        Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+        Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
             $Uri -eq 'https://api.example.test/orgs/demo/rulesets/21' -and
             $Headers['Authorization'] -eq 'Bearer installation-token' -and $Headers['X-GitHub-Api-Version'] -eq '2026-03-10'
         }
@@ -95,7 +95,7 @@ Describe 'Organization ruleset detail contract' {
         $listed += Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{ id = 22; name = 'platform-default-branch'; source = 'demo' }
         { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
             Should -Throw '*duplicate rulesets*'
-        Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
     }
 
     It 'does not adopt an inherited enterprise ruleset with the managed name' {
@@ -103,7 +103,7 @@ Describe 'Organization ruleset detail contract' {
         $listed[0].source = 'example'
         Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch |
             Should -BeNullOrEmpty
-        Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Uri -like '*/rulesets/21' }
+        Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Uri -like '*/rulesets/21' }
     }
 
     It 'explicitly rejects unsupported condition variant <Variant>' -ForEach @(
@@ -121,11 +121,11 @@ Describe 'Organization ruleset detail contract' {
         $oldBearer = $env:REST_API_BEARER
         try {
             $env:REST_API_BEARER = 'previous-bearer'
-            Mock -ModuleName CodeSecurity Invoke-WebRequest { throw 'Connection lost' }
+            Mock -ModuleName Rulesets Invoke-WebRequest { throw 'Connection lost' }
             { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
                 Should -Throw '*Connection lost*'
             $env:REST_API_BEARER | Should -Be 'previous-bearer'
-            Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
                 $Headers['Authorization'] -eq 'Bearer installation-token'
             }
         }
@@ -139,7 +139,7 @@ Describe 'Organization ruleset detail contract' {
         $env:PLATFORM_GITHUB_TOKENS = $Map
         { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
             Should -Throw '*No installation token*'
-        Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 0 -Exactly
+        Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 0 -Exactly
     }
 
     It 'does not normalize invalid dismissal restriction enabled value <Value>' -ForEach @(
@@ -160,13 +160,13 @@ Describe 'Organization ruleset detail contract' {
         $detail[$Field] = $Value
         { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch -Id 21 } |
             Should -Throw '*mismatched identity or source*'
-        Should -Invoke -ModuleName CodeSecurity Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+        Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
     }
 
     It 'rejects a successful GET with <Case> instead of treating it like HTTP 404' -ForEach @(
         @{ Case = 'empty body'; Body = '' }, @{ Case = 'JSON null'; Body = 'null' }
     ) {
-        Mock -ModuleName CodeSecurity Invoke-WebRequest {
+        Mock -ModuleName Rulesets Invoke-WebRequest {
             [pscustomobject]@{ StatusCode = 200; Content = $Body; Headers = @{} }
         } -ParameterFilter { $Uri -like '*/rulesets/21' }
         { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch -Id 21 } |

@@ -25,11 +25,21 @@ variable "instance" {
   }
 }
 
-# The runner always passes this contract variable; the module reads the actions organization from the instance.
+# The runner always passes this contract variable. The validation requires the organization ruleset of the actions
+# organization from the organization-rulesets module; the module reads the actions organization from the instance.
 # tflint-ignore: terraform_unused_declarations
 variable "prerequisites" {
   description = "Public outputs of prerequisite modules supplied by the module runner."
   type        = any
+
+  validation {
+    condition = try(
+      var.instance.organizations.actions != "" &&
+      contains([for organization in tolist(var.prerequisites["organization-rulesets"].organizations) : lower(organization)], lower(var.instance.organizations.actions)),
+      false
+    )
+    error_message = "organization-rulesets must target the actions organization: it creates the organization ruleset that requires a code owner review on main of every catalog repository."
+  }
 }
 
 # The module runner reads the variable as the GitHub App resource scope; the validation pins it to the actions organization.

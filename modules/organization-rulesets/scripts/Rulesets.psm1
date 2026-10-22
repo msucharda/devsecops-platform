@@ -1,8 +1,82 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Reuse the versioned REST transport (including same-origin pagination) of this module.
-Import-Module (Join-Path $PSScriptRoot 'CodeSecurity.psm1')
+# Endpoints, API version 2026-03-10:
+# https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/rules?apiVersion=2026-03-10
+$script:ApiVersion = '2026-03-10'
+
+function Assert-RulesetApiUrl {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $ApiUrl)
+
+    $uri = $null
+    if (-not [Uri]::TryCreate($ApiUrl, [UriKind]::Absolute, [ref] $uri) -or $uri.AbsolutePath -cne '/' -or $uri.Query -or
+        $uri.UserInfo -or -not ($uri.Scheme -ceq 'https' -or ($uri.Scheme -ceq 'http' -and $uri.IsLoopback))) {
+        throw "The GitHub API URL '$ApiUrl' must be an HTTPS origin; plain HTTP is only accepted for a loopback test stub."
+    }
+}
+
+function Invoke-RulesetRestApi {
+    <#
+    .SYNOPSIS
+    Sends one GitHub REST request with REST_API_BEARER and follows Link rel="next" on the same origin.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][ValidateSet('GET', 'POST', 'PUT', 'DELETE')][string] $Method,
+        [Parameter(Mandatory)][string] $Path,
+        [AllowNull()][object] $Body,
+        [switch] $AllPages,
+        [switch] $AllowNotFound
+    )
+
+    Assert-RulesetApiUrl -ApiUrl $ApiUrl
+    if (-not $env:REST_API_BEARER) { throw 'REST_API_BEARER is not set; the runner must export the installation token.' }
+    $origin = $ApiUrl.TrimEnd('/')
+    $headers = @{
+        Authorization          = "Bearer $env:REST_API_BEARER"
+        Accept                 = 'application/vnd.github+json'
+        'X-GitHub-Api-Version' = $script:ApiVersion
+    }
+    $uri = "$origin$Path"
+    $items = [Collections.Generic.List[object]]::new()
+    while ($uri) {
+        $request = @{
+            Uri = $uri; Method = $Method; Headers = $headers; SkipHttpErrorCheck = $true
+            MaximumRetryCount = 0; MaximumRedirection = 0; TimeoutSec = 60
+        }
+        if ($null -ne $Body) {
+            $request.Body = ConvertTo-Json -InputObject $Body -Depth 20 -Compress
+            $request.ContentType = 'application/json'
+        }
+        $reply = Invoke-WebRequest @request
+        $status = [int] $reply.StatusCode
+        if ($status -eq 404 -and $AllowNotFound) { return $null }
+        if ($status -lt 200 -or $status -gt 299) { throw "GitHub returned HTTP $status for $Method $($Path.Split('?')[0])." }
+        $content = if ($reply.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($reply.Content) } else { [string] $reply.Content }
+        $parsed = if ([string]::IsNullOrWhiteSpace($content)) { $null } else { ConvertFrom-Json -InputObject $content -AsHashtable -Depth 100 -NoEnumerate }
+        if ($Method -ceq 'GET' -and $null -eq $parsed) {
+            throw "GitHub returned an empty successful GET response for $($Path.Split('?')[0]); only HTTP 404 proves absence."
+        }
+        if (-not $AllPages) { return , $parsed }
+        if ($parsed -isnot [array]) { throw "GitHub returned no JSON array for $Method $($Path.Split('?')[0])." }
+        foreach ($item in $parsed) { $items.Add($item) }
+        $uri = $null
+        foreach ($link in @($reply.Headers['Link'])) {
+            foreach ($part in ([string] $link).Split(',')) {
+                if ($part -match '^\s*<(?<url>[^>]+)>\s*;\s*rel="next"\s*$') {
+                    $next = $Matches['url']
+                    if (-not $next.StartsWith("$origin/", [StringComparison]::Ordinal)) {
+                        throw "GitHub returned a pagination link outside '$origin'."
+                    }
+                    $uri = $next
+                }
+            }
+        }
+    }
+    return , $items.ToArray()
+}
 
 function Invoke-OrganizationRulesetApi {
     [CmdletBinding()]
@@ -25,7 +99,7 @@ function Invoke-OrganizationRulesetApi {
     $previous = $env:REST_API_BEARER
     try {
         $env:REST_API_BEARER = $tokens[$Organization]
-        return , (Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method $Method -Path $Path -Body $Body -AllPages:$AllPages -AllowNotFound:$AllowNotFound)
+        return , (Invoke-RulesetRestApi -ApiUrl $ApiUrl -Method $Method -Path $Path -Body $Body -AllPages:$AllPages -AllowNotFound:$AllowNotFound)
     }
     finally { $env:REST_API_BEARER = $previous }
 }
