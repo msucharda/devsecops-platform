@@ -5,8 +5,8 @@ Waits at most -MaxSeconds for the checks of a pull request head commit and repor
 
 .DESCRIPTION
 The script reads the pull request head SHA, the workflow runs and check runs for that SHA, and the Copilot review state.
-It polls until the checks pass or fail, or until -MaxSeconds elapse. Sleeps end before the deadline, and every request uses the
-remaining time as its connection timeout and read-stall timeout. Repository and token come from local sources without a network call.
+It polls until the checks pass or fail, or until -MaxSeconds elapse. Sleeps end before the deadline, and one cancellation
+deadline bounds every request including its whole response body. Repository and token come from local sources without a network call.
 
 Output: one line, for example 'pending 3/7; copilot: requested', 'failed: Platform tools; copilot: reviewed (rounds 1)'
 or 'passed; copilot: none'.
@@ -32,6 +32,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $deadline = (Get-Date).ToUniversalTime().AddSeconds($MaxSeconds)
+Import-Module (Join-Path $PSScriptRoot 'DeadlineHttp.psm1')
 trap {
     Write-Output "error: $($_.Exception.Message)"
     exit 3
@@ -60,16 +61,10 @@ function Invoke-GitHubGet {
     Sends one GET request that ends before the deadline. Returns $null when no time is left.
     #>
     param([Parameter(Mandatory)][string] $Path)
-    $remaining = [Math]::Floor((Get-RemainingSecond))
-    if ($remaining -lt 1) { return $null }
-    try {
-        $response = Invoke-WebRequest -Uri "$apiBase/$Path" -Method GET -Headers $headers -SkipHttpErrorCheck -MaximumRedirection 0 -ConnectionTimeoutSeconds ([int] $remaining) -OperationTimeoutSeconds ([int] $remaining)
-    }
-    catch {
-        # A request cut off by the deadline leaves the state pending; any other transport error is an error.
-        if ((Get-RemainingSecond) -lt 1) { return $null }
-        throw
-    }
+    if ((Get-RemainingSecond) -lt 1) { return $null }
+    # A request cut off by the deadline returns $null and leaves the state pending; any other transport error is an error.
+    $response = Invoke-DeadlineHttpGet -Uri "$apiBase/$Path" -Headers $headers -Deadline $deadline
+    if ($null -eq $response) { return $null }
     if ($response.StatusCode -ne 200) { throw "GET $Path failed with HTTP $($response.StatusCode)." }
     try { return , (ConvertFrom-Json -InputObject $response.Content -AsHashtable -NoEnumerate -Depth 100 -ErrorAction Stop) }
     catch { throw "GET $Path returned a body that is not JSON." }

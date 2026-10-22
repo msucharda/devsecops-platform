@@ -95,7 +95,8 @@ function Get-CiWorkflowSetting {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $WorkflowPath)
 
-    Import-Module powershell-yaml -ErrorAction Stop
+    $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
+    Import-Module powershell-yaml -RequiredVersion $requirements.Runtime['powershell-yaml'] -ErrorAction Stop
     $workflow = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $WorkflowPath -Raw) -Ordered
     $pwshSteps = [ordered]@{}
     foreach ($name in 'Check PowerShell', 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {

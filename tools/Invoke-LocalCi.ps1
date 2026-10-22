@@ -200,7 +200,7 @@ function Invoke-PwshScript {
     $body = "`$ErrorActionPreference = 'stop'`n$Script`nif ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit `$LASTEXITCODE }`n"
     Set-Content -LiteralPath $path -Value $body -Encoding utf8NoBOM
     Add-LogLine $Script
-    return Invoke-Native -FilePath ([Environment]::ProcessPath) -Arguments @('-NoProfile', '-NonInteractive', '-Command', ". '$path'")
+    return Invoke-Native -FilePath ([Environment]::ProcessPath) -Arguments @('-NoProfile', '-NonInteractive', '-File', $path)
 }
 
 function Write-FailureDetail {
@@ -314,7 +314,7 @@ try {
 
     # 8. Terraform
     Invoke-Step -Name 'Discover Terraform roots' -Body {
-        Invoke-PwshScript -Script "./tools/Get-TerraformRoots.ps1 -GitHubOutputPath '$(Join-Path $temp 'github-output.txt')'"
+        Invoke-PwshScript -Script "./tools/Get-TerraformRoots.ps1 -GitHubOutputPath $(ConvertTo-PwshList (Join-Path $temp 'github-output.txt'))"
     }
     if ($selection.TerraformRoot.Count -eq 0) { Skip-Step -Name 'Terraform' -Reason 'no root selected' }
     foreach ($root in $selection.TerraformRoot) {

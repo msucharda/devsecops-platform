@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1')
+    Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'DeadlineHttp.psm1')
     $script = Join-Path (Split-Path $PSScriptRoot -Parent) 'Wait-PullRequestChecks.ps1'
     $sha = '6dcb09b5b57875f334f61aebed695e2e4193db5e'
     $arguments = @{ Pr = 1347; Repository = 'demo-platform/devsecops'; ApiUrl = 'https://api.contoso.ghe.com'; MaxSeconds = 60; IntervalSeconds = 20 }
@@ -40,11 +41,12 @@ Describe 'Wait-PullRequestChecks' {
 
         Mock Get-Date { $api.Now }
         Mock Start-Sleep { $api.Sleeps.Add($Seconds); $api.Now = $api.Now.AddSeconds($Seconds) }
-        Mock Invoke-WebRequest {
-            $api.Requests.Add([pscustomobject]@{ Uri = $Uri; Headers = $Headers; TimeoutSec = $ConnectionTimeoutSeconds; At = $api.Now })
+        Mock Invoke-DeadlineHttpGet {
+            $api.Requests.Add([pscustomobject]@{ Uri = [string] $Uri; Headers = $Headers; Deadline = $Deadline; At = $api.Now })
             if ($api.Hang) {
-                $api.Now = $api.Now.AddSeconds($ConnectionTimeoutSeconds)
-                throw 'The request was canceled due to the configured HttpClient.Timeout.'
+                # The request streams until the deadline cancels it.
+                $api.Now = $Deadline
+                return $null
             }
             $api.Now = $api.Now.AddSeconds(1)
             $path = ([uri] $Uri).AbsolutePath
@@ -235,7 +237,7 @@ Describe 'Wait-PullRequestChecks' {
         & $script @arguments -MaxSeconds 45 -IntervalSeconds 7 | Out-Null
 
         $LASTEXITCODE | Should -Be 2
-        foreach ($request in $api.Requests) { $request.At.AddSeconds($request.TimeoutSec) | Should -BeLessOrEqual $deadline }
+        foreach ($request in $api.Requests) { $request.Deadline | Should -BeLessOrEqual $deadline }
         $api.Now | Should -BeLessOrEqual $deadline
     }
 
