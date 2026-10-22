@@ -1154,17 +1154,28 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Count | Should -Be 0
     }
 
-    It 'isolates all three enterprise-baseline App identities including both nightly plans (<Immutable>)' -TestCases @(
-        @{ Immutable = $false }, @{ Immutable = $true }
+    It 'isolates all three <GovernanceModule> App identities including both nightly plans and requires security review only for apply (<Immutable>)' -TestCases @(
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false }
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $true }
+        @{ GovernanceModule = 'organization-rulesets'; Immutable = $false }
     ) {
-        param($Immutable)
+        param($GovernanceModule, $Immutable)
+        if ($GovernanceModule -cne 'enterprise-baseline') {
+            # Reuse the isolated governance fixture under the module name that bootstrap must protect.
+            $modulesRoot = Join-Path $release 'modules'
+            Rename-Item -LiteralPath (Join-Path $modulesRoot 'enterprise-baseline') -NewName $GovernanceModule
+            $manifestPath = Join-Path $modulesRoot "$GovernanceModule/module.yaml"
+            (Get-Content -LiteralPath $manifestPath -Raw).Replace('name: enterprise-baseline', "name: $GovernanceModule") | Set-Content -LiteralPath $manifestPath
+            & (Join-Path $releaseTools.FullName 'Generate-DeploymentWorkflow.ps1') -ModulesPath $modulesRoot `
+                -OutputPath (Join-Path $release 'templates/instance/.github/workflows/deploy.yml')
+        }
         $subjectPrefix = if ($Immutable) { 'repo:demo-a1b2c3-platform@10/instance@20' } else { 'repo:demo-a1b2c3-platform/instance' }
         $cloud.oidcSettings = @{ use_default = $true; use_immutable_subject = $Immutable; sub_claim_prefix = $subjectPrefix }
-        $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @('demo-a1b2c3-platform') } } }
-        $instance.credentials = @{ 'enterprise-baseline' = @{
-            plan = @{ environment = 'enterprise-baseline-plan'; githubApp = 'reader' }
-            apply = @{ environment = 'enterprise-baseline-apply'; githubApp = 'writer' }
-            rulesetPlan = @{ environment = 'enterprise-baseline-ruleset-plan'; githubApp = 'rulesets' }
+        $instance.modules = @{ $GovernanceModule = @{ parameters = @{ target_organizations = @('demo-a1b2c3-platform') } } }
+        $instance.credentials = @{ $GovernanceModule = @{
+            plan = @{ environment = "$GovernanceModule-plan"; githubApp = 'reader' }
+            apply = @{ environment = "$GovernanceModule-apply"; githubApp = 'writer' }
+            rulesetPlan = @{ environment = "$GovernanceModule-ruleset-plan"; githubApp = 'rulesets' }
         } }
         $keyManifest = Get-Content -LiteralPath $keysPath -Raw | ConvertFrom-Json -AsHashtable
         $index = 102
@@ -1182,7 +1193,7 @@ Describe 'GitHub bootstrap public interface' {
             $keyManifest[$alias].privateKeyPath = $appKeyPath
             $index++
         }
-        foreach ($name in @('service', 'enterprise-baseline')) {
+        foreach ($name in @('service', $GovernanceModule)) {
             $module = @{ Name = $name }
             foreach ($phase in @('plan', 'apply')) {
                 $module[$phase] = @{ ResourceId = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-bootstrap/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-demo-$name-$phase"
@@ -1200,29 +1211,33 @@ Describe 'GitHub bootstrap public interface' {
 
         $result.CredentialsConfigured | Should -BeTrue
         $prefix = '/repos/demo-a1b2c3-platform/instance/environments'
-        $cloud.variables["$prefix/enterprise-baseline-plan/variables/PLATFORM_APP_ID"] | Should -Be '102'
-        $cloud.variables["$prefix/enterprise-baseline-plan-drift/variables/PLATFORM_APP_ID"] | Should -Be '102'
-        $cloud.variables["$prefix/enterprise-baseline-ruleset-plan/variables/PLATFORM_APP_ID"] | Should -Be '104'
-        $cloud.variables["$prefix/enterprise-baseline-ruleset-plan-drift/variables/PLATFORM_APP_ID"] | Should -Be '104'
-        $cloud.variables["$prefix/enterprise-baseline-apply/variables/PLATFORM_APP_ID"] | Should -Be '103'
-        $securityReview = $cloud.environments["$prefix/enterprise-baseline-apply"].protection_rules |
+        $cloud.variables["$prefix/$GovernanceModule-plan/variables/PLATFORM_APP_ID"] | Should -Be '102'
+        $cloud.variables["$prefix/$GovernanceModule-plan-drift/variables/PLATFORM_APP_ID"] | Should -Be '102'
+        $cloud.variables["$prefix/$GovernanceModule-ruleset-plan/variables/PLATFORM_APP_ID"] | Should -Be '104'
+        $cloud.variables["$prefix/$GovernanceModule-ruleset-plan-drift/variables/PLATFORM_APP_ID"] | Should -Be '104'
+        $cloud.variables["$prefix/$GovernanceModule-apply/variables/PLATFORM_APP_ID"] | Should -Be '103'
+        $securityReview = $cloud.environments["$prefix/$GovernanceModule-apply"].protection_rules |
             Where-Object { $_.type -eq 'required_reviewers' }
         $securityReview.reviewers[0].reviewer.id | Should -Be 31
+        foreach ($environment in @("$GovernanceModule-plan", "$GovernanceModule-plan-drift", "$GovernanceModule-ruleset-plan", "$GovernanceModule-ruleset-plan-drift")) {
+            $cloud.environments.ContainsKey("$prefix/$environment") | Should -BeTrue
+            $cloud.environments["$prefix/$environment"].protection_rules | Where-Object { $_.type -eq 'required_reviewers' } |
+                Should -BeNullOrEmpty -Because "$environment runs read-only plans"
+        }
         @($cloud.secrets.Keys).Count | Should -Be 6
         $federation = @($cloud.resources.Values | Where-Object { $_.Contains('properties') -and $_.properties.Contains('subject') })
-        @($federation | Where-Object { $_.properties.subject -like '*enterprise-baseline*' }).Count | Should -Be 5
-        $identity = $azure.Modules | Where-Object { $_.Name -eq 'enterprise-baseline' }
+        @($federation | Where-Object { $_.properties.subject -like "*$GovernanceModule*" }).Count | Should -Be 5
+        $identity = $azure.Modules | Where-Object { $_.Name -eq $GovernanceModule }
         $planSubjects = @($cloud.resources.Keys | Where-Object { $_.StartsWith("$($identity.Plan.ResourceId)/federatedIdentityCredentials/") } |
             ForEach-Object { $cloud.resources[$_].properties.subject })
         $applySubjects = @($cloud.resources.Keys | Where-Object { $_.StartsWith("$($identity.Apply.ResourceId)/federatedIdentityCredentials/") } |
             ForEach-Object { $cloud.resources[$_].properties.subject })
         $planSubjects | Should -HaveCount 4
-        foreach ($environment in @('enterprise-baseline-plan', 'enterprise-baseline-plan-drift',
-            'enterprise-baseline-ruleset-plan', 'enterprise-baseline-ruleset-plan-drift')) {
+        foreach ($environment in @("$GovernanceModule-plan", "$GovernanceModule-plan-drift", "$GovernanceModule-ruleset-plan", "$GovernanceModule-ruleset-plan-drift")) {
             $planSubjects | Should -Contain "${subjectPrefix}:environment:$environment"
         }
         $applySubjects | Should -HaveCount 1
-        $applySubjects[0] | Should -BeExactly "${subjectPrefix}:environment:enterprise-baseline-apply"
+        $applySubjects[0] | Should -BeExactly "${subjectPrefix}:environment:$GovernanceModule-apply"
         @($federation | Where-Object { $_.properties.subject -match 'pr-authorization|approve-|teardown' }) | Should -HaveCount 0
     }
 

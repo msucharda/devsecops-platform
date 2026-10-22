@@ -62,7 +62,7 @@ Describe 'Module runner with local Terraform' {
             Should -Throw '*declared ruleset*'
     }
 
-    It 'plans the complete isolated rulesets root including bypass drift without touching ordinary module state' {
+    It 'plans the complete isolated rulesets root including bypass drift without touching ordinary module state, then destroys it' {
         $null = & $runner -Module foundation -Action apply @arguments 6>$null
         $ordinaryState = Join-Path $arguments.StatePath 'foundation.tfstate'
         $stateBefore = [IO.File]::ReadAllText($ordinaryState)
@@ -108,6 +108,14 @@ Describe 'Module runner with local Terraform' {
         $outputs.runner_inputs.message | Should -Be 'hello'
         [IO.File]::ReadAllText($ordinaryState) | Should -BeExactly $stateBefore
         [IO.File]::ReadAllText($rulesetState) | Should -BeExactly $rulesetStateBefore
+
+        # A generic rulesets root has no organization-rulesets recovery helper, so destroy must not invoke it.
+        $instance.teardown = @{ allowed = $true }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $null = & $runner -Module foundation -Action destroy -Rulesets @arguments 6>$null 3>$null
+
+        $destroyed = Get-Content -LiteralPath $rulesetState -Raw | ConvertFrom-Json
+        @($destroyed.resources).Count | Should -Be 0
     }
 
     It 'plans known outputs without applying or creating a module state' {
