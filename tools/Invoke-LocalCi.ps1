@@ -50,7 +50,10 @@ function Exit-Usage {
 
 function Invoke-Git {
     param([string[]] $Arguments)
-    $output = @(& git -C $repo @Arguments 2>&1 | ForEach-Object { "$_" })
+    # Only stdout is data; stderr (for example line-ending warnings) goes to the log.
+    $output = @(& git -C $repo @Arguments 2>&1 | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) { Add-LogLine "git: $_" } else { "$_" }
+    })
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
 }
 
