@@ -138,10 +138,24 @@ function Assert-VendoringPublishHead {
     }
 }
 
+function Get-VendoringBoundaryDifference {
+    param([string] $ReferenceSha, [string] $TargetSha)
+    $paths = if ($Kind -eq 'release') { @('platform') } else { @('.', ':(top,exclude).github') }
+    Invoke-VendoringGit (@('diff', '--name-only', '--no-renames', $ReferenceSha, $TargetSha, '--') + $paths)
+}
+
+# security-check: vendoring-resume-main
+function Assert-VendoringResumeBase {
+    param([string] $ParentSha)
+    $differences = @(Get-VendoringBoundaryDifference -ReferenceSha $ParentSha -TargetSha $mainSha)
+    if ($differences.Count -gt 0) {
+        throw "Target main changed inside the vendoring boundary; delete the orphaned import branch '$branch' and run the import again."
+    }
+}
+
 # security-check: vendoring-merged-main
 function Assert-VendoringMergedImport {
-    $paths = if ($Kind -eq 'release') { @('platform') } else { @('.', ':(top,exclude).github') }
-    $differences = @(Invoke-VendoringGit (@('diff', '--name-only', '--no-renames', $mainSha, $remoteSha, '--') + $paths))
+    $differences = @(Get-VendoringBoundaryDifference -ReferenceSha $mainSha -TargetSha $remoteSha)
     if ($differences.Count -gt 0) {
         throw 'Import identity was merged but target main no longer contains it; manual intervention is required.'
     }
@@ -178,7 +192,7 @@ if ($ModeManifestPath) {
         }
     }
 }
-$identity = ConvertTo-Json -InputObject @($Kind, $receipt['Repository'].ToLowerInvariant(), $receipt['Tag']) -Compress
+$identity = ConvertTo-Json -InputObject @($Kind, $receipt['Repository'], $receipt['Tag']) -Compress
 $identityHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity))).ToLowerInvariant()
 $branch = "vendor/$Kind/$identityHash"
 $hostName = ([uri] $ApiUrl).Host -replace '^api\.', ''
@@ -250,6 +264,7 @@ else {
         $result = [pscustomobject]@{ HasChanges = $pullRequest['state'] -ceq 'open'; Branch = $branch; PullRequest = $url }
     }
     else {
+        if ($remoteSha) { Assert-VendoringResumeBase -ParentSha $resumeRef.Parent }
         if (-not $remoteSha) {
             $null = Invoke-VendoringGit @('-c', 'user.name=Platform vendoring', '-c', 'user.email=platform-vendoring@users.noreply.github.com',
                 'commit', '--quiet', '-m', "Vendor $($receipt['Repository']) at $($receipt['Tag'])")

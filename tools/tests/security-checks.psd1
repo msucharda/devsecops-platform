@@ -4,6 +4,12 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'vendoring-resume-main'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*resumes an orphaned <ImportKind> import with main changes <Change>*') }
+            )
+        }
+        @{
             Name = 'vendoring-merged-main'
             Tests = @(
                 @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*merged import that main no longer contains: <Case>*', '*unchanged*', '*merged import after changes outside*') }

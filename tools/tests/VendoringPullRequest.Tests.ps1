@@ -196,6 +196,77 @@ Describe 'Vendoring diff and pull request publication' {
         $cloud.pulls.Count | Should -Be 1
     }
 
+    It 'resumes an orphaned <ImportKind> import with main changes <Change>' -ForEach @(
+        @{ ImportKind = 'action'; Change = 'inside (added file)'; Inside = $true; Mode = $false }
+        @{ ImportKind = 'release'; Change = 'inside (added file)'; Inside = $true; Mode = $false }
+        @{ ImportKind = 'action'; Change = 'inside (executable bit)'; Inside = $true; Mode = $true }
+        @{ ImportKind = 'release'; Change = 'inside (executable bit)'; Inside = $true; Mode = $true }
+        @{ ImportKind = 'action'; Change = 'outside'; Inside = $false; Mode = $false }
+        @{ ImportKind = 'release'; Change = 'outside'; Inside = $false; Mode = $false }
+    ) {
+        $modePath = 'old.js'
+        if ($ImportKind -ceq 'release') {
+            Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
+            $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform'), (Join-Path $target 'platform')
+            'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
+            $modePath = 'platform/old.sh'
+            'original release' | Set-Content (Join-Path $target $modePath)
+            & $gitExecutable -C $target add .
+            & $gitExecutable -C $target commit --quiet -m release-base
+        }
+        Mock Invoke-RestMethod {
+            param([uri] $Uri, [string] $Method = 'GET', $Body)
+            if ($Method -eq 'POST') { throw 'Injected PR creation interruption.' }
+            & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+        }
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Injected PR creation interruption*'
+        $refs = @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname)' refs/heads)
+        $refs.Count | Should -Be 1
+        $remoteSha = & $gitExecutable --git-dir=$remotePath rev-parse $refs[0]
+        & $gitExecutable -C $target switch --quiet main
+        if ($Mode) {
+            if (-not $IsWindows) { [IO.File]::SetUnixFileMode((Join-Path $target $modePath), [IO.UnixFileMode]493) }
+            & $gitExecutable -C $target update-index --chmod=+x -- $modePath
+        }
+        else {
+            $changedPath = if ($Inside) {
+                if ($ImportKind -ceq 'release') { 'platform/extra.yml' } else { 'extra.js' }
+            }
+            else {
+                if ($ImportKind -ceq 'release') { 'instance.yaml' } else { '.github/CODEOWNERS' }
+            }
+            $destination = Join-Path $target $changedPath
+            $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
+            'main advanced' | Set-Content -LiteralPath $destination
+            & $gitExecutable -C $target add .
+        }
+        & $gitExecutable -C $target commit --quiet -m main-advance
+        Mock Invoke-RestMethod {
+            param([uri] $Uri, [string] $Method = 'GET', $Body)
+            & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+        }
+
+        if ($Inside) {
+            { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+                -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+                Should -Throw '*main changed inside the vendoring boundary*delete the orphaned import branch*run the import again*'
+            $cloud.pulls.Count | Should -Be 0
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+        else {
+            $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+                -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+            $result.Branch | Should -BeExactly $refs[0].Substring('refs/heads/'.Length)
+            $result.PullRequest | Should -BeExactly 'https://example.ghe.com/customer-actions/upstream-action/pull/1'
+            $cloud.pulls.Count | Should -Be 1
+            Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+        & $gitExecutable --git-dir=$remotePath rev-parse $refs[0] | Should -BeExactly $remoteSha
+        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads).Count | Should -Be 1
+    }
+
     It 'rejects changed content or provenance for an existing import identity' -ForEach @(
         @{ Case = 'content'; Change = { 'different bytes' | Set-Content (Join-Path $prepared 'action.yml') } }
         @{ Case = 'digest'; Change = {
@@ -243,7 +314,7 @@ Describe 'Vendoring diff and pull request publication' {
         $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
         & $gitExecutable -C $target switch --quiet main
-        # Deliberately invalid API responses exercise each rejection independently.
+        # Deliberately invalid API responses and a closed-unmerged PR exercise the rejection policy.
         $cloud.lookupTransform = $Change
         { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } | Should -Throw $Message

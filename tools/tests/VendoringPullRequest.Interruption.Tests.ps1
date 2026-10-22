@@ -39,7 +39,7 @@ Describe 'Vendoring publication interruption harness' -Tag 'Interruption' {
             param([uri] $Uri, [string] $Method = 'GET', $Body)
             if ($Method -eq 'GET') { return & $cloudTransport -Uri $Uri -Method $Method -Body $Body }
             $request = $Body | ConvertFrom-Json -AsHashtable
-            Invoke-InterruptionStep -Plan $plan -Request "$Method $($Uri.AbsolutePath)" -Identity "PR $($request.head)" -Apply {
+            Invoke-InterruptionStep -Plan $plan -Request "$($Method.ToUpperInvariant()) $($Uri.AbsolutePath)" -Identity "PR $($request.head)" -Apply {
                 & $cloudTransport -Uri $Uri -Method $Method -Body $Body
             } -Interrupt { throw 'Injected PR creation interruption.' }
         }
@@ -79,6 +79,8 @@ Describe 'Vendoring publication interruption harness' -Tag 'Interruption' {
         $report = Format-InterruptionResult -Name "Publish-VendoringPullRequest.ps1 ($ImportKind)" -Result $result
         Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
-        $plan.Requests | Should -Not -BeNullOrEmpty
+        $plan.Requests.Count | Should -Be 2
+        $plan.Requests[0] | Should -MatchExactly "^git push HEAD:refs/heads/vendor/$ImportKind/[a-f0-9]{64}$"
+        $plan.Requests[1] | Should -BeExactly 'POST /repos/customer-actions/upstream-action/pulls'
     }
 }
