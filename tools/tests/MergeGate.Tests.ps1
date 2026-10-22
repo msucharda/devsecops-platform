@@ -423,9 +423,9 @@ Describe 'Merge gate repository and gh call' {
 
     It 'throws when gh exits with an error' {
         InModuleScope MergeGate {
-            Mock gh { $global:LASTEXITCODE = 1; Write-Error 'HTTP 404' 2>&1 }
+            Mock gh { $global:LASTEXITCODE = 1; [System.Management.Automation.ErrorRecord]::new([Exception]::new('HTTP 404'), 'gh', 'NotSpecified', $null) }
             $target = ConvertTo-MergeGateTarget -Repository 'msucharda/devsecops-platform'
-            { Invoke-MergeGateGh -Target $target -Arguments @('api', '--method', 'GET', 'repos/x') } | Should -Throw '*exit code 1*'
+            { Invoke-MergeGateGh -Target $target -Arguments @('api', '--method', 'GET', 'repos/x') } | Should -Throw '*exit code 1*HTTP 404*'
         }
     }
 }
@@ -728,6 +728,11 @@ Describe 'Merge gate check functions' {
         @{ Case = 'a self-hosted runner'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,1 @@`n-    runs-on: ubuntu-latest`n+    runs-on: [self-hosted, linux]" }; Expected = @('.github/workflows/ci.yml: +    runs-on: [self-hosted, linux]') }
         @{ Case = 'inherited secrets'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,2 @@`n     uses: ./.github/workflows/deploy.yml`n+    secrets: inherit" }; Expected = @('.github/workflows/ci.yml: +    secrets: inherit') }
         @{ Case = 'a GitHub-hosted runner change'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,1 @@`n-    runs-on: ubuntu-latest`n+    runs-on: windows-latest" }; Expected = @() }
+        @{ Case = 'quoted permission values'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,2 @@`n permissions:`n-  contents: `"read`"`n+  contents: `"write`"" }; Expected = @('.github/workflows/ci.yml: -  contents: "read"', '.github/workflows/ci.yml: +  contents: "write"') }
+        @{ Case = 'quoted permission keys'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,2 @@`n permissions:`n-  'contents': 'read'`n+  'contents': 'write'" }; Expected = @(".github/workflows/ci.yml: -  'contents': 'read'", ".github/workflows/ci.yml: +  'contents': 'write'") }
+        @{ Case = 'an indexed secret'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,2 @@`n     env:`n+      TOKEN: `${{ secrets['DEPLOY_TOKEN'] }}" }; Expected = @(".github/workflows/ci.yml: +      TOKEN: `${{ secrets['DEPLOY_TOKEN'] }}") }
+        @{ Case = 'a rename into the workflow directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = 'docs/publish.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.yml: renamed into the workflow directory from docs/publish.yml') }
+        @{ Case = 'a rename inside the workflow directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = '.github/workflows/release.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @() }
         @{ Case = 'a missing patch'; File = @{ filename = '.github/workflows/big.yml' }; Expected = @('.github/workflows/big.yml: patch unavailable') }
         @{ Case = 'an empty patch'; File = @{ filename = '.github/workflows/renamed.yml'; patch = '' }; Expected = @('.github/workflows/renamed.yml: patch unavailable') }
     ) {

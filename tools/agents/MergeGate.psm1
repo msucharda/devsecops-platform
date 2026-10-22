@@ -28,7 +28,7 @@ $script:PendingStatuses = [string[]] @('queued', 'in_progress', 'waiting', 'requ
 $script:SuccessConclusions = [string[]] @('success', 'skipped', 'neutral')
 # Changed lines that touch token permissions (any scope, also inside an unchanged permissions block), privileged triggers,
 # secrets or self-hosted runners (issue #85, G10).
-$script:SensitivePattern = 'permissions|\b(actions|attestations|checks|contents|deployments|discussions|id-token|issues|models|packages|pages|pull-requests|repository-projects|security-events|statuses)\s*:\s*(read|write|none)\b|:\s*write\b|write-all|read-all|id-token|attestations|pull_request_target|workflow_run|secrets\.|secrets\s*:|GITHUB_TOKEN|self-hosted'
+$script:SensitivePattern = 'permissions|\b(actions|attestations|checks|contents|deployments|discussions|id-token|issues|models|packages|pages|pull-requests|repository-projects|security-events|statuses)\b[''"]?\s*:\s*[''"]?(read|write|none)\b|:\s*[''"]?write\b|write-all|read-all|id-token|attestations|pull_request_target|workflow_run|secrets\s*(\.|\[|:)|GITHUB_TOKEN|self-hosted'
 $script:OpenQuestionsHeading = '(?im)^#{1,6}[ \t]*(Otev\u0159en\u00E9 ot\u00E1zky|Open questions)\b.*$'
 $script:DecisionsHeading = '(?im)^#{1,6}[ \t]*(Rozhodnut\u00ED (pro )?u\u017Eivatele)\b.*$'
 $script:DecisionsAcceptedMarker = '<!--\s*merge-gate:\s*decisions-accepted\s+(?<login>[A-Za-z0-9-]+(\[bot\])?)\s+(?<date>\d{4}-\d{2}-\d{2})\s*-->'
@@ -719,6 +719,10 @@ function Get-MergeGateSensitiveLine {
     [OutputType([string])]
     param([Parameter(Mandatory)][System.Collections.IDictionary] $File)
 
+    # A file renamed or copied into the workflow directory activates content that the patch does not show.
+    if ($File['status'] -in @('renamed', 'copied') -and -not (Test-MergeGateWorkflowPath -Path ([string] $File['previous_filename']))) {
+        "$($File['filename']): $($File['status']) into the workflow directory from $($File['previous_filename'])"
+    }
     $patch = $File['patch']
     if ($patch -isnot [string] -or $patch -eq '') {
         "$($File['filename']): patch unavailable"
