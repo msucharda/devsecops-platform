@@ -150,6 +150,42 @@ Describe 'Wait-PullRequestChecks' {
         $LASTEXITCODE | Should -Be 1
     }
 
+    It 'ignores a run and its check runs that a newer run of the same workflow replaced' {
+        $old = $api.Runs['workflow_runs'][0]
+        $old['id'] = 100; $old['conclusion'] = 'cancelled'; $old['check_suite_id'] = 900
+        $new = (Get-GitHubApiFixture -Name actions/list-workflow-runs-for-repo -Set @{
+            'workflow_runs.0.id' = 101; 'workflow_runs.0.name' = 'Source CI'; 'workflow_runs.0.status' = 'completed'
+            'workflow_runs.0.conclusion' = 'success'; 'workflow_runs.0.head_sha' = $sha; 'workflow_runs.0.check_suite_id' = 5
+            'workflow_runs.0.workflow_id' = $old['workflow_id']; 'workflow_runs.0.event' = $old['event']
+        })['workflow_runs'][0]
+        $api.Runs['workflow_runs'] = @($old, $new)
+        $api.Runs['total_count'] = 2
+        $cancelled = Get-CheckRunFixture -Name 'Platform tools' -Conclusion 'cancelled' -Id 10
+        $cancelled['check_suite']['id'] = 900
+        $api.Checks['check_runs'] = @($cancelled, (Get-CheckRunFixture -Name 'Platform tools' -Id 11))
+        $api.Checks['total_count'] = 2
+
+        $output = & $script @arguments
+
+        $output | Should -BeLike 'passed;*'
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It 'still fails when the replacing run failed' {
+        $old = $api.Runs['workflow_runs'][0]
+        $old['id'] = 100
+        $new = (Get-GitHubApiFixture -Name actions/list-workflow-runs-for-repo -Set @{
+            'workflow_runs.0.id' = 101; 'workflow_runs.0.name' = 'Source CI'; 'workflow_runs.0.status' = 'completed'
+            'workflow_runs.0.conclusion' = 'failure'; 'workflow_runs.0.head_sha' = $sha
+            'workflow_runs.0.workflow_id' = $old['workflow_id']; 'workflow_runs.0.event' = $old['event']
+        })['workflow_runs'][0]
+        $api.Runs['workflow_runs'] = @($old, $new)
+        $api.Runs['total_count'] = 2
+
+        & $script @arguments | Should -BeLike 'failed: workflow Source CI;*'
+        $LASTEXITCODE | Should -Be 1
+    }
+
     It 'uses the latest check run of a rerun job' {
         $api.Checks['check_runs'] = @((Get-CheckRunFixture -Name 'Platform tools' -Conclusion 'failure' -Id 10), (Get-CheckRunFixture -Name 'Platform tools' -Id 12))
         $api.Checks['total_count'] = 2

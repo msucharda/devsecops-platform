@@ -127,6 +127,14 @@ function Get-CiWorkflowSetting {
     foreach ($name in $script:TerraformStepCommands.Keys) {
         $step = Get-CiWorkflowStep -Workflow $workflow -Job terraform -Name $name
         $terraformCommands[$name] = [string] $step['run']
+        # The runner executes the commands of this module, so a changed CI command must stop the run.
+        $lines = @(([string] $step['run']).Split("`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $allowed = if ($name -ceq 'Terraform test') { @('if [ -d "$TF_ROOT/tests" ]; then', 'fi') } else { @() }
+        $ciCommands = @($lines | Where-Object { $_ -cnotin $allowed })
+        $localCommands = @(foreach ($command in $script:TerraformStepCommands[$name]) { ($command -join ' ').Replace('{root}', '"$TF_ROOT"') })
+        if (($ciCommands -join "`n") -cne ($localCommands -join "`n")) {
+            throw "ci.yml step '$name' runs commands that Invoke-LocalCi does not run. Update tools/LocalCi.psm1."
+        }
     }
 
     return [pscustomobject]@{
@@ -308,12 +316,14 @@ function Get-LocalCiTempPath {
     [OutputType([string])]
     param(
         [Parameter(Mandatory)][string] $RepoPath,
-        [string] $DataRoot = [Environment]::GetFolderPath('LocalApplicationData')
+        [string] $DataRoot = [Environment]::GetFolderPath('LocalApplicationData'),
+        # Windows paths are case-insensitive; elsewhere two paths that differ only by case are two worktrees.
+        [bool] $CaseInsensitive = $IsWindows
     )
 
     if ([string]::IsNullOrWhiteSpace($DataRoot)) { throw 'The local application data folder is not available for the local CI temp directory.' }
     $repo = [IO.Path]::GetFullPath($RepoPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($repo.ToLowerInvariant()))).Substring(0, 16).ToLowerInvariant()
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($(if ($CaseInsensitive) { $repo.ToLowerInvariant() } else { $repo })))).Substring(0, 16).ToLowerInvariant()
     $path = [IO.Path]::GetFullPath((Join-Path $DataRoot "devsecops-local-ci/$hash"))
     $relative = [IO.Path]::GetRelativePath($repo, $path)
     if ($relative -eq '.' -or -not ($relative.StartsWith('..') -or [IO.Path]::IsPathRooted($relative))) {

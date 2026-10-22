@@ -68,6 +68,8 @@ Describe 'Local CI reads ci.yml' {
         @{ Label = 'pwsh step is missing'; Find = 'name: Check PowerShell'; Replace = 'name: Check scripts' }
         @{ Label = 'actionlint command changed form'; Find = '-shellcheck= -pyflakes= .github/workflows/ci.yml'; Replace = '-shellcheck= -pyflakes= .github/workflows/ci.yml && echo done |' }
         @{ Label = 'TFLint pin is missing'; Find = 'tflint_version:'; Replace = 'tflint_release:' }
+        @{ Label = 'Trivy command changed'; Find = '--severity HIGH,CRITICAL'; Replace = '--severity MEDIUM,HIGH,CRITICAL' }
+        @{ Label = 'TFLint step runs another command'; Find = 'tflint --chdir="$TF_ROOT"' + "`n"; Replace = 'tflint --chdir="$TF_ROOT"' + "`n" + '          tflint --chdir="$TF_ROOT" --format json' + "`n" }
     ) {
         $path = Join-Path $TestDrive 'ci.yml'
         $text = Get-Content -LiteralPath $workflowPath -Raw
@@ -263,6 +265,15 @@ Describe 'Local CI temp directory' {
         Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'worktree-a') -DataRoot $data | Should -BeExactly $first
         Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'worktree-b') -DataRoot $data | Should -Not -Be $first
         (Get-LocalCiTempPath -RepoPath $repoRoot).StartsWith([IO.Path]::GetFullPath($repoRoot), [StringComparison]::OrdinalIgnoreCase) | Should -BeFalse
+    }
+
+    It 'keeps worktree paths that differ only by case apart unless paths are case-insensitive' {
+        $data = Join-Path $TestDrive 'data'
+        $upper = Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'Repo') -DataRoot $data -CaseInsensitive $false
+        $lower = Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'repo') -DataRoot $data -CaseInsensitive $false
+        $upper | Should -Not -Be $lower
+        Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'Repo') -DataRoot $data -CaseInsensitive $true |
+            Should -BeExactly (Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'repo') -DataRoot $data -CaseInsensitive $true)
     }
 
     It 'refuses a temp directory inside the repository' {

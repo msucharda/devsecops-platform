@@ -113,6 +113,18 @@ function Get-ChecksState {
     #>
     param([object[]] $WorkflowRun, [object[]] $CheckRun)
     $passing = @('success', 'neutral', 'skipped')
+    # A new run of the same workflow and event (for example after reopening) replaces the older one; the check
+    # runs of a replaced run's check suite no longer count. A rerun keeps its run ID and replaces its check runs.
+    $latestRun = [System.Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    foreach ($run in $WorkflowRun) {
+        $key = "$($run['workflow_id'])/$($run['event'])"
+        if (-not $latestRun.ContainsKey($key) -or [long] $run['id'] -gt [long] $latestRun[$key]['id']) { $latestRun[$key] = $run }
+    }
+    $replacedSuites = @($WorkflowRun | Where-Object { $_ -notin $latestRun.Values } | ForEach-Object { [string] $_['check_suite_id'] })
+    $WorkflowRun = @($latestRun.Values)
+    $CheckRun = @($CheckRun | Where-Object {
+        -not ($_['check_suite'] -is [System.Collections.IDictionary] -and [string] $_['check_suite']['id'] -cin $replacedSuites)
+    })
     # A rerun creates a new check run with the same app and name; checks of different apps or names stay separate.
     $latest = [System.Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     foreach ($run in $CheckRun) {

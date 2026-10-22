@@ -6,9 +6,10 @@ on:
     tags: ['v*']
   pull_request:
 
-# One run per ref. A new push to a pull request cancels its older run; main and tag runs always finish.
+# One group per pull request ref, so a new push cancels the older run of that pull request. Every other run
+# gets its own group: a shared group would replace a pending main or tag run even without cancel-in-progress.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
