@@ -265,7 +265,7 @@ else {
     }
     else {
         if ($remoteSha) { Assert-VendoringResumeBase -ParentSha $resumeRef.Parent }
-        if (-not $remoteSha) {
+        else {
             $null = Invoke-VendoringGit @('-c', 'user.name=Platform vendoring', '-c', 'user.email=platform-vendoring@users.noreply.github.com',
                 'commit', '--quiet', '-m', "Vendor $($receipt['Repository']) at $($receipt['Tag'])")
             # An empty lease is create-only: a concurrent publisher must never be overwritten.
