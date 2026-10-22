@@ -58,13 +58,14 @@ Describe 'enterprise-baseline organization settings contract' {
 Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' {
     BeforeAll {
         $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline'
-        $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); CodeSecurity = $null })
+        $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); CodeSecurity = $null; ActionsPolicy = $null })
         $codeSecurityStub = Join-Path $PSScriptRoot 'CodeSecurityStub.psm1'
         Import-Module $codeSecurityStub -Force
         $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
         $listener.Start()
         $port = $listener.LocalEndpoint.Port
         # Serves GET and PATCH /orgs/demo; DropNextPatch applies a PATCH and closes the connection without a response.
+        # GET and PUT of the actions policy apply DropNext (a request regex) by writing and closing the connection.
         # Other paths go to the code security stub, whose Drop also closes the connection without a response.
         $stub = Start-ThreadJob -ScriptBlock {
             $listener = $using:listener
@@ -87,7 +88,26 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
                     while ($read -lt $length) { $read += $reader.Read($buffer, $read, $length - $read) }
                     $method, $path = $requestLine.Split(' ')[0, 1]
                     $link = $null
-                    if ($path -cne '/orgs/demo' -and $state.CodeSecurity) {
+                    $policy = $state.ActionsPolicy
+                    if ($policy -and $policy.Paths.Contains($path)) {
+                        $policy.Requests.Add("$method $path")
+                        $resource = $policy.Paths[$path]
+                        if ($method -ceq 'PUT') {
+                            $changes = ([string]::new($buffer)) | ConvertFrom-Json -AsHashtable
+                            foreach ($key in $changes.Keys) { $policy[$resource][$key] = $changes[$key] }
+                            if ($policy.DropNext -and "$method $path" -cmatch $policy.DropNext) {
+                                $policy.DropNext = $null
+                                continue
+                            }
+                            $status = '204 No Content'
+                            $body = ''
+                        }
+                        else {
+                            $status = '200 OK'
+                            $body = ConvertTo-Json -InputObject $policy[$resource] -Depth 5 -Compress
+                        }
+                    }
+                    elseif ($path -cne '/orgs/demo' -and $state.CodeSecurity) {
                         $reply = Invoke-CodeSecurityStubRequest -State $state.CodeSecurity -Method $method -PathAndQuery $path -Headers $headers -Body ([string]::new($buffer))
                         if ($reply.Drop) { continue }
                         $status = "$($reply.Status) Stub"
@@ -168,6 +188,10 @@ locals {
 data "external" "code_security_state" {
   program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "./scripts/Read-CodeSecurityState.ps1"]
 }
+
+data "external" "actions_policy_state" {
+  program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "./scripts/Read-ActionsPolicyState.ps1"]
+}
 '@
         }
         Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json -Depth 10 -InputObject @{
@@ -185,6 +209,15 @@ data "external" "code_security_state" {
             members_can_change_repo_visibility = $false
             members_can_delete_repositories = $false
         }
+        $stubState.ActionsPolicy = [hashtable]::Synchronized(@{
+            Paths = @{ '/orgs/demo/actions/permissions' = 'Actions'; '/orgs/demo/actions/permissions/workflow' = 'Workflow' }
+            # A new organization: GitHub defaults with the enterprise default of read-only workflow permissions.
+            Actions = Get-GitHubApiFixture -Name actions/get-github-actions-permissions-organization -Set @{ allowed_actions = 'all'; sha_pinning_required = $false }
+            Workflow = Get-GitHubApiFixture -Name actions/get-github-actions-default-workflow-permissions-organization -Set @{ can_approve_pull_request_reviews = $false }
+            DropNext = $null
+            Requests = [Collections.Generic.List[string]]::new()
+        })
+        $stubState.ActionsPolicy.Actions.Remove('selected_actions_url')
         $stubState.DropNextPatch = $false
         $stubState.Requests.Clear()
         $managed = @{
@@ -405,5 +438,63 @@ data "external" "code_security_state" {
         $plan.ExitCode | Should -Be 1 -Because $plan.Output
         ($plan.Output -replace '\s+', ' ') | Should -BeLike '*missing or differs from customPatterns*'
         ($plan.Output -replace '\s+', ' ') | Should -Not -BeLike '*push protection disabled*'
+    }
+
+    It 'converges on the next apply when the response of PUT <Request> is lost' -ForEach @(
+        @{ Request = '/orgs/demo/actions/permissions' }
+        @{ Request = '/orgs/demo/actions/permissions/workflow' }
+    ) {
+        $policy = $stubState.ActionsPolicy
+        $policy.Workflow['can_approve_pull_request_reviews'] = $true
+        $policy.Workflow['default_workflow_permissions'] = 'write'
+        $policy.DropNext = "^PUT $([regex]::Escape($Request))$"
+
+        $interrupted = Invoke-StubTerraform apply -input=false -auto-approve
+        $resumed = Invoke-StubTerraform apply -input=false -auto-approve
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+
+        $policy.DropNext | Should -BeNullOrEmpty -Because 'the stub must have lost the response'
+        $interrupted.ExitCode | Should -Not -Be 0
+        $resumed.ExitCode | Should -Be 0 -Because $resumed.Output
+        $plan.ExitCode | Should -Be 0 -Because $plan.Output
+        $policy.Actions['enabled_repositories'] | Should -BeExactly 'all'
+        $policy.Actions['allowed_actions'] | Should -BeExactly 'local_only'
+        $policy.Actions['sha_pinning_required'] | Should -BeFalse
+        $policy.Workflow['default_workflow_permissions'] | Should -BeExactly 'read'
+        $policy.Workflow['can_approve_pull_request_reviews'] | Should -BeFalse
+    }
+
+    It 'restores the GitHub defaults when a destroy loses the PUT response and is repeated' {
+        (Invoke-StubTerraform apply -input=false -auto-approve).ExitCode | Should -Be 0
+        $policy = $stubState.ActionsPolicy
+        $policy.DropNext = '^PUT /orgs/demo/actions/permissions$'
+
+        $interrupted = Invoke-StubTerraform destroy -input=false -auto-approve
+        $resumed = Invoke-StubTerraform destroy -input=false -auto-approve
+        $remaining = Invoke-StubTerraform state list
+
+        $policy.DropNext | Should -BeNullOrEmpty -Because 'the stub must have lost the response'
+        $interrupted.ExitCode | Should -Not -Be 0
+        $resumed.ExitCode | Should -Be 0 -Because $resumed.Output
+        $remaining.Output.Trim() | Should -BeNullOrEmpty
+        $policy.Actions['enabled_repositories'] | Should -BeExactly 'all'
+        $policy.Actions['allowed_actions'] | Should -BeExactly 'all'
+        $policy.Workflow['default_workflow_permissions'] | Should -BeExactly 'read'
+        $policy.Workflow['can_approve_pull_request_reviews'] | Should -BeFalse
+    }
+
+    It 'fails the plan when the actions policy drifts: <Case>' -ForEach @(
+        @{ Case = 'all actions allowed'; Message = 'allowed actions policy of demo is not local_only'; Drift = { param($p) $p.Actions['allowed_actions'] = 'all' } }
+        @{ Case = 'write token'; Message = 'GITHUB_TOKEN permissions of demo are not read'; Drift = { param($p) $p.Workflow['default_workflow_permissions'] = 'write' } }
+        @{ Case = 'pull request approval'; Message = 'can create and approve pull requests is not false'; Drift = { param($p) $p.Workflow['can_approve_pull_request_reviews'] = $true } }
+    ) {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        & $Drift $stubState.ActionsPolicy
+
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+
+        $plan.ExitCode | Should -Be 1 -Because $plan.Output
+        ($plan.Output -replace '\s+', ' ') | Should -BeLike "*$Message*"
     }
 }

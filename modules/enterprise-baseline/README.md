@@ -2,11 +2,11 @@
 
 Modul nastaví automatizované kontroly v organizacích instance podle ADR 0016. Název modulu zachováváme. Enterprise kontroly, které App-only automatizace nepokrývá, jsou povinné ruční předpoklady, ne Terraform prostředky modulu.
 
-Předpoklady: `organizations` a `actions-catalog`. Manifest deklaruje `organizations`. Graf modulů proto spustí plan a apply tohoto modulu až po úspěšném modulu `organizations` a teardown ho odstraní před destroy modulu `organizations`. Pořadí nezávisí na názvech modulů. Modul výstupy `organizations` zatím nečte. Předpoklad `actions-catalog` manifest zatím nedeklaruje; doplní ho politika akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)).
+Předpoklady: `organizations` a `actions-catalog`. Manifest deklaruje oba moduly. Graf modulů proto spustí plan a apply tohoto modulu až po úspěšných modulech `organizations` a `actions-catalog`. Teardown ho odstraní před destroy obou modulů. Politika akcí tak začne platit až po importu vendorovaných akcí a při teardownu skončí dřív, než katalog zmizí. Pořadí nezávisí na názvech modulů. Modul výstupy předpokladů nečte. Výběr modulu `enterprise-baseline` vybere i `actions-catalog` včetně jeho ručních kroků.
 
 ## Stav implementace
 
-[#17](https://github.com/msucharda/devsecops-platform/issues/17) implementuje organizační oprávnění a ruční enterprise předpoklady. [#19](https://github.com/msucharda/devsecops-platform/issues/19) implementuje code security configuration a custom patterns. Samostatný root `rulesets/` implementuje organizační rulesety podle [#20](https://github.com/msucharda/devsecops-platform/issues/20). Politika akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)) zatím implementovaná není.
+[#17](https://github.com/msucharda/devsecops-platform/issues/17) implementuje organizační oprávnění a ruční enterprise předpoklady. [#18](https://github.com/msucharda/devsecops-platform/issues/18) implementuje politiku akcí a výchozí oprávnění `GITHUB_TOKEN`; živou akceptaci na GHE.com zatím nikdo neprovedl. [#19](https://github.com/msucharda/devsecops-platform/issues/19) implementuje code security configuration a custom patterns. Samostatný root `rulesets/` implementuje organizační rulesety podle [#20](https://github.com/msucharda/devsecops-platform/issues/20).
 
 ## Spravovaná organizační nastavení
 
@@ -60,6 +60,26 @@ Platformní tým příznaky nastaví před bootstrapem. O omezení classic PAT z
 - CodeQL default setup politika akcí neblokuje.
 - Výchozí oprávnění `GITHUB_TOKEN` je jen čtení.
 - GitHub Actions nesmí vytvářet ani schvalovat PR.
+
+### Politika akcí a oprávnění `GITHUB_TOKEN`
+
+Modul v každé organizaci z `target_organizations` nastaví tato pole (API verze `2026-03-10`):
+
+| Endpoint | Pole | Hodnota | Výchozí hodnota GitHubu |
+|---|---|---|---|
+| [`PUT /orgs/{org}/actions/permissions`](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions#set-github-actions-permissions-for-an-organization) | `enabled_repositories` | `all` | `all` |
+| | `allowed_actions` | `local_only` | `all` |
+| [`PUT /orgs/{org}/actions/permissions/workflow`](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions#set-default-workflow-permissions-for-an-organization) | `default_workflow_permissions` | `read` | `read` |
+| | `can_approve_pull_request_reviews` | `false` | `false` |
+
+- `local_only` povolí akce z repozitářů organizace a enterprise. Vendorované akce v organizaci akcí jsou dostupné celé enterprise ([`actions-catalog`](../actions-catalog/README.md)), proto workflow organizací instance smějí volat jen je a akce enterprise. Akce z GitHub.com a Marketplace politika zablokuje.
+- Omezení: `local_only` nezablokuje akce z jiných organizací enterprise. Užší pravidlo „jen organizace akcí“ by vyžadovalo enterprise politiku nebo seznam `selected` s vyloučením; je to otevřená otázka.
+- `can_approve_pull_request_reviews` řídí i vytváření PR z GitHub Actions (v UI „Allow GitHub Actions to create and approve pull requests“).
+- Modul nespravuje `sha_pinning_required` ani seznam `selected-actions`; `sha_pinning_required` ponechá beze změny.
+- Enterprise politika může nastavení organizace zakázat. Pak `PUT` vrátí HTTP 409 a apply selže se zprávou o enterprise politice. Modul enterprise politiku nemění.
+- Zápis i čtení provádí skript `scripts/ActionsPolicy.psm1`. Oba `PUT` vrací `204` bez těla, proto modul nepoužívá provider `restapi`. Každý zápis je idempotentní `PUT` jen se spravovanými poli. Skript nejdřív přečte stav a zapíše jen rozdíl. Po zápisu stav znovu přečte a selže, když neodpovídá politice.
+- Data source `external.actions_policy_state` čte `GET /orgs/{org}/actions/permissions` a `GET /orgs/{org}/actions/permissions/workflow` při každém planu a po apply. Chybějící pole, jiný typ nebo jiná velikost písmen je porušení, ne shoda. Drift zastaví plan; oprava je ruční obnova nebo apply s `-replace=terraform_data.actions_policy_settings["<org>"]`.
+- Identitní prostředek `terraform_data.actions_policy` při destroy obnoví výchozí hodnoty GitHubu z tabulky. Obsahový prostředek `terraform_data.actions_policy_settings` politiku zapisuje; změna politiky nahradí jen jeho, takže mezi starou a novou politikou nevznikne okno s výchozími hodnotami.
 
 ## Organizační ruleset pro výchozí větev
 
@@ -152,11 +172,11 @@ Seznam repozitářů modul čte přes [`GET /installation/repositories`](https:/
 Neznámý stav připojení (hodnota mimo dokumentovaný enum) a neznámý `mode` bypass reviewera plan zastaví. Chybějící `mode` znamená dokumentovanou výchozí hodnotu `ALWAYS`.
 ## Teardown
 
-Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu a smaže organizační rulesety, configurations a custom patterns. Destroy configuration nejdřív zruší její výchozí roli a potom ji smaže. GitHub odpojí repozitáře a ponechá jim nastavení bez vazby na configuration. Destroy patternu vyřeší jeho alerty jako `pattern deleted` (`post_delete_action: resolve_alerts`). Ruční enterprise předpoklady nemění. Případné ruční operace uvádí manifest včetně omezení odstranění. Destroy organizačních nastavení pošle `PATCH` jen se spravovanými poli a výchozími hodnotami z tabulky výše.
+Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu, včetně politiky akcí a oprávnění `GITHUB_TOKEN` (`all`, `all`, `read`, `false`), a smaže organizační rulesety, configurations a custom patterns. Destroy configuration nejdřív zruší její výchozí roli a potom ji smaže. GitHub odpojí repozitáře a ponechá jim nastavení bez vazby na configuration. Destroy patternu vyřeší jeho alerty jako `pattern deleted` (`post_delete_action: resolve_alerts`). Ruční enterprise předpoklady nemění. Případné ruční operace uvádí manifest včetně omezení odstranění. Destroy organizačních nastavení pošle `PATCH` jen se spravovanými poli a výchozími hodnotami z tabulky výše.
 
 ## Identita
 
-- Běžný plan používá installation token s `Organization Administration: read`; apply používá `write` pro organizace instance. Stejná oprávnění dokumentace uvádí pro čtení a změny code security configurations, custom patterns a pattern configurations.
+- Běžný plan používá installation token s `Organization Administration: read`; apply používá `write` pro organizace instance. Stejná oprávnění dokumentace uvádí pro čtení a změny code security configurations, custom patterns, pattern configurations a politiky GitHub Actions organizace.
 - Seznam a detail rulesetů vyžadují `write` i pro čtení. Plan rulesetů proto běží v samostatném jobu a environmentu s vlastní App identitou. Toto oprávnění umožňuje i změny jiných organizačních nastavení; výjimku přijímáme podle ADR 0016.
 - Privátní klíč ani token ruleset jobu nesmějí dostat ostatní plan joby. Stejné oddělení platí pro noční detekci driftu.
 - PR platformního týmu může spustit oba plan joby automaticky, bez dalšího schválení security týmem. Forky, jiní autoři ani App-created PR credentials automaticky nedostanou.
