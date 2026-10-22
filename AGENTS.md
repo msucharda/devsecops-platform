@@ -101,12 +101,11 @@ CI workflow `Source CI` spouští dva joby navíc k Pester testům. Oba běží 
 
 ### Lokální validace
 
-Lokální testy musí běžet ve stejném režimu jako CI. Pester musí běžet pod `Set-StrictMode -Version Latest`. Bez StrictMode test projde i při čtení nedefinované proměnné.
+Lokální validace musí běžet ve stejném režimu jako CI.
 
-- Úplný běh: `pwsh -NoProfile -File ./tools/Invoke-Tests.ps1 -CI`. Job `Platform tools` spouští stejný skript. Skript sám nastaví `Set-StrictMode -Version Latest` a `$ErrorActionPreference = 'Stop'`.
-- Cílený běh jednoho souboru: `pwsh -NoProfile -Command "Set-StrictMode -Version Latest; Import-Module Pester -RequiredVersion 5.7.1; Invoke-Pester -Path ./tools/tests/<soubor>.Tests.ps1 -Output Detailed"`. Verze Pesteru je v `tools/requirements.psd1`. Cílený běh nenahrazuje úplný běh před pushem.
-- Ostatní kroky CI spouštěj příkazem z `.github/workflows/ci.yml` beze změny parametrů, například `./tools/Test-PowerShell.ps1` nebo `./tools/Generate-DeploymentWorkflow.ps1 -Check`.
-- Důvod: lokálně zelené změny bez StrictMode selhaly v CI na 4 testech.
+- Kroky CI spouštěj příkazy z `.github/workflows/ci.yml` beze změny parametrů.
+- Pester musí běžet pod `Set-StrictMode -Version Latest` a ve verzi z `tools/requirements.psd1`. Bez StrictMode test projde i při čtení nedefinované proměnné a v CI pak selže.
+- Cílený běh jednoho testovacího souboru nenahrazuje úplný běh před pushem.
 
 ### Security checkpoint během implementace
 
@@ -128,26 +127,13 @@ Skill `code-review` čte tato pravidla jako coding standards repozitáře. Osa S
 
 ## Práce agentů
 
-Pravidla platí pro každého agenta v repozitáři, včetně subagentů.
+Pravidla platí pro každého agenta v repozitáři.
 
-### Úspora kontextu
+### Fakta a rozhodnutí
 
-- Token-intensive krok spusť přes subagenta typu `task`: běh testů, lint, build, generátor s `-Check`, čtení CI logů. Subagent vrátí stručný výsledek. Při selhání vrátí úplný výstup chyb.
-- Rešerši v kódu a dokumentaci přes víc souborů spusť přes subagenta typu `explore`.
-- Krátký cílený příkaz smí agent spustit přímo.
-- Subagent, kterému byl krok přidělen, ho provede přímo a dál ho nedeleguje.
-- Důvod: každé volání modelu znovu načte celý kontext, v průměru asi 120 000 tokenů. Výstup modelu tvoří méně než 1 % tokenů. Výstupy testů a CI logy kontext nafukují a zvyšují počet kompakcí (compaction). Zdroj: data o spotřebě tokenů za 3 dny.
-
-### Odolnost vůči kompakci
-
-- Agent musí vést soubor `invariants.md` v session files. Soubor obsahuje:
-  - trvalá pravidla ze zadání;
-  - pozdější rozhodnutí uživatele a zadavatele úkolu, oddělená od vlastních návrhů agenta;
-  - postup validace.
-- Agent soubor aktualizuje při každé změně pravidel, rozhodnutí nebo postupu validace. Po každé kompakci ho znovu přečte.
-- Každý fakt o stavu musí mít označení: ověřený (čím), nahlášený (kým), nebo neověřený či netestovaný.
-- Návrh se bez schválení nesmí stát rozhodnutím.
-- Důvod: audit 50 checkpointů ukázal, že checkpointy ztrácely kvalifikace („neověřeno“ se změnilo na „ověřeno“), podmíněné výjimky a postup validace. Neschválená výjimka se zapsala jako rozhodnutí.
+- Každý fakt o stavu musí mít označení: ověřený (čím), nahlášený (kým), nebo neověřený.
+- Návrh agenta se bez schválení nesmí stát rozhodnutím. Agent musí vést rozhodnutí uživatele a zadavatele úkolu odděleně od vlastních návrhů.
+- Důvod: při zkracování záznamů o práci se kvalifikace ztrácejí. „Neověřeno“ se změní na „ověřeno“ a neschválená výjimka se zapíše jako rozhodnutí.
 
 ### Strop Copilot code review
 
