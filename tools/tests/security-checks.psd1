@@ -4,6 +4,42 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'vendoring-merged-main'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*merged import that main no longer contains: <Case>*', '*unchanged*', '*merged import after changes outside*') }
+            )
+        }
+        @{
+            Name = 'vendoring-publish-head'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*changed import branch before PR*', '*opens an App PR*') }
+            )
+        }
+        @{
+            Name = 'vendoring-resume-ref'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid resume ref: <Case>*', '*recovers the published branch*') }
+            )
+        }
+        @{
+            Name = 'vendoring-pr-lookup'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*malformed or ambiguous PR lookup: <Case>*', '*existing PR has lost its branch*', '*recovers the published branch*') }
+            )
+        }
+        @{
+            Name = 'vendoring-resume-pr'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid resumed PR: <Case>*', '*accepts documented nullable PR*', '*recovers the published branch*', '*unchanged*', '*malformed merge timestamp*') }
+            )
+        }
+        @{
+            Name = 'vendoring-resume-tree'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*changed content or provenance*', '*recovers the published branch*') }
+            )
+        }
+        @{
             Name = 'release-tag-commit'
             Tests = @(
                 @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*tag-commit mismatch*', '*annotated tag whose tag object*') }
