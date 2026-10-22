@@ -89,30 +89,13 @@ variable "catalog" {
   }
 }
 
-variable "releases" {
-  description = "Approved imports to tag: upstream action => upstream tag and the commit of the vendored copy on main whose receipt records that tag."
-  type = map(object({
-    tag    = string
-    commit = string
-  }))
-  default = {}
+variable "vendoring_catalog_path" {
+  description = "Path of the vendoring catalog. Null reads vendoring/actions.json of the instance repository that contains platform/modules; tests point it to a fixture."
+  type        = string
+  default     = null
 
   validation {
-    condition     = alltrue([for upstream in keys(var.releases) : contains(var.catalog, upstream)])
-    error_message = "Each release must belong to an action in the catalog."
-  }
-
-  validation {
-    condition = alltrue([
-      for release in values(var.releases) :
-      length(release.tag) <= 100 && can(regex("^[A-Za-z0-9][A-Za-z0-9._-]*$", release.tag)) &&
-      !strcontains(release.tag, "..") && !endswith(release.tag, ".lock") && !endswith(release.tag, ".")
-    ])
-    error_message = "Each release tag must be a plain tag name such as v4.2.2."
-  }
-
-  validation {
-    condition     = alltrue([for release in values(var.releases) : can(regex("^[0-9a-f]{40}$", release.commit))])
-    error_message = "Each release commit must be a full lowercase commit SHA."
+    condition     = var.vendoring_catalog_path == null ? true : endswith(replace(var.vendoring_catalog_path, "\\", "/"), "vendoring/actions.json")
+    error_message = "The vendoring catalog path must name a vendoring/actions.json file."
   }
 }

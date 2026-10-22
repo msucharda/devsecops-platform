@@ -9,7 +9,22 @@ locals {
       security_team = var.security_team
     }
   }
-  provisioner = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-CatalogChange.ps1", "-Action"]
+  # The vendoring catalog of the instance repository is the single source of approved imports. The runner plans the module
+  # in <instance>/platform/modules/actions-catalog, so the catalog lies three levels up.
+  vendoring_path = coalesce(var.vendoring_catalog_path, "${path.module}/../../../vendoring/actions.json")
+  vendoring      = try(jsondecode(file(local.vendoring_path)), null)
+  vendored       = try({ for upstream, copy in local.vendoring.actions : upstream => copy }, {})
+  # Missing or non-string fields become empty strings, which the preconditions of the releases output reject.
+  releases = {
+    for upstream, copy in local.vendored : upstream => {
+      repository = try(copy.repository == null ? "" : tostring(copy.repository), "")
+      tag        = try(copy.tag == null ? "" : tostring(copy.tag), "")
+      commit     = try(copy.sha == null ? "" : tostring(copy.sha), "")
+    }
+  }
+  # Only entries of the catalog reach a resource; any other entry fails the plan through the releases output.
+  release_tags = { for upstream, release in local.releases : upstream => { tag = release.tag, commit = release.commit } if contains(var.catalog, upstream) }
+  provisioner  = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-CatalogChange.ps1", "-Action"]
 }
 
 # Creates or adopts the internal repository {owner}-{repository}, opens its actions to the enterprise, gives the security
@@ -33,7 +48,7 @@ resource "terraform_data" "repository" {
 # Tags the approved import commit with the upstream tag after its receipt and its place on protected main are verified.
 # An existing tag is never moved; a new release adds a new tag.
 resource "terraform_data" "release_tag" {
-  for_each = var.releases
+  for_each = local.release_tags
 
   input            = merge(local.repositories[each.key], { tag = each.value.tag, commit = each.value.commit })
   triggers_replace = [terraform_data.repository[each.key].id, merge(local.repositories[each.key], each.value)]
@@ -54,8 +69,8 @@ data "external" "catalog_state" {
 
   program = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Read-CatalogState.ps1"]
   query = merge(each.value, {
-    tag    = try(var.releases[each.key].tag, "")
-    commit = try(var.releases[each.key].commit, "")
+    tag    = try(local.release_tags[each.key].tag, "")
+    commit = try(local.release_tags[each.key].commit, "")
   })
 
   depends_on = [terraform_data.repository, terraform_data.release_tag]

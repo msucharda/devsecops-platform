@@ -15,7 +15,7 @@ Předpoklady: `organizations`. Ruční kroky: `create-actions-security-team` a `
 - Security tým má do repozitáře `push` a `.github/CODEOWNERS` obsahuje jen `* @{organizace}/{security tým}`.
 - Import ([vendoring](../../docs/vendoring.md)) otevře PR s diffem. Merge do `main` vyžaduje schválení code ownera, tedy security týmu.
 - Tag ve vendorované kopii se rovná tagu upstreamu. Modul tag vytvoří až po ověření schváleného importu a existující tag nikdy nepřesune.
-- Workflow pinují akci na SHA commitu z výstupu `releases`, ne na tag.
+- Workflow pinují akci na SHA commitu z výstupu `releases`, ne na tag. Výstup vzniká z [katalogu vendoringu](#katalog-vendoringu).
 
 ## Počáteční katalog
 
@@ -35,9 +35,20 @@ Předpoklady: `organizations`. Ruční kroky: `create-actions-security-team` a `
 | `target_organizations` | ano | Rozsah GitHub App: přesně organizace akcí instance, například `["demo-a1b2c3-actions"]`. Velikost písmen se při porovnání ignoruje. |
 | `security_team` | ano | Slug týmu v organizaci akcí, který vlastní katalog přes CODEOWNERS a schvaluje importy. Malá písmena, číslice a `-`, nejvýše 100 znaků. |
 | `catalog` | ne | Seznam upstreamů `owner/repo` malými písmeny. Výchozí hodnota je počáteční katalog. Názvy repozitářů `{owner}-{repo}` se nesmí shodovat a mají nejvýše 100 znaků. |
-| `releases` | ne | Mapa upstream → `{ tag, commit }` schválených importů. `commit` je plné SHA (40 znaků hex, malá písmena) commitu importu na `main`. Výchozí hodnota je prázdná mapa. |
+| `vendoring_catalog_path` | ne | Cesta ke katalogu `vendoring/actions.json`. Výchozí hodnota `null` čte katalog repozitáře instance, ve kterém leží `platform/modules`. Testy ji nastaví na fixture. |
 
 Terraform validuje parametry před spuštěním provisionerů.
+
+## Katalog vendoringu
+
+Modul čte schválené importy jen z katalogu `vendoring/actions.json` v repozitáři instance ([vendoring](../../docs/vendoring.md#vstupy-a-katalog)). Katalog je jediný zdroj pravdy; modul nemá parametr pro releasy. Každá položka `actions` musí mít:
+
+- klíč z parametru `catalog`,
+- `repository` rovné `{organizace akcí}/{owner}-{repo}`,
+- `tag` upstreamu, například `v4.2.2`; prosté jméno tagu bez `..`, bez koncového `.lock` nebo `.`, nejvýše 100 znaků,
+- `sha` jako plné SHA (40 znaků hex, malá písmena) commitu importu na `main`.
+
+Nečitelný katalog, jiná verze než `1` nebo neplatná položka ukončí plan chybou ještě před změnou prostředků (precondition výstupu `releases`).
 
 ## Výstupy
 
@@ -64,7 +75,7 @@ Prostředek `terraform_data.repository` pro každou akci katalogu spustí `Invok
 
 ### Tag releasu
 
-Prostředek `terraform_data.release_tag` pro každou položku `releases` spustí `-Action CreateReleaseTag`:
+Prostředek `terraform_data.release_tag` pro každou položku katalogu vendoringu spustí `-Action CreateReleaseTag`:
 
 1. Pokud tag existuje a ukazuje přímo na `commit`, modul nic nemění. Tag na jiný objekt, včetně anotovaného tagu, ukončí běh chybou. Modul tag nikdy nepřesune.
 2. Modul přečte stav repozitáře jako [kontrola stavu](#kontrola-stavu) bez tagu. Každé porušení ukončí běh chybou před tvorbou tagu. Schvalovací pravidlo, CODEOWNERS a push security týmu zajišťují, že `main` obsahuje jen schválené změny.
@@ -73,9 +84,9 @@ Prostředek `terraform_data.release_tag` pro každou položku `releases` spustí
 5. Modul znovu přečte SHA `main`. Pokud se od kroku 2 změnilo, běh skončí chybou a tag nevznikne.
 6. Modul vytvoří lightweight tag (`POST /repos/{org}/{repo}/git/refs`). Odpověď HTTP 422 vede k opakovanému čtení tagu podle kroku 1.
 
-Nový release je nová položka `releases` s novým tagem. Starý tag zůstává.
+Nový release je změna položky katalogu vendoringu na nový tag a commit. Starý tag zůstává.
 
-Omezení: krok 3 ověřuje dosažitelnost z `main`, ne schválení přesné revize. Mezilehlý commit importního PR s platným receiptem proto projde. Commit releasu volí člověk v parametru `releases` přes reviewovaný PR konfigurace instance. Vazbu na důkaz schválení řeší [#72](https://github.com/msucharda/devsecops-platform/issues/72).
+Omezení: krok 3 ověřuje dosažitelnost z `main`, ne schválení přesné revize. Mezilehlý commit importního PR s platným receiptem proto projde. Commit releasu volí člověk v katalogu vendoringu přes reviewovaný PR repozitáře instance. Vazbu na důkaz schválení řeší [#72](https://github.com/msucharda/devsecops-platform/issues/72).
 
 ### Kontrola stavu
 
@@ -96,7 +107,7 @@ Každý krok apply nejdřív čte stav. Opakovaný apply po přerušení proto p
 
 ### Destroy a teardown
 
-Destroy nic nemaže. Repozitáře, tagy a CODEOWNERS zůstanou, dokud člověk nesmaže organizaci akcí (ruční krok modulu `organizations`). Odebrání akce z `catalog` ani položky z `releases` repozitář ani tag nesmaže.
+Destroy nic nemaže. Repozitáře, tagy a CODEOWNERS zůstanou, dokud člověk nesmaže organizaci akcí (ruční krok modulu `organizations`). Odebrání akce z `catalog` ani položky z katalogu vendoringu repozitář ani tag nesmaže.
 
 ## Ruční kroky
 

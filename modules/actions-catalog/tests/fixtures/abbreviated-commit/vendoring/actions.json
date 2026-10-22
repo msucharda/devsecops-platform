@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "actions": {
+    "actions/checkout": {
+      "repository": "demo-a1b2c3-actions/actions-checkout",
+      "tag": "v4.2.2",
+      "sha": "11bd719"
+    }
+  }
+}

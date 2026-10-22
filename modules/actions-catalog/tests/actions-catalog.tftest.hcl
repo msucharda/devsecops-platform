@@ -19,6 +19,8 @@ variables {
   prerequisites        = {}
   target_organizations = ["demo-a1b2c3-actions"]
   security_team        = "actions-security"
+  # The instance repository of a test has no catalog; each run reads a fixture of vendoring/actions.json.
+  vendoring_catalog_path = "tests/fixtures/empty/vendoring/actions.json"
 }
 
 run "creates_a_repository_for_every_default_catalog_entry" {
@@ -64,9 +66,7 @@ run "tags_an_approved_release" {
   command = plan
 
   variables {
-    releases = {
-      "actions/checkout" = { tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
-    }
+    vendoring_catalog_path = "tests/fixtures/release/vendoring/actions.json"
   }
 
   assert {
@@ -95,10 +95,8 @@ run "exposes_repositories_and_releases_of_a_compliant_catalog" {
   command = plan
 
   variables {
-    catalog = ["actions/checkout", "azure/login"]
-    releases = {
-      "actions/checkout" = { tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
-    }
+    catalog                = ["actions/checkout", "azure/login"]
+    vendoring_catalog_path = "tests/fixtures/release/vendoring/actions.json"
   }
 
   override_resource {
@@ -259,62 +257,112 @@ run "rejects_colliding_repository_names" {
   expect_failures = [var.catalog]
 }
 
-run "rejects_a_release_outside_the_catalog" {
+run "rejects_a_missing_vendoring_catalog" {
   command = plan
 
   variables {
-    releases = {
-      "evil/checkout" = { tag = "v1", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
-    }
+    vendoring_catalog_path = "tests/fixtures/missing/vendoring/actions.json"
   }
 
-  expect_failures = [var.releases]
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_vendoring_catalog_of_another_version" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/version-2/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_vendored_action_outside_the_catalog" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/outside-catalog/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_an_upper_case_vendored_action" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/upper-case-action/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_vendored_copy_in_another_organization" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/other-repository/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_vendored_action_without_a_tag" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/missing-tag/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
 }
 
 run "rejects_an_invalid_release_tag" {
   command = plan
 
   variables {
-    releases = {
-      "actions/checkout" = { tag = "refs/tags/v4", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
-    }
+    vendoring_catalog_path = "tests/fixtures/invalid-tag/vendoring/actions.json"
   }
 
-  expect_failures = [var.releases]
+  expect_failures = [output.releases]
 }
 
 run "rejects_a_release_tag_ending_with_lock" {
   command = plan
 
   variables {
-    releases = {
-      "actions/checkout" = { tag = "v4.lock", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
-    }
+    vendoring_catalog_path = "tests/fixtures/lock-tag/vendoring/actions.json"
   }
 
-  expect_failures = [var.releases]
+  expect_failures = [output.releases]
 }
 
 run "rejects_an_abbreviated_release_commit" {
   command = plan
 
   variables {
-    releases = {
-      "actions/checkout" = { tag = "v4.2.2", commit = "11bd719" }
-    }
+    vendoring_catalog_path = "tests/fixtures/abbreviated-commit/vendoring/actions.json"
   }
 
-  expect_failures = [var.releases]
+  expect_failures = [output.releases]
 }
 
 run "rejects_an_upper_case_release_commit" {
   command = plan
 
   variables {
-    releases = {
-      "actions/checkout" = { tag = "v4.2.2", commit = "11BD71901BBE5B1630CEEA73D27597364C9AF683" }
-    }
+    vendoring_catalog_path = "tests/fixtures/upper-case-commit/vendoring/actions.json"
   }
 
-  expect_failures = [var.releases]
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_vendoring_catalog_path_of_another_file" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/release/vendoring/other.json"
+  }
+
+  expect_failures = [var.vendoring_catalog_path]
 }
