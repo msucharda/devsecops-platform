@@ -55,12 +55,12 @@ Describe 'Vendoring diff and pull request publication' {
                 $state = if ($filter['state']) { $filter['state'] } else { 'open' }
                 $perPage = if ($filter['per_page']) { [int] $filter['per_page'] } else { 30 }
                 $page = if ($filter['page']) { [int] $filter['page'] } else { 1 }
-                $matches = @($cloud.pulls | Where-Object {
+                $matchingPulls = @($cloud.pulls | Where-Object {
                     ($state -eq 'all' -or $_.state -ceq $state) -and
                     (-not $filter['head'] -or "$($_.head.repo.full_name.Split('/')[0]):$($_.head.ref)" -ceq $filter['head']) -and
                     (-not $filter['base'] -or $_.base.ref -ceq $filter['base'])
                 } | Sort-Object number -Descending | Select-Object -Skip (($page - 1) * $perPage) -First $perPage)
-                $items = @(foreach ($pull in $matches) {
+                $items = @(foreach ($pull in $matchingPulls) {
                     $fixture = Get-GitHubApiFixture -Name pulls/list -Set @{
                         '0.number' = $pull.number; '0.html_url' = $pull.html_url
                         '0.head.ref' = $pull.head.ref; '0.head.sha' = $pull.head.sha
