@@ -26,7 +26,8 @@ $script:CopilotCheckName = 'copilot-pull-request-reviewer'
 $script:CopilotWorkflowName = 'Running Copilot Code Review'
 $script:PendingStatuses = [string[]] @('queued', 'in_progress', 'waiting', 'requested', 'pending')
 $script:SuccessConclusions = [string[]] @('success', 'skipped', 'neutral')
-$script:SensitivePattern = 'permissions|contents:\s*write|id-token|attestations|packages:\s*write|pull_request_target|workflow_run|secrets\.|GITHUB_TOKEN|write-all|self-hosted'
+# Changed lines that touch permissions (any scope, also inside an unchanged permissions block), triggers, secrets or runners.
+$script:SensitivePattern = 'permissions|\b(actions|attestations|checks|contents|deployments|discussions|id-token|issues|models|packages|pages|pull-requests|repository-projects|security-events|statuses)\s*:\s*(read|write|none)\b|:\s*write\b|write-all|read-all|id-token|attestations|pull_request_target|workflow_run|secrets\.|GITHUB_TOKEN|self-hosted'
 $script:OpenQuestionsHeading = '(?im)^#{1,6}[ \t]*(Otev\u0159en\u00E9 ot\u00E1zky|Open questions)\b.*$'
 $script:DecisionsHeading = '(?im)^#{1,6}[ \t]*(Rozhodnut\u00ED (pro )?u\u017Eivatele)\b.*$'
 $script:DecisionsAcceptedMarker = '<!--\s*merge-gate:\s*decisions-accepted\s+(?<login>[A-Za-z0-9-]+(\[bot\])?)\s+(?<date>\d{4}-\d{2}-\d{2})\s*-->'
@@ -50,6 +51,7 @@ query($owner: String!, $name: String!, $number: Int!, $threads: String) {
       }
       reviews(last: 100) { totalCount nodes { author { login } state submittedAt commit { oid } body } }
       timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT], last: 100) {
+        pageInfo { hasPreviousPage }
         nodes {
           __typename
           ... on ReviewRequestedEvent { createdAt requestedReviewer { __typename ... on Bot { login } } }
@@ -343,13 +345,17 @@ function Assert-MergeGatePullRequestShape {
         throw 'The pull request has no valid head or base SHA.'
     }
     if ($PullRequest['isDraft'] -isnot [bool]) { throw 'The pull request has no isDraft value.' }
-    if ($PullRequest['body'] -isnot [string] -and $null -ne $PullRequest['body']) { throw 'The pull request body is not text.' }
+    # PullRequest.body is String!; a missing body is an incomplete response, not a body without open questions.
+    if ($PullRequest['body'] -isnot [string]) { throw 'The pull request has no body.' }
     $reviews = Get-MergeGateValue -Node $PullRequest -Path 'reviews'
     $reviewNodes = Get-MergeGateList -Node $reviews -Path 'nodes'
     if ((Get-MergeGateValue -Node $reviews -Path 'totalCount') -ne $reviewNodes.Count) {
         throw "The pull request has more than $($reviewNodes.Count) reviews; the gate cannot count Copilot rounds from a partial list."
     }
     $null = Get-MergeGateList -Node $PullRequest -Path 'timelineItems.nodes'
+    if ((Get-MergeGateValue -Node $PullRequest -Path 'timelineItems.pageInfo.hasPreviousPage') -ne $false) {
+        throw 'The pull request has more than 100 review request and force-push events; the gate cannot find the latest Copilot request in a partial list.'
+    }
     $null = Get-MergeGateList -Node $PullRequest -Path 'commits.nodes'
 }
 
@@ -591,14 +597,17 @@ function Get-MergeGateMergeFinding {
     <#
     .SYNOPSIS
     G7: a conflict fails, an unknown mergeability is pending and BLOCKED fails when no other check explains it.
+    A merge queue fails: gh pr merge would only queue the pull request, and the queue would merge it later without the gate.
     #>
     [CmdletBinding()]
     [OutputType([string])]
     param(
         [Parameter(Mandatory)][System.Collections.IDictionary] $PullRequest,
-        [bool] $OtherFindings
+        [bool] $OtherFindings,
+        [bool] $MergeQueue
     )
 
+    if ($MergeQueue) { 'fail:merge-queue-unsupported' }
     $mergeable = $PullRequest['mergeable']
     $status = $PullRequest['mergeStateStatus']
     if ($mergeable -ceq 'CONFLICTING' -or $status -ceq 'DIRTY') { 'fail:conflict' }
@@ -640,14 +649,15 @@ function Test-MergeGateEmptySection {
 }
 
 function Get-MergeGateSection {
-    # Returns the content of every heading that matches the pattern, up to the next heading of any level.
+    # Returns the content of every heading that matches the pattern, up to the next heading of the same or a higher level.
     [CmdletBinding()]
     [OutputType([string])]
     param([AllowEmptyString()][string] $Body, [Parameter(Mandatory)][string] $Pattern)
 
     foreach ($heading in [regex]::Matches($Body, $Pattern)) {
         $start = $heading.Index + $heading.Length
-        $next = [regex]::Match($Body.Substring($start), '(?m)^#{1,6}[ \t]')
+        $level = $heading.Value.Length - $heading.Value.TrimStart('#').Length
+        $next = [regex]::Match($Body.Substring($start), "(?m)^#{1,$level}[ \t]")
         if ($next.Success) { $Body.Substring($start, $next.Index) } else { $Body.Substring($start) }
     }
 }
@@ -759,6 +769,7 @@ function Get-MergeGateRuleSummary {
     $strict = $false
     $reviewOnPush = $null
     $threadResolution = $null
+    $mergeQueue = $false
     foreach ($rule in $Rules) {
         if ($rule -isnot [System.Collections.IDictionary] -or $rule['type'] -isnot [string]) { throw 'A branch rule has no type.' }
         switch -CaseSensitive ($rule['type']) {
@@ -772,9 +783,10 @@ function Get-MergeGateRuleSummary {
             }
             'copilot_code_review' { $reviewOnPush = (Get-MergeGateValue -Node $rule -Path 'parameters.review_on_push') -eq $true }
             'pull_request' { $threadResolution = (Get-MergeGateValue -Node $rule -Path 'parameters.required_review_thread_resolution') -eq $true }
+            'merge_queue' { $mergeQueue = $true }
         }
     }
-    return @{ RequiredContexts = $contexts.ToArray(); Strict = $strict; CopilotReviewOnPush = $reviewOnPush; ThreadResolutionRequired = $threadResolution }
+    return @{ RequiredContexts = $contexts.ToArray(); Strict = $strict; CopilotReviewOnPush = $reviewOnPush; ThreadResolutionRequired = $threadResolution; MergeQueue = $mergeQueue }
 }
 
 # security-check: merge-gate-verdict
@@ -808,6 +820,7 @@ function Get-MergeGateMessage {
         'copilot-review-missing' { return 'The pull request has no Copilot review and none is requested.' }
         'copilot-review-stale' { return 'The latest Copilot review is not on the head.' }
         'conflict' { return 'The pull request has merge conflicts.' }
+        'merge-queue-unsupported' { return 'The base branch requires a merge queue; the gate supports only a direct squash merge pinned to the evaluated head.' }
         'mergeability-unknown' { return 'GitHub has not computed the mergeability yet.' }
         'mergeability-unrecognized' { return 'GitHub reports an unrecognized mergeability state.' }
         'blocked-by-rules' { return 'Branch rules block the merge although all gate checks pass. Fix the rules; never use --admin.' }
@@ -1056,7 +1069,7 @@ function Complete-MergeGateEvaluation {
     # G7 depends on G2-G6: BLOCKED fails on its own only when nothing else explains it.
     $other = @($reasons | Where-Object { $_.check -in @('draft', 'head-pin', 'ci-checks', 'review-threads', 'copilot-review') }).Count -gt 0
     $mergeEvidence = @{ 'blocked-by-rules' = [ordered]@{ requiredContexts = $ruleSummary.RequiredContexts; strict = $ruleSummary.Strict; threadResolutionRequired = $ruleSummary.ThreadResolutionRequired } }
-    foreach ($reason in @(ConvertTo-MergeGateReason -Check 'mergeability' -Finding @(Get-MergeGateMergeFinding -PullRequest $pullRequest -OtherFindings $other) -Evidence $mergeEvidence)) { $reasons.Add($reason) }
+    foreach ($reason in @(ConvertTo-MergeGateReason -Check 'mergeability' -Finding @(Get-MergeGateMergeFinding -PullRequest $pullRequest -OtherFindings $other -MergeQueue $ruleSummary.MergeQueue) -Evidence $mergeEvidence)) { $reasons.Add($reason) }
     $Result.details['merge'] = [ordered]@{ mergeable = $pullRequest['mergeable']; mergeStateStatus = $pullRequest['mergeStateStatus'] }
 
     # G8
@@ -1107,6 +1120,7 @@ function Complete-MergeGateEvaluation {
         copilotReviewOnPush = $ruleSummary.CopilotReviewOnPush
         threadResolutionRequired = $ruleSummary.ThreadResolutionRequired
         strictRequiredStatusChecks = $ruleSummary.Strict
+        mergeQueue = $ruleSummary.MergeQueue
         requiredContexts = $ruleSummary.RequiredContexts
     }
 

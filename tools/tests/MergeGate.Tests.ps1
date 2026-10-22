@@ -325,6 +325,19 @@ Describe 'Merge gate fails closed' {
         (Invoke-ScenarioGate -Stub $stub).exitCode | Should -Be 5
     }
 
+    It 'fails with evaluation-error when the pull request body is <Case>' -ForEach @(
+        @{ Case = 'null'; Remove = $false }
+        @{ Case = 'missing'; Remove = $true }
+    ) {
+        if ($Remove) { $stub.PullRequest.Remove('body') } else { $stub.PullRequest.body = $null }
+        (Invoke-ScenarioGate -Stub $stub).exitCode | Should -Be 5
+    }
+
+    It 'fails with evaluation-error when the timeline has more events than one page' {
+        $stub.PullRequest.timelineItems.pageInfo.hasPreviousPage = $true
+        (Invoke-ScenarioGate -Stub $stub).exitCode | Should -Be 5
+    }
+
     It 'fails with evaluation-error when the pull request has no mergeable state' {
         $stub.PullRequest.mergeable = $null
         (Invoke-ScenarioGate -Stub $stub).exitCode | Should -Be 5
@@ -603,6 +616,14 @@ Describe 'Merge gate check functions' {
         }
     }
 
+    It 'G7 fails a merge queue, which would merge later without the gate' {
+        InModuleScope MergeGate {
+            @(Get-MergeGateMergeFinding -PullRequest @{ mergeable = 'MERGEABLE'; mergeStateStatus = 'CLEAN'; isDraft = $false } -OtherFindings $false -MergeQueue $true) | Should -Be @('fail:merge-queue-unsupported')
+            (Get-MergeGateRuleSummary -Rules @(@{ type = 'merge_queue'; parameters = @{ merge_method = 'SQUASH' } })).MergeQueue | Should -BeTrue
+            (Get-MergeGateRuleSummary -Rules @(@{ type = 'pull_request'; parameters = @{ required_review_thread_resolution = $true } })).MergeQueue | Should -BeFalse
+        }
+    }
+
     It 'G8 behind=<Behind> requireUpToDate=<Require> strict=<Strict> -> <Expected>' -ForEach @(
         @{ Behind = 0; Require = $true; Strict = $true; Expected = @() }
         @{ Behind = 3; Require = $false; Strict = $false; Expected = @() }
@@ -635,6 +656,8 @@ Describe 'Merge gate check functions' {
         @{ Case = 'with open live criteria only'; Body = "## Otev`u{0159}en`u{00E1} `u{017E}iv`u{00E1} krit`u{00E9}ria`n- Spustit bootstrap"; Expected = @() }
         @{ Case = 'with a marker of 2 open questions'; Body = "text`n<!-- merge-gate: open-questions=2 -->"; Expected = @('fail:open-questions') }
         @{ Case = 'with a marker of 0 open questions'; Body = "text`n<!-- merge-gate: open-questions=0 -->"; Expected = @() }
+        @{ Case = 'with a question in a subsection'; Body = "## Otev`u{0159}en`u{00E9} ot`u{00E1}zky`n### P`u{0159}`u{00ED}stup`nM`u{00E1} workflow dostat z`u{00E1}pis?`n## Testy`n- x"; Expected = @('fail:open-questions') }
+        @{ Case = 'with an empty section followed by a deeper heading of another section'; Body = "## Otev`u{0159}en`u{00E9} ot`u{00E1}zky`n`u{017D}`u{00E1}dn`u{00E9}`n## Testy`n### Detail`n- x"; Expected = @() }
         @{ Case = 'with user decisions'; Body = "## Rozhodnut`u{00ED} u`u{017E}ivatele`n- D1"; Expected = @() }
     ) {
         InModuleScope MergeGate -Parameters $_ { @(Get-MergeGateBodyFinding -Body $Body) | Should -Be $Expected }
@@ -665,6 +688,8 @@ Describe 'Merge gate check functions' {
         @{ Case = 'an added permission'; File = @{ filename = '.github/workflows/release.yml'; patch = "@@ -1,2 +1,3 @@`n on: push`n+permissions:`n+  id-token: write" }; Expected = @('.github/workflows/release.yml: +permissions:', '.github/workflows/release.yml: +  id-token: write') }
         @{ Case = 'a removed trigger'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,1 @@`n-on: pull_request_target`n jobs:" }; Expected = @('.github/workflows/ci.yml: -on: pull_request_target') }
         @{ Case = 'unchanged context lines'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,3 @@`n permissions:`n   contents: read`n+      - run: echo" }; Expected = @() }
+        @{ Case = 'a scope change inside an unchanged permissions block'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,3 +1,3 @@`n permissions:`n-  actions: read`n+  actions: write" }; Expected = @('.github/workflows/ci.yml: -  actions: read', '.github/workflows/ci.yml: +  actions: write') }
+        @{ Case = 'a security-events write'; File = @{ filename = '.github/workflows/scan.yml'; patch = "@@ -1,1 +1,2 @@`n jobs:`n+    security-events: write" }; Expected = @('.github/workflows/scan.yml: +    security-events: write') }
         @{ Case = 'a missing patch'; File = @{ filename = '.github/workflows/big.yml' }; Expected = @('.github/workflows/big.yml: patch unavailable') }
         @{ Case = 'an empty patch'; File = @{ filename = '.github/workflows/renamed.yml'; patch = '' }; Expected = @('.github/workflows/renamed.yml: patch unavailable') }
     ) {

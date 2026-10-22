@@ -142,6 +142,9 @@
             ]
           },
           "timelineItems": {
+            "pageInfo": {
+              "hasPreviousPage": false
+            },
             "nodes": [
               {
                 "__typename": "ReviewRequestedEvent",

@@ -243,7 +243,7 @@
         @{
             Name = 'merge-gate-mergeability'
             Tests = @(
-                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G7 mergeable*') }
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G7 mergeable*', '*G7 fails a merge queue*') }
             )
         }
         @{
