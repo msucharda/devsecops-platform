@@ -4,6 +4,18 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'vendoring-main-ref'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid target main ref: <Case>*', '*opens an App PR*') }
+            )
+        }
+        @{
+            Name = 'vendoring-publish-main'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*remote main moving during*', '*remote main moving before confirming*', '*opens an App PR*', '*unchanged*') }
+            )
+        }
+        @{
             Name = 'vendoring-resume-main'
             Tests = @(
                 @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*resumes an orphaned <ImportKind> import with main changes <Change>*') }

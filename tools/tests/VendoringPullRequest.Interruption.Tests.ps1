@@ -46,7 +46,7 @@ Describe 'Vendoring publication interruption harness' -Tag 'Interruption' {
         $reset = {
             $cloud.pulls.Clear()
             $cloud.attempt = 0
-            foreach ($ref in @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname)' refs/heads)) {
+            foreach ($ref in @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname)' refs/heads/vendor)) {
                 & $gitExecutable --git-dir=$remotePath update-ref -d $ref
             }
         }

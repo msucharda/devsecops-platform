@@ -33,6 +33,7 @@ Describe 'Vendoring diff and pull request publication' {
         $env:PLATFORM_GITHUB_TOKENS = '{"customer-actions":"ghs_fixture"}'
         $remotePath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '.git')
         & $gitExecutable init --quiet --bare $remotePath
+        & $gitExecutable -C $target push --quiet $remotePath main
         $cloud = @{ pulls = [Collections.Generic.List[object]]::new(); attempt = 0 }
         $gitTransport = {
             param([string[]] $Arguments)
@@ -108,6 +109,7 @@ Describe 'Vendoring diff and pull request publication' {
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com -RunIdentifier fixture
         & $gitExecutable -C $target branch -f main HEAD
         & $gitExecutable -C $target switch --quiet main
+        & $gitExecutable -C $target push --quiet $remotePath main
         $cloud.pulls[0].state = 'closed'
         $cloud.pulls[0].merged_at = '2026-10-22T12:00:00Z'
 
@@ -175,7 +177,7 @@ Describe 'Vendoring diff and pull request publication' {
 
         $second.Branch | Should -BeExactly $first.Branch
         $second.PullRequest | Should -BeExactly $first.PullRequest
-        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads).Count | Should -Be 1
+        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads/vendor).Count | Should -Be 1
         & $gitExecutable --git-dir=$remotePath rev-parse "refs/heads/$($first.Branch)" | Should -BeExactly $firstSha
         $cloud.pulls.Count | Should -Be 1
     }
@@ -188,6 +190,7 @@ Describe 'Vendoring diff and pull request publication' {
         'new governance' | Set-Content (Join-Path $target '.github/CODEOWNERS')
         & $gitExecutable -C $target add .
         & $gitExecutable -C $target commit --quiet -m governance
+        & $gitExecutable -C $target push --quiet $remotePath main
 
         $second = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
@@ -203,7 +206,14 @@ Describe 'Vendoring diff and pull request publication' {
         @{ ImportKind = 'release'; Change = 'inside (executable bit)'; Inside = $true; Mode = $true }
         @{ ImportKind = 'action'; Change = 'outside'; Inside = $false; Mode = $false }
         @{ ImportKind = 'release'; Change = 'outside'; Inside = $false; Mode = $false }
+        @{ ImportKind = 'action'; Change = 'remote inside (added file)'; Inside = $true; Mode = $false }
+        @{ ImportKind = 'release'; Change = 'remote inside (added file)'; Inside = $true; Mode = $false }
+        @{ ImportKind = 'action'; Change = 'remote inside (executable bit)'; Inside = $true; Mode = $true }
+        @{ ImportKind = 'release'; Change = 'remote inside (executable bit)'; Inside = $true; Mode = $true }
+        @{ ImportKind = 'action'; Change = 'remote outside'; Inside = $false; Mode = $false }
+        @{ ImportKind = 'release'; Change = 'remote outside'; Inside = $false; Mode = $false }
     ) {
+        $remoteOnlyChange = $Change.StartsWith('remote ')
         $modePath = 'old.js'
         if ($ImportKind -ceq 'release') {
             Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
@@ -214,6 +224,7 @@ Describe 'Vendoring diff and pull request publication' {
             & $gitExecutable -C $target add .
             & $gitExecutable -C $target commit --quiet -m release-base
         }
+        & $gitExecutable -C $target push --quiet $remotePath main
         Mock Invoke-RestMethod {
             param([uri] $Uri, [string] $Method = 'GET', $Body)
             if ($Method -eq 'POST') { throw 'Injected PR creation interruption.' }
@@ -222,13 +233,21 @@ Describe 'Vendoring diff and pull request publication' {
         { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*Injected PR creation interruption*'
-        $refs = @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname)' refs/heads)
+        $refs = @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname)' refs/heads/vendor)
         $refs.Count | Should -Be 1
         $remoteSha = & $gitExecutable --git-dir=$remotePath rev-parse $refs[0]
         & $gitExecutable -C $target switch --quiet main
+        $checkoutSha = & $gitExecutable -C $target rev-parse main
+        $mainWriter = $target
+        if ($remoteOnlyChange) {
+            $mainWriter = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+            & $gitExecutable clone --quiet --branch main $remotePath $mainWriter
+            & $gitExecutable -C $mainWriter config user.name fixture
+            & $gitExecutable -C $mainWriter config user.email fixture@example.test
+        }
         if ($Mode) {
-            if (-not $IsWindows) { [IO.File]::SetUnixFileMode((Join-Path $target $modePath), [IO.UnixFileMode]493) }
-            & $gitExecutable -C $target update-index --chmod=+x -- $modePath
+            if (-not $IsWindows) { [IO.File]::SetUnixFileMode((Join-Path $mainWriter $modePath), [IO.UnixFileMode]493) }
+            & $gitExecutable -C $mainWriter update-index --chmod=+x -- $modePath
         }
         else {
             $changedPath = if ($Inside) {
@@ -237,12 +256,13 @@ Describe 'Vendoring diff and pull request publication' {
             else {
                 if ($ImportKind -ceq 'release') { 'instance.yaml' } else { '.github/CODEOWNERS' }
             }
-            $destination = Join-Path $target $changedPath
+            $destination = Join-Path $mainWriter $changedPath
             $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
             'main advanced' | Set-Content -LiteralPath $destination
-            & $gitExecutable -C $target add .
+            & $gitExecutable -C $mainWriter add .
         }
-        & $gitExecutable -C $target commit --quiet -m main-advance
+        & $gitExecutable -C $mainWriter commit --quiet -m main-advance
+        & $gitExecutable -C $mainWriter push --quiet $remotePath main
         Mock Invoke-RestMethod {
             param([uri] $Uri, [string] $Method = 'GET', $Body)
             & $cloudTransport -Uri $Uri -Method $Method -Body $Body
@@ -264,7 +284,121 @@ Describe 'Vendoring diff and pull request publication' {
             Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
         }
         & $gitExecutable --git-dir=$remotePath rev-parse $refs[0] | Should -BeExactly $remoteSha
-        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads).Count | Should -Be 1
+        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads/vendor).Count | Should -Be 1
+        if ($remoteOnlyChange) { & $gitExecutable -C $target rev-parse main | Should -BeExactly $checkoutSha }
+    }
+
+    It 'rejects an invalid target main ref: <Case>' -ForEach @(
+        @{ Case = 'missing'; Response = { return @() } }
+        @{ Case = 'multiple'; Response = { @($mainLine, $mainLine) } }
+        @{ Case = 'invalid SHA'; Response = { $mainLine -replace '^[a-f0-9]{40}', ('z' * 40) } }
+        @{ Case = 'SHA case'; Response = { $mainLine.Substring(0, 40).ToUpperInvariant() + $mainLine.Substring(40) } }
+        @{ Case = 'other ref'; Response = { $mainLine.Replace('refs/heads/main', 'refs/heads/other') } }
+        @{ Case = 'ref case'; Response = { $mainLine.Replace('refs/heads/main', 'refs/heads/MAIN') } }
+    ) {
+        $mainLine = (& $gitExecutable -C $target rev-parse main) + "`trefs/heads/main"
+        # Deliberately malformed git responses isolate the target-main guard.
+        Mock git {
+            if ($Arguments -contains 'ls-remote' -and $Arguments[-1] -ceq 'refs/heads/main') { return & $Response }
+            & $gitTransport -Arguments $Arguments
+        }
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Cannot resolve target main to one commit*'
+        $cloud.pulls.Count | Should -Be 0
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+    }
+
+    It 'bases a new <ImportKind> import on remote main without changing local main' -ForEach @(
+        @{ ImportKind = 'action'; Outside = '.github/CODEOWNERS' }
+        @{ ImportKind = 'release'; Outside = 'instance.yaml' }
+    ) {
+        if ($ImportKind -ceq 'release') {
+            Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
+            $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+            'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
+        }
+        $checkoutSha = & $gitExecutable -C $target rev-parse main
+        $writer = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        & $gitExecutable clone --quiet --branch main $remotePath $writer
+        & $gitExecutable -C $writer config user.name fixture
+        & $gitExecutable -C $writer config user.email fixture@example.test
+        $destination = Join-Path $writer $Outside
+        $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
+        'latest configuration' | Set-Content $destination
+        & $gitExecutable -C $writer add .
+        & $gitExecutable -C $writer commit --quiet -m remote-configuration
+        & $gitExecutable -C $writer push --quiet $remotePath main
+        $remoteMain = & $gitExecutable --git-dir=$remotePath rev-parse refs/heads/main
+
+        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+
+        & $gitExecutable --git-dir=$remotePath rev-parse "$($result.Branch)^" | Should -BeExactly $remoteMain
+        & $gitExecutable -C $target rev-parse main | Should -BeExactly $checkoutSha
+        Get-Content (Join-Path $target $Outside) -Raw | Should -Match 'latest configuration'
+        $cloud.pulls.Count | Should -Be 1
+    }
+
+    It 'rejects remote main moving during <ImportKind> publication after <Step> with orphan <Orphan>' -ForEach @(
+        @{ ImportKind = 'action'; Step = 'PR lookup'; Orphan = $false }
+        @{ ImportKind = 'release'; Step = 'PR lookup'; Orphan = $false }
+        @{ ImportKind = 'action'; Step = 'import head check'; Orphan = $false }
+        @{ ImportKind = 'release'; Step = 'import head check'; Orphan = $false }
+        @{ ImportKind = 'action'; Step = 'PR lookup'; Orphan = $true }
+        @{ ImportKind = 'release'; Step = 'PR lookup'; Orphan = $true }
+        @{ ImportKind = 'action'; Step = 'import head check'; Orphan = $true }
+        @{ ImportKind = 'release'; Step = 'import head check'; Orphan = $true }
+    ) {
+        if ($ImportKind -ceq 'release') {
+            Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
+            $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+            'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
+        }
+        if ($Orphan) {
+            Mock Invoke-RestMethod {
+                param([uri] $Uri, [string] $Method = 'GET', $Body)
+                if ($Method -eq 'POST') { throw 'Injected PR creation interruption.' }
+                & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+            }
+            { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+                -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+                Should -Throw '*Injected PR creation interruption*'
+            & $gitExecutable -C $target switch --quiet main
+        }
+        Mock Invoke-RestMethod {
+            param([uri] $Uri, [string] $Method = 'GET', $Body)
+            & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+        }
+        $checkoutSha = & $gitExecutable -C $target rev-parse main
+        $writer = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        & $gitExecutable clone --quiet --branch main $remotePath $writer
+        & $gitExecutable -C $writer config user.name fixture
+        & $gitExecutable -C $writer config user.email fixture@example.test
+        & $gitExecutable -C $writer commit --quiet --allow-empty -m remote-main-advance
+        $advanceMain = { & $gitExecutable -C $writer push --quiet $remotePath main }
+        if ($Step -ceq 'PR lookup') {
+            $cloud.lookupTransform = { param($items) & $advanceMain; return ,$items }
+        }
+        else {
+            $cloud.branchReads = 0
+            Mock git {
+                $result = & $gitTransport -Arguments $Arguments
+                if ($Arguments -contains 'ls-remote' -and $Arguments[-1] -clike 'refs/heads/vendor/*') {
+                    $cloud.branchReads++
+                    if ($cloud.branchReads -eq 2) { & $advanceMain }
+                }
+                return $result
+            }
+        }
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Target main changed during vendoring*retry*'
+        $cloud.pulls.Count | Should -Be 0
+        & $gitExecutable -C $target rev-parse main | Should -BeExactly $checkoutSha
+        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads/vendor).Count | Should -Be 1
+        $posts = if ($Orphan) { 1 } else { 0 }
+        Should -Invoke Invoke-RestMethod -Times $posts -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
     It 'rejects changed content or provenance for an existing import identity' -ForEach @(
@@ -358,6 +492,7 @@ Describe 'Vendoring diff and pull request publication' {
         $cloud.pulls[0].state = 'closed'
         $cloud.pulls[0].merged_at = '2026-10-22T12:00:00Z'
         . $Change
+        & $gitExecutable -C $target push --quiet $remotePath main
 
         { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
@@ -384,6 +519,7 @@ Describe 'Vendoring diff and pull request publication' {
         'outside import' | Set-Content (Join-Path $target $Outside)
         & $gitExecutable -C $target add .
         & $gitExecutable -C $target commit --quiet -m outside-boundary
+        & $gitExecutable -C $target push --quiet $remotePath main
 
         $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
@@ -394,9 +530,45 @@ Describe 'Vendoring diff and pull request publication' {
         'inside import changed' | Set-Content (Join-Path $target $Owned)
         & $gitExecutable -C $target add .
         & $gitExecutable -C $target commit --quiet -m inside-boundary
+        & $gitExecutable -C $target push --quiet $remotePath main
         { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*main no longer contains*'
+    }
+
+    It 'rejects remote main moving before confirming a merged <ImportKind> import' -ForEach @(
+        @{ ImportKind = 'action' }
+        @{ ImportKind = 'release' }
+    ) {
+        if ($ImportKind -ceq 'release') {
+            Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
+            $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+            'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
+        }
+        $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+        & $gitExecutable -C $target branch -f main HEAD
+        & $gitExecutable -C $target switch --quiet main
+        & $gitExecutable -C $target push --quiet $remotePath main
+        $cloud.pulls[0].state = 'closed'
+        $cloud.pulls[0].merged_at = '2026-10-22T12:00:00Z'
+        $writer = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        & $gitExecutable clone --quiet --branch main $remotePath $writer
+        & $gitExecutable -C $writer config user.name fixture
+        & $gitExecutable -C $writer config user.email fixture@example.test
+        & $gitExecutable -C $writer commit --quiet --allow-empty -m remote-main-advance
+        Mock git {
+            $result = & $gitTransport -Arguments $Arguments
+            if ($Arguments -contains 'diff' -and $Arguments -contains '--name-only') {
+                & $gitExecutable -C $writer push --quiet $remotePath main
+            }
+            return $result
+        }
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Target main changed during vendoring*retry*'
+        $cloud.pulls.Count | Should -Be 1
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
     It 'accepts documented nullable PR fields and case-insensitive repository names on resume' {
@@ -441,7 +613,7 @@ Describe 'Vendoring diff and pull request publication' {
         { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*no import branch*'
-        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads).Count | Should -Be 0
+        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads/vendor).Count | Should -Be 0
         $cloud.pulls.Count | Should -Be 1
     }
 
@@ -463,7 +635,8 @@ Describe 'Vendoring diff and pull request publication' {
         $refLine = "$firstSha`trefs/heads/$($first.Branch)"
         # Deliberately malformed/foreign git responses isolate the resume guards.
         Mock git {
-            if ($Arguments -contains $Operation) { return & $Response }
+            if ($Arguments -contains $Operation -and
+                ($Operation -cne 'ls-remote' -or $Arguments[-1] -clike 'refs/heads/vendor/*')) { return & $Response }
             & $gitTransport -Arguments $Arguments
         }
         { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
@@ -479,7 +652,7 @@ Describe 'Vendoring diff and pull request publication' {
     ) {
         $cloud.reads = 0
         Mock git {
-            if ($Arguments -contains 'ls-remote') {
+            if ($Arguments -contains 'ls-remote' -and $Arguments[-1] -clike 'refs/heads/vendor/*') {
                 $cloud.reads++
                 if ($cloud.reads -gt 1) {
                     $line = & $gitTransport -Arguments $Arguments
@@ -528,6 +701,7 @@ Describe 'Vendoring diff and pull request publication' {
         'old release' | Set-Content -LiteralPath (Join-Path $target 'platform/obsolete.txt')
         & $gitExecutable -C $target add .
         & $gitExecutable -C $target commit --quiet -m instance
+        & $gitExecutable -C $target push --quiet $remotePath main
         Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
         $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
         'new release' | Set-Content -LiteralPath (Join-Path $prepared 'platform/README.md')

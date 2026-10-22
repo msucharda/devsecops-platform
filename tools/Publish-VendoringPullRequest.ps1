@@ -144,6 +144,22 @@ function Get-VendoringBoundaryDifference {
     Invoke-VendoringGit (@('diff', '--name-only', '--no-renames', $ReferenceSha, $TargetSha, '--') + $paths)
 }
 
+# security-check: vendoring-main-ref
+function Get-VendoringMainRef {
+    $refs = @(Invoke-VendoringRemoteGit @('ls-remote', '--heads', $remote, 'refs/heads/main'))
+    if ($refs.Count -ne 1 -or $refs[0] -cnotmatch '^([a-f0-9]{40})\s+refs/heads/main$') {
+        throw 'Cannot resolve target main to one commit.'
+    }
+    return $Matches[1]
+}
+
+# security-check: vendoring-publish-main
+function Assert-VendoringPublishMain {
+    if ((Get-VendoringMainRef) -cne $mainSha) {
+        throw 'Target main changed during vendoring; retry from main.'
+    }
+}
+
 # security-check: vendoring-resume-main
 function Assert-VendoringResumeBase {
     param([string] $ParentSha)
@@ -162,7 +178,6 @@ function Assert-VendoringMergedImport {
 }
 if (@(Invoke-VendoringGit @('status', '--porcelain')).Count -gt 0) { throw 'Target checkout must be clean before vendoring.' }
 if ((Invoke-VendoringGit @('branch', '--show-current')) -cne 'main') { throw 'Target checkout must start on protected main.' }
-$mainSha = Invoke-VendoringGit @('rev-parse', 'HEAD')
 $items = @(Get-ChildItem -LiteralPath $prepared -Recurse -Force)
 if (@($items | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
     throw 'Prepared source must not contain symbolic links.'
@@ -197,6 +212,8 @@ $identityHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
 $branch = "vendor/$Kind/$identityHash"
 $hostName = ([uri] $ApiUrl).Host -replace '^api\.', ''
 $remote = "https://$hostName/$Repository.git"
+$mainSha = Get-VendoringMainRef
+$null = Invoke-VendoringRemoteGit @('fetch', '--quiet', '--no-tags', $remote, $mainSha)
 $remoteSha = $null
 $start = $mainSha
 if ($resumeRef = Get-VendoringResumeRef) {
@@ -259,7 +276,10 @@ else {
     if ($pullRequests.Count -eq 1) {
         $pullRequest = $pullRequests[0] | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
         Assert-VendoringPullRequest -PullRequest $pullRequest -Branch $branch -HeadSha $remoteSha
-        if ($pullRequest['state'] -ceq 'closed') { Assert-VendoringMergedImport }
+        if ($pullRequest['state'] -ceq 'closed') {
+            Assert-VendoringMergedImport
+            Assert-VendoringPublishMain
+        }
         $url = if ($pullRequest['state'] -ceq 'open') { $pullRequest['html_url'] } else { $null }
         $result = [pscustomobject]@{ HasChanges = $pullRequest['state'] -ceq 'open'; Branch = $branch; PullRequest = $url }
     }
@@ -272,7 +292,6 @@ else {
             $null = Invoke-VendoringRemoteGit @('push', '--quiet', "--force-with-lease=refs/heads/${branch}:", $remote, "HEAD:refs/heads/$branch")
             $remoteSha = Invoke-VendoringGit @('rev-parse', 'HEAD')
         }
-        Assert-VendoringPublishHead
         $body = @"
 Vendoring $($receipt['Repository']) at tag $($receipt['Tag']), commit $($receipt['Commit']).
 
@@ -283,6 +302,8 @@ Cloud PR plan: **NOT PERFORMED**. This App-created PR receives no cloud credenti
 Review and merge into protected main must precede the main plan and approved apply (ADR 0016).
 Release workflow templates stay under platform/; promotion of live workflows is a separate reviewed manual step.
 "@
+        Assert-VendoringPublishHead
+        Assert-VendoringPublishMain
         $pullRequest = Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/repos/$Repository/pulls" -Method POST -Headers $headers `
             -ContentType application/json -Body (ConvertTo-Json -InputObject @{
                 title = "Vendor $($receipt['Repository']) $($receipt['Tag'])"
