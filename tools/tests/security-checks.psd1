@@ -42,7 +42,7 @@
         @{
             Name = 'vendoring-pull-request-reuse'
             Tests = @(
-                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*reuses the pushed branch and open PR*', '*ignores a listed PR whose head <Case>*', '*stops before changing a listed PR that <Case>*') }
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*reuses the pushed branch and open PR*', '*ignores a listed PR whose head <Case>*', '*stops before changing a listed PR that <Case>*', '*App PR of the branch is closed*') }
             )
         }
         @{

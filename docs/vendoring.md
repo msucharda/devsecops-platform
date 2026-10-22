@@ -76,7 +76,9 @@ Větev importu má stabilní identitu: `vendor/<kind>/<zdroj>-<tag>-<hash>`. Has
 
 - Vzdálená větev se stejným stromem a rodičem zůstane beze změny; nástroj nepushuje.
 - Vzdálenou větev s jiným obsahem nástroj přepíše přes `--force-with-lease`, ale jen pokud obsahuje jediný commit vendoringu nad historií `main`. Commit jiného autora, merge commit nebo cizí historie import zastaví s chybou; větev musí zkontrolovat člověk.
-- Otevřený PR z této větve do `main` nástroj použije znovu (`GET /repos/{owner}/{repo}/pulls` s filtrem `head`). Rozdílný název nebo popis aktualizuje (`PATCH /repos/{owner}/{repo}/pulls/{pull_number}`). Víc PR, PR do jiné větve než `main` nebo neotevřený PR import zastaví s chybou.
+- Otevřený PR z této větve do `main` nástroj použije znovu (`GET /repos/{owner}/{repo}/pulls` s filtrem `head` a `state=all`). Rozdílný název nebo popis aktualizuje (`PATCH /repos/{owner}/{repo}/pulls/{pull_number}`). Víc otevřených PR nebo PR do jiné větve než `main` import zastaví s chybou.
+- PR větve, který neotevřela App (autor není typu `Bot` s loginem `*[bot]`), import zastaví s chybou ještě před push. Push by PR synchronizoval a lidský autor PR může deployment authorization (autorizace nasazení) propustit k cloudovému planu.
+- Uzavřený PR App nástroj ignoruje a otevře nový PR ze stejné větve.
 
 PR otevře installation token, nikoli `GITHUB_TOKEN`. GITHUB_TOKEN workflow má pouze `contents: read` pro checkout důvěryhodných nástrojů. Tokeny se po použití odvolají i při chybě. Chyba push nebo vytvoření PR se nesmí vykázat jako úspěšný import. Nástroj nevynucuje merge ani nevytváří upstream tag v cíli; tagování schválené kopie řeší #15 po review.
 

@@ -90,17 +90,24 @@ function Test-VendoringBranchReplaceable {
 
 # security-check: vendoring-pull-request-reuse
 function Select-VendoringPullRequest {
-    # Returns the open App PR of the import branch, $null when none exists, and fails on any ambiguous or foreign match.
+    # Returns the open App PR of the import branch or $null. A PR of the branch that the App did not open stops the
+    # import before the branch changes: a push would synchronize it, and a human author can release cloud credentials.
     param([AllowNull()][object[]] $PullRequests, [Parameter(Mandatory)][string] $Branch, [Parameter(Mandatory)][string] $Repository)
     $own = @(foreach ($pullRequest in @($PullRequests)) {
             if ($null -eq $pullRequest -or $null -eq $pullRequest.head -or $null -eq $pullRequest.head.repo) { continue }
             if ($pullRequest.head.ref -cne $Branch -or $pullRequest.head.repo.full_name -ne $Repository) { continue }
             $pullRequest
         })
-    if ($own.Count -gt 1) { throw "Import branch '$Branch' has $($own.Count) pull requests; inspect them before importing again." }
-    if ($own.Count -eq 0) { return $null }
-    $pullRequest = $own[0]
-    if ($pullRequest.state -cne 'open' -or $null -eq $pullRequest.base -or $pullRequest.base.ref -cne 'main' -or
+    foreach ($pullRequest in $own) {
+        if ($null -eq $pullRequest.user -or $pullRequest.user.type -cne 'Bot' -or [string] $pullRequest.user.login -notlike '*[[]bot]') {
+            throw "Import branch '$Branch' has a pull request that the vendoring App did not open; inspect it before importing again."
+        }
+    }
+    $open = @($own | Where-Object { $_.state -ceq 'open' })
+    if ($open.Count -gt 1) { throw "Import branch '$Branch' has $($open.Count) open pull requests; inspect them before importing again." }
+    if ($open.Count -eq 0) { return $null }
+    $pullRequest = $open[0]
+    if ($null -eq $pullRequest.base -or $pullRequest.base.ref -cne 'main' -or
         $pullRequest.number -isnot [ValueType] -or [long] $pullRequest.number -lt 1 -or [string] $pullRequest.html_url -cnotmatch '^https://') {
         throw "Pull request of import branch '$Branch' is not an open PR into main; inspect it before importing again."
     }
@@ -187,6 +194,23 @@ if (-not $diff) {
 else {
     $null = Invoke-VendoringGit @('-c', 'user.name=Platform vendoring', '-c', "user.email=$vendoringEmail",
         'commit', '--quiet', '-m', "Vendor $($receipt['Repository']) at $($receipt['Tag'])")
+    $body = @"
+Vendoring $($receipt['Repository']) at tag $($receipt['Tag']), commit $($receipt['Commit']).
+
+Source SHA256: $($receipt['Sha256'])
+Attestation: $($receipt['Attestation']). Absence is not verification.
+
+Cloud PR plan: **NOT PERFORMED**. This App-created PR receives no cloud credentials.
+Review and merge into protected main must precede the main plan and approved apply (ADR 0016).
+Release workflow templates stay under platform/; promotion of live workflows is a separate reviewed manual step.
+"@
+    $title = "Vendor $($receipt['Repository']) $($receipt['Tag'])"
+    $apiBase = "$($ApiUrl.TrimEnd('/'))/repos/$Repository/pulls"
+    $headFilter = [uri]::EscapeDataString("$($owner):$branch")
+    $listed = Invoke-RestMethod -Uri "$($apiBase)?state=all&head=$headFilter&per_page=100" -Headers $headers
+    if (@($listed).Count -ge 100) { throw "Import branch '$branch' has too many pull requests to inspect." }
+    # Inspect the PRs before the push, which would synchronize any PR of the branch.
+    $pullRequest = Select-VendoringPullRequest -PullRequests @($listed) -Branch $branch -Repository $Repository
     $localTree = Invoke-VendoringGit @('rev-parse', 'HEAD^{tree}')
     $localParent = Invoke-VendoringGit @('rev-parse', 'HEAD~1')
     $branchPattern = "^(?<sha>[0-9a-f]{40})\trefs/heads/$([regex]::Escape($branch))$"
@@ -217,21 +241,6 @@ else {
     if ($push) {
         $null = Invoke-VendoringRemoteGit @('push', '--quiet', "--force-with-lease=refs/heads/${branch}:$expected", $remote, "HEAD:refs/heads/$branch")
     }
-    $body = @"
-Vendoring $($receipt['Repository']) at tag $($receipt['Tag']), commit $($receipt['Commit']).
-
-Source SHA256: $($receipt['Sha256'])
-Attestation: $($receipt['Attestation']). Absence is not verification.
-
-Cloud PR plan: **NOT PERFORMED**. This App-created PR receives no cloud credentials.
-Review and merge into protected main must precede the main plan and approved apply (ADR 0016).
-Release workflow templates stay under platform/; promotion of live workflows is a separate reviewed manual step.
-"@
-    $title = "Vendor $($receipt['Repository']) $($receipt['Tag'])"
-    $apiBase = "$($ApiUrl.TrimEnd('/'))/repos/$Repository/pulls"
-    $headFilter = [uri]::EscapeDataString("$($owner):$branch")
-    $listed = Invoke-RestMethod -Uri "$($apiBase)?state=open&head=$headFilter&per_page=100" -Headers $headers
-    $pullRequest = Select-VendoringPullRequest -PullRequests @($listed) -Branch $branch -Repository $Repository
     if ($null -eq $pullRequest) {
         $pullRequest = Invoke-RestMethod -Uri $apiBase -Method POST -Headers $headers -ContentType application/json -Body (ConvertTo-Json -InputObject @{
                 title = $title; head = $branch; base = 'main'; body = $body

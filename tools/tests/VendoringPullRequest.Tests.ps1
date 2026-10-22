@@ -16,11 +16,13 @@ BeforeAll {
         $fields = @{
             number = $Pull.number; html_url = "https://example.ghe.com/customer-actions/upstream-action/pull/$($Pull.number)"
             state = $Pull.state; title = $Pull.title; body = $Pull.body; 'head.ref' = $Pull.head; 'head.label' = "$($Pull.headOwner):$($Pull.head)"
-            'head.repo.full_name' = $Pull.headRepository; 'base.ref' = $Pull.base
+            'head.repo.full_name' = $Pull.headRepository; 'base.ref' = $Pull.base; 'user.login' = $Pull.authorLogin; 'user.type' = $Pull.authorType
         }
         foreach ($key in $fields.Keys) { $set["$Prefix$key"] = $fields[$key] }
         $body = Get-GitHubApiFixture -Name $Name -Set $set
-        if ($null -eq $Pull.headRepository) { if ($Prefix) { $body[0].head.repo = $null } else { $body.head.repo = $null } }
+        $item = if ($Prefix) { $body[0] } else { $body }
+        if ($null -eq $Pull.headRepository) { $item.head.repo = $null }
+        if ($null -eq $Pull.authorLogin) { $item.user = $null }
         return , $body
     }
     $apiTransport = {
@@ -37,7 +39,7 @@ BeforeAll {
             foreach ($pull in $cloud.pulls) {
                 # The documented head filter selects by owner and branch; the stub matches like GitHub without case.
                 if ($query['head'] -and "$($pull.headOwner):$($pull.head)" -ne $query['head']) { continue }
-                if (-not $cloud.listAllStates -and $query['state'] -cne 'all' -and $pull.state -cne $query['state']) { continue }
+                if ($query['state'] -cne 'all' -and $pull.state -cne $query['state']) { continue }
                 $items.Add((& $newPullFixture 'pulls/list' $pull '0.')[0])
             }
             return , $items.ToArray()
@@ -49,6 +51,7 @@ BeforeAll {
             $pull = @{
                 number = $number; state = 'open'; title = $request.title; body = $request.body; head = $request.head
                 headOwner = 'customer-actions'; headRepository = 'customer-actions/upstream-action'; base = $request.base
+                authorLogin = 'platform-vendoring[bot]'; authorType = 'Bot'
             }
             $cloud.pulls.Add($pull)
             return & $newPullFixture 'pulls/create' $pull ''
@@ -94,7 +97,7 @@ Describe 'Vendoring diff and pull request publication' {
         $savedMap = $env:PLATFORM_GITHUB_TOKENS
         $env:GH_TOKEN = 'ghs_fixture'
         $env:PLATFORM_GITHUB_TOKENS = '{"customer-actions":"ghs_fixture"}'
-        $cloud = @{ pulls = [Collections.Generic.List[hashtable]]::new(); nextNumber = 1; listAllStates = $false }
+        $cloud = @{ pulls = [Collections.Generic.List[hashtable]]::new(); nextNumber = 1 }
         Mock git { & $gitTransport $Arguments }
         Mock Invoke-RestMethod {
             param([uri] $Uri, [string] $Method, $Body)
@@ -308,18 +311,37 @@ Describe 'Vendoring diff and pull request publication' {
             Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
         }
 
+        It 'opens a new PR when the App PR of the branch is closed' {
+            $first = & $publisher @arguments
+            & $restart
+            $cloud.pulls[0].state = 'closed'
+
+            $second = & $publisher @arguments
+            $second.Branch | Should -BeExactly $first.Branch
+            $second.PullRequest | Should -Not -Be $first.PullRequest
+            $cloud.pulls.Count | Should -Be 2
+        }
+
         It 'stops before changing a listed PR that <Case>' -ForEach @(
             @{ Case = 'targets another base'; Field = 'base'; Value = 'develop'; Message = '*not an open PR into main*' }
-            @{ Case = 'is closed'; Field = 'state'; Value = 'closed'; Message = '*not an open PR into main*' }
             @{ Case = 'has an invalid number'; Field = 'number'; Value = 0; Message = '*not an open PR into main*' }
             @{ Case = 'has a non-HTTPS URL'; Field = 'html_url'; Value = 'http://example.ghe.com/pull/1'; Message = '*not an open PR into main*' }
-            @{ Case = 'has a duplicate'; Field = 'duplicate'; Value = $null; Message = '*has 2 pull requests*' }
+            @{ Case = 'has an open duplicate'; Field = 'duplicate'; Value = $null; Message = '*has 2 open pull requests*' }
+            @{ Case = 'a person opened'; Field = 'author'; Value = @('octocat', 'User'); Message = '*did not open*' }
+            @{ Case = 'a person opened and closed'; Field = 'closed-author'; Value = @('octocat', 'User'); Message = '*did not open*' }
+            @{ Case = 'a user with a bot-like login opened'; Field = 'author'; Value = @('platform-vendoring[bot]', 'User'); Message = '*did not open*' }
+            @{ Case = 'a bot type without a bot login opened'; Field = 'author'; Value = @('octocat', 'Bot'); Message = '*did not open*' }
+            @{ Case = 'has no author'; Field = 'author'; Value = @($null, $null); Message = '*did not open*' }
         ) {
-            $null = & $publisher @arguments
+            $first = & $publisher @arguments
             & $restart
-            $cloud.listAllStates = $true
             'retagged' | Set-Content -LiteralPath (Join-Path $prepared 'action.yml')
             if ($Field -ceq 'duplicate') { $cloud.pulls.Add($cloud.pulls[0].Clone()) }
+            elseif ($Field -cin @('author', 'closed-author')) {
+                $cloud.pulls[0].authorLogin = $Value[0]
+                $cloud.pulls[0].authorType = $Value[1]
+                if ($Field -ceq 'closed-author') { $cloud.pulls[0].state = 'closed' }
+            }
             elseif ($Field -ceq 'html_url') {
                 Mock Invoke-RestMethod -ParameterFilter { $Method -ne 'POST' -and $Method -ne 'PATCH' -and ([string] $Uri) -like '*/pulls?*' } {
                     $items = & $apiTransport -Uri $Uri -Method GET
@@ -328,8 +350,12 @@ Describe 'Vendoring diff and pull request publication' {
                 }
             }
             else { $cloud.pulls[0][$Field] = $Value }
+            $before = & $gitExecutable --git-dir=$bare rev-parse "refs/heads/$($first.Branch)"
 
             { & $publisher @arguments } | Should -Throw $Message
+            # The check runs before the push, so no PR of the branch is synchronized with unreviewed content.
+            & $gitExecutable --git-dir=$bare rev-parse "refs/heads/$($first.Branch)" | Should -Be $before
+            Should -Invoke git -Times 1 -Exactly -ParameterFilter { $Arguments -contains 'push' }
             Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
         }
