@@ -1,0 +1,93 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest",
+    "variant": "msucharda/devsecops-platform#40",
+    "note": "Selection of MergeGate.psm1 $script:PullRequestQuery, read on 2026-10-22. State at 16:17:30Z, one second after gh pr ready requested the Copilot review (16:17:29Z); the review came at 16:34:42Z."
+  },
+  "required": {
+    "data.repository.pullRequest": [
+      "state",
+      "merged",
+      "headRefOid",
+      "baseRefName",
+      "baseRefOid",
+      "isDraft",
+      "mergeable",
+      "mergeStateStatus",
+      "body",
+      "commits",
+      "reviewThreads",
+      "reviews",
+      "timelineItems"
+    ],
+    "data.repository.pullRequest.reviewThreads": [
+      "totalCount",
+      "pageInfo",
+      "nodes"
+    ],
+    "data.repository.pullRequest.reviews": [
+      "totalCount",
+      "nodes"
+    ]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "number": 40,
+          "state": "OPEN",
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "mergeCommit": null,
+          "headRefOid": "2df180115c5f4b9e5c9e08cf7f226189ee9c9754",
+          "baseRefName": "main",
+          "baseRefOid": "ed326fe484bfad3c9d6e740e2e62641c5c6c4247",
+          "isDraft": false,
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "CLEAN",
+          "body": "## Summary\n\nRefs #14. Issue zůstává otevřené do doložení živého ověření na referenční instanci.\n\n```text\ntrusted main\n  authorize invocation before credentials\n  prepare tagged source\n    resolve tag -> commit / named release ZIP\n    verify existing attestation; fail closed\n    rewrite nested uses -> catalog SHA\n    preserve executable flags in a manifest\n  publish with kind-specific target App\n    replace owned vendored tree -> diff -> PR against main\n    report cloud PR plan NOT PERFORMED\n```\n\nJeden reusable workflow importuje akce i release. Cílové Apps mají pouze Contents: write a Pull requests: write; token pokrývá jediný cílový repozitář. Zdrojová read-only App, příprava dat a publikace zůstávají oddělené. Chybějící katalogová akce, neplatná attestace nebo nedostupné API import zastaví.\n\nPodle schváleného upřesnění #16 automatický import mění jen `platform/`, včetně přepsaných workflow šablon. Živé `.github/workflows` povýší člověk přes review; App nezíská workflows: write. Rozhodnutí je zapsané v [#16](https://github.com/msucharda/devsecops-platform/issues/16#issuecomment-6148995640). Dokumentace deklaruje ruční import nedostupného privátního zdroje bez osobního PAT/OAuth ve workflow.\n\n## Evidence\n\n- **Before:** veřejné příkazy importu neexistovaly; první fixture testy selhaly. Regresní test executable bits selhal, protože publikace nepodporovala mode manifest.\n  **After:** 309/309 Pester testů prošlo, včetně 26 testů vendoringu. Prošly PowerShell syntax/static analysis, validace manifestů a konfigurací, kontroly generovaných workflow, actionlint 1.7.7 a whitespace kontrola.\n- **Before:** artifact přenos ztrácel spustitelnost a jediný writer environment nemohl obsloužit dvě organizace.\n  **After:** validovaný manifest obnovuje Git mode 100755; action/release mají samostatné chráněné writer vazby. Standards review: 0 významných nálezů. Spec review: 2 nálezy, oba opravené.\n- Veřejný import `actions/checkout@v4.2.2` skutečně stáhl zdroj bez credentials a rozlišil tag na commit. Nepřítomnou attestaci výslovně označil jako neověřenou provenance.\n- **Neověřeno živě:** cílový App PR, App installation a oprávnění na GHE.com, kryptografické ověření skutečné attestace ani navazující main plan / schválený apply. Offline HTTP/CLI fixtures nejsou end-to-end ověření. Organizace, Apps ani širší oprávnění nebyly vytvořené.\n\n## Merge Danger\n\n**Door:** two-way\n\nZdrojovou změnu lze vrátit; samotný merge tohoto PR neprovisionuje infrastrukturu ani nespustí import v instanci. Před živým během musí platformní tým připravit cíle, katalog a oddělené environmenty `vendoring-source`, `vendoring-action-import`, `vendoring-release-import`.\n\n**Blast Radius:** vendoring\n\nImport nahrazuje tracked obsah v deklarované hranici: kořen akce kromě `.github/`, nebo pouze `platform/` pro release. Cílové rulesety a security review musí chránit merge. App PR nedostane cloudové credentials; po review a merge do chráněné main následuje plan před schváleným apply podle ADR 0016.",
+          "createdAt": "2026-10-13T15:53:31Z",
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "oid": "2df180115c5f4b9e5c9e08cf7f226189ee9c9754",
+                  "committedDate": "2026-10-13T15:53:01Z"
+                }
+              }
+            ]
+          },
+          "reviewThreads": {
+            "totalCount": 0,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": []
+          },
+          "reviews": {
+            "totalCount": 0,
+            "nodes": []
+          },
+          "timelineItems": {
+            "nodes": [
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-13T16:17:29Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

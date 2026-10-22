@@ -1,0 +1,240 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+    "operationId": "pulls/list-files",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests-files",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/diff-entry[]",
+    "variant": "msucharda/devsecops-platform#40",
+    "note": "Read on 2026-10-22. The optional patch is kept only for .github files, which the gate reads. State at 16:17:19Z, when the coordinator verified the draft before running gh pr ready and gh pr merge in one call."
+  },
+  "required": {
+    "[]": [
+      "additions",
+      "blob_url",
+      "changes",
+      "contents_url",
+      "deletions",
+      "filename",
+      "raw_url",
+      "sha",
+      "status"
+    ]
+  },
+  "body": [
+    {
+      "sha": "640b8716f9494cc3a92179395d5f3c685c95994d",
+      "filename": ".github/workflows/ci.yml",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/.github%2Fworkflows%2Fci.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/.github%2Fworkflows%2Fci.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/.github%2Fworkflows%2Fci.yml?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754",
+      "patch": "@@ -48,7 +48,7 @@ jobs:\n           ./tools/Generate-DeploymentWorkflow.ps1 -Check\n           ./tools/Generate-DeploymentWorkflow.ps1 -ModulesPath ./tools/tests/fixtures/modules -OutputPath ./tools/tests/fixtures/deploy.yml -Check\n       - name: Validate deployment workflow syntax\n-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml templates/instance/.github/workflows/deploy.yml tools/tests/fixtures/deploy.yml\n+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml templates/instance/.github/workflows/deploy.yml templates/instance/.github/workflows/vendor.yml tools/tests/fixtures/deploy.yml\n       - name: Discover Terraform roots\n         id: terraform-roots\n         shell: pwsh"
+    },
+    {
+      "sha": "da1525b37153d6e7fe375377e42f405005f5e02d",
+      "filename": "README.md",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 0,
+      "changes": 2,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/README.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/README.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/README.md?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "48445d0d14435d206869b102eb0c59be60d03c6f",
+      "filename": "docs/vendoring.md",
+      "status": "added",
+      "additions": 102,
+      "deletions": 0,
+      "changes": 102,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/docs%2Fvendoring.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/docs%2Fvendoring.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/docs%2Fvendoring.md?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "cf686d4293a0649e3efe931b761db763969a58ec",
+      "filename": "templates/instance/.github/workflows/vendor.yml",
+      "status": "added",
+      "additions": 187,
+      "deletions": 0,
+      "changes": 187,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/templates%2Finstance%2F.github%2Fworkflows%2Fvendor.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/templates%2Finstance%2F.github%2Fworkflows%2Fvendor.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/templates%2Finstance%2F.github%2Fworkflows%2Fvendor.yml?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754",
+      "patch": "@@ -0,0 +1,187 @@\n+name: Vendor source\n+\n+on:\n+  workflow_call:\n+    inputs:\n+      source-repository:\n+        type: string\n+        required: true\n+      source-tag:\n+        type: string\n+        required: true\n+      source-api-url:\n+        type: string\n+        default: https://api.github.com\n+      source-asset:\n+        type: string\n+        default: ''\n+      private-source:\n+        type: boolean\n+        default: false\n+      target-repository:\n+        type: string\n+        required: true\n+      kind:\n+        type: string\n+        required: true\n+      actions-organization:\n+        type: string\n+        required: true\n+    outputs:\n+      pull-request:\n+        value: ${{ jobs.publish.outputs.pull-request }}\n+\n+permissions:\n+  contents: read\n+\n+concurrency:\n+  group: vendoring-${{ inputs.target-repository }}\n+  cancel-in-progress: false\n+\n+jobs:\n+  authorize:\n+    name: Require trusted main before entering any credential environment\n+    runs-on: ubuntu-latest\n+    steps:\n+      - name: Reject unauthorized invocation explicitly\n+        shell: pwsh\n+        env:\n+          IMPORT_REF: ${{ github.ref }}\n+          IMPORT_EVENT: ${{ github.event_name }}\n+        run: |\n+          if ($env:IMPORT_REF -cne 'refs/heads/main' -or\n+              $env:IMPORT_EVENT -cnotin @('workflow_dispatch', 'push')) {\n+            throw 'Vendoring requires a trusted main push or workflow_dispatch; PR and non-main imports are not authorized.'\n+          }\n+\n+  prepare:\n+    name: Prepare tagged source without write or cloud credentials\n+    needs: authorize\n+    runs-on: ubuntu-latest\n+    environment: vendoring-source\n+    steps:\n+      - name: Check out trusted main tools and catalog\n+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n+        with:\n+          ref: ${{ github.sha }}\n+          persist-credentials: false\n+      - name: Install trusted runtime dependencies\n+        shell: pwsh\n+        run: ./platform/tools/Install-ToolDependencies.ps1\n+      - name: Reject release provenance downgrade before loading credentials\n+        shell: pwsh\n+        env:\n+          IMPORT_KIND: ${{ inputs.kind }}\n+          SOURCE_ASSET: ${{ inputs.source-asset }}\n+        run: |\n+          if ($env:IMPORT_KIND -cnotin @('action', 'release')) { throw 'Import kind must be action or release.' }\n+          if ($env:IMPORT_KIND -ceq 'release' -and -not $env:SOURCE_ASSET) {\n+            throw 'Platform release import requires a named ZIP release asset, not an automatic source archive.'\n+          }\n+      - name: Validate private source binding before using its key\n+        if: ${{ inputs.private-source }}\n+        shell: pwsh\n+        env:\n+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}\n+          SOURCE_API_URL: ${{ inputs.source-api-url }}\n+          DECLARED_SOURCE_REPOSITORY: ${{ vars.SOURCE_REPOSITORY }}\n+          DECLARED_SOURCE_API_URL: ${{ vars.SOURCE_API_URL }}\n+        run: |\n+          if ($env:SOURCE_REPOSITORY -cne $env:DECLARED_SOURCE_REPOSITORY -or\n+              $env:SOURCE_API_URL -cne $env:DECLARED_SOURCE_API_URL) {\n+            throw 'Private source differs from the protected source App binding.'\n+          }\n+      - name: Issue an isolated read-only source installation token\n+        if: ${{ inputs.private-source }}\n+        shell: pwsh\n+        env:\n+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}\n+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}\n+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}\n+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}\n+          SOURCE_REPOSITORY: ${{ vars.SOURCE_REPOSITORY }}\n+          SOURCE_API_URL: ${{ vars.SOURCE_API_URL }}\n+        run: |\n+          ./platform/tools/New-PlatformGitHubToken.ps1 -VendoringRepository $env:SOURCE_REPOSITORY -ReadOnlySource -ApiUrl $env:SOURCE_API_URL\n+      - name: Download, verify and rewrite source as data\n+        shell: pwsh\n+        env:\n+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}\n+          SOURCE_TAG: ${{ inputs.source-tag }}\n+          SOURCE_API_URL: ${{ inputs.source-api-url }}\n+          SOURCE_ASSET: ${{ inputs.source-asset }}\n+          IMPORT_KIND: ${{ inputs.kind }}\n+          ACTIONS_ORGANIZATION: ${{ inputs.actions-organization }}\n+          SOURCE_GITHUB_TOKEN: ${{ env.GH_TOKEN }}\n+        run: |\n+          $source = ./platform/tools/Get-VendoringSource.ps1 -Repository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -ApiUrl $env:SOURCE_API_URL -AssetName $env:SOURCE_ASSET -WorkPath ./vendor/source\n+          ./platform/tools/ConvertTo-VendoredSource.ps1 -SourcePath $source.SourcePath -OutputPath ./vendor/prepared -CatalogPath ./vendoring/actions.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND -ModeManifestPath ./vendor/modes.json\n+      - name: Revoke source installation token\n+        if: ${{ always() && inputs.private-source && env.PLATFORM_GITHUB_TOKENS != '' }}\n+        shell: pwsh\n+        env:\n+          SOURCE_API_URL: ${{ vars.SOURCE_API_URL }}\n+        run: ./platform/tools/Remove-PlatformGitHubToken.ps1 -ApiUrl $env:SOURCE_API_URL\n+      - name: Transfer only prepared data and provenance\n+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n+        with:\n+          name: vendoring-candidate\n+          path: |\n+            vendor/prepared/\n+            vendor/source/receipt.json\n+            vendor/modes.json\n+          include-hidden-files: true\n+          retention-days: 1\n+          if-no-files-found: error\n+\n+  publish:\n+    name: Publish App PR without cloud credentials\n+    needs: prepare\n+    runs-on: ubuntu-latest\n+    environment: ${{ inputs.kind == 'action' && 'vendoring-action-import' || 'vendoring-release-import' }}\n+    outputs:\n+      pull-request: ${{ steps.publish.outputs.pull-request }}\n+    steps:\n+      - name: Check out trusted main tools\n+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n+        with:\n+          ref: ${{ github.sha }}\n+          path: trusted\n+          persist-credentials: false\n+      - name: Install trusted runtime dependencies\n+        shell: pwsh\n+        run: ./trusted/platform/tools/Install-ToolDependencies.ps1\n+      - name: Receive candidate as data, never as executable tools\n+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n+        with:\n+          name: vendoring-candidate\n+          path: candidate\n+      - name: Issue target-only installation token\n+        shell: pwsh\n+        env:\n+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}\n+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}\n+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}\n+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}\n+          TARGET_REPOSITORY: ${{ inputs.target-repository }}\n+        run: ./trusted/platform/tools/New-PlatformGitHubToken.ps1 -VendoringRepository $env:TARGET_REPOSITORY\n+      - name: Check out the target main without persisting credentials\n+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n+        with:\n+          repository: ${{ inputs.target-repository }}\n+          ref: main\n+          path: target\n+          token: ${{ env.GH_TOKEN }}\n+          persist-credentials: false\n+      - name: Commit the vendored diff and open its PR\n+        id: publish\n+        shell: pwsh\n+        env:\n+          TARGET_REPOSITORY: ${{ inputs.target-repository }}\n+          IMPORT_KIND: ${{ inputs.kind }}\n+        run: |\n+          ./trusted/platform/tools/Publish-VendoringPullRequest.ps1 -PreparedPath ./candidate/prepared -TargetPath ./target -ReceiptPath ./candidate/source/receipt.json -ModeManifestPath ./candidate/modes.json -Kind $env:IMPORT_KIND -Repository $env:TARGET_REPOSITORY -ApiUrl $env:GITHUB_API_URL -RunIdentifier \"$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT\" -GitHubOutputPath $env:GITHUB_OUTPUT -SummaryPath $env:GITHUB_STEP_SUMMARY\n+      - name: Revoke target installation token\n+        if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}\n+        shell: pwsh\n+        run: ./trusted/platform/tools/Remove-PlatformGitHubToken.ps1"
+    },
+    {
+      "sha": "1a4b1e2cd2af46387d8ab13d6b25217ee3388304",
+      "filename": "templates/instance/README.md",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 1,
+      "changes": 6,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/templates%2Finstance%2FREADME.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/templates%2Finstance%2FREADME.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/templates%2Finstance%2FREADME.md?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "453cbebddb6fa16067a9fa7fbf100918ab6f13ef",
+      "filename": "templates/instance/vendoring/actions.json",
+      "status": "added",
+      "additions": 4,
+      "deletions": 0,
+      "changes": 4,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/templates%2Finstance%2Fvendoring%2Factions.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/templates%2Finstance%2Fvendoring%2Factions.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/templates%2Finstance%2Fvendoring%2Factions.json?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "7210db062044c386fbda7d98948e68b3a959b7d0",
+      "filename": "tools/ConvertTo-VendoredSource.ps1",
+      "status": "added",
+      "additions": 134,
+      "deletions": 0,
+      "changes": 134,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2FConvertTo-VendoredSource.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2FConvertTo-VendoredSource.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FConvertTo-VendoredSource.ps1?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "e94a489ff4c3a3a6558643edeb5fd05b68f2f9ea",
+      "filename": "tools/Get-VendoringSource.ps1",
+      "status": "added",
+      "additions": 137,
+      "deletions": 0,
+      "changes": 137,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2FGet-VendoringSource.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2FGet-VendoringSource.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FGet-VendoringSource.ps1?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "fb81b3229acdbe88f67fca591325dedb1438cc41",
+      "filename": "tools/New-PlatformGitHubToken.ps1",
+      "status": "modified",
+      "additions": 25,
+      "deletions": 3,
+      "changes": 28,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2FNew-PlatformGitHubToken.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2FNew-PlatformGitHubToken.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FNew-PlatformGitHubToken.ps1?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "b32fa5d4f52a31115121ccd5dad35e4a4bf0a1c1",
+      "filename": "tools/Publish-VendoringPullRequest.ps1",
+      "status": "added",
+      "additions": 174,
+      "deletions": 0,
+      "changes": 174,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2FPublish-VendoringPullRequest.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2FPublish-VendoringPullRequest.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FPublish-VendoringPullRequest.ps1?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "6396a53aa21c413ce25a153e2751c2197f7c5c2b",
+      "filename": "tools/tests/Vendoring.Tests.ps1",
+      "status": "added",
+      "additions": 83,
+      "deletions": 0,
+      "changes": 83,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2FVendoring.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2FVendoring.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FVendoring.Tests.ps1?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "b470af1d217d8a0284b1d6af20fb448abc21a08e",
+      "filename": "tools/tests/VendoringAppToken.Tests.ps1",
+      "status": "added",
+      "additions": 83,
+      "deletions": 0,
+      "changes": 83,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2FVendoringAppToken.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2FVendoringAppToken.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FVendoringAppToken.Tests.ps1?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "97311ae66fc9e1bb1dd59fc41922c638fedcfbc8",
+      "filename": "tools/tests/VendoringPullRequest.Tests.ps1",
+      "status": "added",
+      "additions": 127,
+      "deletions": 0,
+      "changes": 127,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2FVendoringPullRequest.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2FVendoringPullRequest.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FVendoringPullRequest.Tests.ps1?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "7b25eca93265582f4fc1bd4e3cfed768cd19b007",
+      "filename": "tools/tests/VendoringSource.Tests.ps1",
+      "status": "added",
+      "additions": 128,
+      "deletions": 0,
+      "changes": 128,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2FVendoringSource.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2FVendoringSource.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FVendoringSource.Tests.ps1?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "0b3bbdaae515f43582dc085bcacd5b155961b439",
+      "filename": "tools/tests/fixtures/vendoring/action/action.yml",
+      "status": "added",
+      "additions": 11,
+      "deletions": 0,
+      "changes": 11,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Faction%2Faction.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Faction%2Faction.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fvendoring%2Faction%2Faction.yml?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "d1f5cc4a953d89f9a292968c07f05718dcd17466",
+      "filename": "tools/tests/fixtures/vendoring/action/local/action.yaml",
+      "status": "added",
+      "additions": 6,
+      "deletions": 0,
+      "changes": 6,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Faction%2Flocal%2Faction.yaml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Faction%2Flocal%2Faction.yaml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fvendoring%2Faction%2Flocal%2Faction.yaml?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "d4a8854b37eaa67d469ede29d5a48853ee021239",
+      "filename": "tools/tests/fixtures/vendoring/catalog.json",
+      "status": "added",
+      "additions": 13,
+      "deletions": 0,
+      "changes": 13,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Fcatalog.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Fcatalog.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fvendoring%2Fcatalog.json?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "084c01d8207d9f11fcc325e231718c25ceadb538",
+      "filename": "tools/tests/fixtures/vendoring/release/README.md",
+      "status": "added",
+      "additions": 1,
+      "deletions": 0,
+      "changes": 1,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Frelease%2FREADME.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Frelease%2FREADME.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fvendoring%2Frelease%2FREADME.md?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754"
+    },
+    {
+      "sha": "115bf3a196907a2b50104922fbb25ddaebb2ec40",
+      "filename": "tools/tests/fixtures/vendoring/release/templates/instance/.github/workflows/deploy.yml",
+      "status": "added",
+      "additions": 7,
+      "deletions": 0,
+      "changes": 7,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Frelease%2Ftemplates%2Finstance%2F.github%2Fworkflows%2Fdeploy.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/2df180115c5f4b9e5c9e08cf7f226189ee9c9754/tools%2Ftests%2Ffixtures%2Fvendoring%2Frelease%2Ftemplates%2Finstance%2F.github%2Fworkflows%2Fdeploy.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fvendoring%2Frelease%2Ftemplates%2Finstance%2F.github%2Fworkflows%2Fdeploy.yml?ref=2df180115c5f4b9e5c9e08cf7f226189ee9c9754",
+      "patch": "@@ -0,0 +1,7 @@\n+name: Fixture deployment\n+on: workflow_dispatch\n+jobs:\n+  plan:\n+    runs-on: ubuntu-latest\n+    steps:\n+      - uses: actions/checkout@v4"
+    }
+  ]
+}

@@ -1,0 +1,187 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/actions/runs",
+    "operationId": "actions/list-workflow-runs-for-repo",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/actions/workflow-runs#list-workflow-runs-for-a-repository",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "inline object {total_count, workflow_runs: #/components/schemas/workflow-run[]}",
+    "variant": "msucharda/devsecops-platform#71 head_sha",
+    "note": "Read on 2026-10-22 with head_sha. Runs created after the moment are dropped; runs updated after it are in_progress. Nested objects that the gate does not read are cut to identifiers. State at the merge (06:44:42Z) after the open questions section was renamed at 06:30:44Z."
+  },
+  "required": {
+    "": [
+      "total_count",
+      "workflow_runs"
+    ],
+    "workflow_runs.[]": [
+      "id",
+      "node_id",
+      "head_branch",
+      "run_number",
+      "display_title",
+      "event",
+      "status",
+      "conclusion",
+      "head_sha",
+      "path",
+      "workflow_id",
+      "url",
+      "html_url",
+      "created_at",
+      "updated_at",
+      "head_commit",
+      "head_repository",
+      "repository",
+      "jobs_url",
+      "logs_url",
+      "check_suite_url",
+      "cancel_url",
+      "rerun_url",
+      "artifacts_url",
+      "workflow_url",
+      "pull_requests"
+    ]
+  },
+  "body": {
+    "total_count": 3,
+    "workflow_runs": [
+      {
+        "id": 39734402669,
+        "name": "Running Copilot Code Review",
+        "node_id": "WFR_kwLOU93EuM8AAAAJQFrebQ",
+        "head_branch": "msucharda-actions-catalog-module",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "path": "dynamic/agents/copilot-pull-request-reviewer",
+        "display_title": "Running Copilot Code Review",
+        "run_number": 75,
+        "event": "dynamic",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 380368920,
+        "check_suite_id": 107684418236,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAZEn3SvA",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734402669",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734402669",
+        "pull_requests": [],
+        "created_at": "2026-10-22T06:30:50Z",
+        "updated_at": "2026-10-22T06:42:10Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-22T06:30:50Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734402669/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734402669/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107684418236",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734402669/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734402669/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734402669/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/380368920",
+        "head_commit": {
+          "id": "000f3650f3f184f0976282e051ad79488cbeff1e",
+          "tree_id": "4604169cc5fa13e677f4ecc49a4a0d2ef745f9e8",
+          "message": "Reject non-string fields in the vendoring catalog\n\ntostring coerced booleans and numbers into valid-looking tags and SHAs. Fields now pass only when they already are strings.\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-22T05:50:28Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      },
+      {
+        "id": 39734391883,
+        "name": "Source CI",
+        "node_id": "WFR_kwLOU93EuM8AAAAJQFq0Sw",
+        "head_branch": "msucharda-actions-catalog-module",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "path": ".github/workflows/ci.yml",
+        "display_title": "Add actions-catalog module and initial catalog",
+        "run_number": 234,
+        "event": "pull_request",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 376573291,
+        "check_suite_id": 107684389673,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAZEn1jKQ",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734391883",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883",
+        "pull_requests": [],
+        "created_at": "2026-10-22T06:30:44Z",
+        "updated_at": "2026-10-22T06:43:57Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-22T06:30:44Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734391883/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734391883/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107684389673",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734391883/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734391883/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734391883/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/376573291",
+        "head_commit": {
+          "id": "000f3650f3f184f0976282e051ad79488cbeff1e",
+          "tree_id": "4604169cc5fa13e677f4ecc49a4a0d2ef745f9e8",
+          "message": "Reject non-string fields in the vendoring catalog\n\ntostring coerced booleans and numbers into valid-looking tags and SHAs. Fields now pass only when they already are strings.\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-22T05:50:28Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      },
+      {
+        "id": 39734387091,
+        "name": "Source CI",
+        "node_id": "WFR_kwLOU93EuM8AAAAJQFqhkw",
+        "head_branch": "msucharda-actions-catalog-module",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "path": ".github/workflows/ci.yml",
+        "display_title": "Reject non-string fields in the vendoring catalog",
+        "run_number": 233,
+        "event": "push",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 376573291,
+        "check_suite_id": 107684377208,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAZEn0yeA",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734387091",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091",
+        "pull_requests": [],
+        "created_at": "2026-10-22T06:30:41Z",
+        "updated_at": "2026-10-22T06:42:43Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-22T06:30:41Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734387091/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734387091/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107684377208",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734387091/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734387091/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39734387091/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/376573291",
+        "head_commit": {
+          "id": "000f3650f3f184f0976282e051ad79488cbeff1e",
+          "tree_id": "4604169cc5fa13e677f4ecc49a4a0d2ef745f9e8",
+          "message": "Reject non-string fields in the vendoring catalog\n\ntostring coerced booleans and numbers into valid-looking tags and SHAs. Fields now pass only when they already are strings.\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-22T05:50:28Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest",
+    "variant": "msucharda/devsecops-platform#75",
+    "note": "Selection of MergeGate.psm1 $script:PullRequestQuery, read on 2026-10-22. State after the user merged at 06:54:12Z; the coordinator tried to merge again at 06:59:20Z."
+  },
+  "required": {
+    "data.repository.pullRequest": [
+      "state",
+      "merged",
+      "headRefOid",
+      "baseRefName",
+      "baseRefOid",
+      "isDraft",
+      "mergeable",
+      "mergeStateStatus",
+      "body",
+      "commits",
+      "reviewThreads",
+      "reviews",
+      "timelineItems"
+    ],
+    "data.repository.pullRequest.reviewThreads": [
+      "totalCount",
+      "pageInfo",
+      "nodes"
+    ],
+    "data.repository.pullRequest.reviews": [
+      "totalCount",
+      "nodes"
+    ]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "number": 75,
+          "state": "MERGED",
+          "merged": true,
+          "mergedAt": "2026-10-22T06:54:12Z",
+          "mergedBy": {
+            "login": "msucharda"
+          },
+          "mergeCommit": {
+            "oid": "2a024a2c684fccdd0e56e158f5ceedc1f975f118"
+          },
+          "headRefOid": "4009e36ad18a3af4dffc8aa7369b671b5dbf1a04",
+          "baseRefName": "main",
+          "baseRefOid": "f8cf4188f4bc229beee97e239799859e9b904d9e",
+          "isDraft": false,
+          "mergeable": "UNKNOWN",
+          "mergeStateStatus": "UNKNOWN",
+          "body": "Zobecňuje sekce „Lokální validace“ a „Práce agentů“, které přidal #67.\n\n## Co zůstalo\n- Lokální validace běží ve stejném režimu jako CI: příkazy z `.github/workflows/ci.yml` beze změny parametrů, Pester pod `Set-StrictMode -Version Latest` ve verzi z `tools/requirements.psd1`, cílený běh nenahrazuje úplný běh.\n- Fakta o stavu mají označení ověřený (čím) / nahlášený (kým) / neověřený. Návrh agenta se bez schválení nestane rozhodnutím.\n- Strop 2 kol Copilot code review na PR.\n\n## Co odešlo\n- Pevné příkazy a verze Pesteru (`5.7.1`), příklady skriptů CI.\n- Pravidla vázaná na nástroj Copilot: subagenti `task`/`explore`, soubor `invariants.md` v session files, kompakce.\n- Důvody s konkrétními čísly (120 000 tokenů, data za 3 dny, 4 testy, audit 50 checkpointů).\n\nZměna je jen dokumentační. CI pro `AGENTS.md` nemá žádnou kontrolu.",
+          "createdAt": "2026-10-22T06:39:19Z",
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "oid": "4009e36ad18a3af4dffc8aa7369b671b5dbf1a04",
+                  "committedDate": "2026-10-22T06:39:06Z"
+                }
+              }
+            ]
+          },
+          "reviewThreads": {
+            "totalCount": 0,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": []
+          },
+          "reviews": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-22T06:40:40Z",
+                "commit": {
+                  "oid": "4009e36ad18a3af4dffc8aa7369b671b5dbf1a04"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟢 Approval recommended\n\nThe documentation changes match the stated scope and preserve the core safeguards without introducing blocking issues.\n\n**No open issues** 🎉\n\n<details>\n<summary><strong>What changed in this PR</strong></summary>\n\nThis documentation-only PR generalizes the agent guidance introduced in #67 while preserving the validation requirements and decision safeguards.\n\n**Changes:**\n- Replaces fixed commands and Pester versions with references to CI and dependency configuration.\n- Removes tool-specific delegation and session-file rules while retaining fact qualification, approval boundaries, and the two-round Copilot review limit.\n\n| File | Description |\r\n| ---- | ----------- |\r\n| `AGENTS.md` | Simplifies local validation and agent work rules into tool-independent guidance. |\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              }
+            ]
+          },
+          "timelineItems": {
+            "nodes": [
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-22T06:39:21Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/commits/{ref}/status",
+    "operationId": "repos/get-combined-status-for-ref",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/commits/statuses#get-the-combined-status-for-a-specific-reference",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/combined-commit-status",
+    "variant": "msucharda/devsecops-platform#78 head without commit statuses",
+    "note": "Read on 2026-10-22. The repository uses no commit statuses, so the combined state is pending with no statuses (as on #60). Nested objects that the gate does not read are cut to identifiers."
+  },
+  "required": {
+    "": [
+      "state",
+      "sha",
+      "total_count",
+      "statuses",
+      "repository",
+      "commit_url",
+      "url"
+    ]
+  },
+  "body": {
+    "state": "pending",
+    "statuses": [],
+    "sha": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+    "total_count": 0,
+    "repository": {
+      "id": 1407042744,
+      "full_name": "msucharda/devsecops-platform"
+    },
+    "commit_url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/5a86d28aa232fff72af137c29c1abd9e75f398a3",
+    "url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/5a86d28aa232fff72af137c29c1abd9e75f398a3/status"
+  }
+}

@@ -146,6 +146,22 @@ Pravidla platí pro každého agenta v repozitáři.
 - Po vyčerpání stropu agent opraví jen funkční a bezpečnostní nálezy.
 - Ostatní nálezy (kvalita testů a fixtures, okrajové případy, kosmetika) agent zapíše jako follow-up do souvisejícího issue. Ve vlákně review odpoví odkazem na follow-up a vlákno vyřeší.
 
+### Merge gate
+
+Merge gate rozhoduje, zda PR splňuje podmínky pro merge. Nerozhoduje, zda agent smí mergovat: souhlas uživatele nebo mandát drží volající.
+
+- Session před handoffem spustí `./tools/agents/Test-MergeGate.ps1 -Repository <owner/repo> -Pr <číslo> -ExpectedHeadSha <head SHA>` a vloží JSON verdikt do handoffu.
+  - S verdiktem `pending` smí session předat práci jen kvůli `copilot-review-in-progress`. V ostatních případech čeká.
+  - S verdiktem `fail` smí session předat práci jen kvůli `open-questions` nebo `workflow-permissions-changed`, protože o nich rozhoduje uživatel. Ostatní důvody opraví.
+- Koordinátor mergeuje jen přes `./tools/agents/Invoke-GatedMerge.ps1 -Repository <owner/repo> -Pr <číslo> -ExpectedHeadSha <head SHA> -Reason <souhlas nebo mandát>`. Skript vždy vyhodnotí gate znovu a mergeuje jen při `pass` přes `--squash --match-head-commit`.
+- Koordinátor spouští verzi z `origin/main` (`git show origin/main:tools/agents/...`), aby větev nemohla oslabit vlastní gate.
+- Agent nesmí použít `gh pr merge --admin`, `--auto` ani `gh pr ready` a merge v jednom kroku. Verdikt `blocked-by-rules` znamená chybu v rulesetu, ne důvod k obejití pravidel.
+- Změnu oprávnění, triggerů, secrets nebo runnerů v `.github/workflows/**` nebo `.github/actions/**` musí potvrdit člověk pro konkrétní head SHA. Koordinátor potvrzení předá přes `-AcknowledgeWorkflowChanges <head SHA>`.
+- Konvence těla PR:
+  - Tělo PR musí vždy obsahovat sekci `## Otevřené otázky`. Bez otázek obsahuje text „Žádné“. Neprázdná sekce zastaví merge (`open-questions`).
+  - Sekce `## Otevřená živá kritéria` není otevřená otázka a gate ji nečte.
+  - Sekce `## Rozhodnutí uživatele` (nebo `## Rozhodnutí pro uživatele`) bez markeru přijetí vede k varování `decisions-unconfirmed`. Po přijetí rozhodnutí uživatelem koordinátor nebo session přidá do těla marker `<!-- merge-gate: decisions-accepted <login> <YYYY-MM-DD> -->`.
+
 ## Jazyk
 
 - Dokumentace, ADR, specifikace modulů a issues jsou česky podle skillu `controlled-czech`.

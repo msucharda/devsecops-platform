@@ -1,0 +1,51 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/compare/{basehead}",
+    "operationId": "repos/compare-commits",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/commits/commits#compare-two-commits",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/commit-comparison",
+    "variant": "msucharda/devsecops-platform main 889855f...5a86d28 (#78 head)",
+    "note": "Read on 2026-10-22 with per_page=1. The optional files list is dropped. Nested objects that the gate does not read are cut to identifiers."
+  },
+  "required": {
+    "": [
+      "url",
+      "html_url",
+      "permalink_url",
+      "diff_url",
+      "patch_url",
+      "base_commit",
+      "merge_base_commit",
+      "status",
+      "ahead_by",
+      "behind_by",
+      "total_commits",
+      "commits"
+    ]
+  },
+  "body": {
+    "url": "https://api.github.com/repos/msucharda/devsecops-platform/compare/889855f56cdc047e2ac768d69db1c2f58e463b54...5a86d28aa232fff72af137c29c1abd9e75f398a3",
+    "html_url": "https://github.com/msucharda/devsecops-platform/compare/889855f56cdc047e2ac768d69db1c2f58e463b54...5a86d28aa232fff72af137c29c1abd9e75f398a3",
+    "permalink_url": "https://github.com/msucharda/devsecops-platform/compare/msucharda:889855f...msucharda:5a86d28",
+    "diff_url": "https://github.com/msucharda/devsecops-platform/compare/889855f56cdc047e2ac768d69db1c2f58e463b54...5a86d28aa232fff72af137c29c1abd9e75f398a3.diff",
+    "patch_url": "https://github.com/msucharda/devsecops-platform/compare/889855f56cdc047e2ac768d69db1c2f58e463b54...5a86d28aa232fff72af137c29c1abd9e75f398a3.patch",
+    "base_commit": {
+      "sha": "889855f56cdc047e2ac768d69db1c2f58e463b54"
+    },
+    "merge_base_commit": {
+      "sha": "2a024a2c684fccdd0e56e158f5ceedc1f975f118"
+    },
+    "status": "diverged",
+    "ahead_by": 1,
+    "behind_by": 2,
+    "total_commits": 1,
+    "commits": [
+      {
+        "sha": "5a86d28aa232fff72af137c29c1abd9e75f398a3"
+      }
+    ]
+  }
+}

@@ -1,0 +1,160 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest",
+    "variant": "msucharda/devsecops-platform#48",
+    "note": "Selection of MergeGate.psm1 $script:PullRequestQuery, read on 2026-10-22. State at the merge (17:59:40Z): the head was pushed at 17:57:51Z and Source CI was still running."
+  },
+  "required": {
+    "data.repository.pullRequest": [
+      "state",
+      "merged",
+      "headRefOid",
+      "baseRefName",
+      "baseRefOid",
+      "isDraft",
+      "mergeable",
+      "mergeStateStatus",
+      "body",
+      "commits",
+      "reviewThreads",
+      "reviews",
+      "timelineItems"
+    ],
+    "data.repository.pullRequest.reviewThreads": [
+      "totalCount",
+      "pageInfo",
+      "nodes"
+    ],
+    "data.repository.pullRequest.reviews": [
+      "totalCount",
+      "nodes"
+    ]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "number": 48,
+          "state": "OPEN",
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "mergeCommit": null,
+          "headRefOid": "4830b9569f6ec8f2401fe897fcd8688e8e21346c",
+          "baseRefName": "main",
+          "baseRefOid": "be8a6e7877dbb346406a7b78518c1f05fbd1ae15",
+          "isDraft": false,
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "BEHIND",
+          "body": "Part of #32\n\nOpravuje nálezy N-1 až N-5 z přípravy živého běhu průvodce `tools/Start-InstanceSetup.ps1`. Nic živého neběželo.\n\n| Nález | Oprava |\n|---|---|\n| N-1 | Negativní test B1 v `docs/reference-instance.md` porovná prostředky v `rg-<name>-bootstrap` před bootstrapem a po něm. Původní kontrola `az group exists` = `false` selže po dřívějším běhu C1. Test také ověří, že regex změnil příznak. |\n| N-2 | `Invoke-StepProbeOrg`: když uložená probe organizace neexistuje, průvodce vyžádá nový název a starý odmítne (ADR 0008). Při čekajícím přihlášení po vytvoření organizaci nepřejmenuje a doporučí opakování kroku. |\n| N-3 | Nová funkce `Get-SetupProvisionResult` čte výsledek `provisionOnDemand` v dokumentovaném tvaru i v tvaru z živého běhu (`value` = pole záznamů). Úspěch hlásí jen pro záznam uživatele s `targetIdentity.id`, nebo pro `Skipped`/`RedundantExport`. |\n| N-4 | Čekání na účinnost Azure role assignment je 10 minut místo 5 minut. |\n| N-5 | Provision on demand použije první povolené pravidlo pro `User` ze SCIM schématu. Bez takového pravidla průvodce nic neodešle a odkáže na portál. |\n\nOvěření: `./tools/Test-PowerShell.ps1` bez nálezů, `./tools/Invoke-Tests.ps1 -CI` 513 passed / 0 failed.",
+          "createdAt": "2026-10-20T17:43:49Z",
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "oid": "4830b9569f6ec8f2401fe897fcd8688e8e21346c",
+                  "committedDate": "2026-10-20T17:57:51Z"
+                }
+              }
+            ]
+          },
+          "reviewThreads": {
+            "totalCount": 2,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/InstanceSetup.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-20T17:50:16Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/48#discussion_r4328305901"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/InstanceSetup.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-20T17:50:16Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/48#discussion_r4328305961"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "reviews": {
+            "totalCount": 3,
+            "nodes": [
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-20T17:50:16Z",
+                "commit": {
+                  "oid": "b76f788b6e264a62530f83dc1937420bc22b5f60"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\nUnverified provisioning success and stale organization-specific state can still produce incorrect setup results.\n\n<details open>\n<summary><strong>2 open issues</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Require verified identities before reporting EMU account success](https://github.com/msucharda/devsecops-platform/pull/48#discussion_r4328305901) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Reset probe results and installation ID for replacement organizations](https://github.com/msucharda/devsecops-platform/pull/48#discussion_r4328305961) · New\n</details>\n\n<details>\n<summary><strong>What changed in this PR</strong></summary>\n\nHardens the instance setup wizard ahead of the live validation planned in #32.\n\n**Changes:**\n- Handles SCIM provisioning results and selects enabled user rules.\n- Adds deleted-organization recovery and extends Azure role propagation waits.\n- Expands regression tests and updates the bootstrap negative-test procedure.\n\n| File | Description |\r\n| ---- | ----------- |\r\n| tools/​tests/​InstanceSetup.Tests.ps1 | Adds regression coverage for wizard hardening. |\r\n| tools/​InstanceSetup.psm1 | Updates provisioning, organization recovery, and role waits. |\r\n| docs/​reference-instance.md | Documents updated behavior and resource-state comparison. |\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-20T17:58:03Z",
+                "commit": {
+                  "oid": "4830b9569f6ec8f2401fe897fcd8688e8e21346c"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-20T17:58:03Z",
+                "commit": {
+                  "oid": "4830b9569f6ec8f2401fe897fcd8688e8e21346c"
+                },
+                "body": ""
+              }
+            ]
+          },
+          "timelineItems": {
+            "nodes": [
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-20T17:43:50Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

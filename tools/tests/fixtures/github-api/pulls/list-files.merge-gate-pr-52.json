@@ -1,0 +1,61 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+    "operationId": "pulls/list-files",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests-files",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/diff-entry[]",
+    "variant": "msucharda/devsecops-platform#52",
+    "note": "Read on 2026-10-22. The optional patch is kept only for .github files, which the gate reads. State at the --admin merge (20:23:27Z): ruleset version 54014432 required the context copilot-pull-request-reviewer and kept the pull request BLOCKED."
+  },
+  "required": {
+    "[]": [
+      "additions",
+      "blob_url",
+      "changes",
+      "contents_url",
+      "deletions",
+      "filename",
+      "raw_url",
+      "sha",
+      "status"
+    ]
+  },
+  "body": [
+    {
+      "sha": "3e594ce2f2e1819efcd0f6f800bd6c7cc32a0264",
+      "filename": "docs/reference-instance.md",
+      "status": "modified",
+      "additions": 14,
+      "deletions": 6,
+      "changes": 20,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/3332a8b92af1a9d12c881e49869086be80593495/docs%2Freference-instance.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/3332a8b92af1a9d12c881e49869086be80593495/docs%2Freference-instance.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/docs%2Freference-instance.md?ref=3332a8b92af1a9d12c881e49869086be80593495"
+    },
+    {
+      "sha": "ff2d92debc45badc993efb13a7b635724f17dcd5",
+      "filename": "tools/InstanceSetup.psm1",
+      "status": "modified",
+      "additions": 156,
+      "deletions": 17,
+      "changes": 173,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/3332a8b92af1a9d12c881e49869086be80593495/tools%2FInstanceSetup.psm1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/3332a8b92af1a9d12c881e49869086be80593495/tools%2FInstanceSetup.psm1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FInstanceSetup.psm1?ref=3332a8b92af1a9d12c881e49869086be80593495"
+    },
+    {
+      "sha": "0b64d2b81b73be97a4a0fb4e81391109c66572ac",
+      "filename": "tools/tests/InstanceSetup.Tests.ps1",
+      "status": "modified",
+      "additions": 437,
+      "deletions": 0,
+      "changes": 437,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/3332a8b92af1a9d12c881e49869086be80593495/tools%2Ftests%2FInstanceSetup.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/3332a8b92af1a9d12c881e49869086be80593495/tools%2Ftests%2FInstanceSetup.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FInstanceSetup.Tests.ps1?ref=3332a8b92af1a9d12c881e49869086be80593495"
+    }
+  ]
+}

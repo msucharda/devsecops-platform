@@ -1,0 +1,66 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/rules/branches/{branch}",
+    "operationId": "repos/get-branch-rules",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-rules-for-a-branch",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/repository-rule-detailed",
+    "variant": "oneOf repository-rule-copilot-code-review, repository-rule-required-status-checks and repository-rule-pull-request with repository-rule-ruleset-info",
+    "note": "Rules of ruleset 25501485 version 54014432 (2026-10-20 to 2026-10-21), read from GET /repos/{owner}/{repo}/rulesets/{ruleset_id}/history/{version_id} and combined with the ruleset info fields of msucharda/devsecops-platform."
+  },
+  "required": {
+    "[]": [
+      "type"
+    ]
+  },
+  "body": [
+    {
+      "type": "copilot_code_review",
+      "parameters": {
+        "review_on_push": true,
+        "review_draft_pull_requests": false
+      },
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "msucharda/devsecops-platform",
+      "ruleset_id": 25501485
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "copilot-pull-request-reviewer",
+            "integration_id": 15368
+          }
+        ]
+      },
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "msucharda/devsecops-platform",
+      "ruleset_id": 25501485
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "required_reviewers": [],
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "require_extra_approval_for_unattributed_changes": true,
+        "allowed_merge_methods": [
+          "merge",
+          "squash",
+          "rebase"
+        ]
+      },
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "msucharda/devsecops-platform",
+      "ruleset_id": 25501485
+    }
+  ]
+}

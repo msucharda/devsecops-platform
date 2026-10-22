@@ -1,0 +1,187 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/actions/runs",
+    "operationId": "actions/list-workflow-runs-for-repo",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/actions/workflow-runs#list-workflow-runs-for-a-repository",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "inline object {total_count, workflow_runs: #/components/schemas/workflow-run[]}",
+    "variant": "msucharda/devsecops-platform#78 head_sha",
+    "note": "Read on 2026-10-22 with head_sha. Runs created after the moment are dropped; runs updated after it are in_progress. Nested objects that the gate does not read are cut to identifiers. State at the merge (10:26:36Z): all checks green, Copilot reviewed the head, one commit behind main."
+  },
+  "required": {
+    "": [
+      "total_count",
+      "workflow_runs"
+    ],
+    "workflow_runs.[]": [
+      "id",
+      "node_id",
+      "head_branch",
+      "run_number",
+      "display_title",
+      "event",
+      "status",
+      "conclusion",
+      "head_sha",
+      "path",
+      "workflow_id",
+      "url",
+      "html_url",
+      "created_at",
+      "updated_at",
+      "head_commit",
+      "head_repository",
+      "repository",
+      "jobs_url",
+      "logs_url",
+      "check_suite_url",
+      "cancel_url",
+      "rerun_url",
+      "artifacts_url",
+      "workflow_url",
+      "pull_requests"
+    ]
+  },
+  "body": {
+    "total_count": 3,
+    "workflow_runs": [
+      {
+        "id": 39753102985,
+        "name": "Running Copilot Code Review",
+        "node_id": "WFR_kwLOU93EuM8AAAAJQXg2iQ",
+        "head_branch": "msucharda-fix-release-asset-upload-body",
+        "head_sha": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+        "path": "dynamic/agents/copilot-pull-request-reviewer",
+        "display_title": "Running Copilot Code Review",
+        "run_number": 78,
+        "event": "dynamic",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 380368920,
+        "check_suite_id": 107735420671,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAZFYgO_w",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753102985",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39753102985",
+        "pull_requests": [],
+        "created_at": "2026-10-22T09:08:27Z",
+        "updated_at": "2026-10-22T09:13:02Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-22T09:08:27Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753102985/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753102985/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107735420671",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753102985/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753102985/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753102985/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/380368920",
+        "head_commit": {
+          "id": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+          "tree_id": "8d5ed5aa86f44fe112d5f37b8ebc32098317bb22",
+          "message": "Send release asset upload body as binary byte[]\n\nAn if expression enumerated the byte[] body into object[], which\nInvoke-WebRequest sent as text of decimal byte values, so GitHub\nreported a different digest and the release stayed a draft.\n\nThe test stub now hashes what Invoke-WebRequest would actually send,\nand new tests check the upload body type and content and that a draft\nof another tag is left untouched.\n\nPart of #16\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-22T09:08:00Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      },
+      {
+        "id": 39753088057,
+        "name": "Source CI",
+        "node_id": "WFR_kwLOU93EuM8AAAAJQXf8OQ",
+        "head_branch": "msucharda-fix-release-asset-upload-body",
+        "head_sha": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+        "path": ".github/workflows/ci.yml",
+        "display_title": "Send release asset upload body as binary byte[]",
+        "run_number": 244,
+        "event": "pull_request",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 376573291,
+        "check_suite_id": 107735378417,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAZFYdp8Q",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753088057",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39753088057",
+        "pull_requests": [],
+        "created_at": "2026-10-22T09:08:20Z",
+        "updated_at": "2026-10-22T09:22:54Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-22T09:08:20Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753088057/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753088057/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107735378417",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753088057/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753088057/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753088057/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/376573291",
+        "head_commit": {
+          "id": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+          "tree_id": "8d5ed5aa86f44fe112d5f37b8ebc32098317bb22",
+          "message": "Send release asset upload body as binary byte[]\n\nAn if expression enumerated the byte[] body into object[], which\nInvoke-WebRequest sent as text of decimal byte values, so GitHub\nreported a different digest and the release stayed a draft.\n\nThe test stub now hashes what Invoke-WebRequest would actually send,\nand new tests check the upload body type and content and that a draft\nof another tag is left untouched.\n\nPart of #16\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-22T09:08:00Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      },
+      {
+        "id": 39753055561,
+        "name": "Source CI",
+        "node_id": "WFR_kwLOU93EuM8AAAAJQXd9SQ",
+        "head_branch": "msucharda-fix-release-asset-upload-body",
+        "head_sha": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+        "path": ".github/workflows/ci.yml",
+        "display_title": "Send release asset upload body as binary byte[]",
+        "run_number": 243,
+        "event": "push",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 376573291,
+        "check_suite_id": 107735288290,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAZFYYJ4g",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753055561",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39753055561",
+        "pull_requests": [],
+        "created_at": "2026-10-22T09:08:05Z",
+        "updated_at": "2026-10-22T09:21:08Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-22T09:08:05Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753055561/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753055561/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107735288290",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753055561/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753055561/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39753055561/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/376573291",
+        "head_commit": {
+          "id": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+          "tree_id": "8d5ed5aa86f44fe112d5f37b8ebc32098317bb22",
+          "message": "Send release asset upload body as binary byte[]\n\nAn if expression enumerated the byte[] body into object[], which\nInvoke-WebRequest sent as text of decimal byte values, so GitHub\nreported a different digest and the release stayed a draft.\n\nThe test stub now hashes what Invoke-WebRequest would actually send,\nand new tests check the upload body type and content and that a draft\nof another tag is left untouched.\n\nPart of #16\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-22T09:08:00Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      }
+    ]
+  }
+}

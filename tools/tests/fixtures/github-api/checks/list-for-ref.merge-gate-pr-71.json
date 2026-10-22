@@ -1,0 +1,1092 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+    "operationId": "checks/list-for-ref",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/checks/runs#list-check-runs-for-a-git-reference",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "inline object {total_count, check_runs: #/components/schemas/check-run[]}",
+    "variant": "msucharda/devsecops-platform#71 head, filter=latest",
+    "note": "Read on 2026-10-22. Check runs started after the moment are dropped; check runs completed after it are in_progress. Nested objects that the gate does not read are cut to identifiers. State at the merge (06:44:42Z) after the open questions section was renamed at 06:30:44Z."
+  },
+  "required": {
+    "": [
+      "total_count",
+      "check_runs"
+    ],
+    "check_runs.[]": [
+      "id",
+      "node_id",
+      "head_sha",
+      "name",
+      "url",
+      "html_url",
+      "details_url",
+      "status",
+      "conclusion",
+      "started_at",
+      "completed_at",
+      "external_id",
+      "check_suite",
+      "output",
+      "app",
+      "pull_requests"
+    ]
+  },
+  "body": {
+    "total_count": 35,
+    "check_runs": [
+      {
+        "id": 119680907369,
+        "name": "Terraform (modules/enterprise-baseline/rulesets)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym4aQ",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "44b7d93f-0ca3-5092-adcc-22f286d4629b",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907369",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907369",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907369",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:52Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907369/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907298,
+        "name": "Terraform (modules/enterprise-baseline)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym4Ig",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "5f43b3d2-5ea4-5af6-8a67-ad25cfc4e966",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907298",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907298",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907298",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:56Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907298/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907283,
+        "name": "Terraform (modules/emu-identity)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym4Ew",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "79cf9877-8d15-5d4b-b38f-9f26512d6a22",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907283",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907283",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907283",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:51Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907283/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907273,
+        "name": "Terraform (tools/tests/fixtures/runner-modules/sensitive)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym4CQ",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "0407cfc8-c610-53c2-a1b7-1c58952724f3",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907273",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907273",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907273",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:54Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907273/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907272,
+        "name": "Terraform (tools/tests/fixtures/runner-modules/foundation)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym4CA",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "d4da5555-e710-52bc-9d96-cb01cd537e9f",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907272",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907272",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907272",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:49Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907272/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907236,
+        "name": "Terraform (tools/tests/fixtures/rulesets)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym35A",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "cb70037d-5e07-5816-9f33-98ad0c74fd04",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907236",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907236",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907236",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:49Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907236/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907230,
+        "name": "Terraform (tools/tests/fixtures/modules/foundation)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym33g",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "2412be1d-8a2a-57a4-b8ac-0f7e666fd547",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907230",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907230",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907230",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:57Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907230/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907209,
+        "name": "Terraform (tools/tests/fixtures/runner-modules/unknown)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym3yQ",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "bea751e0-6085-5d5d-bef6-8205460e8685",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907209",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907209",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907209",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:49Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907209/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907203,
+        "name": "Terraform (tools/tests/fixtures/runner-modules/application)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym3ww",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "d7a53327-788c-57fc-b932-099cf5ac284f",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907203",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907203",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907203",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:55Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907203/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907154,
+        "name": "Terraform (modules/organizations)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym3kg",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "ebd8bb7f-51d6-5352-8aa6-6eb8cde977d9",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907154",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907154",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907154",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:54Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907154/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680907141,
+        "name": "Terraform (modules/actions-catalog)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ym3hQ",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "99b4ba30-d232-5d6b-af64-35558c2bec9d",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907141",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907141",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119680907141",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:43:38Z",
+        "completed_at": "2026-10-22T06:43:55Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680907141/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485192,
+        "name": "Terraform (modules/emu-identity)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNHSA",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "a1521200-c6aa-5143-ab48-777e82ddbed3",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485192",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485192",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485192",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:40Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485192/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485169,
+        "name": "Terraform (tools/tests/fixtures/runner-modules/unknown)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNHMQ",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "5b49facb-5177-5d0a-8a99-963649a7e4ba",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485169",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485169",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485169",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:35Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485169/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485162,
+        "name": "Terraform (tools/tests/fixtures/runner-modules/sensitive)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNHKg",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "0278615a-aa4a-533c-b077-2d4d5e1cbde7",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485162",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485162",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485162",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:36Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485162/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485149,
+        "name": "Terraform (tools/tests/fixtures/runner-modules/application)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNHHQ",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "f7d5d666-f168-5b88-825b-e038c094692b",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485149",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485149",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485149",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:38Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485149/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485146,
+        "name": "Terraform (modules/organizations)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNHGg",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "3cb5d28f-6bea-51df-b5b2-d064b5278199",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485146",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485146",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485146",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:41Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485146/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485131,
+        "name": "Terraform (tools/tests/fixtures/runner-modules/foundation)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNHCw",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "cacc3184-0bb3-51e7-9228-21a55cee4ee3",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485131",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485131",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485131",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:36Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485131/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485124,
+        "name": "Terraform (modules/actions-catalog)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNHBA",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "b4afbf12-c4ca-51a0-8cf6-3026293f6f1b",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485124",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485124",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485124",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:42Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485124/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485094,
+        "name": "Terraform (modules/enterprise-baseline)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNG5g",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "a9324c49-6004-53cd-bd2b-2dc322457149",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485094",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485094",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485094",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:39Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485094/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485089,
+        "name": "Terraform (tools/tests/fixtures/rulesets)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNG4Q",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "23fe5ca1-0b31-586a-ba42-dbf6985928fa",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485089",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485089",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485089",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:39Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485089/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485053,
+        "name": "Terraform (tools/tests/fixtures/modules/foundation)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNGvQ",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "859ef3d2-2b42-5d36-a3ec-64931237cbea",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485053",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485053",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485053",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:24Z",
+        "completed_at": "2026-10-22T06:42:35Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485053/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119680485052,
+        "name": "Terraform (modules/enterprise-baseline/rulesets)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3YNGvA",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "14eae8f8-c5ea-55a5-b0ef-d1ddfb8143e1",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485052",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485052",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119680485052",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:42:25Z",
+        "completed_at": "2026-10-22T06:42:40Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119680485052/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676621742,
+        "name": "copilot-pull-request-reviewer",
+        "node_id": "CR_kwDOU93EuM8AAAAb3UhTrg",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "fb7ecdca-34a6-5041-90f5-53c3cb85f979",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676621742",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734402669/job/119676621742",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734402669/job/119676621742",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:55Z",
+        "completed_at": "2026-10-22T06:42:09Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 1,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676621742/annotations"
+        },
+        "check_suite": {
+          "id": 107684418236
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676582938,
+        "name": "Interruption harness (3/4)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ue8Gg",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "960729e7-4469-59a2-962f-07ef289f0d57",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582938",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582938",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582938",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:46Z",
+        "completed_at": "2026-10-22T06:33:24Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582938/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676582839,
+        "name": "Platform tools",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ue7tw",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "7a78b83f-d0c0-5cfb-ac5e-9684f312ad63",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582839",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582839",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582839",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:47Z",
+        "completed_at": "2026-10-22T06:43:36Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582839/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676582809,
+        "name": "Interruption harness (1/4)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ue7mQ",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "605d1d35-c939-5936-807a-25b4652d828d",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582809",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582809",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582809",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:46Z",
+        "completed_at": "2026-10-22T06:33:24Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582809/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676582763,
+        "name": "Interruption harness (2/4)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ue7aw",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "d7205e97-f2a3-5634-b9be-39267cfca729",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582763",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582763",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582763",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:46Z",
+        "completed_at": "2026-10-22T06:33:25Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582763/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676582743,
+        "name": "Interruption harness (0/4)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ue7Vw",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "ead0f856-8c10-5b9f-9441-3272baad1b72",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582743",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582743",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582743",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:46Z",
+        "completed_at": "2026-10-22T06:33:38Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582743/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676582402,
+        "name": "Security check mutation tests",
+        "node_id": "CR_kwDOU93EuM8AAAAb3Ue6Ag",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "3940e87f-a6f5-5f20-91ae-585d21a50b1c",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582402",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582402",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734391883/job/119676582402",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:46Z",
+        "completed_at": "2026-10-22T06:32:52Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676582402/annotations"
+        },
+        "check_suite": {
+          "id": 107684389673
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676568332,
+        "name": "Security check mutation tests",
+        "node_id": "CR_kwDOU93EuM8AAAAb3UeDDA",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "2e6c47ca-8650-5375-a018-f386418fce9e",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568332",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568332",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568332",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:44Z",
+        "completed_at": "2026-10-22T06:33:01Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568332/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676568317,
+        "name": "Interruption harness (3/4)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3UeC_Q",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "c5e51bf4-4f17-5686-aeda-1c4134aa1e08",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568317",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568317",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568317",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:44Z",
+        "completed_at": "2026-10-22T06:32:10Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568317/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676568275,
+        "name": "Platform tools",
+        "node_id": "CR_kwDOU93EuM8AAAAb3UeC0w",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "9f179e03-2824-53c1-a45c-f0c045eae035",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568275",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568275",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568275",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:44Z",
+        "completed_at": "2026-10-22T06:42:22Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568275/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676568250,
+        "name": "Interruption harness (2/4)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3UeCug",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "241f3add-9b95-5e2e-a28e-63cab6dd7d55",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568250",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568250",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568250",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:44Z",
+        "completed_at": "2026-10-22T06:33:25Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568250/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676568107,
+        "name": "Interruption harness (0/4)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3UeCKw",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "3d0a1eda-a149-5912-8510-59321412a954",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568107",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568107",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676568107",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:44Z",
+        "completed_at": "2026-10-22T06:32:32Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676568107/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 119676567966,
+        "name": "Interruption harness (1/4)",
+        "node_id": "CR_kwDOU93EuM8AAAAb3UeBng",
+        "head_sha": "000f3650f3f184f0976282e051ad79488cbeff1e",
+        "external_id": "3cf7e908-7d82-5efc-841b-22880c71b4f9",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676567966",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676567966",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39734387091/job/119676567966",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-10-22T06:30:44Z",
+        "completed_at": "2026-10-22T06:32:52Z",
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/119676567966/annotations"
+        },
+        "check_suite": {
+          "id": 107684377208
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      }
+    ]
+  }
+}

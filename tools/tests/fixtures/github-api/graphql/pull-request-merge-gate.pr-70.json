@@ -1,0 +1,179 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest",
+    "variant": "msucharda/devsecops-platform#70",
+    "note": "Selection of MergeGate.psm1 $script:PullRequestQuery, read on 2026-10-22. State at the merge (21:14:19Z): the pull request added release.yml with contents, id-token and attestations write permissions."
+  },
+  "required": {
+    "data.repository.pullRequest": [
+      "state",
+      "merged",
+      "headRefOid",
+      "baseRefName",
+      "baseRefOid",
+      "isDraft",
+      "mergeable",
+      "mergeStateStatus",
+      "body",
+      "commits",
+      "reviewThreads",
+      "reviews",
+      "timelineItems"
+    ],
+    "data.repository.pullRequest.reviewThreads": [
+      "totalCount",
+      "pageInfo",
+      "nodes"
+    ],
+    "data.repository.pullRequest.reviews": [
+      "totalCount",
+      "nodes"
+    ]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "number": 70,
+          "state": "OPEN",
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "mergeCommit": null,
+          "headRefOid": "0509c9b68e568075cb013fe8e434e2a8656e399a",
+          "baseRefName": "main",
+          "baseRefOid": "8f18a97b6c7fd610fda0ccb92a0ed3b467ddbd5f",
+          "isDraft": false,
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "BEHIND",
+          "body": "Part of #16\n\nIssue zůstává otevřené do živého ověření na referenční instanci.\n\n## Co PR mění\n\n**Release zdrojového repozitáře**\n- `.github/workflows/release.yml` (nový): spouští ho push tagu `v*`.\n  - Ověří formát `vMAJOR.MINOR.PATCH[-rc.N]`, shodu tagu s `GITHUB_SHA` a to, že commit je předkem `origin/main`.\n  - Sestaví `platform-<tag>.zip` přes `git archive` a vytvoří build provenance attestaci (`actions/attest-build-provenance` v4.2.2, připnuto na SHA).\n  - Spustí `tools/Publish-PlatformRelease.ps1`.\n- `tools/Publish-PlatformRelease.ps1` (nový):\n  - Ověří, že tag stále ukazuje na sestavený commit (i annotated tag).\n  - Najde release tagu stránkovaně (včetně draftu, jehož odpověď se ztratila).\n  - Vytvoří draft, odstraní zastaralé, částečné a cizí assety, nahraje asset, ověří `state: uploaded` a `digest` a publikuje.\n  - rc je prerelease s `make_latest: false`.\n  - Publikovaný release nikdy nemění. Shodný release potvrdí bez zápisu, odlišný odmítne.\n  - `draft` a `prerelease` musí být JSON boolean; jiný nebo chybějící stav zastaví běh před zápisem.\n\n**Import do instance**\n- `templates/instance/.github/workflows/import-release.yml` (nový): `workflow_dispatch` se vstupem `tag`. `tools/Resolve-PlatformReleaseImport.ps1` odvodí asset a organizaci akcí; volá `vendor.yml` s `kind: release`. Zdroj určuje proměnná `PLATFORM_SOURCE_REPOSITORY` (výchozí hodnota `msucharda/devsecops-platform`).\n- `tools/Get-VendoringSource.ps1`:\n  - Stáhne bundle z `bundle_url` (Snappy), dekomprimuje ho a ověří přes `gh attestation verify --bundle` s politikou `--repo`, `--source-ref refs/tags/<tag>`, `--source-digest <commit>`, `--deny-self-hosted-runners` a `--signer-workflow <zdroj>/.github/workflows/release.yml`.\n  - Import release vyžaduje stav `verified` (`-RequireAttestation`).\n  - **Nově:** nezávisle ověří, že commit tagu je na `main` (Compare API: `status` `behind`/`identical` a `merge_base_commit.sha` = commit). Kontrola předka v signer workflow nestačí, protože signer workflow běží z otagovaného commitu.\n  - Retry s backoff při rate limitu a jasná chyba při vyčerpání limitu.\n\n**Dokumentace:** `docs/vendoring.md` (sekce Release platformy a import do instance), `README.md` (release, rc, přechod z upstream akcí na katalogové kopie), `templates/instance/README.md`, ADR 0012 (repozitář je veřejný, `LICENSE` zatím chybí).\n\n## Zdůvodnění změn `.github/`\n\n- `release.yml`: top-level `permissions: {}`. Job má jen:\n  - `contents: write`: vytvoření release a upload assetu;\n  - `id-token: write` a `attestations: write`: oprávnění, která `actions/attest-build-provenance` vyžaduje ([dokumentace](https://docs.github.com/en/enterprise-cloud@latest/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)).\n  - Checkout s `persist-credentials: false`. Žádné secrets, žádný `pull_request_target`.\n- `ci.yml`: actionlint nově kontroluje `release.yml`. Nový krok kontroluje `import-release.yml` v izolovaném projektu, protože volá lokální reusable workflow `vendor.yml`. Oprávnění se nemění.\n\n## Kontrakt externího API\n\nVerze API `X-GitHub-Api-Version: 2026-03-10`, OpenAPI `github/rest-api-description@bb754941722779d8a5b3a2f25a5fbb7ce794e1ea` (`ghec.2026-03-10.json`). Nové sdílené fixtures:\n\n| Operace | Dokumentace |\n|---|---|\n| `GET /repos/{o}/{r}/git/ref/{ref}`, `GET /repos/{o}/{r}/git/tags/{sha}` | [refs](https://docs.github.com/en/enterprise-cloud@latest/rest/git/refs), [tags](https://docs.github.com/en/enterprise-cloud@latest/rest/git/tags) |\n| `GET/POST /repos/{o}/{r}/releases`, `PATCH /releases/{id}`, `GET /releases/tags/{tag}` | [releases](https://docs.github.com/en/enterprise-cloud@latest/rest/releases/releases) |\n| upload a `DELETE /releases/assets/{id}`; schéma `release-asset` (`state`, `digest`) | [assets](https://docs.github.com/en/enterprise-cloud@latest/rest/releases/assets) |\n| `GET /repos/{o}/{r}/attestations/{subject_digest}` | [attestations](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/attestations#list-attestations) |\n| `GET /repos/{o}/{r}/compare/{basehead}` (`status` enum `diverged`/`ahead`/`behind`/`identical`) | [compare](https://docs.github.com/en/enterprise-cloud@latest/rest/commits/commits#compare-two-commits) |\n| rate limit (`x-ratelimit-*`, `retry-after`, secondary limit) | [rate limits](https://docs.github.com/en/enterprise-cloud@latest/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit) |\n\nSchéma odpovědi attestations nedeklaruje povinná pole. Fixture proto nemá `required` pole; chybějící `attestations` nebo `bundle_url` zastaví nástroj (fail-closed testy).\n\n## Ověření na GHE.com (probe, nahlášeno koordinátorem)\n\nProbe běžel na GitHub-hosted runneru referenční instance GHE.com (2026-10-21 19:01 UTC):\n- P1–P5 OK: stažení assetu, attestations API, stažení a dekomprese `bundle_url`, ověření bundle bez tokenu, odmítnutí změněného artefaktu.\n- P6: `gh` 2.102.0 ověřil i bez tokenu a bez `--bundle`. **Rozhodnutí:** ověření zůstává u `--bundle`. Funguje ve starších i nových verzích `gh` a nezávisí na síťovém chování `gh`. Minimální verzi `gh` proto nevynucuji.\n- `X-RateLimit-Remaining: 55` po prvním volání: sdílenou IP runneru používají jiní. Proto retry s backoff (nejvýše 3 opakování a 300 s čekání) a jasná chyba.\n\n## Testy (lokálně)\n\n- `./tools/Test-PowerShell.ps1`: OK.\n- Plná sada `./tools/Invoke-Tests.ps1`: 1770 passed, 1 selhání v novém testu. Test byl chybně navržený (SHA z číslic nemá velká písmena), je opravený a cílený běh `VendoringSource.Tests.ps1` má 48/48.\n- `-Tag Interruption`: OK; release nástroj 24/24 přerušení obnoveno (2 scénáře × 12).\n- Mutační testy: `release-tag-commit`, `release-asset-digest`, `release-published-state` (13/13), `vendoring-required-attestation` (6/6), `vendoring-commit-on-branch` (6/6); žádný přeživší mutant.\n- actionlint 1.7.7: OK.\n\n## Security checkpoint (`gpt-6.1-sol`, slepé review)\n\n- Opraveno: chybějící nezávislá kontrola, že commit tagu je na `main`.\n- Opraveno: neznámý stav `draft` vstupoval do zapisující cesty; řetězce nebo čísla procházela jako boolean.\n- Opraveno: fixture attestací uváděla povinná pole, která schéma nemá.\n- Follow-up #69: zděděná identita větve a PR importu závislá na `GITHUB_RUN_ATTEMPT` (obnova po přerušení).\n\n## Otevřená živá kritéria #16\n\n- První tag a release s attestací ve zdrojovém repozitáři.\n- Ověření attestace a import PR na `sucharda.ghe.com`.\n- Ruční povýšení workflow a plan před apply.",
+          "createdAt": "2026-10-21T20:48:02Z",
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "oid": "0509c9b68e568075cb013fe8e434e2a8656e399a",
+                  "committedDate": "2026-10-21T20:57:56Z"
+                }
+              }
+            ]
+          },
+          "reviewThreads": {
+            "totalCount": 2,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "isResolved": true,
+                "isOutdated": false,
+                "path": "docs/adr/0012-public-source-repository.md",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T20:57:29Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/70#discussion_r4341886943"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "docs/vendoring.md",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T20:57:30Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/70#discussion_r4341887027"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "reviews": {
+            "totalCount": 4,
+            "nodes": [
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T20:57:30Z",
+                "commit": {
+                  "oid": "eada99810bfb581aa65f08851b2067fb23aa8a43"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\nVeřejná dokumentace porušuje explicitní zákaz zveřejňování identifikátorů instance.\n\n<details open>\n<summary><strong>2 open issues</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-light.png\" alt=\"Low severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Úvod dokumentu odporuje novému omezení licence](https://github.com/msucharda/devsecops-platform/pull/70#discussion_r4341886943) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-light.png\" alt=\"Low severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Veřejný repozitář zveřejňuje skutečný hostname enterprise](https://github.com/msucharda/devsecops-platform/pull/70#discussion_r4341887027) · New\n</details>\n\n<details>\n<summary><strong>What changed in this PR</strong></summary>\n\nPR zavádí vydávání attestovaných release platformy a jejich import do repozitáře instance podle #16. Živé ověření zůstává otevřené.\n\n**Changes:**\n- Publikace release a release candidate s kontrolou digestu a obnovou po přerušení.\n- Import s ověřením attestace, signer workflow a příslušnosti commitu k `main`.\n- Doplnění dokumentace, kontraktních fixtures, testů a CI kontrol.\n\n| File | Description |\r\n| ---- | ----------- |\r\n| `tools/​tests/​VendoringSource.Tests.ps1` | Testy attestací, Snappy, původu commitu a retry. |\r\n| `tools/​tests/​security-checks.psd1` | Registrace nových mutačních kontrol. |\r\n| `tools/​tests/​PlatformReleaseImport.Tests.ps1` | Validace vstupů importu. |\r\n| `tools/​tests/​PlatformRelease.Tests.ps1` | Testy publikace a obnovy draftů. |\r\n| `tools/​tests/​PlatformRelease.Interruption.Tests.ps1` | Obnova po přerušení publikace. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​upload-release-asset.json` | Kontrakt uploadu assetu. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​update-release.json` | Kontrakt aktualizace release. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​list-releases.json` | Kontrakt výpisu release. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​list-attestations.json` | Kontrakt výpisu attestací. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​get-release-by-tag.json` | Kontrakt vyhledání release podle tagu. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​create-release.json` | Kontrakt vytvoření release. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​compare-commits.json` | Kontrakt porovnání commitů. |\r\n| `tools/​tests/​fixtures/​github-api/​git/​get-tag.json` | Kontrakt annotated tagu. |\r\n| `tools/​Resolve-PlatformReleaseImport.ps1` | Odvození vstupů importu. |\r\n| `tools/​Publish-PlatformRelease.ps1` | Obnovitelná publikace release. |\r\n| `tools/​Get-VendoringSource.ps1` | Ověření bundle, původu commitu a retry. |\r\n| `templates/​instance/​README.md` | Popis spuštění importu. |\r\n| `templates/​instance/​.github/​workflows/​vendor.yml` | Povinná attestační politika release. |\r\n| `templates/​instance/​.github/​workflows/​import-release.yml` | Ručně spouštěný import podle tagu. |\r\n| `README.md` | Release a přechod na katalogové akce. |\r\n| `docs/​vendoring.md` | Postup publikace, importu a ověření. |\r\n| `docs/​adr/​0012-public-source-repository.md` | Aktualizace veřejné dostupnosti a licence. |\r\n| `.github/​workflows/​release.yml` | Sestavení, attestace a publikace ZIPu. |\r\n| `.github/​workflows/​ci.yml` | Kontrola syntaxe nových workflow. |\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T20:58:04Z",
+                "commit": {
+                  "oid": "0509c9b68e568075cb013fe8e434e2a8656e399a"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T20:58:07Z",
+                "commit": {
+                  "oid": "0509c9b68e568075cb013fe8e434e2a8656e399a"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T21:10:22Z",
+                "commit": {
+                  "oid": "0509c9b68e568075cb013fe8e434e2a8656e399a"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🔵 Needs a closer look\n\nBezpečnostně citlivý proces publikace a importu má nevyřešené nálezy a vyžaduje závěrečnou lidskou kontrolu.\n\n**No open issues** 🎉\n\n<details>\n<summary><strong>3 previously missed issues</strong></summary>\n\nIn code that hasn't changed since last review\n\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Enforce cumulative secondary rate-limit wait budget</summary>\n\n`tools/​Get-VendoringSource.ps1:53`\n\nKontrola porovnává limit s každým čekáním zvlášť. Při opakovaném secondary rate limit tak výchozích 300 s dovolí čekat 60 + 120 + 240 = 420 s na jediný požadavek, přestože dokumentace slibuje nejvýše 300 s. Odečítejte spotřebované čekání z rozpočtu daného požadavku a přidejte test s výchozím limitem: po čekání 60 a 120 s se má běh zastavit před dalším čekáním 240 s.\n</details>\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Fully unwrap annotated tag chains before commit comparison</summary>\n\n`tools/​Publish-PlatformRelease.ps1:119`\n\nAnnotated tag může odkazovat na další annotated tag, například při vytvoření stabilního tagu nad tagem RC. Kontrola v release.yml takový řetězec přes `^{commit}` přijme, ale zde se rozbalí jen jedna úroveň a následující kontrola nesprávně oznámí přesunutý tag. Rozbalujte řetězec až na commit s omezením hloubky, stejně jako Get-VendoringSource.ps1:152–156.\n</details>\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Validate prerelease type before modifying draft releases</summary>\n\n`tools/​Publish-PlatformRelease.ps1:136`\n\nPopis PR vyžaduje JSON boolean pro `draft` i `prerelease` a zastavení před zápisem při neplatném stavu. Zde se ale kontroluje jen `draft`: existující draft s chybějícím, null, řetězcovým nebo číselným `prerelease` pokračuje do mazání assetů a publikace. `Test-PublishedRelease` se pro draft před těmito zápisy nevolá. Ověřte zde také typ `prerelease` a doplňte regresní testy, které pro tyto vstupy vyžadují nulový počet zápisů.\n</details>\n</details>\n\n<details>\n<summary><strong>2 resolved since last review</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-light.png\" alt=\"Low severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Veřejný repozitář zveřejňuje skutečný hostname enterprise](https://github.com/msucharda/devsecops-platform/pull/70#discussion_r4341887027)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/low-v2-light.png\" alt=\"Low severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Úvod dokumentu odporuje novému omezení licence](https://github.com/msucharda/devsecops-platform/pull/70#discussion_r4341886943)\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              }
+            ]
+          },
+          "timelineItems": {
+            "nodes": [
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T20:48:02Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T20:57:58Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

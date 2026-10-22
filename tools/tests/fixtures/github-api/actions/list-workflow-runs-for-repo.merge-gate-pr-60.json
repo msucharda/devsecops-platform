@@ -1,0 +1,187 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/actions/runs",
+    "operationId": "actions/list-workflow-runs-for-repo",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/actions/workflow-runs#list-workflow-runs-for-a-repository",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "inline object {total_count, workflow_runs: #/components/schemas/workflow-run[]}",
+    "variant": "msucharda/devsecops-platform#60 head_sha",
+    "note": "Read on 2026-10-22 with head_sha. Runs created after the moment are dropped; runs updated after it are in_progress. Nested objects that the gate does not read are cut to identifiers. State at the merge (15:12:36Z): Copilot was re-requested at 14:53:46Z, one second after its review of 122a4fb; the review of the head came at 15:21:51Z."
+  },
+  "required": {
+    "": [
+      "total_count",
+      "workflow_runs"
+    ],
+    "workflow_runs.[]": [
+      "id",
+      "node_id",
+      "head_branch",
+      "run_number",
+      "display_title",
+      "event",
+      "status",
+      "conclusion",
+      "head_sha",
+      "path",
+      "workflow_id",
+      "url",
+      "html_url",
+      "created_at",
+      "updated_at",
+      "head_commit",
+      "head_repository",
+      "repository",
+      "jobs_url",
+      "logs_url",
+      "check_suite_url",
+      "cancel_url",
+      "rerun_url",
+      "artifacts_url",
+      "workflow_url",
+      "pull_requests"
+    ]
+  },
+  "body": {
+    "total_count": 3,
+    "workflow_runs": [
+      {
+        "id": 39620904169,
+        "name": "Running Copilot Code Review",
+        "node_id": "WFR_kwLOU93EuM8AAAAJOZcE6Q",
+        "head_branch": "msucharda-ci-mechanical-checks",
+        "head_sha": "8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+        "path": "dynamic/agents/copilot-pull-request-reviewer",
+        "display_title": "Running Copilot Code Review",
+        "run_number": 63,
+        "event": "dynamic",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 380368920,
+        "check_suite_id": 107373042044,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAY_-6ZfA",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39620904169",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39620904169",
+        "pull_requests": [],
+        "created_at": "2026-10-21T14:53:56Z",
+        "updated_at": "2026-10-21T15:00:33Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-21T14:53:56Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39620904169/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39620904169/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107373042044",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39620904169/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39620904169/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39620904169/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/380368920",
+        "head_commit": {
+          "id": "8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+          "tree_id": "13bfcfcf656328df360a2c9fc05ca08b83cb9f8b",
+          "message": "Add abrupt-stop interruptions and parenthesized boolean guards\n\nThe interruption harness now also ends each interrupted run abruptly: it restores the local state captured at the injection boundary, so progress saved only in catch or finally blocks cannot hide a recovery bug. The mutation generator recognizes 'return ($true)' and 'return ($false)' as guard results.\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-21T14:38:34Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      },
+      {
+        "id": 39619054734,
+        "name": "Source CI",
+        "node_id": "WFR_kwLOU93EuM8AAAAJOXrMjg",
+        "head_branch": "msucharda-ci-mechanical-checks",
+        "head_sha": "8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+        "path": ".github/workflows/ci.yml",
+        "display_title": "Add mechanical CI checks: interruption harness and security check mutation tests",
+        "run_number": 204,
+        "event": "pull_request",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 376573291,
+        "check_suite_id": 107367849514,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAY_59eKg",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619054734",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39619054734",
+        "pull_requests": [],
+        "created_at": "2026-10-21T14:41:31Z",
+        "updated_at": "2026-10-21T14:52:26Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-21T14:41:31Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619054734/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619054734/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107367849514",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619054734/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619054734/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619054734/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/376573291",
+        "head_commit": {
+          "id": "8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+          "tree_id": "13bfcfcf656328df360a2c9fc05ca08b83cb9f8b",
+          "message": "Add abrupt-stop interruptions and parenthesized boolean guards\n\nThe interruption harness now also ends each interrupted run abruptly: it restores the local state captured at the injection boundary, so progress saved only in catch or finally blocks cannot hide a recovery bug. The mutation generator recognizes 'return ($true)' and 'return ($false)' as guard results.\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-21T14:38:34Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      },
+      {
+        "id": 39619042834,
+        "name": "Source CI",
+        "node_id": "WFR_kwLOU93EuM8AAAAJOXqeEg",
+        "head_branch": "msucharda-ci-mechanical-checks",
+        "head_sha": "8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+        "path": ".github/workflows/ci.yml",
+        "display_title": "Add abrupt-stop interruptions and parenthesized boolean guards",
+        "run_number": 203,
+        "event": "push",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 376573291,
+        "check_suite_id": 107367813372,
+        "check_suite_node_id": "CS_kwDOU93EuM8AAAAY_57Q_A",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619042834",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39619042834",
+        "pull_requests": [],
+        "created_at": "2026-10-21T14:41:27Z",
+        "updated_at": "2026-10-21T14:51:30Z",
+        "run_attempt": 1,
+        "run_started_at": "2026-10-21T14:41:27Z",
+        "jobs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619042834/jobs",
+        "logs_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619042834/logs",
+        "check_suite_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-suites/107367813372",
+        "artifacts_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619042834/artifacts",
+        "cancel_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619042834/cancel",
+        "rerun_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/runs/39619042834/rerun",
+        "previous_attempt_url": null,
+        "workflow_url": "https://api.github.com/repos/msucharda/devsecops-platform/actions/workflows/376573291",
+        "head_commit": {
+          "id": "8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+          "tree_id": "13bfcfcf656328df360a2c9fc05ca08b83cb9f8b",
+          "message": "Add abrupt-stop interruptions and parenthesized boolean guards\n\nThe interruption harness now also ends each interrupted run abruptly: it restores the local state captured at the injection boundary, so progress saved only in catch or finally blocks cannot hide a recovery bug. The mutation generator recognizes 'return ($true)' and 'return ($false)' as guard results.\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "timestamp": "2026-10-21T14:38:34Z"
+        },
+        "repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        },
+        "head_repository": {
+          "id": 1407042744,
+          "full_name": "msucharda/devsecops-platform"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+    "operationId": "checks/list-for-ref",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/checks/runs#list-check-runs-for-a-git-reference",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "inline object {total_count, check_runs: #/components/schemas/check-run[]}",
+    "variant": "msucharda/devsecops-platform#48 head, filter=latest",
+    "note": "Read on 2026-10-22. Check runs started after the moment are dropped; check runs completed after it are in_progress. Nested objects that the gate does not read are cut to identifiers. State at the merge (17:59:40Z): the head was pushed at 17:57:51Z and Source CI was still running."
+  },
+  "required": {
+    "": [
+      "total_count",
+      "check_runs"
+    ],
+    "check_runs.[]": [
+      "id",
+      "node_id",
+      "head_sha",
+      "name",
+      "url",
+      "html_url",
+      "details_url",
+      "status",
+      "conclusion",
+      "started_at",
+      "completed_at",
+      "external_id",
+      "check_suite",
+      "output",
+      "app",
+      "pull_requests"
+    ]
+  },
+  "body": {
+    "total_count": 2,
+    "check_runs": [
+      {
+        "id": 118793432135,
+        "name": "Platform tools",
+        "node_id": "CR_kwDOU93EuM8AAAAbqKPsRw",
+        "head_sha": "4830b9569f6ec8f2401fe897fcd8688e8e21346c",
+        "external_id": "5b59cfd7-4cee-5415-badd-646accb8514b",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/118793432135",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39470625769/job/118793432135",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39470625769/job/118793432135",
+        "status": "in_progress",
+        "conclusion": null,
+        "started_at": "2026-10-20T17:58:02Z",
+        "completed_at": null,
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/118793432135/annotations"
+        },
+        "check_suite": {
+          "id": 106962378590
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      },
+      {
+        "id": 118793403624,
+        "name": "Platform tools",
+        "node_id": "CR_kwDOU93EuM8AAAAbqKN86A",
+        "head_sha": "4830b9569f6ec8f2401fe897fcd8688e8e21346c",
+        "external_id": "5f19d82d-8d54-5bd8-b5e8-c5e237f53dd9",
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/118793403624",
+        "html_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39470618309/job/118793403624",
+        "details_url": "https://github.com/msucharda/devsecops-platform/actions/runs/39470618309/job/118793403624",
+        "status": "in_progress",
+        "conclusion": null,
+        "started_at": "2026-10-20T17:57:59Z",
+        "completed_at": null,
+        "output": {
+          "title": null,
+          "summary": null,
+          "text": null,
+          "annotations_count": 2,
+          "annotations_url": "https://api.github.com/repos/msucharda/devsecops-platform/check-runs/118793403624/annotations"
+        },
+        "check_suite": {
+          "id": 106962357546
+        },
+        "app": {
+          "id": 15368,
+          "slug": "github-actions",
+          "name": "GitHub Actions"
+        },
+        "pull_requests": []
+      }
+    ]
+  }
+}
