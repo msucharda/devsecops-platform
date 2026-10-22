@@ -34,6 +34,9 @@ Describe 'Wait-PullRequestChecks' {
             Sleeps = [System.Collections.Generic.List[int]]::new()
             Status = 200
             Hang = $false
+            PullReads = 0
+            HeadSequence = [System.Collections.Generic.Queue[string]]::new()
+            HangOnPullRead = $null
         }
         $api.Checks['check_runs'] = @(Get-CheckRunFixture -Name 'Platform tools' -Id 10)
         $api.Checks['total_count'] = 1
@@ -51,7 +54,12 @@ Describe 'Wait-PullRequestChecks' {
             $api.Now = $api.Now.AddSeconds(1)
             $path = ([uri] $Uri).AbsolutePath
             $body = switch -Regex ($path) {
-                '/pulls/1347$' { $api.Pull }
+                '/pulls/1347$' {
+                    $api.PullReads++
+                    if ($api.HeadSequence.Count -gt 0) { $api.Pull['head']['sha'] = $api.HeadSequence.Dequeue() }
+                    if ($null -ne $api.HangOnPullRead -and $api.PullReads -ge $api.HangOnPullRead) { $api.Now = $Deadline; return $null }
+                    $api.Pull
+                }
                 '/actions/runs$' { $api.Runs }
                 '/check-runs$' { $api.Checks }
                 '/reviews$' { , @($api.Reviews) }
@@ -251,6 +259,30 @@ Describe 'Wait-PullRequestChecks' {
 
         $LASTEXITCODE | Should -Be 2
         ($api.Now - $started).TotalSeconds | Should -BeLessOrEqual 30
+    }
+
+    It 'polls again when the head changed while the checks were read' {
+        $newSha = 'a0dcb09b5b57875f334f61aebed695e2e4193db5'
+        $api.HeadSequence.Enqueue($sha)
+        $api.HeadSequence.Enqueue($newSha)
+        $api.HeadSequence.Enqueue($newSha)
+        $api.HeadSequence.Enqueue($newSha)
+
+        $output = & $script @arguments
+
+        $output | Should -BeExactly 'passed; copilot: none for head (rounds 1)'
+        $LASTEXITCODE | Should -Be 0
+        $api.PullReads | Should -Be 4
+        @($api.Requests.Uri | Where-Object { $_ -like "*/commits/$newSha/check-runs*" }).Count | Should -Be 1
+    }
+
+    It 'returns pending when the head confirmation reaches the deadline' {
+        $api.HangOnPullRead = 2
+
+        $output = & $script @arguments
+
+        $output | Should -BeExactly 'pending (head not confirmed); copilot: reviewed (rounds 1)'
+        $LASTEXITCODE | Should -Be 2
     }
 
     It 'reads every page of check runs' {

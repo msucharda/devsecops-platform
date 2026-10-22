@@ -182,6 +182,13 @@ while ($true) {
     $checks = Get-ChecksState -WorkflowRun @($runs) -CheckRun @($checkRuns)
     $line = "$($checks.Line); $(Get-CopilotState -Review @($reviews) -Requested $requested -HeadSha $sha)"
     if ($checks.State -ne 'pending') {
+        # A push during the reads would make this the result of an older head; confirm the head before reporting it.
+        $confirm = Invoke-GitHubGet -Path "pulls/$Pr"
+        if ($null -eq $confirm) { $line = "pending (head not confirmed); $($line.Split('; ', 2)[1])"; break }
+        if ($confirm -isnot [System.Collections.IDictionary] -or $confirm['head'] -isnot [System.Collections.IDictionary] -or
+            $confirm['head']['sha'] -cne $sha) {
+            continue
+        }
         Write-Output $line
         exit $(if ($checks.State -eq 'passed') { 0 } else { 1 })
     }
