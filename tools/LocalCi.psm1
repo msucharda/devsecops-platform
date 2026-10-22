@@ -378,16 +378,26 @@ function Get-PesterFailureDetail {
     [OutputType([string])]
     param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]] $Line)
 
-    $Line = @($Line | ForEach-Object { $_ -replace '\x1b\[[0-9;]*[A-Za-z]', '' })
+    # Console wrapping splits indented Pester detail lines; a continuation starts in column 0.
+    $joined = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in $Line) {
+        $text = $item -replace '\x1b\[[0-9;]*[A-Za-z]', ''
+        if ($joined.Count -gt 0 -and $text -match '^\S' -and $joined[-1] -match '^\s+\S' -and
+            $text -notmatch '^(Describing|Context|Tests |Running |Starting |Discovery|Pester|\[|Exception|Line \||\S+: )') {
+            $joined[-1] += $text
+        }
+        else { $joined.Add($text) }
+    }
+    $Line = $joined.ToArray()
     for ($index = 0; $index -lt $Line.Count; $index++) {
         if ($Line[$index] -notmatch '^\s*\[-\] ') { continue }
         $Line[$index].Trim()
         $message = $null
         $location = $null
         for ($next = $index + 1; $next -lt $Line.Count -and $Line[$next] -notmatch '^\s*\[[-+!?]\] |^(Describing|Context) '; $next++) {
-            if ($null -eq $location -and $Line[$next] -match '(?<location>[^\s,]+\.ps1:\d+)') { $location = $Matches['location'] }
+            if ($null -eq $location -and $Line[$next] -match '^\s*at .*?(?<location>[^\s,]+\.ps1:\d+)') { $location = $Matches['location'] }
             elseif ($null -eq $message -and $Line[$next].Trim() -and $Line[$next] -notmatch '^\s*\d+(\.\d+)?m?s \(' -and
-                $Line[$next] -notmatch '^\s*at ') {
+                $Line[$next] -notmatch '^\s*(at |\+ )') {
                 $message = $Line[$next].Trim()
             }
         }

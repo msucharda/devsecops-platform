@@ -281,6 +281,21 @@ Describe 'Local CI output parsing' {
         $count.Failed | Should -Be 1
         $count.NotRun | Should -Be 2
     }
+
+    It 'joins detail lines that the console wrapped' {
+        $lines = @(
+            '  [-] wraps 1.2s (1.1s|80ms)'
+            '   Expected no exception to be thrown, but an exception "The variable cannot be retrieved b'
+            'ecause it has not been set." was thrown.'
+            '   at { & $script } | Should -Not -Throw, /repo/tools/tes'
+            'ts/Demo.Tests.ps1:31'
+        )
+
+        Get-PesterFailureDetail -Line $lines | Should -BeExactly @(
+            '[-] wraps 1.2s (1.1s|80ms)'
+            '    at /repo/tools/tests/Demo.Tests.ps1:31'
+            '    Expected no exception to be thrown, but an exception "The variable cannot be retrieved because it has not been set." was thrown.')
+    }
 }
 
 Describe 'Invoke-Tests.ps1 -Path' {
