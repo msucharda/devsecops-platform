@@ -59,7 +59,11 @@ Describe 'Platform release publication' {
                 if (@($release.assets | Where-Object { $_.name -ceq $query['name'] }).Count) {
                     return & $respond 422 @{ message = 'Validation Failed'; errors = @(@{ resource = 'ReleaseAsset'; code = 'already_exists'; field = 'name' }) }
                 }
-                $hash = 'sha256:' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]] $Body)).ToLowerInvariant()
+                # Invoke-WebRequest sends only a byte[] body as binary; any other value, such as an object[] of bytes,
+                # is sent as its string form, so GitHub would store and hash that text.
+                $sent = [Text.Encoding]::UTF8.GetBytes("$Body")
+                if ($Body -is [byte[]]) { $sent = $Body }
+                $hash = 'sha256:' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($sent)).ToLowerInvariant()
                 $item = & $newAsset $query['name'] $(if ($cloud.uploadDigest) { $cloud.uploadDigest } else { $hash })
                 $release.assets.Add($item)
                 return & $respond 201 $item
@@ -121,6 +125,43 @@ Describe 'Platform release publication' {
             $writes[0] | Should -BeExactly 'POST /repos/octo/devsecops-platform/releases'
             $writes[-1] | Should -BeLike 'PATCH /repos/octo/devsecops-platform/releases/*'
             Should -Invoke Invoke-WebRequest -ParameterFilter { $Headers['X-GitHub-Api-Version'] -ceq '2026-03-10' -and $Headers.Authorization -ceq 'Bearer workflow-token' }
+        }
+
+        It 'uploads the asset as a byte[] body with exactly the file content' {
+            $uploads = [Collections.Generic.List[object]]::new()
+            Mock Invoke-WebRequest {
+                param([uri] $Uri, [string] $Method = 'GET', $Body)
+                if ($Uri.Host -ceq 'uploads.github.com') { $uploads.Add([pscustomobject] @{ Body = $Body; ContentType = $ContentType }) }
+                & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+            }
+
+            $null = & $publish @arguments 6>$null
+
+            $uploads.Count | Should -Be 1
+            $uploads[0].ContentType | Should -BeExactly 'application/zip'
+            # A byte[] passed through an if expression is enumerated into object[] and sent as text.
+            $uploads[0].Body.GetType().FullName | Should -BeExactly 'System.Byte[]'
+            [Convert]::ToHexString($uploads[0].Body) | Should -BeExactly ([Convert]::ToHexString([IO.File]::ReadAllBytes($asset)))
+        }
+
+        It 'creates a new release when a draft of another tag exists' {
+            $other = & $newRelease @{ tag_name = 'v1.2.0-rc.1'; draft = $true; prerelease = $true; target_commitish = 'b' * 40; name = 'v1.2.0-rc.1' }
+            $other.assets.Add((& $newAsset 'platform-v1.2.0-rc.1.zip' ('sha256:' + '0' * 64)))
+            $cloud.releases.Add($other)
+
+            $result = & $publish @arguments 6>$null
+
+            $result.Created | Should -BeTrue
+            $cloud.releases.Count | Should -Be 2
+            $writes[0] | Should -BeExactly 'POST /repos/octo/devsecops-platform/releases'
+            $other.draft | Should -BeTrue
+            @($other.assets).Count | Should -Be 1
+            $other.assets[0].name | Should -BeExactly 'platform-v1.2.0-rc.1.zip'
+            @($writes | Where-Object { $_ -like "* /repos/octo/devsecops-platform/releases/$($other.id)*" -or $_ -like "DELETE *" }).Count | Should -Be 0
+            $release = $cloud.releases[1]
+            $release.tag_name | Should -BeExactly 'v1.2.0'
+            $release.draft | Should -BeFalse
+            $release.assets[0].digest | Should -BeExactly $digest
         }
 
         It 'accepts an annotated tag whose tag object points to the built commit' {
