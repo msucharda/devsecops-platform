@@ -94,13 +94,18 @@ function Select-VendoringPullRequest {
     # import before the branch changes: a push would synchronize it, and a human author can release cloud credentials.
     param([AllowNull()][object[]] $PullRequests, [Parameter(Mandatory)][string] $Branch, [Parameter(Mandatory)][string] $Repository)
     $own = @(foreach ($pullRequest in @($PullRequests)) {
-            if ($null -eq $pullRequest -or $null -eq $pullRequest.head -or $null -eq $pullRequest.head.repo) { continue }
+            if ($null -eq $pullRequest -or $null -eq $pullRequest.head -or $null -eq $pullRequest.head.repo) {
+                throw "Pull request list of import branch '$Branch' is unreadable; inspect it before importing again."
+            }
             if ($pullRequest.head.ref -cne $Branch -or $pullRequest.head.repo.full_name -ne $Repository) { continue }
             $pullRequest
         })
     foreach ($pullRequest in $own) {
         if ($null -eq $pullRequest.user -or $pullRequest.user.type -cne 'Bot' -or [string] $pullRequest.user.login -notlike '*[[]bot]') {
             throw "Import branch '$Branch' has a pull request that the vendoring App did not open; inspect it before importing again."
+        }
+        if ($pullRequest.state -cnotin @('open', 'closed')) {
+            throw "Pull request of import branch '$Branch' has an unknown state; inspect it before importing again."
         }
     }
     $open = @($own | Where-Object { $_.state -ceq 'open' })
@@ -227,11 +232,15 @@ Release workflow templates stay under platform/; promotion of live workflows is 
         }
         $remoteCommit = @(Invoke-VendoringGit @('log', '-1', '--format=%ce%n%P', $expected))
         $remoteParents = @(([string] $remoteCommit[1]).Split(' ', [StringSplitOptions]::RemoveEmptyEntries))
-        $parentOnMain = $false
-        if ($remoteParents.Count -eq 1) {
-            & git -C $target merge-base --is-ancestor $remoteParents[0] $localParent 2>$null
-            $parentOnMain = $LASTEXITCODE -eq 0
+        $parentOnMain = $remoteParents.Count -gt 0
+        if (@($remoteParents | Where-Object { $_ -cne $localParent }).Count -and (Invoke-VendoringGit @('rev-parse', '--is-shallow-repository')) -ceq 'true') {
+            # A shallow target checkout ends at the main tip, so older import parents would not look like main history.
+            $null = Invoke-VendoringRemoteGit @('fetch', '--quiet', '--no-tags', '--unshallow', $remote, 'refs/heads/main')
+        }
+        foreach ($parent in $remoteParents) {
+            & git -C $target merge-base --is-ancestor $parent $localParent 2>$null
             if ($LASTEXITCODE -notin @(0, 1)) { throw "Git vendoring command 'merge-base' failed with exit code $LASTEXITCODE." }
+            if ($LASTEXITCODE -ne 0) { $parentOnMain = $false }
         }
         if (-not (Test-VendoringBranchReplaceable -Committer $remoteCommit[0] -Parents $remoteParents -ParentOnMain $parentOnMain)) {
             throw "Import branch '$branch' contains commits that the vendoring App did not create on top of main; inspect it before importing again."

@@ -21,7 +21,6 @@ BeforeAll {
         foreach ($key in $fields.Keys) { $set["$Prefix$key"] = $fields[$key] }
         $body = Get-GitHubApiFixture -Name $Name -Set $set
         $item = if ($Prefix) { $body[0] } else { $body }
-        if ($null -eq $Pull.headRepository) { $item.head.repo = $null }
         if ($null -eq $Pull.authorLogin) { $item.user = $null }
         return , $body
     }
@@ -40,8 +39,11 @@ BeforeAll {
                 # The documented head filter selects by owner and branch; the stub matches like GitHub without case.
                 if ($query['head'] -and "$($pull.headOwner):$($pull.head)" -ne $query['head']) { continue }
                 if ($query['state'] -cne 'all' -and $pull.state -cne $query['state']) { continue }
-                $items.Add((& $newPullFixture 'pulls/list' $pull '0.')[0])
+                $item = (& $newPullFixture 'pulls/list' $pull '0.')[0]
+                if ($cloud.Contains('alterListed')) { & $cloud.alterListed $item }
+                $items.Add($item)
             }
+            if ($cloud.Contains('alterList')) { & $cloud.alterList $items }
             return , $items.ToArray()
         }
         if ($Uri.AbsolutePath -ceq '/repos/customer-actions/upstream-action/pulls' -and $Method -eq 'POST') {
@@ -272,17 +274,43 @@ Describe 'Vendoring diff and pull request publication' {
             $cloud.pulls.Count | Should -Be 1
         }
 
+        It 'replaces a vendoring commit with an older main parent from a shallow checkout' {
+            $first = & $publisher @arguments
+            & $restart
+            'instance change' | Set-Content -LiteralPath (Join-Path $target 'NOTES.md')
+            & $gitExecutable -C $target add NOTES.md
+            & $gitExecutable -C $target commit --quiet -m 'main moved'
+            & $gitExecutable -C $target push --quiet $bare main
+            # The workflow checks out the target with the default depth of one commit.
+            $shallow = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+            & $gitExecutable clone --quiet --depth 1 --branch main ('file:///' + $bare.Replace('\', '/')) $shallow
+            & $gitExecutable -C $shallow rev-parse --is-shallow-repository | Should -Be 'true'
+            $arguments.TargetPath = $shallow
+
+            $null = & $publisher @arguments
+            & $gitExecutable --git-dir=$bare rev-parse "refs/heads/$($first.Branch)~1" | Should -Be (& $gitExecutable --git-dir=$bare rev-parse main)
+            Should -Invoke git -Times 2 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        }
+
         It 'refuses to replace an import branch whose head <Case>' -ForEach @(
             @{ Case = 'has another committer'; Email = 'reviewer@example.test'; Parents = 'main' }
             @{ Case = 'has the vendoring committer in another case'; Email = 'Platform-Vendoring@users.noreply.github.com'; Parents = 'main' }
             @{ Case = 'is a merge commit'; Email = 'platform-vendoring@users.noreply.github.com'; Parents = 'main', 'branch' }
+            @{ Case = 'merges two main commits'; Email = 'platform-vendoring@users.noreply.github.com'; Parents = 'main', 'main~1' }
             @{ Case = 'has a parent outside main'; Email = 'platform-vendoring@users.noreply.github.com'; Parents = 'orphan' }
         ) {
             $first = & $publisher @arguments
             & $restart
+            if ($Parents -ccontains 'main~1') {
+                'instance change' | Set-Content -LiteralPath (Join-Path $target 'NOTES.md')
+                & $gitExecutable -C $target add NOTES.md
+                & $gitExecutable -C $target commit --quiet -m 'main moved'
+                & $gitExecutable -C $target push --quiet $bare main
+            }
             $parents = @(foreach ($name in $Parents) {
                     switch ($name) {
                         'main' { & $gitExecutable --git-dir=$bare rev-parse main }
+                        'main~1' { & $gitExecutable --git-dir=$bare rev-parse 'main~1' }
                         'branch' { & $gitExecutable --git-dir=$bare rev-parse "refs/heads/$($first.Branch)" }
                         'orphan' { & $gitExecutable --git-dir=$bare commit-tree (& $gitExecutable --git-dir=$bare rev-parse 'main^{tree}') -m orphan }
                     }
@@ -299,7 +327,6 @@ Describe 'Vendoring diff and pull request publication' {
         It 'opens its own PR and ignores a listed PR whose head <Case>' -ForEach @(
             @{ Case = 'branch differs in case'; Field = 'head'; Value = 'upper' }
             @{ Case = 'is in a fork'; Field = 'headRepository'; Value = 'fork-owner/upstream-action' }
-            @{ Case = 'repository was deleted'; Field = 'headRepository'; Value = $null }
         ) {
             $first = & $publisher @arguments
             & $restart
@@ -325,7 +352,20 @@ Describe 'Vendoring diff and pull request publication' {
         It 'stops before changing a listed PR that <Case>' -ForEach @(
             @{ Case = 'targets another base'; Field = 'base'; Value = 'develop'; Message = '*not an open PR into main*' }
             @{ Case = 'has an invalid number'; Field = 'number'; Value = 0; Message = '*not an open PR into main*' }
-            @{ Case = 'has a non-HTTPS URL'; Field = 'html_url'; Value = 'http://example.ghe.com/pull/1'; Message = '*not an open PR into main*' }
+            @{ Case = 'has a non-HTTPS URL'; Field = 'alter'; Value = { param($Item) $Item.html_url = 'http://example.ghe.com/pull/1' }; Message = '*not an open PR into main*' }
+            @{ Case = 'has an upper-case URL scheme'; Field = 'alter'; Value = { param($Item) $Item.html_url = 'HTTPS://example.ghe.com/pull/1' }; Message = '*not an open PR into main*' }
+            @{ Case = 'targets main in another case'; Field = 'base'; Value = 'MAIN'; Message = '*not an open PR into main*' }
+            # Deliberately schema-invalid responses: the schema requires base and an integer number.
+            @{ Case = 'has no base'; Field = 'alter'; Value = { param($Item) $Item.base = $null }; Message = '*not an open PR into main*' }
+            @{ Case = 'has a string number'; Field = 'alter'; Value = { param($Item) $Item.number = '1' }; Message = '*not an open PR into main*' }
+            @{ Case = 'a bot type in another case opened'; Field = 'author'; Value = @('platform-vendoring[bot]', 'bot'); Message = '*did not open*' }
+            @{ Case = 'has an empty state'; Field = 'state'; Value = ''; Message = '*unknown state*' }
+            @{ Case = 'has an unknown state'; Field = 'state'; Value = 'draft'; Message = '*unknown state*' }
+            @{ Case = 'has the open state in another case'; Field = 'state'; Value = 'OPEN'; Message = '*unknown state*' }
+            # Deliberately schema-invalid list responses: the schema requires each item, its head and a non-nullable head.repo.
+            @{ Case = 'has no head repository'; Field = 'alter'; Value = { param($Item) $Item.head.repo = $null }; Message = '*unreadable*' }
+            @{ Case = 'has no head'; Field = 'alter'; Value = { param($Item) $Item.head = $null }; Message = '*unreadable*' }
+            @{ Case = 'is a null list item'; Field = 'alterList'; Value = { param($Items) $Items.Add($null) }; Message = '*unreadable*' }
             @{ Case = 'has an open duplicate'; Field = 'duplicate'; Value = $null; Message = '*has 2 open pull requests*' }
             @{ Case = 'a person opened'; Field = 'author'; Value = @('octocat', 'User'); Message = '*did not open*' }
             @{ Case = 'a person opened and closed'; Field = 'closed-author'; Value = @('octocat', 'User'); Message = '*did not open*' }
@@ -342,13 +382,8 @@ Describe 'Vendoring diff and pull request publication' {
                 $cloud.pulls[0].authorType = $Value[1]
                 if ($Field -ceq 'closed-author') { $cloud.pulls[0].state = 'closed' }
             }
-            elseif ($Field -ceq 'html_url') {
-                Mock Invoke-RestMethod -ParameterFilter { $Method -ne 'POST' -and $Method -ne 'PATCH' -and ([string] $Uri) -like '*/pulls?*' } {
-                    $items = & $apiTransport -Uri $Uri -Method GET
-                    foreach ($item in $items) { $item.html_url = 'http://example.ghe.com/pull/1' }
-                    return , $items
-                }
-            }
+            elseif ($Field -ceq 'alter') { $cloud.alterListed = $Value }
+            elseif ($Field -ceq 'alterList') { $cloud.alterList = $Value }
             else { $cloud.pulls[0][$Field] = $Value }
             $before = & $gitExecutable --git-dir=$bare rev-parse "refs/heads/$($first.Branch)"
 
