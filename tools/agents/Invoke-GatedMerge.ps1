@@ -5,7 +5,7 @@ Merges a pull request only after a fresh pass of the merge gate, as a squash mer
 
 .DESCRIPTION
 1. Evaluates the merge gate again; an earlier result is never reused.
-2. already-merged exits 3, fail exits 1, pending waits up to WaitPendingMinutes and then exits 2.
+2. already-merged verifies the merge like step 5 and exits 3 (5 when the verification fails), fail exits 1, pending waits up to WaitPendingMinutes and then exits 2.
 3. pass runs 'gh pr merge --squash --match-head-commit <gate.headSha>'. It never uses --admin, --auto, --merge or --rebase.
 4. A refused merge evaluates the gate once more and reports that verdict; it does not retry with other flags.
 5. After the merge it reads the merge state and the rule suite of the merge commit, which must pass without bypass.
@@ -24,8 +24,7 @@ param(
     [Parameter(Mandatory)][string] $ExpectedHeadSha,
     [Parameter(Mandatory)][string] $Reason,
     [string] $AcknowledgeWorkflowChanges,
-    [ValidateRange(0, 240)][int] $WaitPendingMinutes = 0,
-    [switch] $DeleteBranch
+    [ValidateRange(0, 240)][int] $WaitPendingMinutes = 0
 )
 
 Set-StrictMode -Version Latest

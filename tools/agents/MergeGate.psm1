@@ -26,8 +26,9 @@ $script:CopilotCheckName = 'copilot-pull-request-reviewer'
 $script:CopilotWorkflowName = 'Running Copilot Code Review'
 $script:PendingStatuses = [string[]] @('queued', 'in_progress', 'waiting', 'requested', 'pending')
 $script:SuccessConclusions = [string[]] @('success', 'skipped', 'neutral')
-# Changed lines that touch permissions (any scope, also inside an unchanged permissions block), triggers, secrets or runners.
-$script:SensitivePattern = 'permissions|\b(actions|attestations|checks|contents|deployments|discussions|id-token|issues|models|packages|pages|pull-requests|repository-projects|security-events|statuses)\s*:\s*(read|write|none)\b|:\s*write\b|write-all|read-all|id-token|attestations|pull_request_target|workflow_run|secrets\.|GITHUB_TOKEN|self-hosted'
+# Changed lines that touch token permissions (any scope, also inside an unchanged permissions block), privileged triggers,
+# secrets or self-hosted runners (issue #85, G10).
+$script:SensitivePattern = 'permissions|\b(actions|attestations|checks|contents|deployments|discussions|id-token|issues|models|packages|pages|pull-requests|repository-projects|security-events|statuses)\s*:\s*(read|write|none)\b|:\s*write\b|write-all|read-all|id-token|attestations|pull_request_target|workflow_run|secrets\.|secrets\s*:|GITHUB_TOKEN|self-hosted'
 $script:OpenQuestionsHeading = '(?im)^#{1,6}[ \t]*(Otev\u0159en\u00E9 ot\u00E1zky|Open questions)\b.*$'
 $script:DecisionsHeading = '(?im)^#{1,6}[ \t]*(Rozhodnut\u00ED (pro )?u\u017Eivatele)\b.*$'
 $script:DecisionsAcceptedMarker = '<!--\s*merge-gate:\s*decisions-accepted\s+(?<login>[A-Za-z0-9-]+(\[bot\])?)\s+(?<date>\d{4}-\d{2}-\d{2})\s*-->'
@@ -78,7 +79,7 @@ class MergeGateInputError : System.Exception {
 function ConvertTo-MergeGateTarget {
     <#
     .SYNOPSIS
-    Parses 'owner/repo' or 'host/owner/repo' (GHE.com, for example 'sucharda.ghe.com/slzdso-platform/instance').
+    Parses 'owner/repo' or 'host/owner/repo' (GHE.com, for example 'example.ghe.com/example-platform/instance').
     #>
     [CmdletBinding()]
     [OutputType([hashtable])]
@@ -317,7 +318,11 @@ function Get-MergeGatePullRequest {
                 owner = $Target.Owner; name = $Target.Name; number = $Number; threads = $cursor })
         $current = Get-MergeGateValue -Node $data -Path 'repository.pullRequest'
         if ($current -isnot [System.Collections.IDictionary]) { throw "Pull request $($Target.Slug)#$Number was not found." }
-        if ($null -eq $pullRequest) { $pullRequest = $current }
+        if ($null -eq $pullRequest) {
+            $pullRequest = $current
+            # G1 returns immediately for a merged pull request; the other fields are not needed.
+            if ($current['state'] -ceq 'MERGED' -and $current['merged'] -eq $true) { return $pullRequest }
+        }
         elseif ($current['headRefOid'] -cne $pullRequest['headRefOid']) { throw 'The head of the pull request moved during the evaluation.' }
         $connection = Get-MergeGateValue -Node $current -Path 'reviewThreads'
         foreach ($node in (Get-MergeGateList -Node $connection -Path 'nodes')) { $threads.Add($node) }
@@ -540,9 +545,14 @@ function Get-MergeGateCopilotState {
     param(
         [Parameter(Mandatory)][System.Collections.IDictionary] $PullRequest,
         [AllowEmptyCollection()][object[]] $CheckRuns = @(),
+        [AllowEmptyCollection()][object[]] $WorkflowRuns = @(),
         [Parameter(Mandatory)][string] $HeadSha
     )
 
+    # A Copilot workflow run counts like its check run; a completed run has no completed_at, so updated_at stands in.
+    $copilotRuns = @(@($CheckRuns | Where-Object { Test-MergeGateCopilotRun -Run $_ -Kind CheckRun }) +
+        @($WorkflowRuns | Where-Object { Test-MergeGateCopilotRun -Run $_ -Kind WorkflowRun } | ForEach-Object {
+                @{ name = $_['name']; status = $_['status']; completed_at = if ($_['status'] -ceq 'completed') { $_['updated_at'] } else { $null } } }))
     $reviews = @((Get-MergeGateList -Node $PullRequest -Path 'reviews.nodes') | Where-Object { Test-MergeGateCopilotReview -Review $_ } |
         Sort-Object { ConvertTo-MergeGateTime -Value $_['submittedAt'] })
     $requests = @((Get-MergeGateList -Node $PullRequest -Path 'timelineItems.nodes') | Where-Object { Test-MergeGateCopilotRequest -TimelineItem $_ } |
@@ -560,7 +570,7 @@ function Get-MergeGateCopilotState {
         LastReviewSha = if ($last) { Get-MergeGateValue -Node $last -Path 'commit.oid' } else { $null }
         LastRequestAt = if ($requests.Count -gt 0) { $requests[-1] } else { $null }
         ReviewedHead = $headReviews.Count -gt 0
-        CheckRuns = @($CheckRuns | Where-Object { Test-MergeGateCopilotRun -Run $_ -Kind CheckRun })
+        CheckRuns = $copilotRuns
         HeadOverview = $overview
     }
 }
@@ -779,7 +789,9 @@ function Get-MergeGateRuleSummary {
                     if ($context -isnot [string] -or $context -eq '') { throw 'A required status check has no context.' }
                     if (-not $contexts.Contains($context)) { $contexts.Add($context) }
                 }
-                if ((Get-MergeGateValue -Node $rule -Path 'parameters.strict_required_status_checks_policy') -eq $true) { $strict = $true }
+                $policy = Get-MergeGateValue -Node $rule -Path 'parameters.strict_required_status_checks_policy'
+                if ($policy -isnot [bool]) { throw 'A required status checks rule has no strict_required_status_checks_policy.' }
+                if ($policy) { $strict = $true }
             }
             'copilot_code_review' { $reviewOnPush = (Get-MergeGateValue -Node $rule -Path 'parameters.review_on_push') -eq $true }
             'pull_request' { $threadResolution = (Get-MergeGateValue -Node $rule -Path 'parameters.required_review_thread_resolution') -eq $true }
@@ -977,7 +989,7 @@ function Complete-MergeGateEvaluation {
     $warnings = [System.Collections.Generic.List[object]]::new()
     $reasons = [System.Collections.Generic.List[object]]::new()
     $pullRequest = Get-MergeGatePullRequest -Target $Target -Number $Number
-    Assert-MergeGatePullRequestShape -PullRequest $pullRequest
+    if ($pullRequest['headRefOid'] -isnot [string] -or $pullRequest['headRefOid'] -cnotmatch '^[0-9a-f]{40}$') { throw 'The pull request has no valid head SHA.' }
     $head = [string] $pullRequest['headRefOid']
     $Result.headSha = $head
     $Result.details['state'] = [ordered]@{
@@ -999,6 +1011,7 @@ function Complete-MergeGateEvaluation {
         $Result.exitCode = 3
         return
     }
+    Assert-MergeGatePullRequestShape -PullRequest $pullRequest
     foreach ($reason in @(ConvertTo-MergeGateReason -Check 'pr-state' -Finding $stateFinding)) { $reasons.Add($reason) }
 
     # G2, G3
@@ -1045,7 +1058,7 @@ function Complete-MergeGateEvaluation {
     $Result.details['threads'] = [ordered]@{ total = @($threads).Count; unresolved = $unresolved.Count; items = $unresolved }
 
     # G6
-    $copilot = Get-MergeGateCopilotState -PullRequest $pullRequest -CheckRuns $checkRuns -HeadSha $head
+    $copilot = Get-MergeGateCopilotState -PullRequest $pullRequest -CheckRuns $checkRuns -WorkflowRuns $workflowRuns -HeadSha $head
     $copilotEvidence = @{
         'copilot-review-in-progress' = [ordered]@{ lastRequestAt = Format-MergeGateTime $copilot.LastRequestAt; lastReviewAt = Format-MergeGateTime $copilot.LastReviewAt; lastReviewSha = $copilot.LastReviewSha }
         'copilot-review-stale' = [ordered]@{ lastReviewSha = $copilot.LastReviewSha }
@@ -1191,10 +1204,13 @@ function Test-MergeGatePostMerge {
     [OutputType([bool])]
     param(
         [AllowNull()][System.Collections.IDictionary] $State,
-        [AllowNull()][System.Collections.IDictionary] $Suite
+        [AllowNull()][System.Collections.IDictionary] $Suite,
+        # The base branch the gate evaluated; a pull request retargeted before the merge fails the verification.
+        [AllowEmptyString()][string] $BaseRef
     )
 
     if ($null -eq $State -or $null -eq $Suite) { return $false }
+    if ($BaseRef -and $State['baseRefName'] -cne $BaseRef) { return $false }
     return $State['state'] -ceq 'MERGED' -and $State['merged'] -eq $true -and $Suite['result'] -ceq 'pass' -and
         $Suite['after_sha'] -ceq (Get-MergeGateValue -Node $State -Path 'mergeCommit.oid')
 }
@@ -1210,6 +1226,7 @@ function Get-MergeGatePostMerge {
         [Parameter(Mandatory)][hashtable] $Target,
         [Parameter(Mandatory)][int] $Number,
         [ValidateSet('hour', 'day', 'week', 'month')][string] $TimePeriod = 'hour',
+        [AllowEmptyString()][string] $BaseRef,
         [int] $Attempts = 4,
         [int] $DelaySeconds = 15
     )
@@ -1231,7 +1248,7 @@ function Get-MergeGatePostMerge {
         }
     }
     catch { $errorMessage = $_.Exception.Message }
-    $verified = $null -eq $errorMessage -and (Test-MergeGatePostMerge -State $state -Suite $suite)
+    $verified = $null -eq $errorMessage -and (Test-MergeGatePostMerge -State $state -Suite $suite -BaseRef $BaseRef)
     return [ordered]@{
         verified = $verified
         state = Get-MergeGateValue -Node $state -Path 'state'
@@ -1251,13 +1268,11 @@ function Invoke-MergeGatePullRequestMerge {
     param(
         [Parameter(Mandatory)][hashtable] $Target,
         [Parameter(Mandatory)][int] $Number,
-        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string] $HeadSha,
-        [switch] $DeleteBranch
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string] $HeadSha
     )
 
     $arguments = [System.Collections.Generic.List[string]]::new()
     $arguments.AddRange([string[]] @('pr', 'merge', [string] $Number, '--repo', $Target.Repository, '--squash', '--match-head-commit', $HeadSha))
-    if ($DeleteBranch) { $arguments.Add('--delete-branch') }
     if ($PSCmdlet.ShouldProcess("$($Target.Repository)#$Number", "squash merge at $HeadSha")) {
         $null = Invoke-MergeGateGh -Target $Target -Arguments $arguments.ToArray()
     }
@@ -1275,7 +1290,8 @@ function Complete-MergeGateAlreadyMerged {
     $Output['postVerify'] = Get-MergeGatePostMerge -Target $Target -Number $Number -TimePeriod 'day'
     $Output['mergeCommit'] = $Output['postVerify']['mergeCommit']
     $Output['mergedBy'] = $Output['postVerify']['mergedBy']
-    $Output['exitCode'] = 3
+    # A merge that bypassed the rules, or whose rule suite cannot be found, is not a verified outcome.
+    $Output['exitCode'] = if ($Output['postVerify']['verified']) { 3 } else { 5 }
     return $Output
 }
 
@@ -1296,7 +1312,6 @@ function Invoke-GatedMerge {
         [Parameter(Mandatory)][AllowEmptyString()][string] $Reason,
         [AllowEmptyString()][string] $AcknowledgeWorkflowChanges,
         [ValidateRange(0, 240)][int] $WaitPendingMinutes = 0,
-        [switch] $DeleteBranch,
         [AllowNull()] $Now
     )
 
@@ -1332,7 +1347,7 @@ function Invoke-GatedMerge {
     }
 
     try {
-        Invoke-MergeGatePullRequestMerge -Target $target -Number $Pr -HeadSha $gate['headSha'] -DeleteBranch:$DeleteBranch
+        Invoke-MergeGatePullRequestMerge -Target $target -Number $Pr -HeadSha $gate['headSha']
     }
     catch {
         # No retry with other flags: evaluate once more and report that verdict.
@@ -1346,7 +1361,7 @@ function Invoke-GatedMerge {
     }
 
     $output['action'] = 'merged'
-    $output['postVerify'] = Get-MergeGatePostMerge -Target $target -Number $Pr
+    $output['postVerify'] = Get-MergeGatePostMerge -Target $target -Number $Pr -BaseRef ([string] $gate['details']['base']['baseRef'])
     $output['mergeCommit'] = $output['postVerify']['mergeCommit']
     $output['exitCode'] = if ($output['postVerify']['verified']) { 0 } else { 5 }
     return $output

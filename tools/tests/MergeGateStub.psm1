@@ -67,6 +67,19 @@ function Initialize-MergeGateStub {
     }
 }
 
+function Add-MergeGateStubRuleSuite {
+    # Adds a rule suite in the shape of the shared fixture (a real rule suite of main) for the given merge commit.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable] $Stub,
+        [Parameter(Mandatory)][string] $AfterSha,
+        [Parameter(Mandatory)][string] $Result
+    )
+
+    $suites = Get-GitHubApiFixture -Name 'repos/get-repo-rule-suites.merge-gate' -Set @{ '0.after_sha' = $AfterSha; '0.result' = $Result }
+    $Stub.RuleSuites.Add($suites[0])
+}
+
 function Get-MergeGateStubPage {
     param([object[]] $Items, [int] $Page)
 
@@ -120,7 +133,7 @@ function Invoke-MergeGateStub {
         $pullRequest.mergedBy = @{ login = 'msucharda' }
         $pullRequest.mergeCommit = @{ oid = $Stub.MergeCommit }
         $Stub.Merges++
-        $Stub.RuleSuites.Add(@{ id = 4700000000 + $Stub.Merges; after_sha = $Stub.MergeCommit; ref = 'refs/heads/main'; result = $Stub.SuiteResult })
+        Add-MergeGateStubRuleSuite -Stub $Stub -AfterSha $Stub.MergeCommit -Result $Stub.SuiteResult
         return ''
     }
 
@@ -148,4 +161,4 @@ function Invoke-MergeGateStub {
     throw "The merge gate stub has no response for '$request'."
 }
 
-Export-ModuleMember -Function Get-MergeGateScenario, Initialize-MergeGateStub, Invoke-MergeGateStub
+Export-ModuleMember -Function Get-MergeGateScenario, Initialize-MergeGateStub, Invoke-MergeGateStub, Add-MergeGateStubRuleSuite

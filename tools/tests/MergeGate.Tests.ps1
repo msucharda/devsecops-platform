@@ -244,6 +244,33 @@ Describe 'Merge gate replay of real pull requests' {
         Get-ReasonCode $result | Should -Be @('fail:copilot-review-stale')
     }
 
+    It 'keeps #78 pending while the Copilot review workflow runs again' {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $copilotRun = @($stub.WorkflowRuns.workflow_runs | Where-Object { $_.event -eq 'dynamic' -and $_.name -eq 'Running Copilot Code Review' })[0]
+        $copilotRun.status = 'in_progress'
+        $copilotRun.conclusion = $null
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        $result.verdict | Should -Be 'pending'
+        Get-ReasonCode $result | Should -Be @('pending:copilot-review-in-progress')
+    }
+
+    It 'fails #78 when the base branch requires a merge queue' {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $queue = Get-GitHubApiFixture -Name 'repos/get-branch-rules.merge-queue'
+        $stub.Rules = @($stub.Rules) + $queue
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-ReasonCode $result | Should -Be @('fail:merge-queue-unsupported')
+        $result.details.rules.mergeQueue | Should -BeTrue
+    }
+
+    It 'returns already-merged for #75 before reading a partial review list' {
+        $stub = Initialize-MergeGateStub -Scenario pr-75
+        $stub.PullRequest.reviews.totalCount = 101
+        (Invoke-ScenarioGate -Stub $stub).exitCode | Should -Be 3
+    }
+
     It 'calls only read-only API requests' {
         foreach ($scenario in @('pr-78', 'pr-60', 'pr-70', 'pr-75')) {
             $stub = Initialize-MergeGateStub -Scenario $scenario
@@ -338,6 +365,13 @@ Describe 'Merge gate fails closed' {
         (Invoke-ScenarioGate -Stub $stub).exitCode | Should -Be 5
     }
 
+    It 'fails with evaluation-error when a required status checks rule has no strict policy' {
+        $rules = Get-GitHubApiFixture -Name 'repos/get-branch-rules.merge-gate-required-check'
+        $rules[1].parameters.Remove('strict_required_status_checks_policy')
+        $stub.Rules = $rules
+        (Invoke-ScenarioGate -Stub $stub).exitCode | Should -Be 5
+    }
+
     It 'fails with evaluation-error when the pull request has no mergeable state' {
         $stub.PullRequest.mergeable = $null
         (Invoke-ScenarioGate -Stub $stub).exitCode | Should -Be 5
@@ -361,7 +395,7 @@ Describe 'Merge gate fails closed' {
 Describe 'Merge gate repository and gh call' {
     It 'parses <Repository>' -ForEach @(
         @{ Repository = 'msucharda/devsecops-platform'; HostName = 'github.com'; Slug = 'msucharda/devsecops-platform' }
-        @{ Repository = 'sucharda.ghe.com/slzdso-platform/instance'; HostName = 'sucharda.ghe.com'; Slug = 'slzdso-platform/instance' }
+        @{ Repository = 'example.ghe.com/example-platform/instance'; HostName = 'example.ghe.com'; Slug = 'example-platform/instance' }
     ) {
         InModuleScope MergeGate -Parameters $_ {
             $target = ConvertTo-MergeGateTarget -Repository $Repository
@@ -376,10 +410,10 @@ Describe 'Merge gate repository and gh call' {
             $env:GH_TOKEN = 'github-com-token'
             try {
                 Mock gh { $script:seenToken = $env:GH_TOKEN; $script:seenArguments = $args; $global:LASTEXITCODE = 0; '{"total_count":0,"check_runs":[]}' }
-                $target = ConvertTo-MergeGateTarget -Repository 'sucharda.ghe.com/slzdso-platform/instance'
-                $null = Invoke-MergeGateRest -Target $target -Path 'repos/slzdso-platform/instance/commits/x/check-runs'
+                $target = ConvertTo-MergeGateTarget -Repository 'example.ghe.com/example-platform/instance'
+                $null = Invoke-MergeGateRest -Target $target -Path 'repos/example-platform/instance/commits/x/check-runs'
                 $script:seenToken | Should -BeNullOrEmpty
-                $script:seenArguments | Should -Contain 'sucharda.ghe.com'
+                $script:seenArguments | Should -Contain 'example.ghe.com'
                 $script:seenArguments | Should -Contain 'X-GitHub-Api-Version: 2026-03-10'
                 $env:GH_TOKEN | Should -Be 'github-com-token'
             }
@@ -619,8 +653,8 @@ Describe 'Merge gate check functions' {
     It 'G7 fails a merge queue, which would merge later without the gate' {
         InModuleScope MergeGate {
             @(Get-MergeGateMergeFinding -PullRequest @{ mergeable = 'MERGEABLE'; mergeStateStatus = 'CLEAN'; isDraft = $false } -OtherFindings $false -MergeQueue $true) | Should -Be @('fail:merge-queue-unsupported')
-            (Get-MergeGateRuleSummary -Rules @(@{ type = 'merge_queue'; parameters = @{ merge_method = 'SQUASH' } })).MergeQueue | Should -BeTrue
-            (Get-MergeGateRuleSummary -Rules @(@{ type = 'pull_request'; parameters = @{ required_review_thread_resolution = $true } })).MergeQueue | Should -BeFalse
+            (Get-MergeGateRuleSummary -Rules (Get-GitHubApiFixture -Name 'repos/get-branch-rules.merge-queue')).MergeQueue | Should -BeTrue
+            (Get-MergeGateRuleSummary -Rules (Get-GitHubApiFixture -Name 'repos/get-branch-rules.merge-gate')).MergeQueue | Should -BeFalse
         }
     }
 
@@ -690,6 +724,10 @@ Describe 'Merge gate check functions' {
         @{ Case = 'unchanged context lines'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,3 @@`n permissions:`n   contents: read`n+      - run: echo" }; Expected = @() }
         @{ Case = 'a scope change inside an unchanged permissions block'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,3 +1,3 @@`n permissions:`n-  actions: read`n+  actions: write" }; Expected = @('.github/workflows/ci.yml: -  actions: read', '.github/workflows/ci.yml: +  actions: write') }
         @{ Case = 'a security-events write'; File = @{ filename = '.github/workflows/scan.yml'; patch = "@@ -1,1 +1,2 @@`n jobs:`n+    security-events: write" }; Expected = @('.github/workflows/scan.yml: +    security-events: write') }
+        @{ Case = 'a privileged trigger'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,3 @@`n on:`n   push:`n+  workflow_run:" }; Expected = @('.github/workflows/ci.yml: +  workflow_run:') }
+        @{ Case = 'a self-hosted runner'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,1 @@`n-    runs-on: ubuntu-latest`n+    runs-on: [self-hosted, linux]" }; Expected = @('.github/workflows/ci.yml: +    runs-on: [self-hosted, linux]') }
+        @{ Case = 'inherited secrets'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,2 @@`n     uses: ./.github/workflows/deploy.yml`n+    secrets: inherit" }; Expected = @('.github/workflows/ci.yml: +    secrets: inherit') }
+        @{ Case = 'a GitHub-hosted runner change'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,1 @@`n-    runs-on: ubuntu-latest`n+    runs-on: windows-latest" }; Expected = @() }
         @{ Case = 'a missing patch'; File = @{ filename = '.github/workflows/big.yml' }; Expected = @('.github/workflows/big.yml: patch unavailable') }
         @{ Case = 'an empty patch'; File = @{ filename = '.github/workflows/renamed.yml'; patch = '' }; Expected = @('.github/workflows/renamed.yml: patch unavailable') }
     ) {
@@ -755,12 +793,6 @@ Describe 'Invoke-GatedMerge' {
         $mergeCalls[0] | Should -Be @('pr', 'merge', '78', '--repo', "github.com/$repository", '--squash', '--match-head-commit', $head)
     }
 
-    It 'passes --delete-branch on request' {
-        $result = Invoke-GatedMerge @merge -DeleteBranch
-
-        $result.exitCode | Should -Be 0
-        @($stub.Calls | Where-Object { $_[0] -eq 'pr' })[0][-1] | Should -Be '--delete-branch'
-    }
 
     It 'does not merge when the gate fails' {
         $stub = Initialize-MergeGateStub -Scenario pr-70
@@ -808,7 +840,7 @@ Describe 'Invoke-GatedMerge' {
 
     It 'reports already-merged for #75 without merging again' {
         $stub = Initialize-MergeGateStub -Scenario pr-75
-        $stub.RuleSuites.Add(@{ id = 1; after_sha = $stub.PullRequest.mergeCommit.oid; ref = 'refs/heads/main'; result = 'pass' })
+        Add-MergeGateStubRuleSuite -Stub $stub -AfterSha $stub.PullRequest.mergeCommit.oid -Result 'pass'
         $merge.Pr = 75; $merge.ExpectedHeadSha = $stub.PullRequest.headRefOid; $merge.Now = $stub.Now
         $result = Invoke-GatedMerge @merge
 
@@ -818,6 +850,17 @@ Describe 'Invoke-GatedMerge' {
         $result.mergeCommit | Should -Be $stub.PullRequest.mergeCommit.oid
         $result.postVerify.verified | Should -BeTrue
         @($stub.Calls | Where-Object { $_[0] -eq 'pr' }).Count | Should -Be 0
+    }
+
+    It 'fails the verification of an already merged pull request without a passing rule suite (exit 5)' {
+        $stub = Initialize-MergeGateStub -Scenario pr-75
+        Add-MergeGateStubRuleSuite -Stub $stub -AfterSha $stub.PullRequest.mergeCommit.oid -Result 'bypass'
+        $merge.Pr = 75; $merge.ExpectedHeadSha = $stub.PullRequest.headRefOid; $merge.Now = $stub.Now
+        $result = Invoke-GatedMerge @merge
+
+        $result.reason | Should -Be 'already-merged'
+        $result.postVerify.ruleSuiteResult | Should -Be 'bypass'
+        $result.exitCode | Should -Be 5
     }
 
     It 'evaluates once more and does not retry when GitHub refuses the merge' {
@@ -885,16 +928,21 @@ Describe 'Invoke-GatedMerge' {
         @{ Case = 'a merged state in another case'; State = @{ state = 'merged'; merged = $true; mergeCommit = @{ oid = 'a' * 40 } }; Suite = @{ after_sha = 'a' * 40; result = 'pass' }; Expected = $false }
         @{ Case = 'merged=false'; State = @{ state = 'MERGED'; merged = $false; mergeCommit = @{ oid = 'a' * 40 } }; Suite = @{ after_sha = 'a' * 40; result = 'pass' }; Expected = $false }
         @{ Case = 'no rule suite'; State = @{ state = 'MERGED'; merged = $true; mergeCommit = @{ oid = 'a' * 40 } }; Suite = $null; Expected = $false }
+        @{ Case = 'a retargeted pull request'; State = @{ state = 'MERGED'; merged = $true; baseRefName = 'release'; mergeCommit = @{ oid = 'a' * 40 } }; Suite = @{ after_sha = 'a' * 40; result = 'pass' }; Expected = $false }
+        @{ Case = 'a base in another case'; State = @{ state = 'MERGED'; merged = $true; baseRefName = 'Main'; mergeCommit = @{ oid = 'a' * 40 } }; Suite = @{ after_sha = 'a' * 40; result = 'pass' }; Expected = $false }
         @{ Case = 'no state'; State = $null; Suite = @{ after_sha = 'a' * 40; result = 'pass' }; Expected = $false }
     ) {
-        InModuleScope MergeGate -Parameters $_ { Test-MergeGatePostMerge -State $State -Suite $Suite | Should -Be $Expected }
+        InModuleScope MergeGate -Parameters $_ {
+            if ($State -and -not $State.Contains('baseRefName')) { $State['baseRefName'] = 'main' }
+            Test-MergeGatePostMerge -State $State -Suite $Suite -BaseRef 'main' | Should -Be $Expected
+        }
     }
 }
 
 Describe 'Merge gate scripts' {
     It 'Test-MergeGate.ps1 writes only JSON to the output and exits with the input error code' {
         $script = Join-Path $PSScriptRoot '../agents/Test-MergeGate.ps1'
-        $output = & pwsh -NoProfile -File $script -Repository 'not a repository' -Pr 1 2>$null
+        $output = & pwsh -NoProfile -File $script -Repository 'not a repository' -Pr 1 -Now '2026-10-22T10:00:00Z' 2>$null
         $LASTEXITCODE | Should -Be 4
         ($output -join "`n" | ConvertFrom-Json).reasons[0].code | Should -Be 'invalid-input'
     }

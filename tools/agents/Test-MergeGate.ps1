@@ -14,7 +14,7 @@ The coordinator runs the copy from origin/main, so that a branch cannot weaken i
 ./tools/agents/Test-MergeGate.ps1 -Repository msucharda/devsecops-platform -Pr 85 -ExpectedHeadSha <sha>
 
 .EXAMPLE
-./tools/agents/Test-MergeGate.ps1 -Repository sucharda.ghe.com/slzdso-platform/instance -Pr 8 -ExpectMerged
+./tools/agents/Test-MergeGate.ps1 -Repository example.ghe.com/example-platform/instance -Pr 8 -ExpectMerged
 #>
 [CmdletBinding()]
 param(
@@ -35,7 +35,7 @@ param(
     [int] $MissingCheckGraceMinutes = 15,
     [int] $CopilotPostGraceMinutes = 45,
     # Test seam; the default is the current UTC time.
-    [Nullable[datetime]] $Now
+    [datetime] $Now
 )
 
 Set-StrictMode -Version Latest
@@ -43,8 +43,6 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MergeGate.psm1') -Force
 
 $parameters = @{} + $PSBoundParameters
-if ($null -eq $Now) { $parameters.Remove('Now') }
-else { $parameters['Now'] = $Now.Value }
 $result = Invoke-MergeGate @parameters
 foreach ($reason in @($result.reasons)) { [Console]::Error.WriteLine("$($reason.status) $($reason.check)/$($reason.code): $($reason.message)") }
 Write-Output (ConvertTo-MergeGateJson -Result $result)

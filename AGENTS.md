@@ -156,7 +156,7 @@ Merge gate rozhoduje, zda PR splňuje podmínky pro merge. Nerozhoduje, zda agen
 - Koordinátor mergeuje jen přes `./tools/agents/Invoke-GatedMerge.ps1 -Repository <owner/repo> -Pr <číslo> -ExpectedHeadSha <head SHA> -Reason <souhlas nebo mandát>`. Skript vždy vyhodnotí gate znovu a mergeuje jen při `pass` přes `--squash --match-head-commit`. Merge queue gate nepodporuje (`merge-queue-unsupported`), protože fronta by PR zamergovala později bez gate.
 - Koordinátor spouští verzi z `origin/main` (`git show origin/main:tools/agents/...`), aby větev nemohla oslabit vlastní gate.
 - Agent nesmí použít `gh pr merge --admin`, `--auto` ani `gh pr ready` a merge v jednom kroku. Verdikt `blocked-by-rules` znamená chybu v rulesetu, ne důvod k obejití pravidel.
-- Změnu oprávnění, triggerů, secrets nebo runnerů v `.github/workflows/**` nebo `.github/actions/**` musí potvrdit člověk pro konkrétní head SHA. Koordinátor potvrzení předá přes `-AcknowledgeWorkflowChanges <head SHA>`.
+- Změnu oprávnění tokenu, privilegovaných triggerů (`pull_request_target`, `workflow_run`), secrets nebo self-hosted runnerů v `.github/workflows/**` nebo `.github/actions/**` musí potvrdit člověk pro konkrétní head SHA. Koordinátor potvrzení předá přes `-AcknowledgeWorkflowChanges <head SHA>`.
 - Konvence těla PR:
   - Tělo PR musí vždy obsahovat sekci `## Otevřené otázky`. Bez otázek obsahuje text „Žádné“. Neprázdná sekce zastaví merge (`open-questions`).
   - Sekce `## Otevřená živá kritéria` není otevřená otázka a gate ji nečte.
