@@ -62,6 +62,11 @@ try { $setting = Get-CiWorkflowSetting -WorkflowPath (Join-Path $repo '.github/w
 catch { Exit-Usage "Cannot read .github/workflows/ci.yml: $($_.Exception.Message)" }
 [string[]] $allRoots = @(& (Join-Path $PSScriptRoot 'Get-TerraformRoots.ps1') -RepositoryPath $repo | ConvertFrom-Json)
 
+# The default C:\Windows\TEMP allows creating files but denies deleting and enumerating them, so every run uses its own.
+$temp = Join-Path $repo 'artifacts/local-ci/tmp'
+if (Test-Path -LiteralPath $temp) { Get-ChildItem -LiteralPath $temp -Force | Remove-Item -Recurse -Force }
+$null = New-Item -ItemType Directory -Force -Path $temp
+
 # Selection
 $changedFiles = @()
 $newFiles = @()
@@ -97,14 +102,14 @@ else {
         $baseCi = Invoke-Git @('show', "$($mb):.github/workflows/ci.yml")
         if ($baseCi.ExitCode -ne 0) { $ciChanged = $true }
         else {
-            $basePath = Join-Path ([IO.Path]::GetTempPath()) "local-ci-base-$([guid]::NewGuid().ToString('N')).yml"
+            $basePath = Join-Path $temp "ci-base-$([guid]::NewGuid().ToString('N')).yml"
             try {
                 Set-Content -LiteralPath $basePath -Value ($baseCi.Output -join "`n") -Encoding utf8NoBOM
                 $baseSetting = Get-CiWorkflowSetting -WorkflowPath $basePath
                 $ciChanged = $baseSetting.TerraformFingerprint -cne $setting.TerraformFingerprint
             }
             catch { $ciChanged = $true }
-            finally { Remove-Item -LiteralPath $basePath -Force -ErrorAction SilentlyContinue }
+            finally { Remove-Item -LiteralPath $basePath -Force }
         }
     }
     $selection = Get-LocalCiSelection -RepoPath $repo -ChangedFile $changedFiles -TerraformRoot $allRoots -AllTerraformRoots:$ciChanged
@@ -138,7 +143,6 @@ $savedEnvironment = @{}
 foreach ($name in 'TEMP', 'TMP', 'TMPDIR', 'TF_IN_AUTOMATION', 'INTERRUPTION_SHARD') {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
 }
-$temp = Join-Path $repo 'artifacts/local-ci/tmp'
 $results = [System.Collections.Generic.List[object]]::new()
 $pesterCounts = [System.Collections.Generic.List[object]]::new()
 $failed = $false
