@@ -66,6 +66,8 @@ resource "terraform_data" "actions_policy_settings" {
 
 # Reads the actual policy. Without pending changes the plan reads it and fails on drift; with pending changes the read
 # waits for apply and verifies the result. A read error fails the run, so an unknown state never passes as compliant.
+# Only its postcondition consumes the result.
+# tflint-ignore: terraform_unused_declarations
 data "external" "actions_policy_state" {
   for_each = toset(var.target_organizations)
 
