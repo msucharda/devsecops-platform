@@ -73,7 +73,7 @@ if ($moduleProblems.Count -gt 0) {
 try { $setting = Get-CiWorkflowSetting -WorkflowPath (Join-Path $repo '.github/workflows/ci.yml') }
 catch { Exit-Usage "Cannot read .github/workflows/ci.yml: $($_.Exception.Message)" }
 [string[]] $allRoots = @(& (Join-Path $PSScriptRoot 'Get-TerraformRoots.ps1') -RepositoryPath $repo | ConvertFrom-Json)
-$temp = Join-Path $repo 'artifacts/local-ci/tmp'
+$temp = Get-LocalCiTempPath -RepoPath $repo
 # Selection
 $changedFiles = @()
 $newFiles = @()

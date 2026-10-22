@@ -256,6 +256,20 @@ Describe 'Local CI temp directory' {
         @(Get-ChildItem -LiteralPath $temp -Force) | Should -BeNullOrEmpty
     }
 
+    It 'places the temp directory outside the repository, one per worktree' {
+        $data = Join-Path $TestDrive 'data'
+        $first = Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'worktree-a') -DataRoot $data
+        $first | Should -BeLike (Join-Path $data 'devsecops-local-ci/*')
+        Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'worktree-a') -DataRoot $data | Should -BeExactly $first
+        Get-LocalCiTempPath -RepoPath (Join-Path $TestDrive 'worktree-b') -DataRoot $data | Should -Not -Be $first
+        (Get-LocalCiTempPath -RepoPath $repoRoot).StartsWith([IO.Path]::GetFullPath($repoRoot), [StringComparison]::OrdinalIgnoreCase) | Should -BeFalse
+    }
+
+    It 'refuses a temp directory inside the repository' {
+        $repo = Join-Path $TestDrive 'worktree-c'
+        { Get-LocalCiTempPath -RepoPath $repo -DataRoot (Join-Path $repo 'artifacts') } | Should -Throw '*inside the repository*'
+    }
+
     It 'creates a missing temp directory' {
         $temp = Join-Path $TestDrive 'missing-tmp'
         Clear-LocalCiTemp -Path $temp

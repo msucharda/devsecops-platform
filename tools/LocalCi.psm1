@@ -296,6 +296,32 @@ function Get-LocalCiModuleProblem {
     }
 }
 
+function Get-LocalCiTempPath {
+    <#
+    .SYNOPSIS
+    Returns the per-worktree temp directory of Invoke-LocalCi, outside the repository.
+    .DESCRIPTION
+    Tools refuse work folders inside the source checkout (ADR 0012), so the directory lives under the user's
+    local application data and is named after a hash of the worktree path.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][string] $RepoPath,
+        [string] $DataRoot = [Environment]::GetFolderPath('LocalApplicationData')
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DataRoot)) { throw 'The local application data folder is not available for the local CI temp directory.' }
+    $repo = [IO.Path]::GetFullPath($RepoPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($repo.ToLowerInvariant()))).Substring(0, 16).ToLowerInvariant()
+    $path = [IO.Path]::GetFullPath((Join-Path $DataRoot "devsecops-local-ci/$hash"))
+    $relative = [IO.Path]::GetRelativePath($repo, $path)
+    if ($relative -eq '.' -or -not ($relative.StartsWith('..') -or [IO.Path]::IsPathRooted($relative))) {
+        throw "The local CI temp directory $path is inside the repository $repo."
+    }
+    return $path
+}
+
 function Clear-LocalCiTemp {
     <#
     .SYNOPSIS
@@ -424,5 +450,5 @@ function Get-PesterCount {
     return [pscustomobject]@{ Passed = $passed; Failed = $failed; NotRun = $notRun }
 }
 
-Export-ModuleMember -Function Get-CiWorkflowSetting, Get-LocalCiSelection, Get-LocalCiPreflightProblem, Get-LocalCiModuleProblem, Clear-LocalCiTemp,
+Export-ModuleMember -Function Get-CiWorkflowSetting, Get-LocalCiSelection, Get-LocalCiPreflightProblem, Get-LocalCiModuleProblem, Get-LocalCiTempPath, Clear-LocalCiTemp,
     Get-LocalCiTerraformStepCommand, Get-PesterFailureDetail, Get-PesterCount
