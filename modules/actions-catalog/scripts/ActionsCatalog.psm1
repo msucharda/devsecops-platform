@@ -44,6 +44,8 @@ function Assert-CatalogInput {
     if ($Upstream -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}\z' -or $Upstream -cmatch '/\.\.?\z') {
         throw "Upstream '$Upstream' is not a lowercase owner/repository."
     }
+    # The copy name {owner}-{repo} has the length of the upstream name; GitHub allows at most 100 characters.
+    if ($Upstream.Length -gt 100) { throw "Upstream '$Upstream' gives a copy name longer than 100 characters." }
     if ($SecurityTeam -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?\z') { throw "Security team '$SecurityTeam' is not a team slug." }
     if ([string]::IsNullOrEmpty($Tag) -ne [string]::IsNullOrEmpty($Commit)) { throw "Release of '$Upstream' needs both a tag and a commit." }
     if ($Tag -and ($Tag -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\z' -or $Tag.Contains('..') -or $Tag.EndsWith('.lock') -or $Tag.EndsWith('.'))) {

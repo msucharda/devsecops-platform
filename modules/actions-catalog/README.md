@@ -34,7 +34,7 @@ Předpoklady: `organizations`. Ruční kroky: `create-actions-security-team` a `
 |---|---|---|
 | `target_organizations` | ano | Rozsah GitHub App: přesně organizace akcí instance, například `["demo-a1b2c3-actions"]`. Velikost písmen se při porovnání ignoruje. |
 | `security_team` | ano | Slug týmu v organizaci akcí, který vlastní katalog přes CODEOWNERS a schvaluje importy. Malá písmena, číslice a `-`, nejvýše 100 znaků. |
-| `catalog` | ne | Seznam upstreamů `owner/repo` malými písmeny. Výchozí hodnota je počáteční katalog. Názvy repozitářů `{owner}-{repo}` se nesmí shodovat. |
+| `catalog` | ne | Seznam upstreamů `owner/repo` malými písmeny. Výchozí hodnota je počáteční katalog. Názvy repozitářů `{owner}-{repo}` se nesmí shodovat a mají nejvýše 100 znaků. |
 | `releases` | ne | Mapa upstream → `{ tag, commit }` schválených importů. `commit` je plné SHA (40 znaků hex, malá písmena) commitu importu na `main`. Výchozí hodnota je prázdná mapa. |
 
 Terraform validuje parametry před spuštěním provisionerů.

@@ -77,9 +77,10 @@ variable "catalog" {
   validation {
     condition = alltrue([
       for upstream in var.catalog :
-      can(regex("^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$", upstream)) && !can(regex("/\\.\\.?$", upstream))
+      can(regex("^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$", upstream)) && !can(regex("/\\.\\.?$", upstream)) &&
+      length(upstream) <= 100
     ])
-    error_message = "Each catalog entry must be a lowercase upstream owner/repository."
+    error_message = "Each catalog entry must be a lowercase upstream owner/repository whose copy name {owner}-{repo} has at most 100 characters."
   }
 
   validation {

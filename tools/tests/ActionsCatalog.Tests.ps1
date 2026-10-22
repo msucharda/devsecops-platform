@@ -293,6 +293,10 @@ Describe 'Actions catalog module against the documented GitHub API' {
             { Assert-CatalogInput -Organization $organization -Upstream $upstream -SecurityTeam $securityTeam -Tag $Tag -Commit $Commit } | Should -Not -Throw
         }
 
+        It 'accepts an upstream whose copy name has exactly 100 characters' {
+            { Assert-CatalogInput -Organization $organization -Upstream ('actions/' + 'a' * 92) -SecurityTeam $securityTeam } | Should -Not -Throw
+        }
+
         It 'refuses <Case>' -ForEach @(
             @{ Case = 'an organization with a slash'; Field = 'Organization'; Value = 'demo/actions'; Error = '*not a GitHub login*' }
             @{ Case = 'an organization with a leading dash'; Field = 'Organization'; Value = '-demo'; Error = '*not a GitHub login*' }
@@ -300,6 +304,7 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'an upstream in upper case'; Field = 'Upstream'; Value = 'Actions/checkout'; Error = '*lowercase owner/repository*' }
             @{ Case = 'an upstream with a nested path'; Field = 'Upstream'; Value = 'actions/checkout/sub'; Error = '*lowercase owner/repository*' }
             @{ Case = 'an upstream repository named ..'; Field = 'Upstream'; Value = 'actions/..'; Error = '*lowercase owner/repository*' }
+            @{ Case = 'an upstream whose copy name exceeds 100 characters'; Field = 'Upstream'; Value = ('actions/' + 'a' * 93); Error = '*longer than 100 characters*' }
             @{ Case = 'a team slug in upper case'; Field = 'SecurityTeam'; Value = 'Actions-Security'; Error = '*not a team slug*' }
             @{ Case = 'a team slug with a slash'; Field = 'SecurityTeam'; Value = 'org/team'; Error = '*not a team slug*' }
             @{ Case = 'a tag without a commit'; Field = 'Tag'; Value = 'v4.2.2'; Error = '*needs both a tag and a commit*' }

@@ -231,6 +231,24 @@ run "rejects_a_dot_repository" {
   expect_failures = [var.catalog]
 }
 
+run "rejects_a_copy_name_longer_than_100_characters" {
+  command = plan
+
+  variables {
+    catalog = ["actions/${join("", [for i in range(93) : "a"])}"]
+  }
+
+  expect_failures = [var.catalog]
+}
+
+run "accepts_a_copy_name_of_100_characters" {
+  command = plan
+
+  variables {
+    catalog = ["actions/${join("", [for i in range(92) : "a"])}"]
+  }
+}
+
 run "rejects_colliding_repository_names" {
   command = plan
 
