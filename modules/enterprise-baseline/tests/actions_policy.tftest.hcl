@@ -71,14 +71,14 @@ run "manages_the_policy_of_every_organization" {
   assert {
     condition = alltrue([
       for organization, state in data.external.actions_policy_state :
-      state.query == {
+      state.query == tomap({
         api_url                          = "https://api.example.ghe.com"
         organization                     = organization
         enabled_repositories             = "all"
         allowed_actions                  = "local_only"
         default_workflow_permissions     = "read"
         can_approve_pull_request_reviews = "false"
-      }
+      })
     ])
     error_message = "The state reader must verify the managed policy of its organization."
   }
