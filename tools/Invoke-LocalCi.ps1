@@ -283,7 +283,7 @@ try {
         exit 2
     }
     Add-Result -Name 'Preflight' -Status 'PASS' -Seconds $watch.Elapsed.TotalSeconds
-    $actionlint = if ((& $toolProbe 'actionlint') -ceq $setting.ActionlintVersion) { @('actionlint') }
+    [string[]] $actionlint = if ((& $toolProbe 'actionlint') -ceq $setting.ActionlintVersion) { @('actionlint') }
     else { @('go', 'run', "github.com/rhysd/actionlint/cmd/actionlint@v$($setting.ActionlintVersion)") }
 
     # 2.-5. pwsh steps, in full and unchanged from ci.yml
