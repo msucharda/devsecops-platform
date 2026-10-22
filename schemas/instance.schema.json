@@ -69,7 +69,8 @@
         "emuUserNamespacesRestricted": { "$ref": "#/definitions/confirmation" },
         "fineGrainedPatApprovalRequired": { "$ref": "#/definitions/confirmation" },
         "patMaxLifetime90Days": { "$ref": "#/definitions/confirmation" },
-        "githubAppAvailabilityVerified": { "$ref": "#/definitions/confirmation" }
+        "githubAppAvailabilityVerified": { "$ref": "#/definitions/confirmation" },
+        "liveWorkflowsPromoted": { "$ref": "#/definitions/confirmation" }
       }
     },
     "bootstrap": {

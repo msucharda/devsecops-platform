@@ -9,6 +9,7 @@ manualPrerequisites:
   - emuUserNamespacesRestricted
   - fineGrainedPatApprovalRequired
   - patMaxLifetime90Days
+  - liveWorkflowsPromoted
 manualSteps: []
 permissions:
   azure: []

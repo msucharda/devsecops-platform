@@ -41,8 +41,9 @@ Manifest deklaruje `manualPrerequisites`. Runner před plan a apply vyžaduje `t
 | `emuUserNamespacesRestricted` | EMU user namespaces nesmějí obsahovat repozitáře, které obejdou organizační kontroly. |
 | `fineGrainedPatApprovalRequired` | Fine-grained PAT vyžaduje schválení. |
 | `patMaxLifetime90Days` | Maximální platnost PAT je 90 dní. |
+| `liveWorkflowsPromoted` | Živá workflow v `.github/workflows` repozitáře instance jsou povýšená z `platform/` a volají jen katalogové akce. Viz [Politika akcí](#politika-akcí-a-oprávnění-github_token). |
 
-Platformní tým příznaky nastaví před bootstrapem. O omezení classic PAT zatím není rozhodnuto. Teardown tyto předpoklady zachová. Jejich ruční potvrzení není důkaz automatického planu ani detekce driftu.
+Platformní tým nastaví enterprise příznaky před bootstrapem. Příznak `liveWorkflowsPromoted` nastaví až po mergi PR s povýšením workflow; bootstrap ani průvodce ho nevyžadují a průvodce zachová jeho hodnotu. O omezení classic PAT zatím není rozhodnuto. Teardown tyto předpoklady zachová. Jejich ruční potvrzení není důkaz automatického planu ani detekce driftu.
 
 ## Organizační oprávnění
 
@@ -73,10 +74,10 @@ Modul v každé organizaci z `target_organizations` nastaví tato pole (API verz
 | | `can_approve_pull_request_reviews` | `false` | `false` |
 
 - `local_only` povolí akce z repozitářů organizace a enterprise. Vendorované akce v organizaci akcí jsou dostupné celé enterprise ([`actions-catalog`](../actions-catalog/README.md)), proto workflow organizací instance smějí volat jen je a akce enterprise. Akce z GitHub.com a Marketplace politika zablokuje.
-- Omezení: `local_only` nezablokuje akce z jiných organizací enterprise. Užší pravidlo „jen organizace akcí“ by vyžadovalo enterprise politiku nebo seznam `selected` s vyloučením; je to otevřená otázka.
-- Pořadí nasazení: úspěšný apply `actions-catalog` nedokazuje, že živá workflow v `.github/workflows` repozitáře instance už používají katalogové akce. Povýšení šablon z `platform/` je samostatný ruční krok ([vendoring](../../docs/vendoring.md#ruční-povýšení-živých-workflow-v-16)). Platformní tým musí povýšení mergnout před prvním apply tohoto modulu. Jinak politika zablokuje deploy, drift i teardown workflow, které upstream akce stále volají. Obnova: organization owner v UI dočasně povolí všechny akce, povýší workflow a apply zopakuje. Modul toto pořadí zatím nevynucuje; mechanismus vynucení je otevřená otázka.
+- Omezení: `local_only` nezablokuje akce z jiných organizací enterprise. Přírůstek 1 `local_only` ponechá (rozhodnutí uživatele z 22. 10. 2026). Užší pravidlo `selected` se vzorem pro organizaci akcí a jeho živé ověření řeší [#81](https://github.com/msucharda/devsecops-platform/issues/81).
+- Pořadí nasazení: úspěšný apply `actions-catalog` nedokazuje, že živá workflow v `.github/workflows` repozitáře instance už používají katalogové akce. Povýšení šablon z `platform/` je samostatný ruční krok ([vendoring](../../docs/vendoring.md#ruční-povýšení-živých-workflow-v-16)). Platformní tým musí povýšení mergnout před prvním apply tohoto modulu. Jinak politika zablokuje deploy, drift i teardown workflow, které upstream akce stále volají. Runner proto před plan a apply vyžaduje příznak `manualPrerequisites.liveWorkflowsPromoted: true`; chybějící nebo nepravdivá hodnota plan zastaví. Příznak je ruční deklarace, ne důkaz. Automatický preflight `uses:` v živých workflow řeší [#83](https://github.com/msucharda/devsecops-platform/issues/83). Obnova po chybném pořadí: organization owner v UI dočasně povolí všechny akce, povýší workflow a apply zopakuje.
 - `can_approve_pull_request_reviews` řídí i vytváření PR z GitHub Actions (v UI „Allow GitHub Actions to create and approve pull requests“).
-- Modul nespravuje `sha_pinning_required` ani seznam `selected-actions`; `sha_pinning_required` ponechá beze změny.
+- Modul nespravuje `sha_pinning_required` ani seznam `selected-actions`; `sha_pinning_required` ponechá beze změny (rozhodnutí uživatele z 22. 10. 2026). Ověření SHA pinningu workflow a rozhodnutí o poli řeší [#82](https://github.com/msucharda/devsecops-platform/issues/82).
 - Enterprise politika může nastavení organizace zakázat. Pak `PUT` vrátí HTTP 409 a apply selže se zprávou o enterprise politice. Modul enterprise politiku nemění.
 - Zápis i čtení provádí skript `scripts/ActionsPolicy.psm1`. Oba `PUT` vrací `204` bez těla, proto modul nepoužívá provider `restapi`. Každý zápis je idempotentní `PUT` jen se spravovanými poli. Skript nejdřív přečte stav a zapíše jen rozdíl. Po zápisu stav znovu přečte a selže, když neodpovídá politice.
 - Data source `external.actions_policy_state` čte `GET /orgs/{org}/actions/permissions` a `GET /orgs/{org}/actions/permissions/workflow` při každém planu a po apply. Chybějící pole, jiný typ nebo jiná velikost písmen je porušení, ne shoda. Drift zastaví plan; oprava je ruční obnova nebo apply s `-replace=terraform_data.actions_policy_settings["<org>"]`.

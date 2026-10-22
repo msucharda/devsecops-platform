@@ -28,6 +28,7 @@ manualPrerequisites:
   fineGrainedPatApprovalRequired: false
   patMaxLifetime90Days: false
   githubAppAvailabilityVerified: false
+  liveWorkflowsPromoted: false
 githubApps: {}
 credentials: {}
 teardown:

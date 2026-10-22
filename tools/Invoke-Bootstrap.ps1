@@ -731,7 +731,7 @@ if (@($selected).Count -gt 0) {
 }
 
 if ($Preflight) {
-    foreach ($prerequisite in @(Get-PlatformManualPrerequisite -Instance $instance)) {
+    foreach ($prerequisite in @(Get-PlatformManualPrerequisite -Instance $instance -Scope Bootstrap)) {
         $checkResults.Add([pscustomobject]@{
             Area = 'Manual prerequisites'
             Check = "`$.manualPrerequisites.$($prerequisite.Name)"

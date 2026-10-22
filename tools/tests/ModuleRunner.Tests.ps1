@@ -424,6 +424,54 @@ terraform {
         Test-Path -LiteralPath (Join-Path $arguments.StatePath 'bootstrap.tfstate') | Should -BeFalse
     }
 
+    It 'does not require the post-bootstrap confirmation liveWorkflowsPromoted for bootstrap when it is <Case>' -ForEach @(
+        @{ Case = 'false'; Remove = $false }
+        @{ Case = 'missing'; Remove = $true }
+    ) {
+        $bootstrapRoot = Join-Path $modules 'bootstrap'
+        Copy-Item -LiteralPath (Join-Path $modules 'foundation') -Destination $bootstrapRoot -Recurse
+        $manifestFile = Join-Path $bootstrapRoot 'module.yaml'
+        (Get-Content -LiteralPath $manifestFile -Raw).Replace('name: foundation', 'name: bootstrap') |
+            Set-Content -LiteralPath $manifestFile
+        $instance.modules = @{ bootstrap = @{ parameters = @{ message = 'hello' } } }
+        if ($Remove) { $instance.manualPrerequisites.Remove('liveWorkflowsPromoted') }
+        else { $instance.manualPrerequisites.liveWorkflowsPromoted = $false }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        $result = & $runner -Module bootstrap -Action plan @arguments 6>$null
+
+        $result.HasChanges | Should -BeTrue
+    }
+
+    It 'blocks module plan when the declared liveWorkflowsPromoted confirmation is <Case>' -ForEach @(
+        @{ Case = 'false'; Remove = $false }
+        @{ Case = 'missing'; Remove = $true }
+    ) {
+        $manifestFile = Join-Path $modules 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestFile -Raw)
+        $manifest.manualPrerequisites = @('liveWorkflowsPromoted')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestFile
+        if ($Remove) { $instance.manualPrerequisites.Remove('liveWorkflowsPromoted') }
+        else { $instance.manualPrerequisites.liveWorkflowsPromoted = $false }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        { & $runner -Module foundation -Action plan @arguments 6>$null } |
+            Should -Throw "*foundation*requires manual prerequisite confirmations*$.manualPrerequisites.liveWorkflowsPromoted*"
+        Test-Path -LiteralPath (Join-Path $arguments.StatePath 'foundation.tfstate') | Should -BeFalse
+    }
+
+    It 'plans a module whose declared liveWorkflowsPromoted confirmation is true' {
+        $manifestFile = Join-Path $modules 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestFile -Raw)
+        $manifest.manualPrerequisites = @('liveWorkflowsPromoted')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestFile
+
+        $result = & $runner -Module foundation -Action plan @arguments 6>$null
+
+        $result.HasChanges | Should -BeTrue
+        @($result.ManualPrerequisites | Where-Object { $_.Name -ceq 'liveWorkflowsPromoted' -and $_.Confirmed }).Count | Should -Be 1
+    }
+
     It 'blocks module <Action> when a declared enterprise prerequisite is <Case>' -ForEach @(
         @{ Action = 'plan'; Case = 'false'; Remove = $false }
         @{ Action = 'apply'; Case = 'false'; Remove = $false }

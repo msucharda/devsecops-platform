@@ -21,3 +21,4 @@ manualPrerequisites:
   fineGrainedPatApprovalRequired: true
   patMaxLifetime90Days: true
   githubAppAvailabilityVerified: true
+  liveWorkflowsPromoted: true

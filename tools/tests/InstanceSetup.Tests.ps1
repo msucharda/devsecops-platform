@@ -473,7 +473,7 @@ Describe 'Instance setup wizard' {
             @($flags.Keys) | Should -Be @(
                 'tenant', 'subscriptions', 'enterpriseOidc', 'enterpriseScim', 'enterpriseOwner', 'licenses',
                 'privateInternalForksDisabled', 'repositoryManagementPoliciesEnforced', 'emuUserNamespacesRestricted',
-                'fineGrainedPatApprovalRequired', 'patMaxLifetime90Days', 'githubAppAvailabilityVerified'
+                'fineGrainedPatApprovalRequired', 'patMaxLifetime90Days', 'githubAppAvailabilityVerified', 'liveWorkflowsPromoted'
             )
             @($flags.Keys | Where-Object { $flags[$_] }) | Should -Be @(
                 'tenant', 'subscriptions', 'enterpriseOidc', 'enterpriseScim', 'enterpriseOwner', 'licenses',
@@ -496,6 +496,20 @@ Describe 'Instance setup wizard' {
             }
             $flags['privateInternalForksDisabled'] | Should -BeFalse
             $flags['repositoryManagementPoliciesEnforced'] | Should -BeFalse
+
+            $setup.Existing = @{ manualPrerequisites = @{ liveWorkflowsPromoted = $true } }
+            $flags = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Get-SetupFlag -Setup $Setup
+            }
+            $flags['liveWorkflowsPromoted'] | Should -BeTrue
+
+            $setup.Existing = @{ manualPrerequisites = @{ liveWorkflowsPromoted = 'true' } }
+            $flags = InModuleScope InstanceSetup -Parameters @{ Setup = $setup } {
+                param($Setup)
+                Get-SetupFlag -Setup $Setup
+            }
+            $flags['liveWorkflowsPromoted'] | Should -BeFalse
         }
     }
 
