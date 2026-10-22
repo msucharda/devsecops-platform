@@ -52,6 +52,54 @@ Describe 'Deployment authorization' {
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly
     }
 
+    It 'denies a platform-team PR from a vendoring import branch without contacting the membership API: <Branch>' -ForEach @(
+        @{ Branch = 'vendor/release/platform-org-devsecops-platform-v1.2.0-0123456789abcdef' }
+        @{ Branch = 'Vendor/action/upstream-action-v1-0123456789abcdef' }
+    ) {
+        $payload = @{
+            pull_request = @{
+                head = @{ ref = $Branch; sha = ('a' * 40); repo = @{ id = 1; full_name = 'platform/instance' } }
+                base = @{ ref = 'main'; repo = @{ id = 1; full_name = 'platform/instance' } }
+                user = @{ login = 'member'; type = 'User' }
+            }
+        }
+        $path = Join-Path $TestDrive 'vendoring.json'
+        ConvertTo-Json $payload -Depth 20 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod { throw 'A vendoring import branch must never reach membership lookup.' }
+
+        $result = & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance `
+            -Ref refs/heads/main -Team platform-team -ApiUrl https://api.example.test
+
+        $result.Allowed | Should -BeFalse
+        $result.Reason | Should -Match 'vendoring import branch'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'still grants an active platform-team author on an ordinary branch: <Branch>' -ForEach @(
+        @{ Branch = 'feature/vendor/update' }
+        @{ Branch = 'vendoring-docs' }
+    ) {
+        $payload = @{
+            pull_request = @{
+                head = @{ ref = $Branch; sha = ('b' * 40); repo = @{ id = 1; full_name = 'platform/instance' } }
+                base = @{ ref = 'main'; repo = @{ id = 1; full_name = 'platform/instance' } }
+                user = @{ login = 'member'; type = 'User' }
+            }
+        }
+        $path = Join-Path $TestDrive 'ordinary.json'
+        ConvertTo-Json $payload -Depth 20 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod {
+            param($Uri)
+            if ($Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team') { return [pscustomobject]@{ slug = 'platform-team' } }
+            [pscustomobject]@{ state = 'active' }
+        }
+
+        $result = & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance `
+            -Ref refs/heads/main -Team platform-team -ApiUrl https://api.example.test
+
+        $result.Allowed | Should -BeTrue
+    }
+
     It 'grants credentials only for active platform-team authors: <State>' -ForEach @(
         @{ State = 'active'; Allowed = $true }
         @{ State = 'pending'; Allowed = $false }

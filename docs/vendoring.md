@@ -83,7 +83,7 @@ Větev importu má stabilní identitu: `vendor/<kind>/<zdroj>-<tag>-<hash>`. Has
 
 PR otevře installation token, nikoli `GITHUB_TOKEN`. GITHUB_TOKEN workflow má pouze `contents: read` pro checkout důvěryhodných nástrojů. Tokeny se po použití odvolají i při chybě. Chyba push nebo vytvoření PR se nesmí vykázat jako úspěšný import. Nástroj nevynucuje merge ani nevytváří upstream tag v cíli; tagování schválené kopie řeší #15 po review.
 
-PR body a summary uvádějí **Cloud PR plan: NOT PERFORMED**. Stávající deployment authorization odmítne App autora před předáním cloudových credentials. Po review a merge do chráněné `main` proběhne nový plan před schváleným apply. Úspěšná příprava, validace YAML, vytvoření PR ani ruční krok nejsou cloudový plan.
+PR body a summary uvádějí **Cloud PR plan: NOT PERFORMED**. Stávající deployment authorization odmítne App autora před předáním cloudových credentials. PR z větve `vendor/*` odmítne bez ohledu na autora: App větev importu při obnově force-pushuje, takže PR člověka z této větve může obsahovat neschválený obsah. Po review a merge do chráněné `main` proběhne nový plan před schváleným apply. Úspěšná příprava, validace YAML, vytvoření PR ani ruční krok nejsou cloudový plan.
 
 ### Ruční povýšení živých workflow v #16
 

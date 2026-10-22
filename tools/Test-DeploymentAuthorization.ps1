@@ -41,6 +41,10 @@ elseif ($EventName -eq 'pull_request_target') {
         $pr['head']['repo']['full_name'] -cne $Repository) {
         $reason = 'Pull request is from a fork; cloud plan NOT PERFORMED.'
     }
+    elseif ([string] $pr['head']['ref'] -like 'vendor/*') {
+        # The vendoring App force-pushes its import branches, so even a person's PR from one may carry unreviewed content.
+        $reason = 'Pull request is from a vendoring import branch; cloud plan NOT PERFORMED. Plan runs after review and merge.'
+    }
     elseif ($pr['user']['type'] -cne 'User' -or $pr['user']['login'] -like '*[[]bot]' -or $pr['performed_via_github_app']) {
         $reason = 'Pull request was created by an App; cloud plan NOT PERFORMED. Plan runs after review and merge.'
     }
