@@ -72,6 +72,12 @@ Každý environment s App deklaruje `PLATFORM_APP_ID`, `PLATFORM_APP_INSTALLATIO
 
 `Publish-VendoringPullRequest.ps1` vyžaduje čistý checkout cílové `main` a ověřený installation token. Akce vlastní obsah kořene cílového repozitáře kromě `.github/`; upstream `.github/` se neimportuje, aby nepřepsal governance ani nespustil cizí workflow. Release vlastní jen `platform/`. Nástroj odstraní staré tracked soubory uvnitř příslušné hranice a přidá nové; zachová konfiguraci instance i živé workflow. Do `.vendoring.json`, pro release do `platform/.vendoring.json`, zapíše tag, source commit, digest a stav attestace. Licence a ostatní soubory zdroje zůstávají součástí diffu.
 
+Větev importu má stabilní identitu: `vendor/<kind>/<zdroj>-<tag>-<hash>`. Hash je prvních 16 znaků SHA256 z druhu importu, zdroje (malými písmeny) a tagu. Číslo ani pokus běhu workflow identitu neovlivní. Opakovaný běh proto obnoví přerušený import takto:
+
+- Vzdálená větev se stejným stromem a rodičem zůstane beze změny; nástroj nepushuje.
+- Vzdálenou větev s jiným obsahem nástroj přepíše přes `--force-with-lease`, ale jen pokud obsahuje jediný commit vendoringu nad historií `main`. Commit jiného autora, merge commit nebo cizí historie import zastaví s chybou; větev musí zkontrolovat člověk.
+- Otevřený PR z této větve do `main` nástroj použije znovu (`GET /repos/{owner}/{repo}/pulls` s filtrem `head`). Rozdílný název nebo popis aktualizuje (`PATCH /repos/{owner}/{repo}/pulls/{pull_number}`). Víc PR, PR do jiné větve než `main` nebo neotevřený PR import zastaví s chybou.
+
 PR otevře installation token, nikoli `GITHUB_TOKEN`. GITHUB_TOKEN workflow má pouze `contents: read` pro checkout důvěryhodných nástrojů. Tokeny se po použití odvolají i při chybě. Chyba push nebo vytvoření PR se nesmí vykázat jako úspěšný import. Nástroj nevynucuje merge ani nevytváří upstream tag v cíli; tagování schválené kopie řeší #15 po review.
 
 PR body a summary uvádějí **Cloud PR plan: NOT PERFORMED**. Stávající deployment authorization odmítne App autora před předáním cloudových credentials. Po review a merge do chráněné `main` proběhne nový plan před schváleným apply. Úspěšná příprava, validace YAML, vytvoření PR ani ruční krok nejsou cloudový plan.

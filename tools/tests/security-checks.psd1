@@ -34,6 +34,18 @@
             )
         }
         @{
+            Name = 'vendoring-branch-replaceable'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*refuses to replace an import branch whose head <Case>*', '*replaces a stale vendoring commit*', '*replaces a vendoring commit whose parent*') }
+            )
+        }
+        @{
+            Name = 'vendoring-pull-request-reuse'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*reuses the pushed branch and open PR*', '*ignores a listed PR whose head <Case>*', '*stops before changing a listed PR that <Case>*') }
+            )
+        }
+        @{
             Name = 'github-app-owner'
             Tests = @(
                 @{ Path = 'tools/tests/GitHubAppOwner.Tests.ps1'; FullName = @('*') }
