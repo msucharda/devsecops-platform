@@ -237,7 +237,11 @@ function Invoke-Step {
     Add-Result -Name $Name -Status 'FAIL' -Seconds $watch.Elapsed.TotalSeconds -Note "exit code $code"
     Write-FailureDetail -Output $output.ToArray() -Pester:$Pester
     if ($Pester) {
-        $failedNew = @($newFiles | Where-Object { $_ -clike '*.Tests.ps1' -and ($output -match [regex]::Escape([IO.Path]::GetFileName($_))) })
+        $failedFiles = @(Get-PesterFailureDetail -Line $output.ToArray() | Where-Object { $_ -match '^\s+at ' })
+        $failedNew = @($newFiles | Where-Object {
+            $leaf = [IO.Path]::GetFileName($_)
+            $_ -clike '*.Tests.ps1' -and @($failedFiles | Where-Object { $_ -match "[\\/]$([regex]::Escape($leaf)):\d+$" }).Count -gt 0
+        })
         if ($failedNew.Count -gt 0) {
             Write-Console "    Hint: $($failedNew -join ', ') is new in this diff. Rerun once to rule out a race before you change code."
         }
