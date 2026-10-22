@@ -289,7 +289,7 @@ Describe 'Vendoring diff and pull request publication' {
     }
 
     It 'rejects an invalid resumed PR: <Case>' -ForEach @(
-        @{ Case = 'missing response'; Change = { param($items) return ,@($null) }; Message = '*Invalid vendoring PR response*' }
+        @{ Case = 'missing response'; Change = { return ,@($null) }; Message = '*Invalid vendoring PR response*' }
         @{ Case = 'missing head'; Change = { param($items) $items[0].Remove('head'); return ,$items }; Message = '*head repository*' }
         @{ Case = 'null head repository'; Change = { param($items) $items[0].head.repo = $null; return ,$items }; Message = '*head repository*' }
         @{ Case = 'other head repository'; Change = { param($items) $items[0].head.repo.full_name = 'another/repo'; return ,$items }; Message = '*head repository*' }
