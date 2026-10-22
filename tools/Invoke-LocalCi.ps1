@@ -58,15 +58,19 @@ if ($Changed -and $Full) { Exit-Usage '-Changed and -Full are mutually exclusive
 $mode = if ($Full) { 'Full' } else { 'Changed' }
 
 Import-Module (Join-Path $PSScriptRoot 'LocalCi.psm1') -Force
+$requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
+$moduleProbe = { param($module) @(Get-Module -ListAvailable -Name $module | ForEach-Object { $_.Version.ToString() }) }
+# ci.yml is parsed with powershell-yaml, so missing modules must be reported before parsing.
+$moduleProblems = @(Get-LocalCiModuleProblem -Requirements $requirements -ModuleProbe $moduleProbe)
+if ($moduleProblems.Count -gt 0) {
+    foreach ($problem in $moduleProblems) { Add-LogLine "ERROR $problem"; Write-Information "ERROR $problem" -InformationAction Continue }
+    Write-Console "Log: $LogPath"
+    exit 2
+}
 try { $setting = Get-CiWorkflowSetting -WorkflowPath (Join-Path $repo '.github/workflows/ci.yml') }
 catch { Exit-Usage "Cannot read .github/workflows/ci.yml: $($_.Exception.Message)" }
 [string[]] $allRoots = @(& (Join-Path $PSScriptRoot 'Get-TerraformRoots.ps1') -RepositoryPath $repo | ConvertFrom-Json)
-
-# The default C:\Windows\TEMP allows creating files but denies deleting and enumerating them, so every run uses its own.
 $temp = Join-Path $repo 'artifacts/local-ci/tmp'
-if (Test-Path -LiteralPath $temp) { Get-ChildItem -LiteralPath $temp -Force | Remove-Item -Recurse -Force }
-$null = New-Item -ItemType Directory -Force -Path $temp
-
 # Selection
 $changedFiles = @()
 $newFiles = @()
@@ -102,7 +106,7 @@ else {
         $baseCi = Invoke-Git @('show', "$($mb):.github/workflows/ci.yml")
         if ($baseCi.ExitCode -ne 0) { $ciChanged = $true }
         else {
-            $basePath = Join-Path $temp "ci-base-$([guid]::NewGuid().ToString('N')).yml"
+            $basePath = Join-Path (Split-Path $LogPath -Parent) "ci-base-$([guid]::NewGuid().ToString('N')).yml"
             try {
                 Set-Content -LiteralPath $basePath -Value ($baseCi.Output -join "`n") -Encoding utf8NoBOM
                 $baseSetting = Get-CiWorkflowSetting -WorkflowPath $basePath
@@ -140,7 +144,9 @@ if ($Plan) { exit 0 }
 
 # Environment
 $savedEnvironment = @{}
-foreach ($name in 'TEMP', 'TMP', 'TMPDIR', 'TF_IN_AUTOMATION', 'INTERRUPTION_SHARD') {
+# A nested or concurrent run would empty the per-worktree TEMP of the outer run.
+if ($env:INVOKE_LOCAL_CI_ACTIVE) { Exit-Usage 'Another Invoke-LocalCi run is active in this process tree; nested runs are refused.' }
+foreach ($name in 'TEMP', 'TMP', 'TMPDIR', 'TF_IN_AUTOMATION', 'INTERRUPTION_SHARD', 'INVOKE_LOCAL_CI_ACTIVE') {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 $results = [System.Collections.Generic.List[object]]::new()
@@ -235,21 +241,27 @@ function Invoke-Step {
     }
 }
 
+function Skip-Step {
+    param([string] $Name, [string] $Reason)
+    $note = if ($script:failed) { 'fail-fast' } else { $Reason }
+    Add-Result -Name $Name -Status 'SKIP' -Seconds 0 -Note $note
+}
+
 function ConvertTo-PwshList {
     param([string[]] $Item)
     return ($Item | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ','
 }
 
 try {
-    if (Test-Path -LiteralPath $temp) { Get-ChildItem -LiteralPath $temp -Force | Remove-Item -Recurse -Force }
-    $null = New-Item -ItemType Directory -Force -Path $temp
+    $env:INVOKE_LOCAL_CI_ACTIVE = '1'
+    # The default C:\Windows\TEMP allows creating files but denies deleting and enumerating them, so every run uses its own.
+    Clear-LocalCiTemp -Path $temp
     foreach ($name in 'TEMP', 'TMP', 'TMPDIR') { [Environment]::SetEnvironmentVariable($name, $temp) }
     $env:TF_IN_AUTOMATION = 'true'
     Remove-Item Env:INTERRUPTION_SHARD -ErrorAction SilentlyContinue
 
     # 1. Preflight
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
     $toolProbe = {
         param($tool)
         if (-not (Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
@@ -262,7 +274,6 @@ try {
         }
         return ([string] $text).Trim().TrimStart('v')
     }
-    $moduleProbe = { param($module) @(Get-Module -ListAvailable -Name $module | ForEach-Object { $_.Version.ToString() }) }
     $problems = @(Get-LocalCiPreflightProblem -PowerShellVersion $PSVersionTable.PSVersion -Requirements $requirements -Setting $setting `
         -NeedsTerraformTools:($selection.TerraformRoot.Count -gt 0) -ModuleProbe $moduleProbe -ToolProbe $toolProbe)
     foreach ($problem in $problems) { Write-Console "$(if ($problem.Severity -eq 'Error') { 'ERROR' } else { 'WARN' }) $($problem.Message)" }
@@ -298,12 +309,12 @@ try {
     Invoke-Step -Name 'Discover Terraform roots' -Body {
         Invoke-PwshScript -Script "./tools/Get-TerraformRoots.ps1 -GitHubOutputPath '$(Join-Path $temp 'github-output.txt')'"
     }
-    if ($selection.TerraformRoot.Count -eq 0) { Add-Result -Name 'Terraform' -Status 'SKIP' -Seconds 0 -Note 'no root selected' }
+    if ($selection.TerraformRoot.Count -eq 0) { Skip-Step -Name 'Terraform' -Reason 'no root selected' }
     foreach ($root in $selection.TerraformRoot) {
         $commands = Get-LocalCiTerraformStepCommand -Root $root
         foreach ($name in $commands.Keys) {
             if ($name -eq 'Terraform test' -and -not (Test-Path -LiteralPath (Join-Path $repo "$root/tests") -PathType Container)) {
-                Add-Result -Name "$name ($root)" -Status 'SKIP' -Seconds 0 -Note 'no tests directory'
+                Skip-Step -Name "$name ($root)" -Reason 'no tests directory'
                 continue
             }
             $list = $commands[$name]
@@ -322,7 +333,7 @@ try {
     elseif ($selection.PesterPath.Count -gt 0) { $pesterScript = "./tools/Invoke-Tests.ps1 -CI -Path $(ConvertTo-PwshList $selection.PesterPath)" }
     else { $pesterScript = $null }
     if ($pesterScript) { Invoke-Step -Name 'Run Pester' -Pester -Body { Invoke-PwshScript -Script $pesterScript } }
-    else { Add-Result -Name 'Run Pester' -Status 'SKIP' -Seconds 0 -Note 'no test file mapped' }
+    else { Skip-Step -Name 'Run Pester' -Reason 'no test file mapped' }
 
     # 10. Interruption harness, all shards
     if ($runInterruption) {
@@ -330,7 +341,7 @@ try {
         else { "./tools/Invoke-Tests.ps1 -Tag Interruption -Path $(ConvertTo-PwshList $selection.InterruptionPath)" }
         Invoke-Step -Name 'Interrupt every state-changing step' -Pester -Body { Invoke-PwshScript -Script $interruptionScript }
     }
-    else { Add-Result -Name 'Interrupt every state-changing step' -Status 'SKIP' -Seconds 0 -Note 'no test file mapped' }
+    else { Skip-Step -Name 'Interrupt every state-changing step' -Reason 'no test file mapped' }
 
     # 11. Mutation tests
     if ($runMutation) {
@@ -338,7 +349,7 @@ try {
         if (-not $selection.AllMutation) { $mutationScript += " -Check $(ConvertTo-PwshList $selection.MutationCheck)" }
         Invoke-Step -Name 'Weaken every marked security check' -Body { Invoke-PwshScript -Script $mutationScript }
     }
-    else { Add-Result -Name 'Weaken every marked security check' -Status 'SKIP' -Seconds 0 -Note 'no marked check changed' }
+    else { Skip-Step -Name 'Weaken every marked security check' -Reason 'no marked check changed' }
 }
 finally {
     foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name]) }

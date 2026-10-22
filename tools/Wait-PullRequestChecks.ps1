@@ -5,7 +5,8 @@ Waits at most -MaxSeconds for the checks of a pull request head commit and repor
 
 .DESCRIPTION
 The script reads the pull request head SHA, the workflow runs and check runs for that SHA, and the Copilot review state.
-It polls until the checks pass or fail, or until -MaxSeconds elapse. No request or sleep extends past the deadline.
+It polls until the checks pass or fail, or until -MaxSeconds elapse. Sleeps end before the deadline, and every request uses the
+remaining time as its connection timeout and read-stall timeout. Repository and token come from local sources without a network call.
 
 Output: one line, for example 'pending 3/7; copilot: requested', 'failed: Platform tools; copilot: reviewed (rounds 1)'
 or 'passed; copilot: none'.
@@ -37,9 +38,11 @@ trap {
 }
 
 if (-not $Repository) {
-    $Repository = (& gh repo view --json nameWithOwner --jq .nameWithOwner 2>$null | Out-String).Trim()
+    # Read from the local remote; a network call here would not be bounded by the deadline.
+    $remote = (& git -C $PSScriptRoot remote get-url origin 2>$null | Out-String).Trim()
+    if ($remote -match '[:/](?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { $Repository = $Matches['name'] }
 }
-if ($Repository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Pass -Repository <owner>/<repo>; it could not be read from gh.' }
+if ($Repository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Pass -Repository <owner>/<repo>; it could not be read from the origin remote.' }
 $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { (& gh auth token 2>$null | Out-String).Trim() }
 if ([string]::IsNullOrWhiteSpace($token)) { throw 'No GitHub token: set GH_TOKEN or sign in with gh auth login.' }
 $headers = @{ Authorization = 'Bearer ' + $token; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
@@ -60,7 +63,7 @@ function Invoke-GitHubGet {
     $remaining = [Math]::Floor((Get-RemainingSecond))
     if ($remaining -lt 1) { return $null }
     try {
-        $response = Invoke-WebRequest -Uri "$apiBase/$Path" -Method GET -Headers $headers -SkipHttpErrorCheck -MaximumRedirection 0 -ConnectionTimeoutSeconds ([int] $remaining)
+        $response = Invoke-WebRequest -Uri "$apiBase/$Path" -Method GET -Headers $headers -SkipHttpErrorCheck -MaximumRedirection 0 -ConnectionTimeoutSeconds ([int] $remaining) -OperationTimeoutSeconds ([int] $remaining)
     }
     catch {
         # A request cut off by the deadline leaves the state pending; any other transport error is an error.
@@ -110,10 +113,12 @@ function Get-ChecksState {
     #>
     param([object[]] $WorkflowRun, [object[]] $CheckRun)
     $passing = @('success', 'neutral', 'skipped')
-    $latest = @{}
+    # A rerun creates a new check run with the same app and name; checks of different apps or names stay separate.
+    $latest = [System.Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     foreach ($run in $CheckRun) {
-        $name = [string] $run['name']
-        if (-not $latest.ContainsKey($name) -or [long] $run['id'] -gt [long] $latest[$name]['id']) { $latest[$name] = $run }
+        $app = if ($run['app'] -is [System.Collections.IDictionary]) { [string] $run['app']['id'] } else { '' }
+        $key = "$app/$($run['name'])"
+        if (-not $latest.ContainsKey($key) -or [long] $run['id'] -gt [long] $latest[$key]['id']) { $latest[$key] = $run }
     }
     $checks = @($latest.Values)
     $failedNames = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)

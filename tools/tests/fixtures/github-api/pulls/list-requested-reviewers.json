@@ -6,12 +6,27 @@
     "apiVersion": "2026-03-10",
     "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
-    "schema": "#/components/schemas/pull-request-review-request"
+    "schema": "#/components/schemas/pull-request-review-request",
+    "note": "The documented example omits the required team field type; the body adds the documented enum value organization."
   },
   "required": {
     "": [
       "users",
       "teams"
+    ],
+    "teams.[]": [
+      "id",
+      "node_id",
+      "url",
+      "members_url",
+      "name",
+      "description",
+      "permission",
+      "html_url",
+      "repositories_url",
+      "slug",
+      "parent",
+      "type"
     ],
     "users.[]": [
       "avatar_url",
@@ -71,7 +86,8 @@
         "permission": "admin",
         "members_url": "https://api.github.com/teams/1/members{/member}",
         "repositories_url": "https://api.github.com/teams/1/repos",
-        "parent": null
+        "parent": null,
+        "type": "organization"
       }
     ]
   }

@@ -272,6 +272,43 @@ function Get-LocalCiSelection {
     }
 }
 
+function Get-LocalCiModuleProblem {
+    <#
+    .SYNOPSIS
+    Returns one message per module from tools/requirements.psd1 that is not available in the exact version.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Requirements,
+        [Parameter(Mandatory)][scriptblock] $ModuleProbe
+    )
+
+    foreach ($group in 'Runtime', 'Development') {
+        if (-not $Requirements.Contains($group)) { continue }
+        foreach ($name in @($Requirements[$group].Keys | Sort-Object)) {
+            $wanted = [string] $Requirements[$group][$name]
+            $available = @(& $ModuleProbe $name | ForEach-Object { [string] $_ })
+            if ($wanted -cnotin $available) {
+                "Module $name $wanted is missing (found: $(if ($available) { $available -join ', ' } else { 'none' })). Run ./tools/Install-ToolDependencies.ps1 -Development"
+            }
+        }
+    }
+}
+
+function Clear-LocalCiTemp {
+    <#
+    .SYNOPSIS
+    Creates the per-worktree temp directory and removes everything an earlier, possibly interrupted, run left in it.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Path)
+
+    if (Test-Path -LiteralPath $Path) { Get-ChildItem -LiteralPath $Path -Force | Remove-Item -Recurse -Force }
+    $null = New-Item -ItemType Directory -Force -Path $Path
+    if (@(Get-ChildItem -LiteralPath $Path -Force).Count -gt 0) { throw "The temp directory $Path could not be emptied." }
+}
+
 function Get-LocalCiPreflightProblem {
     <#
     .SYNOPSIS
@@ -296,16 +333,7 @@ function Get-LocalCiPreflightProblem {
     $warn = { param($message) $problems.Add([pscustomobject]@{ Severity = 'Warning'; Message = $message }) }
 
     if ($PowerShellVersion -lt [version] '7.4') { & $fail "PowerShell $PowerShellVersion is too old; install PowerShell 7.4 or newer." }
-    foreach ($group in 'Runtime', 'Development') {
-        if (-not $Requirements.Contains($group)) { continue }
-        foreach ($name in @($Requirements[$group].Keys)) {
-            $wanted = [string] $Requirements[$group][$name]
-            $available = @(& $ModuleProbe $name | ForEach-Object { [string] $_ })
-            if ($wanted -cnotin $available) {
-                & $fail "Module $name $wanted is missing (found: $(if ($available) { $available -join ', ' } else { 'none' })). Run ./tools/Install-ToolDependencies.ps1 -Development"
-            }
-        }
-    }
+    foreach ($message in @(Get-LocalCiModuleProblem -Requirements $Requirements -ModuleProbe $ModuleProbe)) { & $fail $message }
 
     $terraform = & $ToolProbe 'terraform'
     if ([string]::IsNullOrWhiteSpace($terraform)) {
@@ -386,5 +414,5 @@ function Get-PesterCount {
     return [pscustomobject]@{ Passed = $passed; Failed = $failed; NotRun = $notRun }
 }
 
-Export-ModuleMember -Function Get-CiWorkflowSetting, Get-LocalCiSelection, Get-LocalCiPreflightProblem,
+Export-ModuleMember -Function Get-CiWorkflowSetting, Get-LocalCiSelection, Get-LocalCiPreflightProblem, Get-LocalCiModuleProblem, Clear-LocalCiTemp,
     Get-LocalCiTerraformStepCommand, Get-PesterFailureDetail, Get-PesterCount

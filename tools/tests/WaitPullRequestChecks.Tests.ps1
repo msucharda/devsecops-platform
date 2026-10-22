@@ -4,7 +4,7 @@ BeforeAll {
     $sha = '6dcb09b5b57875f334f61aebed695e2e4193db5e'
     $arguments = @{ Pr = 1347; Repository = 'demo-platform/devsecops'; ApiUrl = 'https://api.contoso.ghe.com'; MaxSeconds = 60; IntervalSeconds = 20 }
 
-    function New-CheckRun {
+    function Get-CheckRunFixture {
         param([string] $Name, [string] $Status = 'completed', [AllowNull()][string] $Conclusion = 'success', [long] $Id = 4)
         $body = Get-GitHubApiFixture -Name checks/list-for-ref -Set @{
             'check_runs.0.name' = $Name; 'check_runs.0.status' = $Status; 'check_runs.0.conclusion' = $Conclusion
@@ -34,7 +34,7 @@ Describe 'Wait-PullRequestChecks' {
             Status = 200
             Hang = $false
         }
-        $api.Checks['check_runs'] = @(New-CheckRun -Name 'Platform tools' -Id 10)
+        $api.Checks['check_runs'] = @(Get-CheckRunFixture -Name 'Platform tools' -Id 10)
         $api.Checks['total_count'] = 1
         $api.Requested['users'] = @()
 
@@ -81,7 +81,7 @@ Describe 'Wait-PullRequestChecks' {
         @{ Conclusion = 'neutral' }
         @{ Conclusion = 'skipped' }
     ) {
-        $api.Checks['check_runs'] = @((New-CheckRun -Name 'Platform tools' -Id 10), (New-CheckRun -Name 'Lint' -Conclusion $Conclusion -Id 11))
+        $api.Checks['check_runs'] = @((Get-CheckRunFixture -Name 'Platform tools' -Id 10), (Get-CheckRunFixture -Name 'Lint' -Conclusion $Conclusion -Id 11))
         $api.Checks['total_count'] = 2
 
         $output = & $script @arguments
@@ -96,11 +96,12 @@ Describe 'Wait-PullRequestChecks' {
         @{ Conclusion = 'cancelled' }
         @{ Conclusion = 'timed_out' }
         @{ Conclusion = 'action_required' }
+        # Intentionally invalid: values outside the documented conclusion enum must fail closed.
         @{ Conclusion = 'stale' }
         @{ Conclusion = 'Success' }
         @{ Conclusion = $null }
     ) {
-        $api.Checks['check_runs'] = @((New-CheckRun -Name 'Platform tools' -Id 10), (New-CheckRun -Name 'Terraform (modules/a)' -Conclusion $Conclusion -Id 11))
+        $api.Checks['check_runs'] = @((Get-CheckRunFixture -Name 'Platform tools' -Id 10), (Get-CheckRunFixture -Name 'Terraform (modules/a)' -Conclusion $Conclusion -Id 11))
         $api.Checks['total_count'] = 2
 
         $output = & $script @arguments
@@ -111,7 +112,7 @@ Describe 'Wait-PullRequestChecks' {
     }
 
     It 'reports failed early while other jobs still run' {
-        $api.Checks['check_runs'] = @((New-CheckRun -Name 'Platform tools' -Conclusion 'failure' -Id 10), (New-CheckRun -Name 'Mutation' -Status 'in_progress' -Conclusion $null -Id 11))
+        $api.Checks['check_runs'] = @((Get-CheckRunFixture -Name 'Platform tools' -Conclusion 'failure' -Id 10), (Get-CheckRunFixture -Name 'Mutation' -Status 'in_progress' -Conclusion $null -Id 11))
         $api.Checks['total_count'] = 2
         $api.Runs['workflow_runs'][0]['status'] = 'in_progress'
         $api.Runs['workflow_runs'][0]['conclusion'] = $null
@@ -133,8 +134,24 @@ Describe 'Wait-PullRequestChecks' {
         $LASTEXITCODE | Should -Be 1
     }
 
+    It 'keeps a failed check of another app or name case that a newer success could hide' -ForEach @(
+        @{ Case = 'app' }
+        @{ Case = 'case' }
+    ) {
+        $failedCheck = Get-CheckRunFixture -Name 'Lint' -Conclusion 'failure' -Id 10
+        $passedCheck = Get-CheckRunFixture -Name 'Lint' -Id 12
+        if ($Case -eq 'app') { $passedCheck['app']['id'] = 2 } else { $passedCheck['name'] = 'lint' }
+        $api.Checks['check_runs'] = @($failedCheck, $passedCheck)
+        $api.Checks['total_count'] = 2
+
+        $output = & $script @arguments
+
+        $output | Should -BeLike 'failed: Lint;*'
+        $LASTEXITCODE | Should -Be 1
+    }
+
     It 'uses the latest check run of a rerun job' {
-        $api.Checks['check_runs'] = @((New-CheckRun -Name 'Platform tools' -Conclusion 'failure' -Id 10), (New-CheckRun -Name 'Platform tools' -Id 12))
+        $api.Checks['check_runs'] = @((Get-CheckRunFixture -Name 'Platform tools' -Conclusion 'failure' -Id 10), (Get-CheckRunFixture -Name 'Platform tools' -Id 12))
         $api.Checks['total_count'] = 2
 
         & $script @arguments | Should -BeLike 'passed;*'
@@ -149,7 +166,7 @@ Describe 'Wait-PullRequestChecks' {
     ) {
         switch ($Case) {
             'job' {
-                $api.Checks['check_runs'] = @((New-CheckRun -Name 'Platform tools' -Id 10), (New-CheckRun -Name 'Mutation' -Status 'queued' -Conclusion $null -Id 11))
+                $api.Checks['check_runs'] = @((Get-CheckRunFixture -Name 'Platform tools' -Id 10), (Get-CheckRunFixture -Name 'Mutation' -Status 'queued' -Conclusion $null -Id 11))
                 $api.Checks['total_count'] = 2
             }
             'run' { $api.Runs['workflow_runs'][0]['status'] = 'in_progress'; $api.Runs['workflow_runs'][0]['conclusion'] = $null }
@@ -168,14 +185,14 @@ Describe 'Wait-PullRequestChecks' {
     }
 
     It 'reports the counts of a pending run' {
-        $api.Checks['check_runs'] = @((New-CheckRun -Name 'Platform tools' -Id 10), (New-CheckRun -Name 'Mutation' -Status 'in_progress' -Conclusion $null -Id 11))
+        $api.Checks['check_runs'] = @((Get-CheckRunFixture -Name 'Platform tools' -Id 10), (Get-CheckRunFixture -Name 'Mutation' -Status 'in_progress' -Conclusion $null -Id 11))
         $api.Checks['total_count'] = 2
 
         & $script @arguments | Should -BeExactly 'pending 1/2; copilot: reviewed (rounds 1)'
     }
 
     It 'never sends a request or sleeps past -MaxSeconds' {
-        $api.Checks['check_runs'] = @(New-CheckRun -Name 'Mutation' -Status 'in_progress' -Conclusion $null -Id 11)
+        $api.Checks['check_runs'] = @(Get-CheckRunFixture -Name 'Mutation' -Status 'in_progress' -Conclusion $null -Id 11)
         $started = $api.Now
         $deadline = $started.AddSeconds(45)
 
@@ -199,7 +216,7 @@ Describe 'Wait-PullRequestChecks' {
     }
 
     It 'reads every page of check runs' {
-        $api.Checks['check_runs'] = @(1..100 | ForEach-Object { New-CheckRun -Name "job $_" -Id $_ })
+        $api.Checks['check_runs'] = @(1..100 | ForEach-Object { Get-CheckRunFixture -Name "job $_" -Id $_ })
         $api.Checks['total_count'] = 101
 
         & $script @arguments | Out-Null
@@ -228,6 +245,7 @@ Describe 'Wait-PullRequestChecks' {
         & $script @arguments | Should -BeExactly "passed; $Expected"
     }
 
+    # Intentionally invalid responses: an HTTP error, a missing head SHA and a missing check_runs list.
     It 'exits with 3 on <Label>' -ForEach @(
         @{ Label = 'an HTTP error'; Case = 'http' }
         @{ Label = 'a pull request without head SHA'; Case = 'sha' }

@@ -4,7 +4,7 @@ BeforeAll {
     Import-Module (Join-Path $toolRoot 'LocalCi.psm1') -Force
     $workflowPath = Join-Path $repoRoot '.github/workflows/ci.yml'
 
-    function New-FakeRepository {
+    function Build-FakeRepository {
         $root = Join-Path $TestDrive "repo-$([guid]::NewGuid().ToString('N'))"
         $files = @{
             'tools/Foo.ps1' = 'param()'
@@ -80,7 +80,7 @@ Describe 'Local CI reads ci.yml' {
 
 Describe 'Local CI selection for -Changed' {
     BeforeAll {
-        $fakeRepo = New-FakeRepository
+        $fakeRepo = Build-FakeRepository
     }
 
     It 'selects a changed test file' {
@@ -243,6 +243,26 @@ Describe 'Local CI preflight' {
     }
 }
 
+Describe 'Local CI temp directory' {
+    It 'removes what an interrupted run left behind and keeps the directory' {
+        $temp = Join-Path $TestDrive 'local-ci-tmp'
+        $null = New-Item -ItemType Directory -Force -Path (Join-Path $temp 'actionlint-1/.github/workflows')
+        Set-Content -LiteralPath (Join-Path $temp 'step-1.ps1') -Value 'exit 1'
+        Set-Content -LiteralPath (Join-Path $temp '.hidden') -Value 'x'
+
+        Clear-LocalCiTemp -Path $temp
+
+        Test-Path -LiteralPath $temp -PathType Container | Should -BeTrue
+        @(Get-ChildItem -LiteralPath $temp -Force) | Should -BeNullOrEmpty
+    }
+
+    It 'creates a missing temp directory' {
+        $temp = Join-Path $TestDrive 'missing-tmp'
+        Clear-LocalCiTemp -Path $temp
+        Test-Path -LiteralPath $temp -PathType Container | Should -BeTrue
+    }
+}
+
 Describe 'Local CI output parsing' {
     It 'extracts the failed test, its location and the first error line' {
         $esc = [char] 27
@@ -304,6 +324,15 @@ Describe 'Invoke-LocalCi.ps1' {
         $result = Invoke-LocalCiProcess -Arguments @('-Base', 'refs/heads/no-such-branch-for-local-ci', '-Plan')
         $result.ExitCode | Should -Be 2
         $result.Output | Should -Match "Invalid -Base"
+    }
+
+    It 'refuses a nested run with exit code 2 before it touches the temp directory' {
+        $env:INVOKE_LOCAL_CI_ACTIVE = '1'
+        try { $result = Invoke-LocalCiProcess -Arguments @('-Base', 'HEAD') }
+        finally { Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE }
+        $result.ExitCode | Should -Be 2
+        $result.Output | Should -Match 'nested runs are refused'
+        $result.Output | Should -Not -Match 'PASS Preflight'
     }
 
     It 'prints the plan without running a step' {

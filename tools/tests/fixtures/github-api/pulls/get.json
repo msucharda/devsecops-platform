@@ -6,7 +6,8 @@
     "apiVersion": "2026-03-10",
     "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
-    "schema": "#/components/schemas/pull-request"
+    "schema": "#/components/schemas/pull-request",
+    "note": "The documented example omits the required label fields archived_at and archived_by and the required team field type; the body adds archived_at and archived_by with the documented null value (not archived) and type with the documented enum value organization."
   },
   "required": {
     "": [
@@ -57,6 +58,30 @@
       "repo",
       "sha",
       "user"
+    ],
+    "labels.[]": [
+      "id",
+      "node_id",
+      "url",
+      "name",
+      "description",
+      "color",
+      "default",
+      "archived_at",
+      "archived_by"
+    ],
+    "requested_teams.[]": [
+      "id",
+      "node_id",
+      "url",
+      "members_url",
+      "name",
+      "description",
+      "permission",
+      "html_url",
+      "repositories_url",
+      "slug",
+      "type"
     ]
   },
   "body": {
@@ -105,7 +130,9 @@
         "name": "bug",
         "description": "Something isn't working",
         "color": "f29513",
-        "default": true
+        "default": true,
+        "archived_at": null,
+        "archived_by": null
       }
     ],
     "milestone": {
@@ -227,7 +254,8 @@
         "notification_setting": "notifications_enabled",
         "permission": "admin",
         "members_url": "https://api.github.com/teams/1/members{/member}",
-        "repositories_url": "https://api.github.com/teams/1/repos"
+        "repositories_url": "https://api.github.com/teams/1/repos",
+        "type": "organization"
       }
     ],
     "head": {
