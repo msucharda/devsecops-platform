@@ -87,6 +87,12 @@ function Assert-VendoringPullRequest {
         $PullRequest['html_url'] -ine "https://$hostName/$Repository/pull/$($PullRequest['number'])") {
         throw 'Vendoring PR URL does not match the target.'
     }
+    $author = $PullRequest['user']
+    if ($author -isnot [Collections.IDictionary]) { throw 'Vendoring PR author must be an object identifying an App bot.' }
+    if ($author['type'] -isnot [string] -or $author['type'] -cne 'Bot') { throw 'Vendoring PR author type is not Bot.' }
+    if ($author['login'] -isnot [string] -or $author['login'] -cnotmatch '\A\S+\[bot\]\z') {
+        throw 'Vendoring PR author login is not an App bot.'
+    }
     $mergedAt = [DateTimeOffset]::MinValue
     if ($PullRequest['state'] -eq 'closed' -and
         -not [DateTimeOffset]::TryParse($PullRequest['merged_at'], [Globalization.CultureInfo]::InvariantCulture,
@@ -122,7 +128,7 @@ function Get-VendoringResumeRef {
 # security-check: vendoring-pr-lookup
 function Get-VendoringExistingPullRequest {
     $queryHead = [uri]::EscapeDataString("${owner}:$branch")
-    $pullRequests = Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/repos/$Repository/pulls?state=all&head=$queryHead&base=main&per_page=100" -Headers $headers
+    $pullRequests = Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/repos/$Repository/pulls?state=all&head=$queryHead&per_page=100" -Headers $headers
     if ($pullRequests -isnot [Collections.IList] -or $pullRequests.Count -gt 1) {
         throw 'Vendoring PR lookup must return an array with at most one import PR.'
     }

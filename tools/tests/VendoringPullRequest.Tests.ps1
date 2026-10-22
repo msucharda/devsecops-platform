@@ -52,13 +52,21 @@ Describe 'Vendoring diff and pull request publication' {
             }
             if ($Uri.AbsolutePath -like '*/pulls' -and $Method -eq 'GET') {
                 $filter = [Web.HttpUtility]::ParseQueryString($Uri.Query)
-                $items = @(foreach ($pull in @($cloud.pulls | Where-Object { "customer-actions:$($_.head.ref)" -ceq $filter['head'] })) {
+                $state = if ($filter['state']) { $filter['state'] } else { 'open' }
+                $perPage = if ($filter['per_page']) { [int] $filter['per_page'] } else { 30 }
+                $page = if ($filter['page']) { [int] $filter['page'] } else { 1 }
+                $matches = @($cloud.pulls | Where-Object {
+                    ($state -eq 'all' -or $_.state -ceq $state) -and
+                    (-not $filter['head'] -or "$($_.head.repo.full_name.Split('/')[0]):$($_.head.ref)" -ceq $filter['head']) -and
+                    (-not $filter['base'] -or $_.base.ref -ceq $filter['base'])
+                } | Sort-Object number -Descending | Select-Object -Skip (($page - 1) * $perPage) -First $perPage)
+                $items = @(foreach ($pull in $matches) {
                     $fixture = Get-GitHubApiFixture -Name pulls/list -Set @{
                         '0.number' = $pull.number; '0.html_url' = $pull.html_url
                         '0.head.ref' = $pull.head.ref; '0.head.sha' = $pull.head.sha
                         '0.head.repo.full_name' = $pull.head.repo.full_name
                         '0.base.ref' = $pull.base.ref; '0.base.repo.full_name' = $pull.base.repo.full_name
-                        '0.state' = $pull.state; '0.merged_at' = $pull.merged_at
+                        '0.state' = $pull.state; '0.merged_at' = $pull.merged_at; '0.user' = $pull.user
                     }
                     $fixture[0]
                 })
@@ -67,13 +75,20 @@ Describe 'Vendoring diff and pull request publication' {
             }
             if ($Uri.AbsolutePath -like '*/pulls' -and $Method -eq 'POST') {
                 $request = $Body | ConvertFrom-Json -AsHashtable
+                if (@($cloud.pulls | Where-Object {
+                    $_.head.ref -ceq $request.head -and $_.base.ref -ceq $request.base -and $_.state -ceq 'open'
+                }).Count -gt 0) {
+                    # The documented POST validation failure is surfaced as an HTTP error, not a success response.
+                    throw 'HTTP 422: a pull request already exists for this head and base.'
+                }
                 $sha = & $gitExecutable --git-dir=$remotePath rev-parse "refs/heads/$($request.head)"
                 $number = $cloud.pulls.Count + 1
                 $pull = Get-GitHubApiFixture -Name pulls/create -Set @{
                     number = $number; html_url = "https://example.ghe.com/customer-actions/upstream-action/pull/$number"
                     'head.ref' = $request.head; 'head.sha' = $sha; 'head.repo.full_name' = 'customer-actions/upstream-action'
-                    'base.ref' = 'main'; 'base.repo.full_name' = 'customer-actions/upstream-action'
+                    'base.ref' = $request.base; 'base.repo.full_name' = 'customer-actions/upstream-action'
                     state = 'open'; merged_at = $null
+                    'user.type' = 'Bot'; 'user.login' = 'platform-vendoring[bot]'
                 }
                 $cloud.pulls.Add($pull)
                 return $pull
@@ -197,6 +212,116 @@ Describe 'Vendoring diff and pull request publication' {
 
         $second.PullRequest | Should -BeExactly $first.PullRequest
         $cloud.pulls.Count | Should -Be 1
+    }
+
+    It 'refuses a retargeted <ImportKind> PR after losing the create response without a second POST' -ForEach @(
+        @{ ImportKind = 'action' }
+        @{ ImportKind = 'release' }
+    ) {
+        if ($ImportKind -ceq 'release') {
+            $platform = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+            Move-Item -LiteralPath (Join-Path $prepared 'action.yml') -Destination (Join-Path $platform.FullName 'README.md')
+        }
+        Mock Invoke-RestMethod {
+            param([uri] $Uri, [string] $Method = 'GET', $Body)
+            $response = & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+            if ($Method -eq 'POST') { throw 'Injected lost PR create response.' }
+            return ,$response
+        }
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Injected lost PR create response*'
+        $cloud.pulls.Count | Should -Be 1
+        $branch = $cloud.pulls[0].head.ref
+        $sha = & $gitExecutable --git-dir=$remotePath rev-parse "refs/heads/$branch"
+        & $gitExecutable -C $target switch --quiet main
+        & $gitExecutable --git-dir=$remotePath update-ref refs/heads/other main
+        $cloud.pulls[0].base.ref = 'other'
+
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*base is not main*'
+
+        $cloud.pulls.Count | Should -Be 1
+        & $gitExecutable --git-dir=$remotePath rev-parse "refs/heads/$branch" | Should -BeExactly $sha
+        Should -Invoke git -Times 1 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'rejects ambiguous PR history across bases and states before writing' {
+        $first = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+        $historical = Get-GitHubApiFixture -Name pulls/create -Set @{
+            number = 2; html_url = 'https://example.ghe.com/customer-actions/upstream-action/pull/2'
+            'head.ref' = $first.Branch; 'head.sha' = $cloud.pulls[0].head.sha
+            'head.repo.full_name' = 'customer-actions/upstream-action'
+            'base.ref' = 'other'; 'base.repo.full_name' = 'customer-actions/upstream-action'
+            state = 'closed'; merged_at = $null
+        }
+        $cloud.pulls.Add($historical)
+        & $gitExecutable -C $target switch --quiet main
+
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*array with at most one import PR*'
+
+        $cloud.pulls.Count | Should -Be 2
+        Should -Invoke git -Times 1 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'does not overwrite an orphaned <ImportKind> branch or duplicate a human PR opened after lookup' -ForEach @(
+        @{ ImportKind = 'action' }
+        @{ ImportKind = 'release' }
+    ) {
+        if ($ImportKind -ceq 'release') {
+            $platform = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+            Move-Item -LiteralPath (Join-Path $prepared 'action.yml') -Destination (Join-Path $platform.FullName 'README.md')
+        }
+        Mock Invoke-RestMethod {
+            param([uri] $Uri, [string] $Method = 'GET', $Body)
+            if ($Method -eq 'POST') { throw 'Injected PR creation interruption.' }
+            & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+        }
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Injected PR creation interruption*'
+        $refs = @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname)' refs/heads/vendor)
+        $refs.Count | Should -Be 1
+        $branch = $refs[0] -replace '^refs/heads/', ''
+        $sha = & $gitExecutable --git-dir=$remotePath rev-parse $refs[0]
+        & $gitExecutable -C $target switch --quiet main
+        $cloud.lookupTransform = {
+            param($items)
+            $items.Count | Should -Be 0
+            $cloud.Remove('lookupTransform')
+            $human = Get-GitHubApiFixture -Name pulls/create -Set @{
+                number = 1; html_url = 'https://example.ghe.com/customer-actions/upstream-action/pull/1'
+                'head.ref' = $branch; 'head.sha' = $sha; 'head.repo.full_name' = 'customer-actions/upstream-action'
+                'base.ref' = 'main'; 'base.repo.full_name' = 'customer-actions/upstream-action'
+                state = 'open'; merged_at = $null
+            }
+            $human.user.type | Should -BeExactly 'User'
+            $cloud.pulls.Add($human)
+            return ,$items
+        }
+        Mock Invoke-RestMethod {
+            param([uri] $Uri, [string] $Method = 'GET', $Body)
+            & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+        }
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*HTTP 422*'
+        & $gitExecutable -C $target switch --quiet main
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*author type is not Bot*'
+
+        $cloud.pulls.Count | Should -Be 1
+        @(& $gitExecutable --git-dir=$remotePath for-each-ref refs/heads/vendor).Count | Should -Be 1
+        & $gitExecutable --git-dir=$remotePath rev-parse "refs/heads/$branch" | Should -BeExactly $sha
+        Should -Invoke git -Times 1 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
     It 'resumes an orphaned <ImportKind> import with main changes <Change>' -ForEach @(
@@ -455,6 +580,45 @@ Describe 'Vendoring diff and pull request publication' {
         $cloud.pulls.Count | Should -Be 1
     }
 
+    It 'rejects an invalid App PR author: <Case>' -ForEach @(
+        @{ Case = 'missing author'; Change = { param($pull) $pull.Remove('user') }; Message = '*author must be an object*' }
+        @{ Case = 'null author'; Change = { param($pull) $pull.user = $null }; Message = '*author must be an object*' }
+        @{ Case = 'unreadable author'; Change = { param($pull) $pull.user = 'unknown' }; Message = '*author must be an object*' }
+        @{ Case = 'human type'; Change = { param($pull) $pull.user.type = 'User' }; Message = '*author type is not Bot*' }
+        @{ Case = 'type case'; Change = { param($pull) $pull.user.type = 'bot' }; Message = '*author type is not Bot*' }
+        @{ Case = 'missing type'; Change = { param($pull) $pull.user.Remove('type') }; Message = '*author type is not Bot*' }
+        @{ Case = 'null type'; Change = { param($pull) $pull.user.type = $null }; Message = '*author type is not Bot*' }
+        @{ Case = 'empty type'; Change = { param($pull) $pull.user.type = '' }; Message = '*author type is not Bot*' }
+        @{ Case = 'non-string type'; Change = { param($pull) $pull.user.type = @('Bot') }; Message = '*author type is not Bot*' }
+        @{ Case = 'human login'; Change = { param($pull) $pull.user.login = 'maintainer' }; Message = '*author login is not an App bot*' }
+        @{ Case = 'login suffix case'; Change = { param($pull) $pull.user.login = 'platform-vendoring[BOT]' }; Message = '*author login is not an App bot*' }
+        @{ Case = 'missing login'; Change = { param($pull) $pull.user.Remove('login') }; Message = '*author login is not an App bot*' }
+        @{ Case = 'null login'; Change = { param($pull) $pull.user.login = $null }; Message = '*author login is not an App bot*' }
+        @{ Case = 'empty login'; Change = { param($pull) $pull.user.login = '' }; Message = '*author login is not an App bot*' }
+        @{ Case = 'non-string login'; Change = { param($pull) $pull.user.login = @('platform-vendoring[bot]') }; Message = '*author login is not an App bot*' }
+        @{ Case = 'login without App name'; Change = { param($pull) $pull.user.login = '[bot]' }; Message = '*author login is not an App bot*' }
+        @{ Case = 'login whitespace'; Change = { param($pull) $pull.user.login = ' [bot]' }; Message = '*author login is not an App bot*' }
+        @{ Case = 'login trailing newline'; Change = { param($pull) $pull.user.login = "platform-vendoring[bot]`n" }; Message = '*author login is not an App bot*' }
+    ) {
+        $first = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+        & $gitExecutable -C $target switch --quiet main
+        $sha = & $gitExecutable --git-dir=$remotePath rev-parse "refs/heads/$($first.Branch)"
+        # Includes documented human/null authors and deliberately malformed individual author fields.
+        $cloud.lookupTransform = {
+            param($items)
+            $null = & $Change $items[0]
+            return ,$items
+        }
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } | Should -Throw $Message
+
+        & $gitExecutable --git-dir=$remotePath rev-parse "refs/heads/$($first.Branch)" | Should -BeExactly $sha
+        $cloud.pulls.Count | Should -Be 1
+        Should -Invoke git -Times 1 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
     It 'rejects a malformed merge timestamp instead of reporting a completed import' {
         $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
@@ -571,13 +735,12 @@ Describe 'Vendoring diff and pull request publication' {
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
-    It 'accepts documented nullable PR fields and case-insensitive repository names on resume' {
+    It 'accepts documented nullable PR head users and case-insensitive repository names on resume' {
         $first = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
         & $gitExecutable -C $target switch --quiet main
         $cloud.lookupTransform = {
             param($items)
-            $items[0].user = $null
             $items[0].head.user = $null
             $items[0].head.repo.full_name = 'CUSTOMER-ACTIONS/UPSTREAM-ACTION'
             $items[0].base.repo.full_name = 'CUSTOMER-ACTIONS/UPSTREAM-ACTION'

@@ -42,13 +42,13 @@
         @{
             Name = 'vendoring-pr-lookup'
             Tests = @(
-                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*malformed or ambiguous PR lookup: <Case>*', '*existing PR has lost its branch*', '*recovers the published branch*') }
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*malformed or ambiguous PR lookup: <Case>*', '*existing PR has lost its branch*', '*recovers the published branch*', '*ambiguous PR history across bases*', '*retargeted <ImportKind> PR*') }
             )
         }
         @{
             Name = 'vendoring-resume-pr'
             Tests = @(
-                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid resumed PR: <Case>*', '*accepts documented nullable PR*', '*recovers the published branch*', '*unchanged*', '*malformed merge timestamp*') }
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid resumed PR: <Case>*', '*invalid App PR author: <Case>*', '*accepts documented nullable PR*', '*recovers the published branch*', '*unchanged*', '*malformed merge timestamp*') }
             )
         }
         @{
