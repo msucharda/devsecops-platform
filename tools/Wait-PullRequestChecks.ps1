@@ -187,6 +187,7 @@ while ($true) {
         if ($null -eq $confirm) { $line = "pending (head not confirmed); $($line.Split('; ', 2)[1])"; break }
         if ($confirm -isnot [System.Collections.IDictionary] -or $confirm['head'] -isnot [System.Collections.IDictionary] -or
             $confirm['head']['sha'] -cne $sha) {
+            $line = 'pending (head changed); copilot: unknown'
             continue
         }
         Write-Output $line

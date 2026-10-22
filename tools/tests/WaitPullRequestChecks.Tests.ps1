@@ -276,6 +276,17 @@ Describe 'Wait-PullRequestChecks' {
         @($api.Requests.Uri | Where-Object { $_ -like "*/commits/$newSha/check-runs*" }).Count | Should -Be 1
     }
 
+    It 'does not report the result of a replaced head when the next poll reaches the deadline' {
+        $api.HeadSequence.Enqueue($sha)
+        $api.HeadSequence.Enqueue('a0dcb09b5b57875f334f61aebed695e2e4193db5')
+        $api.HangOnPullRead = 3
+
+        $output = & $script @arguments
+
+        $output | Should -BeExactly 'pending (head changed); copilot: unknown'
+        $LASTEXITCODE | Should -Be 2
+    }
+
     It 'returns pending when the head confirmation reaches the deadline' {
         $api.HangOnPullRead = 2
 
