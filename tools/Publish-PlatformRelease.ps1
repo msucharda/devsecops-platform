@@ -44,7 +44,9 @@ function Invoke-ReleaseApi {
     )
     $request = @{ Method = $Method; Uri = $Uri; Headers = $headers; SkipHttpErrorCheck = $true }
     if ($null -ne $Body) {
-        $request.Body = if ($Body -is [byte[]]) { $Body } else { $Body | ConvertTo-Json -Depth 10 -Compress }
+        # Assign inside the branches: an if expression enumerates a byte[] into object[], which Invoke-WebRequest
+        # sends as the text of decimal byte values instead of the binary file.
+        if ($Body -is [byte[]]) { $request.Body = $Body } else { $request.Body = ConvertTo-Json -InputObject $Body -Depth 10 -Compress }
         $request.ContentType = $ContentType
     }
     $response = Invoke-WebRequest @request
