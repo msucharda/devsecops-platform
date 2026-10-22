@@ -180,6 +180,11 @@
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
         @{
+            Mutant = 'Assert-VendoringPublishMain: operator ''-cne'' -> -ine in ''(Get-VendoringMainRef) -cne $mainSha''#1'
+            Reason = 'Equivalent mutant: both the captured SHA and every subsequent SHA come from Get-VendoringMainRef, whose case-sensitive pattern requires exactly 40 lowercase hexadecimal characters. Case-insensitive comparison cannot accept a different value in that domain.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/88'
+        }
+        @{
             Mutant = 'Assert-OpenIssue: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Issue[''number''] -cnotmatch ''^[1-9][0-9]*$''''#1'
             Reason = 'Equivalent mutant: the pattern contains only digit classes, and no character matches a digit class case-insensitively but not case-sensitively.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/57'
