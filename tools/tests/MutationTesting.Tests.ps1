@@ -47,6 +47,17 @@ Describe 'Security check mutation testing' {
             $marker[0].Function | Should -BeExactly 'Test-Sample'
         }
 
+        It 'finds markers in module scripts' {
+            $repo = Initialize-TestRepository -Content 'function Other { }'
+            New-Item -ItemType Directory -Path (Join-Path $repo 'modules/sample/scripts') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $repo 'modules/sample/scripts/Sample.psm1') -Value "# security-check: sample-check`nfunction Test-Sample { if (`$x) { throw 'no' } }"
+
+            $marker = @(Get-SecurityCheckMarker -RepoPath $repo)
+
+            $marker.Count | Should -Be 1
+            $marker[0].File | Should -BeExactly 'modules/sample/scripts/Sample.psm1'
+        }
+
         It 'ignores markers in test files' {
             $repo = Initialize-TestRepository -Content 'function Other { }'
             Set-Content -LiteralPath (Join-Path $repo 'tools/tests/Sample.Tests.ps1') -Value "# security-check: sample-check`nfunction Test-Sample { }"
@@ -77,6 +88,28 @@ Describe 'Security check mutation testing' {
             $replacement | Should -Contain '$a -or $b=>(-not ($a -or $b))'
             $replacement | Should -Contain '$a=>($false)'
             $replacement | Should -Contain '$b=>($false)'
+        }
+
+        It 'weakens a guard that writes a <Case> reason to false' -ForEach @(
+            @{ Case = 'literal'; Output = "'no'" }
+            @{ Case = 'expandable'; Output = '"no $a"' }
+            @{ Case = 'returned'; Output = "return 'no'" }
+        ) {
+            $function = Get-TestFunctionAst -Text "function Test-Sample { if (`$a -or `$b) { $Output } }"
+
+            $replacement = @(Get-FunctionMutant -Function $function | ForEach-Object { "$($_.Original)=>$($_.Replacement)" })
+
+            $replacement | Should -Contain '$a -or $b=>($false)'
+            $replacement | Should -Contain '$a=>($false)'
+        }
+
+        It 'does not treat an assigned or piped string as a reason' -ForEach @(
+            @{ Case = 'assigned'; Body = "`$x = 'no'" }
+            @{ Case = 'piped'; Body = "'no' | Write-Verbose" }
+        ) {
+            $function = Get-TestFunctionAst -Text "function Test-Sample { if (`$a) { $Body } }"
+
+            @(Get-FunctionMutant -Function $function) | Should -BeNullOrEmpty
         }
 
         It 'weakens an allow return and its -and operands to true' {

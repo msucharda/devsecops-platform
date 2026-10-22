@@ -1,0 +1,51 @@
+name: actions-catalog
+description: Internal repositories of the vendored actions in the actions organization, open to the enterprise, owned by the security team and tagged with the upstream tag after an approved import.
+prerequisites:
+  - organizations
+manualSteps:
+  - id: create-actions-security-team
+    owner: security
+    description: >-
+      Before the first apply, an owner of the actions organization creates the visible (closed) security team named by
+      the security_team parameter in the actions organization and adds the security reviewers; CODEOWNERS ignores a
+      secret team. The module gives the
+      team push access to every catalog repository and names it in CODEOWNERS; it does not manage the team or
+      its members.
+    limitations:
+      plan: The plan fails while the team is missing or secret, because the state reader cannot check its repository access.
+      drift: Drift detection reports a deleted team as a failed plan, not as a planned change.
+      teardown: The team stays after teardown and disappears with the actions organization.
+  - id: require-catalog-code-owner-review
+    owner: security
+    description: >-
+      An active organization ruleset of the actions organization on the default branch of every catalog repository requires a pull request with at least one
+      approving review and a code owner review that a later push dismisses, without bypass. A repository ruleset does not count,
+      because the apply credential administers the repository. The module must not hold a ruleset write
+      credential (ADR 0016); it only reads the rules active on main and fails while they are missing. Apply opens a
+      repository to the enterprise only after it reads the rule, so the ruleset must exist before the first apply. An owner of
+      the actions organization creates the organization ruleset until a module manages it.
+    limitations:
+      plan: The plan reads the active rules of main and fails while no rule requires an approving code owner review.
+      drift: Drift detection reports a removed rule as a failed plan, not as a planned change.
+      teardown: The ruleset stays after teardown and disappears with the actions organization.
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp:
+    plan:
+      permissions:
+        administration: read
+        contents: read
+        members: read
+        metadata: read
+      resources:
+        organizations: target_organizations
+    apply:
+      permissions:
+        administration: write
+        contents: write
+        members: read
+        metadata: read
+      resources:
+        organizations: target_organizations
+  adminPat: []

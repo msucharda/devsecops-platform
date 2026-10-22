@@ -83,6 +83,43 @@
                 @{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*updates the single open drift issue*', '*fails closed when the created response*', '*fails closed when the update response*') }
             )
         }
+        @{
+            Name = 'catalog-repository-adoptable'
+            Tests = @(
+                @{ Path = 'tools/tests/ActionsCatalog.Tests.ps1'; FullName = @('*Test-CatalogRepositoryAdoptable*', '*refuses an existing repository that*', '*refuses a new repository that GitHub created*') }
+            )
+        }
+        @{
+            Name = 'catalog-approval-rule'
+            Tests = @(
+                @{ Path = 'tools/tests/ActionsCatalog.Tests.ps1'; FullName = @('*Test-CatalogApprovalRule*') }
+            )
+        }
+        @{
+            Name = 'catalog-team-push'
+            Tests = @(
+                @{
+                    Path = 'tools/tests/ActionsCatalog.Tests.ps1'
+                    FullName = @(
+                        '*creates the internal repository, opens it to the enterprise, grants the team push*'
+                        '*grants push to a team that has only*', '*keeps a team with*', '*security team does not exist*'
+                        '*fails closed on a security team reply*', '*fails closed on a team permission reply*'
+                    )
+                }
+            )
+        }
+        @{
+            Name = 'catalog-release-commit'
+            Tests = @(
+                @{ Path = 'tools/tests/ActionsCatalog.Tests.ps1'; FullName = @('*New-CatalogReleaseTag*') }
+            )
+        }
+        @{
+            Name = 'catalog-state-violation'
+            Tests = @(
+                @{ Path = 'tools/tests/ActionsCatalog.Tests.ps1'; FullName = @('*Get-CatalogStateViolation*') }
+            )
+        }
     )
 
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.

@@ -1,0 +1,38 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/rules/branches/{branch}",
+    "operationId": "repos/get-branch-rules",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-rules-for-a-branch",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/repository-rule-detailed"
+  },
+  "required": {
+    "[]": [
+      "type"
+    ]
+  },
+  "body": [
+    {
+      "type": "commit_message_pattern",
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "monalisa/my-repo",
+      "ruleset_id": 42,
+      "parameters": {
+        "operator": "starts_with",
+        "pattern": "issue"
+      }
+    },
+    {
+      "type": "commit_author_email_pattern",
+      "ruleset_source_type": "Organization",
+      "ruleset_source": "my-org",
+      "ruleset_id": 73,
+      "parameters": {
+        "operator": "contains",
+        "pattern": "github"
+      }
+    }
+  ]
+}

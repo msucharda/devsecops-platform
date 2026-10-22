@@ -17,10 +17,12 @@ BeforeAll {
         $organizations.name = $OrganizationsName
         ConvertTo-Yaml $organizations | Set-Content -LiteralPath $organizationsPath
 
-        $baselinePath = Join-Path $modules 'enterprise-baseline/module.yaml'
-        $baseline = ConvertFrom-Yaml (Get-Content -LiteralPath $baselinePath -Raw)
-        $baseline.prerequisites = @($baseline.prerequisites | ForEach-Object { if ($_ -ceq 'organizations') { $OrganizationsName } else { $_ } })
-        ConvertTo-Yaml $baseline | Set-Content -LiteralPath $baselinePath
+        foreach ($manifestPath in (Get-ChildItem -LiteralPath $modules -Filter 'module.yaml' -Recurse -Depth 1).FullName) {
+            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+            if (@($manifest.prerequisites) -cnotcontains 'organizations') { continue }
+            $manifest.prerequisites = @($manifest.prerequisites | ForEach-Object { if ($_ -ceq 'organizations') { $OrganizationsName } else { $_ } })
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        }
         return $modules
     }
 }

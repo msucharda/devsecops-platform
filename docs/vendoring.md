@@ -19,7 +19,7 @@ Bootstrap umístí workflow do `.github/workflows/vendor.yml` v Instance reposit
 
 Workflow vrátí výstup `pull-request`. Prázdná hodnota znamená, že import nenašel diff; není to cloudový plan.
 
-Katalog `vendoring/actions.json` v repozitáři instance má verzi `1` a mapu `actions`. Prázdnou šablonu naplní platformní tým po schválení importů z #15. Klíč určuje upstream repozitář; `repository` určuje kopii `{owner}-{repo}` a `sha` její skutečný merge commit:
+Katalog `vendoring/actions.json` v repozitáři instance má verzi `1` a mapu `actions`. Prázdnou šablonu naplní platformní tým po schválení importů. Klíč určuje upstream repozitář; `repository` určuje kopii `{owner}-{repo}`, `tag` tag upstreamu a `sha` skutečný merge commit kopie:
 
 ```json
 {
@@ -27,6 +27,7 @@ Katalog `vendoring/actions.json` v repozitáři instance má verzi `1` a mapu `a
   "actions": {
     "actions/checkout": {
       "repository": "example-actions/actions-checkout",
+      "tag": "v4.2.2",
       "sha": "1111111111111111111111111111111111111111"
     }
   }
@@ -34,6 +35,8 @@ Katalog `vendoring/actions.json` v repozitáři instance má verzi `1` a mapu `a
 ```
 
 SHA v příkladu je pouze placeholder. Platformní tým musí přes API cílového repozitáře ověřit skutečný commit a jeho schválení security týmem. Offline validátor kontroluje formát a cílovou organizaci, nikoli existenci nebo schválení commitu. Katalog vybírá jednu schválenou kopii pro každý upstream repozitář; upstream reference sama nevybírá jinou verzi kopie.
+
+Modul [actions-catalog](../modules/actions-catalog/README.md#katalog-vendoringu) čte katalog jako jediný zdroj schválených importů. Pro každou položku vytvoří ve vendorované kopii tag `tag` na commitu `sha` a pole `tag` vyžaduje. Offline validátor importu pole `tag` nekontroluje.
 
 ## Příprava a attestace
 

@@ -1,0 +1,65 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/contents/{path}",
+    "operationId": "repos/get-content",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/contents#get-repository-content",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/content-directory",
+    "variant": "oneOf content-directory"
+  },
+  "required": {
+    "[]": [
+      "_links",
+      "git_url",
+      "html_url",
+      "download_url",
+      "name",
+      "path",
+      "sha",
+      "size",
+      "type",
+      "url"
+    ],
+    "[]._links": [
+      "git",
+      "html",
+      "self"
+    ]
+  },
+  "body": [
+    {
+      "type": "file",
+      "size": 625,
+      "name": "octokit.rb",
+      "path": "lib/octokit.rb",
+      "sha": "fff6fe3a23bf1c8ea0692b4a883af99bee26fd3b",
+      "url": "https://api.github.com/repos/octokit/octokit.rb/contents/lib/octokit.rb",
+      "git_url": "https://api.github.com/repos/octokit/octokit.rb/git/blobs/fff6fe3a23bf1c8ea0692b4a883af99bee26fd3b",
+      "html_url": "https://github.com/octokit/octokit.rb/blob/master/lib/octokit.rb",
+      "download_url": "https://raw.githubusercontent.com/octokit/octokit.rb/master/lib/octokit.rb",
+      "_links": {
+        "self": "https://api.github.com/repos/octokit/octokit.rb/contents/lib/octokit.rb",
+        "git": "https://api.github.com/repos/octokit/octokit.rb/git/blobs/fff6fe3a23bf1c8ea0692b4a883af99bee26fd3b",
+        "html": "https://github.com/octokit/octokit.rb/blob/master/lib/octokit.rb"
+      }
+    },
+    {
+      "type": "dir",
+      "size": 0,
+      "name": "octokit",
+      "path": "lib/octokit",
+      "sha": "a84d88e7554fc1fa21bcbc4efae3c782a70d2b9d",
+      "url": "https://api.github.com/repos/octokit/octokit.rb/contents/lib/octokit",
+      "git_url": "https://api.github.com/repos/octokit/octokit.rb/git/trees/a84d88e7554fc1fa21bcbc4efae3c782a70d2b9d",
+      "html_url": "https://github.com/octokit/octokit.rb/tree/master/lib/octokit",
+      "download_url": null,
+      "_links": {
+        "self": "https://api.github.com/repos/octokit/octokit.rb/contents/lib/octokit",
+        "git": "https://api.github.com/repos/octokit/octokit.rb/git/trees/a84d88e7554fc1fa21bcbc4efae3c782a70d2b9d",
+        "html": "https://github.com/octokit/octokit.rb/tree/master/lib/octokit"
+      }
+    }
+  ]
+}

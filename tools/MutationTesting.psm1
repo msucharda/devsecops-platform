@@ -25,11 +25,12 @@ function Get-SecurityCheckMarker {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)][string] $RepoPath,
-        [string[]] $Include = @('tools')
+        [string[]] $Include = @('tools', 'modules')
     )
 
     foreach ($folder in $Include) {
         $root = Join-Path $RepoPath $folder
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
         $files = Get-ChildItem -LiteralPath $root -Recurse -File -Include '*.ps1', '*.psm1' |
             Where-Object { $_.FullName -notmatch '[\\/]tests[\\/]' } | Sort-Object FullName
         foreach ($file in $files) {
@@ -153,6 +154,20 @@ function Test-BooleanReturn {
     return $inner -is [System.Management.Automation.Language.VariableExpressionAst] -and $inner.Extent.Text -eq $Value
 }
 
+function Test-ReasonOutput {
+    # True when a statement writes a literal reason string to the output, as checks that list the reasons of a refusal do.
+    param($Node)
+
+    if ($Node -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -and
+        $Node -isnot [System.Management.Automation.Language.ExpandableStringExpressionAst]) { return $false }
+    $command = $Node.Parent
+    if ($command -isnot [System.Management.Automation.Language.CommandExpressionAst] -or $command.Redirections.Count -gt 0) { return $false }
+    $pipeline = $command.Parent
+    if ($pipeline -isnot [System.Management.Automation.Language.PipelineAst] -or $pipeline.PipelineElements.Count -ne 1) { return $false }
+    return $pipeline.Parent -is [System.Management.Automation.Language.StatementBlockAst] -or
+        $pipeline.Parent -is [System.Management.Automation.Language.ReturnStatementAst]
+}
+
 function Get-ClausePolarity {
     param($Body)
 
@@ -160,6 +175,7 @@ function Get-ClausePolarity {
             param($node)
             $node -is [System.Management.Automation.Language.ThrowStatementAst] -or
             (Test-BooleanReturn -Node $node -Value '$false') -or
+            (Test-ReasonOutput -Node $node) -or
             ($node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in @('Exit-SetupStage', 'Write-Error'))
         }, $false)
     if (@($denies).Count -gt 0) { return 'Deny' }
