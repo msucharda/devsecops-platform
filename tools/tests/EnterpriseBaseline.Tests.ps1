@@ -58,6 +58,8 @@ Describe 'enterprise-baseline organization settings contract' {
 Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' {
     BeforeAll {
         $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline'
+        $baselineOrganizationLogin = 'demo'
+        $baselineReviewerId = 42
         $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); CodeSecurity = $null; ActionsPolicy = $null })
         $codeSecurityStub = Join-Path $PSScriptRoot 'CodeSecurityStub.psm1'
         Import-Module $codeSecurityStub -Force
@@ -194,8 +196,8 @@ data "external" "actions_policy_state" {
 }
 '@
         }
-        $testOrganization = if (Get-Variable Organization -ErrorAction SilentlyContinue) { $Organization } else { 'demo' }
-        $testReviewer = if (Get-Variable ReviewerId -ErrorAction SilentlyContinue) { $ReviewerId } else { 42 }
+        $testOrganization = $baselineOrganizationLogin
+        $testReviewer = $baselineReviewerId
         Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json -Depth 10 -InputObject @{
             instance = @{
                 name = 'demo'; github = @{ host = 'example.ghe.com'; enterprise = 'example' }
@@ -244,19 +246,19 @@ data "external" "actions_policy_state" {
         $init.ExitCode | Should -Be 0 -Because $init.Output
     }
 
-    It 'converges, detects drift and tears down the baseline in <Organization> with its local reviewers' -ForEach @(
-        @{ Organization = 'demo-platform'; ReviewerId = 11 }
-        @{ Organization = 'demo-actions'; ReviewerId = 22 }
-        @{ Organization = 'demo-workloads'; ReviewerId = 33 }
+    It 'converges, detects drift and tears down the baseline in <BaselineOrganizationLogin> with its local reviewers' -ForEach @(
+        @{ BaselineOrganizationLogin = 'demo-platform'; BaselineReviewerId = 11 }
+        @{ BaselineOrganizationLogin = 'demo-actions'; BaselineReviewerId = 22 }
+        @{ BaselineOrganizationLogin = 'demo-workloads'; BaselineReviewerId = 33 }
     ) {
         $apply = Invoke-StubTerraform apply -input=false -auto-approve
         $apply.ExitCode | Should -Be 0 -Because $apply.Output
         $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
         $plan.ExitCode | Should -Be 0 -Because $plan.Output
         foreach ($field in $managed.Keys) { $stubState.Organization[$field] | Should -Be $managed[$field] }
-        $stubState.Organization.login | Should -BeExactly $Organization
+        $stubState.Organization.login | Should -BeExactly $baselineOrganizationLogin
         $configuration = $stubState.CodeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }
-        $configuration.secret_scanning_delegated_bypass_options.reviewers[0].reviewer_id | Should -Be $ReviewerId
+        $configuration.secret_scanning_delegated_bypass_options.reviewers[0].reviewer_id | Should -Be $baselineReviewerId
         $stubState.Organization.default_repository_permission = 'read'
         $drift = Invoke-StubTerraform plan -input=false -detailed-exitcode
         $drift.ExitCode | Should -Be 1 -Because $drift.Output
