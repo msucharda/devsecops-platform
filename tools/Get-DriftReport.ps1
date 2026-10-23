@@ -113,9 +113,6 @@ if ($needs) {
                             if ($changes -ceq 'true') { $drift.Add("- ``$module`` ($($root.Label); organization results unavailable)") }
                         }
                         else {
-                            if ($expectedOrganizations.Count -eq 0 -and $changes -ceq 'true') {
-                                $drift.Add("- ``$module`` ($($root.Label); organization scope unverified)")
-                            }
                             if ((ConvertTo-PlatformCanonicalJson @($results.PSBase.Keys | Sort-Object -CaseSensitive)) -cne
                                 (ConvertTo-PlatformCanonicalJson @($expectedOrganizations | Sort-Object -CaseSensitive))) {
                                 $incomplete.Add("Plan job $($root.Job) organization result keys differ from the complete instance organization set.")
@@ -134,6 +131,10 @@ if ($needs) {
                                 if ($record['result'] -cne 'success' -or $record['changes'] -isnot [bool]) {
                                     $incomplete.Add("Plan job $($root.Job) did not complete organization '$organization' with a boolean change state.")
                                 }
+                            }
+                            if ($changes -ceq 'true' -and -not $organizationChanges) {
+                                $reason = if ($expectedOrganizations.Count -eq 0) { 'organization scope unverified' } else { 'organization results incomplete' }
+                                $drift.Add("- ``$module`` ($($root.Label); $reason)")
                             }
                             if ($changes -cin @('true', 'false') -and
                                 $changes -cne $organizationChanges.ToString().ToLowerInvariant()) {

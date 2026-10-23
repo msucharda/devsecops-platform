@@ -47,7 +47,9 @@ Describe 'Per-organization drift completeness' {
         $results['demo-workloads'].changes = $true
         $needs.module_scoped.outputs.changes = 'true'
         Invoke-OrganizationDriftReport
-        Get-Content -LiteralPath $reportPath -Raw | Should -Match '`scoped` / `demo-workloads`'
+        $report = Get-Content -LiteralPath $reportPath -Raw
+        $report | Should -Match '`scoped` / `demo-workloads`'
+        $report | Should -Not -Match 'organization results incomplete'
     }
 
     It 'preserves reported drift when the configured organization scope cannot be verified' {
@@ -62,6 +64,25 @@ Describe 'Per-organization drift completeness' {
         $report = Get-Content -LiteralPath $reportPath -Raw
         $report | Should -Match 'Drift detected'
         $report | Should -Match '`scoped`.*organization scope unverified'
+    }
+
+    It 'preserves aggregate drift without verified organization details: <Case>' -ForEach @(
+        @{ Case = 'empty results'; Change = { param($r) $r.Clear() } }
+        @{ Case = 'missing organization'; Change = { param($r) $r.Remove('demo-actions') } }
+        @{ Case = 'string change state'; Change = { param($r) $r['demo-actions'].changes = 'true' } }
+        @{ Case = 'null record'; Change = { param($r) $r['demo-actions'] = $null } }
+        @{ Case = 'aggregate disagrees'; Change = { param($r) $null = $r } }
+    ) {
+        & $Change $results
+        $needs.module_scoped.outputs.changes = 'true'
+
+        Invoke-OrganizationDriftReport
+
+        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`n"
+        $report = Get-Content -LiteralPath $reportPath -Raw
+        $report | Should -Match 'Drift detected'
+        $report | Should -Match '`scoped`.*organization results incomplete'
+        $report | Should -Match 'Drift detection INCOMPLETE'
     }
 
     It 'marks missing or invalid organization results as incomplete: <Case>' -ForEach @(
