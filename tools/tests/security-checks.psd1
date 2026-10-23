@@ -186,6 +186,126 @@
                 @{ Path = 'tools/tests/ActionsPolicy.Tests.ps1'; FullName = @('*Get-ActionsPolicyStateViolation*') }
             )
         }
+        @{
+            Name = 'merge-gate-read-only'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*read-only guard*', '*calls only read-only API requests*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-pr-state'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G1 state*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-draft'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G2 isDraft*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-head-pin'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G3 expected head*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-run-state'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G4 run state*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-copilot-run'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G4 recognizes the Copilot run*', '*G4 <Case> -> <Expected>') }
+            )
+        }
+        @{
+            Name = 'merge-gate-ci-checks'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G4 <Case> -> <Expected>') }
+            )
+        }
+        @{
+            Name = 'merge-gate-review-threads'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G5 thread*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-copilot-author'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G6 counts a review*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-copilot-review'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G6 <Case> -> <Expected>') }
+            )
+        }
+        @{
+            Name = 'merge-gate-mergeability'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G7 mergeable*', '*G7 fails a merge queue*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-behind-base'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G8 behind*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-empty-section'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G9 treats the section*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-open-questions'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G9 body*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-workflow-path'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 treats*', '*G10 classifies*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-workflow-lines'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 sensitive lines*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-workflow-changes'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 finding*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-verdict'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*verdict of*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-merge-allowed'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*allows a merge only for a pass*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-post-merge'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*verifies the merge*') }
+            )
+        }
     )
 
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.

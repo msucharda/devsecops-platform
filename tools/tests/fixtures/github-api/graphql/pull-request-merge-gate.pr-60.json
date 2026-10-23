@@ -1,0 +1,586 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest",
+    "variant": "msucharda/devsecops-platform#60",
+    "note": "Selection of MergeGate.psm1 $script:PullRequestQuery, read on 2026-10-22. State at the merge (15:12:36Z): Copilot was re-requested at 14:53:46Z, one second after its review of 122a4fb; the review of the head came at 15:21:51Z."
+  },
+  "required": {
+    "data.repository.pullRequest": [
+      "state",
+      "merged",
+      "headRefOid",
+      "baseRefName",
+      "baseRefOid",
+      "isDraft",
+      "mergeable",
+      "mergeStateStatus",
+      "body",
+      "commits",
+      "reviewThreads",
+      "reviews",
+      "timelineItems"
+    ],
+    "data.repository.pullRequest.reviewThreads": [
+      "totalCount",
+      "pageInfo",
+      "nodes"
+    ],
+    "data.repository.pullRequest.reviews": [
+      "totalCount",
+      "nodes"
+    ]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "number": 60,
+          "state": "OPEN",
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "mergeCommit": null,
+          "headRefOid": "8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+          "baseRefName": "main",
+          "baseRefOid": "6d60ba4696a263aad339c8130521e0ca19e52822",
+          "isDraft": false,
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "CLEAN",
+          "body": "Part of #57\r\n\r\n## Co PR přidává\r\n\r\n### Harness pro přerušení (`tools/tests/InterruptionHarness.psm1`)\r\n- Stub GitHub/Azure API bez živých volání. Harness přeruší běh před každým mutujícím požadavkem a po něm (ztracená odpověď), pak spustí běh znovu nad uloženým stavem a ověří konvergenci.\r\n- Každé přerušení běží ve dvou režimech: `Error` (výjimka transportu, proběhne `catch`/`finally`) a `Abrupt` (lokální stav se obnoví ze snímku v bodě přerušení, jako po pádu procesu). Test předává `-CaptureLocal` a `-RestoreLocal`.\r\n- `GitHubBootstrap.Interruption.Tests.ps1`: 272/272 (resource) a 280/280 (credential) přerušení projde.\r\n- `InstanceSetup.Interruption.Tests.ps1` (probe org/admin): 24/24 přerušení projde.\r\n- `InterruptionHarness.Tests.ps1`: 3 regresní testy harnessu nad modelovým nástrojem.\r\n- Tag `Interruption`. `Invoke-Tests.ps1` ho bez `-Tag` vynechá. CI ho spouští v matici 4 shardů (`INTERRUPTION_SHARD`).\r\n\r\n**Nálezy harnessu, opravené v tomto PR:**\r\n1. Záměr FIC v inventory se nově registruje před `PUT`. Dřív ztracená odpověď zanechala nezaevidovaný FIC.\r\n2. Záměr `organizationCreationPending` se ukládá před mutací, ne až po ní.\r\n3. Selhání `DELETE` probe rulesetu nově shodí stage. Dřív selhání prošlo tiše (fail-open).\r\n\r\n**Nálezy Copilot review, opravené v tomto PR:**\r\n1. Zamítnuté vytvoření probe organizace (4xx nebo GraphQL `errors`) nechalo `organizationCreationPending`. Další běh pak opakoval stejný název. Wizard teď posílá mutaci jednou (`-NoRetry`), po potvrzeném zamítnutí obnoví předchozí organizaci a uloží stav. Security checkpoint (gpt-6.1-sol) doplnil dvě podmínky: záměr zůstane uložený, když odpověď obsahuje organizaci (částečná data vedle `errors`), a když běh obnovuje ztracené vytvoření.\r\n2. `-Reconfirm` admin probe nechal na disku starý `adminPassed`. Po selhání úklidu by další běh bez `-Reconfirm` probe přeskočil. `adminPassed` se teď smaže a uloží před první operací, která může selhat.\r\n3. Stub rulesetů a testy probe admin používají sdílené fixtures (`create-org-ruleset.json` je nová).\r\n4. Mutační nástroj: zastaralý report se maže na začátku běhu, argumenty workerů jsou v uvozovkách, každý vzor `FullName` v baseline musí najít test, regex a wildcard operátory dostanou mutanta velikosti písmen vždy a operandy logické hodnoty přiřazené do proměnné, kterou testuje guard, se oslabují také (+4 mutanti v `Test-PlatformGitHubAppOwner`).\r\n5. Duplicitní ID mutanta napříč označenými funkcemi (porovnání bez rozlišení velikosti písmen) shodí generování. Kolize by mohla zabitým mutantem přepsat přeživšího.\r\n6. `return ($false)` / `return ($true)` v závorkách: generátor tiše vynechal guard. **Opraveno** (`Test-BooleanReturn`) a pokryto 2 testy.\r\n7. Injektovaná chyba transportu nechala proběhnout `catch`/`finally` (`Save-SetupState` ve `finally`), a harness tak mohl přehlédnout chybu obnovy po pádu procesu. **Opraveno** režimem `Abrupt`.\r\n8. Neúplné odpovědi repozitáře a týmu ve fixtures `InstanceSetup.Interruption.Tests.ps1`: follow-up v https://github.com/msucharda/devsecops-platform/issues/57#issuecomment-6318596606.\r\n\r\n### Mutační testy bezpečnostních kontrol\r\n- Kontrola se označí komentářem `# security-check: <name>` nad funkcí. `tools/MutationTesting.psm1` vygeneruje oslabující mutanty: podmínky guardů, návratové hodnoty, operandy `-and`/`-or` a porovnání citlivá na velikost písmen (`-c*` → `-i*`).\r\n- `tools/Invoke-MutationTests.ps1` spustí baseline a mutanty v dávkových workerech (`tools/tests/Invoke-MutationWorker.ps1`). Testy každé kontroly mapuje `tools/tests/security-checks.psd1`.\r\n- Fail-closed: přeživší mutant, chyba, neplatná výjimka, výjimka bez shody, test bez shody a nezelená baseline → exit ≠ 0.\r\n- Výsledek: **91 mutantů, 87 zabito, 0 přežilo, 4 výjimky, 0 chyb.** V CI asi 1 min.\r\n- Přeživší mutanti z prvního běhu vedli k novým testům: `GitHubAppOwner.Tests.ps1`, `AcceptanceRunEvidence.Tests.ps1` a doplňky v BootstrapExecutionPolicy, InstanceSetup, GitHubAppToken a DriftIssue.\r\n\r\n| Check | Mutants | Killed | Excepted |\r\n|---|---|---|---|\r\n| acceptance-run-evidence | 29 | 27 | 2 |\r\n| azure-unconditional-role | 2 | 2 | 0 |\r\n| bootstrap-external-path | 2 | 2 | 0 |\r\n| bootstrap-request-policy | 13 | 13 | 0 |\r\n| drift-open-issue | 10 | 8 | 2 |\r\n| github-app-owner | 20 | 20 | 0 |\r\n| setup-app-permission | 12 | 12 | 0 |\r\n| token-app-permission | 3 | 3 | 0 |\r\n\r\n**Výjimky (ekvivalentní mutanty):**\r\n- 3× `-cne` → `-ine` u porovnání celočíselných ID (číslo issue, `runId`, `runAttempt`). Celé číslo nemá velikost písmen.\r\n- 1× `-cnotmatch` → `-inotmatch` u `^[1-9][0-9]*$` (číslo issue). Vzor obsahuje jen třídy číslic.\r\n\r\n### CI (`.github/workflows/ci.yml`)\r\n- Nové joby `interruption` (matice 4 shardů) a `mutation` (report jako artifact). Oba mají jen `contents: read`, `timeout-minutes: 10`, připnuté akce a žádná živá volání.\r\n- Ruleset ani oprávnění se nemění.\r\n\r\n### Dokumentace\r\n- AGENTS.md, sekce „Mechanické kontroly v CI“: harness, zapojení nového nástroje, označení kontroly, výjimky.\r\n\r\n## Review\r\n- **Security checkpoint** (slepé review, gpt-6.1-sol): 1 střední nález. Stav `Failed` se vyhodnocoval před `Errors`, takže chyba testu mohla vypadat jako zabitý mutant. Opraveno v `Get-MutationJobStatus` (Errors má přednost) a pokryto 7 testy klasifikace.\r\n- **Koncové code review** (gpt-6.1-sol):\r\n  1. Parenthesizovaný `return ($a -and $b)` unikl mutaci. **Opraveno** a pokryto regresním testem. Současné kontroly tento tvar nepoužívají, počet mutantů se tím nezměnil.\r\n  2. S `-Check` se zastaralé výjimky zahodily před validací. **Opraveno:** `Select-MutationException` validuje proti úplnému inventáři mutantů a testy pokrývají vybranou kontrolu, nevybranou kontrolu, zastaralou výjimku a rozdíl velikosti písmen.\r\n  3. Harness nepokrývá všechny mutující cesty: Azure bootstrap, vytvoření acceptance rulesetu, workflow dispatch, vytvoření a revokaci tokenu (`Invoke-RestMethod`). **Neopraveno v tomto PR, follow-up v #57.** Tento PR zavádí harness a pokrývá GitHub bootstrap a probe kroky. Rozšíření na další kroky je mechanické (postup je popsaný v AGENTS.md), ale rozsahem patří do samostatné změny.\r\n\r\n## Mimo rozsah (paralelní práce)\r\n- Teardown (`Remove-Bootstrap.ps1`, `Generate-TeardownWorkflow.ps1`, #22 / #56), `Invoke-Module.ps1` a moduly code security (#19) nejsou zapojené do harnessu ani do mutační konfigurace.\r\n\r\n## Rozhodnutí uživatele\r\n- `interruption` a `mutation` zatím nebudou povinné checky v rulesetu.\r\n- Matice 4 shardů pro harness je schválená.\r\n- Rozpočet GitHub Actions navýší uživatel. Potom se znovu spustí CI a Copilot review.\r\n\r\n## Ověření\r\n- `tools/Test-PowerShell.ps1`: OK.\r\n- `MutationTesting.Tests.ps1`: 58/58.\r\n- `Invoke-MutationTests.ps1` po rebase na c55907a (#58): 87 zabito / 0 přežilo / 4 výjimky, 121 s lokálně.\r\n- `InstanceSetup.Tests.ps1`, `InstanceSetup.Interruption.Tests.ps1`, `MutationTesting.Tests.ps1`, `GitHubApiFixture.Tests.ps1`: 238/238.\r\n- Shard harnessu lokálně: zelený.\r\n- `Invoke-Tests.ps1 -CI` lokálně: jediné pády jsou 3 známé environmentální pády `EnterpriseBaseline` (Terraform provider, „Access is denied“ v TEMP); existují i na `main`.\r\n\r\n\r\n\r\n## CI\r\nPoslední zelený běh (ceb1126): shardy harnessu 90–102 s, mutace 109 s, Platform tools 378 s. Běhy od 5c95560 nezačaly kvůli vyčerpanému rozpočtu GitHub Actions (stejně na `main`). Lokálně 83cc50d: lint OK, mutace 91/87/0/4 za 120 s.\r\n\r\n",
+          "createdAt": "2026-10-21T11:08:15Z",
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "oid": "8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+                  "committedDate": "2026-10-21T14:38:34Z"
+                }
+              }
+            ]
+          },
+          "reviewThreads": {
+            "totalCount": 12,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "isResolved": true,
+                "isOutdated": false,
+                "path": "tools/InstanceSetup.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T11:18:21Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139821"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/Invoke-MutationTests.ps1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T11:18:21Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139873"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/Invoke-MutationTests.ps1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T11:18:21Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139924"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/MutationTesting.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T11:18:22Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139974"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/tests/InstanceSetup.Interruption.Tests.ps1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T11:18:22Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140015"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/tests/Invoke-MutationWorker.ps1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T11:18:22Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140065"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": false,
+                "path": "tools/InstanceSetup.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T11:33:37Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336275263"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": false,
+                "path": "tools/PlatformTools.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T11:33:37Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336275359"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/MutationTesting.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T12:22:53Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336716314"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/MutationTesting.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T12:55:05Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037657"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": false,
+                "path": "tools/tests/InstanceSetup.Interruption.Tests.ps1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T12:55:05Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037740"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "tools/tests/InterruptionHarness.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T12:55:06Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037783"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "reviews": {
+            "totalCount": 20,
+            "nodes": [
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T11:18:22Z",
+                "commit": {
+                  "oid": "09fd660d7a8069ce9dd604c15d371b474a3ef1c9"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\nUnresolved recovery and validation gaps can trap retries or produce misleading test results.\n\n<details open>\n<summary><strong>6 open issues</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Preserve retry intent only for unknown organization creation outcomes](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139821) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Remove stale reports before fallible setup and validation](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139873) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Preserve worker argument boundaries for paths containing spaces](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139924) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Avoid unsafe case-insensitive regex optimization with backreferences](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139974) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Use valid contract fixtures for ruleset API responses](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140015) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Validate each configured full-name pattern independently](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140065) · New\n</details>\n\n<details>\n<summary><strong>What changed in this PR</strong></summary>\n\nAdds automated recovery and security-check testing to the platform’s CI, advancing #57.\n\n**Changes:**\n- Adds a sharded interruption harness and mutation-test runner.\n- Fixes recovery bookkeeping and probe cleanup handling.\n- Expands regression tests and documents integration requirements.\n\n| File | Description |\r\n| ---- | ----------- |\r\n| tools/​tests/​security-checks.psd1 | Maps checks to tests and exceptions. |\r\n| tools/​tests/​MutationTesting.Tests.ps1 | Tests mutation generation and validation. |\r\n| tools/​tests/​Invoke-MutationWorker.ps1 | Executes isolated mutation jobs. |\r\n| tools/​tests/​InterruptionHarness.psm1 | Simulates interruptions and checks recovery. |\r\n| tools/​tests/​InstanceSetup.Tests.ps1 | Adds recovery and permission regressions. |\r\n| tools/​tests/​InstanceSetup.Interruption.Tests.ps1 | Exercises interrupted probe setup. |\r\n| tools/​tests/​GitHubBootstrap.Interruption.Tests.ps1 | Exercises interrupted GitHub bootstrap. |\r\n| tools/​tests/​GitHubAppToken.Tests.ps1 | Tests permission case sensitivity. |\r\n| tools/​tests/​GitHubAppOwner.Tests.ps1 | Tests App ownership validation. |\r\n| tools/​tests/​DriftIssue.Tests.ps1 | Expands issue-response validation tests. |\r\n| tools/​tests/​BootstrapExecutionPolicy.Tests.ps1 | Tests read-only request restrictions. |\r\n| tools/​tests/​AcceptanceRunEvidence.Tests.ps1 | Tests acceptance evidence validation. |\r\n| tools/​Publish-DriftIssue.ps1 | Marks issue validation for mutation testing. |\r\n| tools/​PlatformTools.psm1 | Marks ownership and request-policy checks. |\r\n| tools/​New-PlatformGitHubToken.ps1 | Marks token permission validation. |\r\n| tools/​MutationTesting.psm1 | Implements mutation generation and result handling. |\r\n| tools/​Invoke-Tests.ps1 | Supports tagged test selection. |\r\n| tools/​Invoke-MutationTests.ps1 | Coordinates workers and reports results. |\r\n| tools/​Invoke-GitHubBootstrap.ps1 | Persists credential intent before writes. |\r\n| tools/​Invoke-Bootstrap.ps1 | Marks Azure role validation. |\r\n| tools/​InstanceSetup.psm1 | Improves creation recovery and cleanup handling. |\r\n| tools/​InstanceSetup.GitHub.ps1 | Marks acceptance evidence validation. |\r\n| AGENTS.md | Documents both mechanical checks. |\r\n| .github/​workflows/​ci.yml | Adds interruption and mutation jobs. |\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T11:33:38Z",
+                "commit": {
+                  "oid": "b812b40a0c81e016739c53c9b37c3821d18f8d3a"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\nMutation coverage misses identity subconditions, and failed probe rechecks can retain a persisted success marker.\n\n<details open>\n<summary><strong>8 open issues</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Clear stale admin success state before reconfirmation](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336275263) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Identity predicate operands lack mutation coverage](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336275359) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Validate each configured full-name pattern independently](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140065)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Use valid contract fixtures for ruleset API responses](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140015)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Avoid unsafe case-insensitive regex optimization with backreferences](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139974)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Preserve worker argument boundaries for paths containing spaces](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139924)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Remove stale reports before fallible setup and validation](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139873)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Preserve retry intent only for unknown organization creation outcomes](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139821)\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:07:57Z",
+                "commit": {
+                  "oid": "ceb112685e6fc493377ed861a8fd59028a324675"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🔵 Needs a closer look\n\nOrganization recovery can lose saved intent, and gaps in mutation coverage and test-result handling can leave CI green incorrectly.\n\n<details open>\n<summary><strong>3 open issues</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Identity predicate operands lack mutation coverage](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336275359)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Clear stale admin success state before reconfirmation](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336275263)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Avoid unsafe case-insensitive regex optimization with backreferences](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139974)\n</details>\n\n<details>\n<summary><strong>3 previously missed issues</strong></summary>\n\nIn code that hasn't changed since last review\n\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Fail when Pester containers or blocks fail</summary>\n\n`tools/​Invoke-Tests.ps1:27`\n\nThis success condition ignores Pester container and block failures. If one interruption test file fails during discovery while another passes, the failed file can contribute no test cases: PassedCount is positive while FailedCount and the selected NotRun count are zero. The harness job can therefore succeed without running its full coverage. Include FailedContainersCount and FailedBlocksCount in the failure condition, as Invoke-MutationWorker.ps1 already does.\n</details>\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Normalize parenthesized Boolean returns in guard detection</summary>\n\n`tools/​MutationTesting.psm1:159`\n\nGuard detection compares raw return text, so `if ($invalid) { return ($false) }` is skipped even though it is equivalent to `return $false`. The same omission affects parenthesized `$true` returns. If another guard produces mutants, the no-mutable-condition check does not catch the missing coverage. Normalize both return pipelines with Get-InnerExpression before classifying them, and add regression tests for parenthesized true/false guards.\n</details>\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Generate mutations for Boolean assignments in guards</summary>\n\n`tools/​MutationTesting.psm1:183`\n\nFor github-app-owner, this traversal receives only `-not $identified`. The ID and node_id checks assigned to `$identified` in PlatformTools.psm1:18–19 are never visited, so the generator mutates the whole guard but not its individual identity constraints. Removing a negative test for one constraint can therefore leave this mutation check green. Inline the predicate into its guard, or resolve local Boolean assignments before generating operand mutations, and add a regression test for this assigned conjunction.\n</details>\n</details>\n\n<details>\n<summary><strong>5 resolved since last review</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Validate each configured full-name pattern independently](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140065)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Use valid contract fixtures for ruleset API responses](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140015)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Preserve worker argument boundaries for paths containing spaces](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139924)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Remove stale reports before fallible setup and validation](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139873)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Preserve retry intent only for unknown organization creation outcomes](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139821)\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:15:30Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:15:30Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:15:30Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:15:30Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:15:30Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:15:31Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:15:31Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:15:31Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:22:53Z",
+                "commit": {
+                  "oid": "3f4d47fa8be1eee6bfc3344441675baaac771cbe"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\nMutation result collisions and skipped security operands can leave CI green without proving the intended protections.\n\n<details open>\n<summary><strong>1 open issue</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Prevent duplicate mutant IDs across functions](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336716314) · New\n</details>\n\n<details>\n<summary><strong>2 previously missed issues</strong></summary>\n\nIn code that hasn't changed since last review\n\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Handle boolean local variables in mutation analysis</summary>\n\n`tools/​MutationTesting.psm1:179`\n\nThe generator visits guards and logical returns but does not follow boolean local variables. In the marked `Test-PlatformGitHubAppOwner` (`tools/PlatformTools.psm1:18–20`), `$identified` combines the ID type, positive-ID and `node_id` checks. Only the whole guard is mutated; its individual checks are skipped. Removing one negative test can therefore leave mutation testing green because another identifier test kills the whole-guard mutant. Support these boolean initializers, or explicitly reject unsupported indirect conditions rather than silently skipping their operands. Add a regression using this function's shape.\n</details>\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Use complete documented API response fixtures</summary>\n\n`tools/​tests/​InstanceSetup.Interruption.Tests.ps1:88`\n\nThe successful repository responses here and at line 94 contain only `name` and `private`; the team responses at lines 98 and 104 contain only `slug`. These omit required identifiers and other fields, so the harness exercises abbreviated success objects rather than the documented API contracts. This conflicts with AGENTS.md:25,38; the existing `repos/get.json` and `teams/list-teams.json` fixtures show the required fields. Use `repos/get` for repository lookup and add operation-specific, documented fixtures for repository creation and team lookup/creation, overriding only scenario values.\n</details>\n</details>\n\n<details>\n<summary><strong>8 resolved since last review</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Identity predicate operands lack mutation coverage](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336275359)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Clear stale admin success state before reconfirmation](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336275263)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Validate each configured full-name pattern independently](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140065)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Use valid contract fixtures for ruleset API responses](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336140015)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Avoid unsafe case-insensitive regex optimization with backreferences](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139974)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Preserve worker argument boundaries for paths containing spaces](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139924)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Remove stale reports before fallible setup and validation](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139873)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Preserve retry intent only for unknown organization creation outcomes](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4336139821)\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:23:14Z",
+                "commit": {
+                  "oid": "5c955609f1cb4656d19a76acab87d7c77a498d79"
+                },
+                "body": "The job was not started because a GitHub Actions budget is preventing further Actions use."
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:30:00Z",
+                "commit": {
+                  "oid": "83cc50d4256eb5eaf4fbc6a6ec2b9b73c1e0bad4"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:30:09Z",
+                "commit": {
+                  "oid": "83cc50d4256eb5eaf4fbc6a6ec2b9b73c1e0bad4"
+                },
+                "body": "The job was not started because a GitHub Actions budget is preventing further Actions use."
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T12:55:06Z",
+                "commit": {
+                  "oid": "83cc50d4256eb5eaf4fbc6a6ec2b9b73c1e0bad4"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\nUnresolved gaps in interruption simulation, mutation coverage, and stub contracts weaken the new checks’ reliability.\n\n<details open>\n<summary><strong>3 open issues</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Recognize parenthesized boolean return guards](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037657) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Use complete API response fixtures for recovery tests](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037740) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Add abrupt-stop recovery test at transport error injection](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037783) · New\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T14:31:09Z",
+                "commit": {
+                  "oid": "122a4fb72dcca3f96453c41e49254d258631156e"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T14:31:09Z",
+                "commit": {
+                  "oid": "122a4fb72dcca3f96453c41e49254d258631156e"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T14:31:10Z",
+                "commit": {
+                  "oid": "122a4fb72dcca3f96453c41e49254d258631156e"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T14:53:45Z",
+                "commit": {
+                  "oid": "122a4fb72dcca3f96453c41e49254d258631156e"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🔵 Needs a closer look\n\nThe recovery simulator, mutation infrastructure, and persistence changes need final human validation, especially without completed CI for the latest revision.\n\n**No open issues** 🎉\n\n<details>\n<summary><strong>3 resolved since last review</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Add abrupt-stop recovery test at transport error injection](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037783)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Use complete API response fixtures for recovery tests](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037740)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Recognize parenthesized boolean return guards](https://github.com/msucharda/devsecops-platform/pull/60#discussion_r4337037657)\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              }
+            ]
+          },
+          "timelineItems": {
+            "pageInfo": {
+              "hasPreviousPage": false
+            },
+            "nodes": [
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T11:08:16Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T11:22:24Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "HeadRefForcePushedEvent",
+                "createdAt": "2026-10-21T11:22:25Z"
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T11:56:24Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T12:07:58Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "HeadRefForcePushedEvent",
+                "createdAt": "2026-10-21T12:15:12Z"
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T12:22:55Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T12:29:51Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T12:42:46Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T14:30:47Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "HeadRefForcePushedEvent",
+                "createdAt": "2026-10-21T14:41:26Z"
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T14:53:46Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

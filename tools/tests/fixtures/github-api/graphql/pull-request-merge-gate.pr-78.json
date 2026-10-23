@@ -1,0 +1,108 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest",
+    "variant": "msucharda/devsecops-platform#78",
+    "note": "Selection of MergeGate.psm1 $script:PullRequestQuery, read on 2026-10-22. State at the merge (10:26:36Z): all checks green, Copilot reviewed the head, one commit behind main."
+  },
+  "required": {
+    "data.repository.pullRequest": [
+      "state",
+      "merged",
+      "headRefOid",
+      "baseRefName",
+      "baseRefOid",
+      "isDraft",
+      "mergeable",
+      "mergeStateStatus",
+      "body",
+      "commits",
+      "reviewThreads",
+      "reviews",
+      "timelineItems"
+    ],
+    "data.repository.pullRequest.reviewThreads": [
+      "totalCount",
+      "pageInfo",
+      "nodes"
+    ],
+    "data.repository.pullRequest.reviews": [
+      "totalCount",
+      "nodes"
+    ]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "number": 78,
+          "state": "OPEN",
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "mergeCommit": null,
+          "headRefOid": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+          "baseRefName": "main",
+          "baseRefOid": "afd8bd70733c38487f50241cb44b2bcd10ccab4c",
+          "isDraft": false,
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "BEHIND",
+          "body": "Part of #16\n\n## Problem\n\nTag `v0.1.0-rc.1` (run 39738221578) stopped at the Publish release step: „Uploaded asset platform-v0.1.0-rc.1.zip does not report the digest sha256:6a087e41…; release stays a draft.“ The uploaded asset was not a ZIP but the text of decimal byte values (`80 75 3 4 10 0 …`).\n\n## Cause (verified)\n\n`Invoke-ReleaseApi` assigned `$request.Body = if ($Body -is [byte[]]) { $Body } else { … }`. The output of an `if` expression is enumerated, so the `byte[]` became `object[]`. `Invoke-WebRequest` sends a non-`byte[]` body as its string form. Verified locally: `$x = if ($true) { [byte[]](80,75,3) }` gives `System.Object[]` and `\"$x\"` gives `80 75 3`.\n\nThe test stub cast the body back with `[byte[]] $Body`, so it hid the bug.\n\n## Change\n\n- `tools/Publish-PlatformRelease.ps1`: assign the body inside the `if` branches.\n- `tools/tests/PlatformRelease.Tests.ps1`:\n  - The upload stub hashes what `Invoke-WebRequest` would send: only a `byte[]` is binary, anything else is its string form.\n  - New test: the upload body is `System.Byte[]` with the exact file content and `application/zip`.\n  - New test: a rerun for a new tag ignores an existing draft of another tag. It creates its own release and does not change the foreign draft or its assets.\n- No other site in the repository passes a binary body through an `if` expression (searched `tools/` and `modules/`).\n\nAPI: [Upload a release asset](https://docs.github.com/en/enterprise-cloud@latest/rest/releases/assets#upload-a-release-asset), `X-GitHub-Api-Version: 2026-03-10` (raw binary body).\n\n## Validation\n\n- Before the fix, 16 tests in `PlatformRelease.Tests.ps1` failed with the production error message.\n- After the fix: `Invoke-Tests.ps1 -CI` 2039 passed / 0 failed, `-Tag Interruption` 8 passed, mutation checks `release-asset-digest` (9/9), `release-published-state` (13/13) and `release-tag-commit` (6/6) were killed.\n- Security checkpoint (independent review, gpt-6.1-sol): no findings.\n\nTag `v0.1.0-rc.2` will be created after merge.",
+          "createdAt": "2026-10-22T09:08:17Z",
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "oid": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+                  "committedDate": "2026-10-22T09:08:00Z"
+                }
+              }
+            ]
+          },
+          "reviewThreads": {
+            "totalCount": 0,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": []
+          },
+          "reviews": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-22T09:13:04Z",
+                "commit": {
+                  "oid": "5a86d28aa232fff72af137c29c1abd9e75f398a3"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟢 Approval recommended\n\nThe narrow fix directly addresses the upload failure, with targeted regression coverage and no unresolved findings.\n\n**No open issues** 🎉\n\n<details>\n<summary><strong>What changed in this PR</strong></summary>\n\nFixes release asset uploads so ZIP files reach GitHub as binary data rather than decimal-byte text, supporting the release publishing work in #16.\n\n**Changes:**\n- Preserves the `byte[]` request body by assigning it inside the conditional branches.\n- Updates the upload stub to distinguish binary bodies from string-converted values.\n- Adds regression tests for exact upload content, content type, and isolation from another tag’s draft release.\n\n| File | Description |\r\n| ---- | ----------- |\r\n| tools/​tests/​PlatformRelease.Tests.ps1 | Models upload serialization and adds payload and draft-isolation tests. |\r\n| tools/​Publish-PlatformRelease.ps1 | Preserves binary request bodies during release asset uploads. |\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              }
+            ]
+          },
+          "timelineItems": {
+            "pageInfo": {
+              "hasPreviousPage": false
+            },
+            "nodes": [
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-22T09:08:18Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest",
+    "variant": "msucharda/devsecops-platform#52",
+    "note": "Selection of MergeGate.psm1 $script:PullRequestQuery, read on 2026-10-22. State at the --admin merge (20:23:27Z): ruleset version 54014432 required the context copilot-pull-request-reviewer and kept the pull request BLOCKED."
+  },
+  "required": {
+    "data.repository.pullRequest": [
+      "state",
+      "merged",
+      "headRefOid",
+      "baseRefName",
+      "baseRefOid",
+      "isDraft",
+      "mergeable",
+      "mergeStateStatus",
+      "body",
+      "commits",
+      "reviewThreads",
+      "reviews",
+      "timelineItems"
+    ],
+    "data.repository.pullRequest.reviewThreads": [
+      "totalCount",
+      "pageInfo",
+      "nodes"
+    ],
+    "data.repository.pullRequest.reviews": [
+      "totalCount",
+      "nodes"
+    ]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "number": 52,
+          "state": "OPEN",
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "mergeCommit": null,
+          "headRefOid": "3332a8b92af1a9d12c881e49869086be80593495",
+          "baseRefName": "main",
+          "baseRefOid": "a2da7eed3349238afce8e56ed9772220626ab4c1",
+          "isDraft": false,
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "BLOCKED",
+          "body": "Part of #32\n\nPR opravuje nálezy z živých běhů R1–R3:\n\n- [N-6, N-7](https://github.com/msucharda/devsecops-platform/issues/32#issuecomment-6298080533)\n- [N-8, N-9](https://github.com/msucharda/devsecops-platform/issues/32#issuecomment-6298925731)\n\n## Summary\n\n### N-6: smazání App A\n\n```diff\n Invoke-StepProbeAuthorization\n   probe passed → save authorizationPassed\n-  delete key and App ID, show \"delete App A\", continue\n+  Request-SetupProbeAppDeletion\n+    open .../settings/apps/<name>-probe-authorization/advanced\n+    ask \"Is this step done?\"              # no → Missing\n+    GET /app with the App A JWT\n+      200     → Missing, key kept\n+      401/404 → delete key and App ID, save state\n+      other   → Error\n+    key missing → warning, rely on the confirmation\n```\n\nNepotvrzené smazání průvodce vyžádá při dalším pokusu i v dalším běhu. Platí to i s `-Reconfirm`.\n\nPředpoklad: GitHub pro JWT smazané App vrací HTTP 401 nebo 404. Živě ověřený není.\n\n### N-7: `setup-state.json`\n\n```diff\n Save-SetupState\n-  ConvertTo-Json $Setup.State           # hashtable order differs per process\n+  sort keys ordinally, recursively\n+  if file content is equal → return\n+  write UTF-8 without BOM\n```\n\n### N-8: elevace a Ctrl+C\n\n```text\nInvoke-SetupElevatedAction\n  elevation = Existing if found before start, else Unclear\n  try\n    if Unclear: POST elevateAccess\n      403              → Rejected, error with guidance\n      error, exception → stays Unclear\n      ok               → Active\n    action\n  finally\n    Active   → remove, expect an assignment\n    Unclear  → warning, remove any elevation found    # also Ctrl+C during POST\n    Existing → ask \"existed before…\", remove\n    Rejected → nothing\n```\n\nDotaz „Elevated access existed before the wizard started“ se zobrazí jen při elevaci nalezené před startem. Chyba 403 se zobrazí hned.\n\nPOST `elevateAccess` je uvnitř `try`. Ctrl+C po zpracování POST v Azure proto nenechá elevaci na kořeni `/` zapnutou.\n\nPokud průvodce při odebírání elevaci nenajde, vypíše varování a postup kontroly v Entra.\n\n### N-9: HTTP 403 na `elevateAccess`\n\n```diff\n Invoke-SetupAzureLogin                 # [l]\n+  az logout --username <upn>           # failure is ignored\n   az login --tenant <tenant>\n Invoke-SetupApi\n   403 from Azure\n+    append: token issued at <iat>, wids with or without Global Administrator\n```\n\nToken samotný průvodce nevypisuje.\n\n**Prokázaná příčina** (zdroje azure-cli 2.91.0 a MSAL 1.39.0):\n\n- `az login` bez `--scope` získá nový access token jen pro `https://management.core.windows.net//.default`.\n- `az account get-access-token --resource https://management.azure.com/` volá MSAL `acquire_token_silent`. Ten vrátí access token z cache, dokud mu zbývá víc než 5 minut. Refresh nevynutí.\n- Průvodce používá tokeny pro `https://management.azure.com/` a Graph. Po `[l]` proto dostal tokeny vydané před aktivací Global Administratora v PIM. Tokeny platí 60–90 minut.\n- `az rest` pro ARM používá resource `https://management.core.windows.net/`. Tento token `az login` obnovil. Proto `az rest` vrátil 200.\n- MSAL kontroluje cache access tokenů před brokerem WAM. Problém tedy platí i s WAM.\n\n**Hypotéza** (z kódu neprokázaná):\n\n- ARM rozhoduje o `elevateAccess` podle claimu `wids`.\n- Průvodce nenašel existující elevaci kvůli zastaralému tokenu.\n\n**Vedlejší efekt:** `az logout --username` smaže v Azure CLI tokeny a subscriptions daného účtu ve všech tenantech. Jiné účty zůstanou přihlášené. Dokumentace to uvádí.\n\n### Opravy z code review\n\n- Ctrl+C během POST `elevateAccess`: viz N-8.\n- `-Reconfirm` obcházel nepotvrzené smazání App A. Retry pak spustil test se starým App ID. Průvodce smazání teď dokončí nejdřív. Před opakováním testu smaže uložený výsledek. Retry proto nepovažuje novou App A za zbytek prošlého testu.\n\n### Ověření živě\n\n1. Vyvolej 403 na `elevateAccess` s tokenem vydaným před aktivací Global Administratora. Chyba musí ukázat `iat` a `wids` bez Global Administratora.\n2. Zvol `[l]`. Další pokus musí ukázat nový `iat` a Global Administratora ve `wids`. Elevace musí projít.\n3. Volitelně dekóduj `iat` z `az account get-access-token --resource https://management.azure.com/` před samotným `az login` a po něm. Stejný `iat` potvrdí příčinu.\n4. Po smazání App A ověř, že `GET /app` vrátí HTTP 401 nebo 404 a průvodce smazání přijme.\n5. Spusť průvodce dvakrát bez změny stavu. Hash `setup-state.json` se nesmí změnit.\n\n## Evidence\n\n- **Before:** nové testy selhaly z očekávaného důvodu:\n\n  ```text\n  Setup state: same content, other key order → file unchanged     # random key order\n  App A deletion: answer \"no\" → Missing, key kept                 # step continued\n  Elevated access: 403 → no \"existed before\" prompt, no removal   # prompt, then 403\n  Azure sign-in: [l] → az logout before az login                  # only az login\n  App A deletion: -Reconfirm retry → replacement App A kept       # asked to delete it\n  ```\n\n  Mutační kontrola: POST `elevateAccess` před `try` → test s `[powershell]::Stop()` během POST selže.\n\n- **After:**\n  - `tools/Test-PowerShell.ps1`: OK.\n  - `tools/Invoke-Tests.ps1 -CI`: 573 passed, 0 failed.\n\n## Merge Danger\n\n**Door:** two-way\n\nZměna se týká jen lokálního průvodce. Formát `setup-state.json` zůstává kompatibilní.\n\n**Blast Radius:** průvodce\n\n- `[l]` odhlásí účet v Azure CLI ve všech tenantech.\n- Krok App A čeká na potvrzené smazání App A.\n- První běh po merge jednou přepíše `setup-state.json` se seřazenými klíči.",
+          "createdAt": "2026-10-20T20:15:53Z",
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "oid": "3332a8b92af1a9d12c881e49869086be80593495",
+                  "committedDate": "2026-10-20T20:14:54Z"
+                }
+              }
+            ]
+          },
+          "reviewThreads": {
+            "totalCount": 0,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": []
+          },
+          "reviews": {
+            "totalCount": 1,
+            "nodes": [
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-20T20:19:17Z",
+                "commit": {
+                  "oid": "3332a8b92af1a9d12c881e49869086be80593495"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🔵 Needs a closer look\n\nÚklid privilegované elevace a dosud živě neověřená kontrola smazání App A vyžadují závěrečné lidské ověření.\n\n**No open issues** 🎉\n\n<details>\n<summary><strong>What changed in this PR</strong></summary>\n\nPR opravuje nálezy N-6 až N-9 z živého ověřování průvodce referenční instance v #32.\n\n**Změny:**\n- Vyžaduje potvrzení smazání App A a stabilizuje zápis stavu.\n- Upravuje úklid elevace při chybě nebo přerušení a obnovu tokenů Azure.\n- Doplňuje diagnostiku, regresní testy a dokumentaci.\n\n| File | Description |\r\n| ---- | ----------- |\r\n| tools/​tests/​InstanceSetup.Tests.ps1 | Regresní testy smazání App A, stavu, přihlášení a elevace. |\r\n| tools/​InstanceSetup.psm1 | Opravy průvodce a diagnostika tokenů Azure. |\r\n| docs/​reference-instance.md | Popis nového chování a postupu ověření. |\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              }
+            ]
+          },
+          "timelineItems": {
+            "pageInfo": {
+              "hasPreviousPage": false
+            },
+            "nodes": [
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-20T20:15:54Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

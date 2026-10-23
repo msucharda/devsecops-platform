@@ -1,0 +1,296 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+    "operationId": "pulls/list-files",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests-files",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/diff-entry[]",
+    "variant": "msucharda/devsecops-platform#70",
+    "note": "Read on 2026-10-22. The optional patch is kept only for .github files, which the gate reads. State at the merge (21:14:19Z): the pull request added release.yml with contents, id-token and attestations write permissions."
+  },
+  "required": {
+    "[]": [
+      "additions",
+      "blob_url",
+      "changes",
+      "contents_url",
+      "deletions",
+      "filename",
+      "raw_url",
+      "sha",
+      "status"
+    ]
+  },
+  "body": [
+    {
+      "sha": "d767e7e755a908fe534cc4eb4c209d0ed2094141",
+      "filename": ".github/workflows/ci.yml",
+      "status": "modified",
+      "additions": 11,
+      "deletions": 1,
+      "changes": 12,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/.github%2Fworkflows%2Fci.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/.github%2Fworkflows%2Fci.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/.github%2Fworkflows%2Fci.yml?ref=0509c9b68e568075cb013fe8e434e2a8656e399a",
+      "patch": "@@ -51,7 +51,17 @@ jobs:\n           ./tools/Generate-TeardownWorkflow.ps1 -Check\n           ./tools/Generate-TeardownWorkflow.ps1 -ModulesPath ./tools/tests/fixtures/modules -OutputPath ./tools/tests/fixtures/teardown.yml -Check\n       - name: Validate deployment workflow syntax\n-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml templates/instance/.github/workflows/deploy.yml templates/instance/.github/workflows/drift.yml templates/instance/.github/workflows/teardown.yml templates/instance/.github/workflows/vendor.yml tools/tests/fixtures/deploy.yml tools/tests/fixtures/drift.yml tools/tests/fixtures/teardown.yml tools/acceptance/github/bootstrap-acceptance.yml\n+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml .github/workflows/release.yml templates/instance/.github/workflows/deploy.yml templates/instance/.github/workflows/drift.yml templates/instance/.github/workflows/teardown.yml templates/instance/.github/workflows/vendor.yml tools/tests/fixtures/deploy.yml tools/tests/fixtures/drift.yml tools/tests/fixtures/teardown.yml tools/acceptance/github/bootstrap-acceptance.yml\n+      - name: Validate instance workflows that call local reusable workflows\n+        # actionlint resolves ./.github/workflows/<file> from the project root, so the instance caller is checked\n+        # in a separate project that has the layout of an instance repository.\n+        run: |\n+          project=\"$(mktemp -d)\"\n+          mkdir -p \"$project/.github/workflows\"\n+          cp templates/instance/.github/workflows/import-release.yml templates/instance/.github/workflows/vendor.yml \"$project/.github/workflows/\"\n+          git init -q \"$project\"\n+          cd \"$project\"\n+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/import-release.yml\n       - name: Discover Terraform roots\n         id: terraform-roots\n         shell: pwsh"
+    },
+    {
+      "sha": "d912955e44bf36a1f6e08283abf017e6bd96e2bf",
+      "filename": ".github/workflows/release.yml",
+      "status": "added",
+      "additions": 69,
+      "deletions": 0,
+      "changes": 69,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/.github%2Fworkflows%2Frelease.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/.github%2Fworkflows%2Frelease.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/.github%2Fworkflows%2Frelease.yml?ref=0509c9b68e568075cb013fe8e434e2a8656e399a",
+      "patch": "@@ -0,0 +1,69 @@\n+name: Platform release\n+\n+# A pushed SemVer tag on a commit of main publishes platform-<tag>.zip with a build provenance attestation.\n+# Instance repositories import the release with import-release.yml, which verifies the attestation against\n+# this workflow file (signer workflow) and the tag (source ref).\n+on:\n+  push:\n+    tags:\n+      - 'v*'\n+\n+permissions: {}\n+\n+concurrency:\n+  group: platform-release-${{ github.ref }}\n+  cancel-in-progress: false\n+\n+jobs:\n+  release:\n+    name: Build, attest and publish\n+    runs-on: ubuntu-latest\n+    timeout-minutes: 15\n+    permissions:\n+      contents: write\n+      id-token: write\n+      attestations: write\n+    steps:\n+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n+        with:\n+          ref: ${{ github.sha }}\n+          fetch-depth: 0\n+          persist-credentials: false\n+      - name: Check tag and build the release asset\n+        id: build\n+        env:\n+          TAG: ${{ github.ref_name }}\n+        run: |\n+          set -euo pipefail\n+          if ! [[ \"$TAG\" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-rc\\.(0|[1-9][0-9]*))?$ ]]; then\n+            echo \"::error::Tag $TAG must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rc.N.\"\n+            exit 1\n+          fi\n+          commit=\"$(git rev-parse --verify \"${GITHUB_SHA}^{commit}\")\"\n+          if [ \"$(git rev-parse --verify \"refs/tags/${TAG}^{commit}\")\" != \"$commit\" ]; then\n+            echo \"::error::Tag $TAG moved after the workflow started.\"\n+            exit 1\n+          fi\n+          if ! git merge-base --is-ancestor \"$commit\" origin/main; then\n+            echo \"::error::Tag $TAG must point to a commit of main.\"\n+            exit 1\n+          fi\n+          mkdir -p artifacts\n+          asset=\"artifacts/platform-${TAG}.zip\"\n+          git archive --format=zip --prefix=\"devsecops-platform-${TAG#v}/\" --output=\"$asset\" \"$commit\"\n+          echo \"commit=$commit\" >> \"$GITHUB_OUTPUT\"\n+          echo \"asset=$asset\" >> \"$GITHUB_OUTPUT\"\n+      - name: Attest build provenance\n+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8\n+        with:\n+          subject-path: ${{ steps.build.outputs.asset }}\n+      - name: Publish release\n+        shell: pwsh\n+        env:\n+          GITHUB_TOKEN: ${{ github.token }}\n+          TAG: ${{ github.ref_name }}\n+          COMMIT: ${{ steps.build.outputs.commit }}\n+          ASSET: ${{ steps.build.outputs.asset }}\n+        run: |\n+          $result = ./tools/Publish-PlatformRelease.ps1 -Repository $env:GITHUB_REPOSITORY -Tag $env:TAG -Commit $env:COMMIT -AssetPath $env:ASSET\n+          \"Release [$($result.Tag)]($($result.Url)): ``$($result.Asset)`` ``$($result.Digest)``\" >> $env:GITHUB_STEP_SUMMARY"
+    },
+    {
+      "sha": "82ba7c5d295cafb7e6fdfc4c615dd0cdf161870d",
+      "filename": "README.md",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 1,
+      "changes": 13,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/README.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/README.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/README.md?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "6f9814db1a7f62b398b281ece53e0773e120eba3",
+      "filename": "docs/adr/0012-public-source-repository.md",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 2,
+      "changes": 4,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/docs%2Fadr%2F0012-public-source-repository.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/docs%2Fadr%2F0012-public-source-repository.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/docs%2Fadr%2F0012-public-source-repository.md?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "23c6de3731f70059b66b321634a70fc0a2e8a4cb",
+      "filename": "docs/vendoring.md",
+      "status": "modified",
+      "additions": 25,
+      "deletions": 5,
+      "changes": 30,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/docs%2Fvendoring.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/docs%2Fvendoring.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/docs%2Fvendoring.md?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "540de9cca37ffb9164fbed13c2e6ce66d4057074",
+      "filename": "templates/instance/.github/workflows/import-release.yml",
+      "status": "added",
+      "additions": 54,
+      "deletions": 0,
+      "changes": 54,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/templates%2Finstance%2F.github%2Fworkflows%2Fimport-release.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/templates%2Finstance%2F.github%2Fworkflows%2Fimport-release.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/templates%2Finstance%2F.github%2Fworkflows%2Fimport-release.yml?ref=0509c9b68e568075cb013fe8e434e2a8656e399a",
+      "patch": "@@ -0,0 +1,54 @@\n+name: Import platform release\n+\n+on:\n+  workflow_dispatch:\n+    inputs:\n+      tag:\n+        description: Platform release tag, for example v1.2.0 or v1.2.0-rc.1\n+        type: string\n+        required: true\n+\n+permissions:\n+  contents: read\n+\n+jobs:\n+  resolve:\n+    name: Resolve the attested release asset and actions organization\n+    runs-on: ubuntu-latest\n+    outputs:\n+      source-repository: ${{ steps.resolve.outputs.source-repository }}\n+      source-asset: ${{ steps.resolve.outputs.source-asset }}\n+      actions-organization: ${{ steps.resolve.outputs.actions-organization }}\n+    steps:\n+      - name: Check out trusted main tools and instance configuration\n+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n+        with:\n+          ref: ${{ github.sha }}\n+          persist-credentials: false\n+      - name: Install trusted runtime dependencies\n+        shell: pwsh\n+        run: ./platform/tools/Install-ToolDependencies.ps1\n+      - name: Validate the release tag and derive import inputs\n+        id: resolve\n+        shell: pwsh\n+        env:\n+          RELEASE_TAG: ${{ inputs.tag }}\n+          PLATFORM_SOURCE_REPOSITORY: ${{ vars.PLATFORM_SOURCE_REPOSITORY }}\n+        run: ./platform/tools/Resolve-PlatformReleaseImport.ps1 -Tag $env:RELEASE_TAG -InstancePath ./instance.yaml -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -GitHubOutputPath $env:GITHUB_OUTPUT\n+\n+  import:\n+    name: Import the attested release under platform/\n+    needs: resolve\n+    uses: ./.github/workflows/vendor.yml\n+    permissions:\n+      contents: read\n+    secrets: inherit\n+    with:\n+      source-repository: ${{ needs.resolve.outputs.source-repository }}\n+      source-tag: ${{ inputs.tag }}\n+      source-api-url: https://api.github.com\n+      source-asset: ${{ needs.resolve.outputs.source-asset }}\n+      private-source: false\n+      target-repository: ${{ github.repository }}\n+      kind: release\n+      actions-organization: ${{ needs.resolve.outputs.actions-organization }}"
+    },
+    {
+      "sha": "87fe2ad93f671c1e5d74a4837ee034b3f5d26988",
+      "filename": "templates/instance/.github/workflows/vendor.yml",
+      "status": "modified",
+      "additions": 7,
+      "deletions": 1,
+      "changes": 8,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/templates%2Finstance%2F.github%2Fworkflows%2Fvendor.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/templates%2Finstance%2F.github%2Fworkflows%2Fvendor.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/templates%2Finstance%2F.github%2Fworkflows%2Fvendor.yml?ref=0509c9b68e568075cb013fe8e434e2a8656e399a",
+      "patch": "@@ -114,7 +114,13 @@ jobs:\n           ACTIONS_ORGANIZATION: ${{ inputs.actions-organization }}\n           SOURCE_GITHUB_TOKEN: ${{ env.GH_TOKEN }}\n         run: |\n-          $source = ./platform/tools/Get-VendoringSource.ps1 -Repository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -ApiUrl $env:SOURCE_API_URL -AssetName $env:SOURCE_ASSET -WorkPath ./vendor/source\n+          $verification = @{}\n+          if ($env:IMPORT_KIND -ceq 'release') {\n+            # A platform release is trusted only when its asset was attested by the source release workflow for this tag\n+            # and the tagged commit is on the source main branch.\n+            $verification = @{ RequireAttestation = $true; SignerWorkflow = \"$env:SOURCE_REPOSITORY/.github/workflows/release.yml\"; ProtectedBranch = 'main' }\n+          }\n+          $source = ./platform/tools/Get-VendoringSource.ps1 -Repository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -ApiUrl $env:SOURCE_API_URL -AssetName $env:SOURCE_ASSET -WorkPath ./vendor/source @verification\n           ./platform/tools/ConvertTo-VendoredSource.ps1 -SourcePath $source.SourcePath -OutputPath ./vendor/prepared -CatalogPath ./vendoring/actions.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND -ModeManifestPath ./vendor/modes.json\n       - name: Revoke source installation token\n         if: ${{ always() && inputs.private-source && env.PLATFORM_GITHUB_TOKENS != '' }}"
+    },
+    {
+      "sha": "0dc257b6423b530fe3297b3d88831e22149150be",
+      "filename": "templates/instance/README.md",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/templates%2Finstance%2FREADME.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/templates%2Finstance%2FREADME.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/templates%2Finstance%2FREADME.md?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "c8588ccc027c723c613853977288fe341a998049",
+      "filename": "tools/Get-VendoringSource.ps1",
+      "status": "modified",
+      "additions": 161,
+      "deletions": 10,
+      "changes": 171,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2FGet-VendoringSource.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2FGet-VendoringSource.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FGet-VendoringSource.ps1?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "5ac3ecd74837d2520b6a545b64dd35bdface0261",
+      "filename": "tools/Publish-PlatformRelease.ps1",
+      "status": "added",
+      "additions": 188,
+      "deletions": 0,
+      "changes": 188,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2FPublish-PlatformRelease.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2FPublish-PlatformRelease.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FPublish-PlatformRelease.ps1?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "77660b36d04e0bfa488ad9749e7d1883fc93dada",
+      "filename": "tools/Resolve-PlatformReleaseImport.ps1",
+      "status": "added",
+      "additions": 51,
+      "deletions": 0,
+      "changes": 51,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2FResolve-PlatformReleaseImport.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2FResolve-PlatformReleaseImport.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FResolve-PlatformReleaseImport.ps1?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "70c24218eac01ddf50d785ac3abe2ce32cd9e3f8",
+      "filename": "tools/tests/PlatformRelease.Interruption.Tests.ps1",
+      "status": "added",
+      "additions": 87,
+      "deletions": 0,
+      "changes": 87,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2FPlatformRelease.Interruption.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2FPlatformRelease.Interruption.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FPlatformRelease.Interruption.Tests.ps1?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "dfa12cf60d4f349de8e1009887ccdc1f317d9644",
+      "filename": "tools/tests/PlatformRelease.Tests.ps1",
+      "status": "added",
+      "additions": 303,
+      "deletions": 0,
+      "changes": 303,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2FPlatformRelease.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2FPlatformRelease.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FPlatformRelease.Tests.ps1?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "5ad1814c039537f3863e5d627037d930322a0615",
+      "filename": "tools/tests/PlatformReleaseImport.Tests.ps1",
+      "status": "added",
+      "additions": 61,
+      "deletions": 0,
+      "changes": 61,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2FPlatformReleaseImport.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2FPlatformReleaseImport.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FPlatformReleaseImport.Tests.ps1?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "cd14e5b0e3a749de7ebacabf25e5c6f0f55a17a6",
+      "filename": "tools/tests/VendoringSource.Tests.ps1",
+      "status": "modified",
+      "additions": 284,
+      "deletions": 10,
+      "changes": 294,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2FVendoringSource.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2FVendoringSource.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FVendoringSource.Tests.ps1?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "8155bf996de89fe0dcfcd07d9fb2b1c14b4bd18b",
+      "filename": "tools/tests/fixtures/github-api/git/get-tag.json",
+      "status": "added",
+      "additions": 51,
+      "deletions": 0,
+      "changes": 51,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Fgit%2Fget-tag.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Fgit%2Fget-tag.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fgithub-api%2Fgit%2Fget-tag.json?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "331192eab608b01749e4d450644ce675a3b6d657",
+      "filename": "tools/tests/fixtures/github-api/repos/compare-commits.json",
+      "status": "added",
+      "additions": 292,
+      "deletions": 0,
+      "changes": 292,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fcompare-commits.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fcompare-commits.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fcompare-commits.json?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "22971325f7e430e68d8330f86475ea17c8d5f167",
+      "filename": "tools/tests/fixtures/github-api/repos/create-release.json",
+      "status": "added",
+      "additions": 165,
+      "deletions": 0,
+      "changes": 165,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fcreate-release.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fcreate-release.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fcreate-release.json?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "84ce48ea2b1adc1f50ea2b12ec128610d677ddf0",
+      "filename": "tools/tests/fixtures/github-api/repos/get-release-by-tag.json",
+      "status": "added",
+      "additions": 165,
+      "deletions": 0,
+      "changes": 165,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fget-release-by-tag.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fget-release-by-tag.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fget-release-by-tag.json?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "7a8fd4927e479674432d337ed4142f122cd3255e",
+      "filename": "tools/tests/fixtures/github-api/repos/list-attestations.json",
+      "status": "added",
+      "additions": 29,
+      "deletions": 0,
+      "changes": 29,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Flist-attestations.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Flist-attestations.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Flist-attestations.json?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "5492eb0ee126f406fac425543275051458114c92",
+      "filename": "tools/tests/fixtures/github-api/repos/list-releases.json",
+      "status": "added",
+      "additions": 166,
+      "deletions": 0,
+      "changes": 166,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Flist-releases.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Flist-releases.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Flist-releases.json?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "f5d5446666534dc92aa6699d6900c1dbc1851829",
+      "filename": "tools/tests/fixtures/github-api/repos/update-release.json",
+      "status": "added",
+      "additions": 165,
+      "deletions": 0,
+      "changes": 165,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fupdate-release.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fupdate-release.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fupdate-release.json?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "a50cad4fa70b4bf43472aa38cd1fc38c334e9fca",
+      "filename": "tools/tests/fixtures/github-api/repos/upload-release-asset.json",
+      "status": "added",
+      "additions": 84,
+      "deletions": 0,
+      "changes": 84,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fupload-release-asset.json",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fupload-release-asset.json",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Ffixtures%2Fgithub-api%2Frepos%2Fupload-release-asset.json?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    },
+    {
+      "sha": "482909ae4d4806b02b0954efb0e71108c548759e",
+      "filename": "tools/tests/security-checks.psd1",
+      "status": "modified",
+      "additions": 30,
+      "deletions": 0,
+      "changes": 30,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Fsecurity-checks.psd1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/0509c9b68e568075cb013fe8e434e2a8656e399a/tools%2Ftests%2Fsecurity-checks.psd1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Fsecurity-checks.psd1?ref=0509c9b68e568075cb013fe8e434e2a8656e399a"
+    }
+  ]
+}

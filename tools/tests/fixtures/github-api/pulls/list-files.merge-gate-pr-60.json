@@ -1,0 +1,293 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+    "operationId": "pulls/list-files",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests-files",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/diff-entry[]",
+    "variant": "msucharda/devsecops-platform#60",
+    "note": "Read on 2026-10-22. The optional patch is kept only for .github files, which the gate reads. State at the merge (15:12:36Z): Copilot was re-requested at 14:53:46Z, one second after its review of 122a4fb; the review of the head came at 15:21:51Z."
+  },
+  "required": {
+    "[]": [
+      "additions",
+      "blob_url",
+      "changes",
+      "contents_url",
+      "deletions",
+      "filename",
+      "raw_url",
+      "sha",
+      "status"
+    ]
+  },
+  "body": [
+    {
+      "sha": "337ca50f063b465474ab88b88e5400d16ba058c7",
+      "filename": ".github/workflows/ci.yml",
+      "status": "modified",
+      "additions": 39,
+      "deletions": 0,
+      "changes": 39,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/.github%2Fworkflows%2Fci.yml",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/.github%2Fworkflows%2Fci.yml",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/.github%2Fworkflows%2Fci.yml?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6",
+      "patch": "@@ -64,6 +64,45 @@ jobs:\n           path: artifacts/pester.xml\n           if-no-files-found: error\n \n+  interruption:\n+    name: Interruption harness (${{ matrix.shard }}/4)\n+    runs-on: ubuntu-latest\n+    timeout-minutes: 10\n+    strategy:\n+      fail-fast: false\n+      matrix:\n+        shard: [0, 1, 2, 3]\n+    env:\n+      INTERRUPTION_SHARD: ${{ matrix.shard }}/4\n+    steps:\n+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n+      - name: Install tool dependencies\n+        shell: pwsh\n+        run: ./tools/Install-ToolDependencies.ps1 -Development\n+      - name: Interrupt every state-changing step\n+        shell: pwsh\n+        run: ./tools/Invoke-Tests.ps1 -Tag Interruption\n+\n+  mutation:\n+    name: Security check mutation tests\n+    runs-on: ubuntu-latest\n+    timeout-minutes: 10\n+    steps:\n+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n+      - name: Install tool dependencies\n+        shell: pwsh\n+        run: ./tools/Install-ToolDependencies.ps1 -Development\n+      - name: Weaken every marked security check\n+        shell: pwsh\n+        run: ./tools/Invoke-MutationTests.ps1 -ReportPath ./artifacts/mutation-report.json\n+      - name: Upload mutation report\n+        if: ${{ !cancelled() && hashFiles('artifacts/mutation-report.json') != '' }}\n+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n+        with:\n+          name: mutation-report\n+          path: artifacts/mutation-report.json\n+          if-no-files-found: error\n+\n   terraform:\n     name: Terraform (${{ matrix.root }})\n     needs: platform"
+    },
+    {
+      "sha": "79b8e3fd9e21903a10d7b27908579674522b5477",
+      "filename": "AGENTS.md",
+      "status": "modified",
+      "additions": 35,
+      "deletions": 0,
+      "changes": 35,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/AGENTS.md",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/AGENTS.md",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/AGENTS.md?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "6082360d2d02c71df61308a818156b478a4c5faa",
+      "filename": "tools/InstanceSetup.GitHub.ps1",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "changes": 1,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInstanceSetup.GitHub.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInstanceSetup.GitHub.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FInstanceSetup.GitHub.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "63f8ae110d7f0b783d626aaf2d9b77da9c7e7ed5",
+      "filename": "tools/InstanceSetup.psm1",
+      "status": "modified",
+      "additions": 76,
+      "deletions": 6,
+      "changes": 82,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInstanceSetup.psm1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInstanceSetup.psm1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FInstanceSetup.psm1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "d71f3f57d8c43884bf68a67dcf21f0959be8a0d7",
+      "filename": "tools/Invoke-Bootstrap.ps1",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "changes": 1,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInvoke-Bootstrap.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInvoke-Bootstrap.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FInvoke-Bootstrap.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "6fc41a23afa6cea9b6774949e0ebca1be012c9e8",
+      "filename": "tools/Invoke-GitHubBootstrap.ps1",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 0,
+      "changes": 3,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInvoke-GitHubBootstrap.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInvoke-GitHubBootstrap.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FInvoke-GitHubBootstrap.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "20464aa6c16058cf56baf88c37f6a0061c43000e",
+      "filename": "tools/Invoke-MutationTests.ps1",
+      "status": "added",
+      "additions": 193,
+      "deletions": 0,
+      "changes": 193,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInvoke-MutationTests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInvoke-MutationTests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FInvoke-MutationTests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "93d7f680867d8310bcce6e6ad60cb35cb8a5af40",
+      "filename": "tools/Invoke-Tests.ps1",
+      "status": "modified",
+      "additions": 11,
+      "deletions": 3,
+      "changes": 14,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInvoke-Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FInvoke-Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FInvoke-Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "17039128accdec732d73667bba976d600c99f36c",
+      "filename": "tools/MutationTesting.psm1",
+      "status": "added",
+      "additions": 399,
+      "deletions": 0,
+      "changes": 399,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FMutationTesting.psm1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FMutationTesting.psm1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FMutationTesting.psm1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "3230a699a0415bef9c3ebce604caf3507a77657c",
+      "filename": "tools/New-PlatformGitHubToken.ps1",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "changes": 1,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FNew-PlatformGitHubToken.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FNew-PlatformGitHubToken.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FNew-PlatformGitHubToken.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "921fc140fe16d57f77fc65ce47efe98571d49dc7",
+      "filename": "tools/PlatformTools.psm1",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 0,
+      "changes": 2,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FPlatformTools.psm1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FPlatformTools.psm1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FPlatformTools.psm1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "410de8e604e9fc24075f69e26c56010c96a90ddc",
+      "filename": "tools/Publish-DriftIssue.ps1",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0,
+      "changes": 1,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FPublish-DriftIssue.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2FPublish-DriftIssue.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FPublish-DriftIssue.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "5954a16c04c1da858dde25acf87b5919c0a9917b",
+      "filename": "tools/tests/AcceptanceRunEvidence.Tests.ps1",
+      "status": "added",
+      "additions": 135,
+      "deletions": 0,
+      "changes": 135,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FAcceptanceRunEvidence.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FAcceptanceRunEvidence.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FAcceptanceRunEvidence.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "5213b2d2da082a46467c3b272c8a2ad8022f9312",
+      "filename": "tools/tests/BootstrapExecutionPolicy.Tests.ps1",
+      "status": "modified",
+      "additions": 10,
+      "deletions": 0,
+      "changes": 10,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FBootstrapExecutionPolicy.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FBootstrapExecutionPolicy.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FBootstrapExecutionPolicy.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "4c0de40b0e688a2ce0112f45fdd8d351c8a35421",
+      "filename": "tools/tests/DriftIssue.Tests.ps1",
+      "status": "modified",
+      "additions": 13,
+      "deletions": 2,
+      "changes": 15,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FDriftIssue.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FDriftIssue.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FDriftIssue.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "e2ac9b691cfa601146efd82bb502bd24a9c65037",
+      "filename": "tools/tests/GitHubAppToken.Tests.ps1",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 0,
+      "changes": 8,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FGitHubAppToken.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FGitHubAppToken.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FGitHubAppToken.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "85cc8b061ac4aa909bbbe5777f4118296312c706",
+      "filename": "tools/tests/GitHubBootstrap.Interruption.Tests.ps1",
+      "status": "added",
+      "additions": 153,
+      "deletions": 0,
+      "changes": 153,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FGitHubBootstrap.Interruption.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FGitHubBootstrap.Interruption.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FGitHubBootstrap.Interruption.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "a6abbafec401ada4652fa22fd9fb0a4d555e8981",
+      "filename": "tools/tests/InstanceSetup.Interruption.Tests.ps1",
+      "status": "added",
+      "additions": 198,
+      "deletions": 0,
+      "changes": 198,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInstanceSetup.Interruption.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInstanceSetup.Interruption.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FInstanceSetup.Interruption.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "1db892f455796846a3e6b31fdb123470dc4ad37e",
+      "filename": "tools/tests/InstanceSetup.Tests.ps1",
+      "status": "modified",
+      "additions": 251,
+      "deletions": 5,
+      "changes": 256,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInstanceSetup.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInstanceSetup.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FInstanceSetup.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "110f51695e8867a5b01a8cf88f1f5bc241191081",
+      "filename": "tools/tests/InterruptionHarness.Tests.ps1",
+      "status": "added",
+      "additions": 79,
+      "deletions": 0,
+      "changes": 79,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInterruptionHarness.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInterruptionHarness.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FInterruptionHarness.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "4a03166aa872deb398b5b5292569755f72835b7f",
+      "filename": "tools/tests/InterruptionHarness.psm1",
+      "status": "added",
+      "additions": 256,
+      "deletions": 0,
+      "changes": 256,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInterruptionHarness.psm1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInterruptionHarness.psm1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FInterruptionHarness.psm1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "34672ea273039998888bc1eddd30a2cf2cdf53e5",
+      "filename": "tools/tests/Invoke-MutationWorker.ps1",
+      "status": "added",
+      "additions": 78,
+      "deletions": 0,
+      "changes": 78,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInvoke-MutationWorker.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FInvoke-MutationWorker.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FInvoke-MutationWorker.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "86647ae4ec97a5675a7e5e26cdffaf7462a2fcb6",
+      "filename": "tools/tests/MutationTesting.Tests.ps1",
+      "status": "added",
+      "additions": 371,
+      "deletions": 0,
+      "changes": 371,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FMutationTesting.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2FMutationTesting.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FMutationTesting.Tests.ps1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    },
+    {
+      "sha": "60fdebff5037117f08b9c92686c7913e19a89b70",
+      "filename": "tools/tests/security-checks.psd1",
+      "status": "added",
+      "additions": 82,
+      "deletions": 0,
+      "changes": 82,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2Fsecurity-checks.psd1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/8cd6ef63ea1de539b77154b17a8e63633b1993c6/tools%2Ftests%2Fsecurity-checks.psd1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2Fsecurity-checks.psd1?ref=8cd6ef63ea1de539b77154b17a8e63633b1993c6"
+    }
+  ]
+}

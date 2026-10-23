@@ -1,0 +1,293 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/compare/{basehead}",
+    "operationId": "repos/compare-commits",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/commits/commits#compare-two-commits",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/commit-comparison",
+    "variant": "msucharda/devsecops-platform main 889855f...5a86d28 (#78 head)",
+    "note": "Read on 2026-10-22 with per_page=1. The optional files list is dropped. Nested objects are complete responses of the API."
+  },
+  "required": {
+    "": [
+      "url",
+      "html_url",
+      "permalink_url",
+      "diff_url",
+      "patch_url",
+      "base_commit",
+      "merge_base_commit",
+      "status",
+      "ahead_by",
+      "behind_by",
+      "total_commits",
+      "commits"
+    ]
+  },
+  "body": {
+    "url": "https://api.github.com/repos/msucharda/devsecops-platform/compare/889855f56cdc047e2ac768d69db1c2f58e463b54...5a86d28aa232fff72af137c29c1abd9e75f398a3",
+    "html_url": "https://github.com/msucharda/devsecops-platform/compare/889855f56cdc047e2ac768d69db1c2f58e463b54...5a86d28aa232fff72af137c29c1abd9e75f398a3",
+    "permalink_url": "https://github.com/msucharda/devsecops-platform/compare/msucharda:889855f...msucharda:5a86d28",
+    "diff_url": "https://github.com/msucharda/devsecops-platform/compare/889855f56cdc047e2ac768d69db1c2f58e463b54...5a86d28aa232fff72af137c29c1abd9e75f398a3.diff",
+    "patch_url": "https://github.com/msucharda/devsecops-platform/compare/889855f56cdc047e2ac768d69db1c2f58e463b54...5a86d28aa232fff72af137c29c1abd9e75f398a3.patch",
+    "base_commit": {
+      "sha": "889855f56cdc047e2ac768d69db1c2f58e463b54",
+      "node_id": "C_kwDOU93EuNoAKDg4OTg1NWY1NmNkYzA0N2UyYWM3NjhkNjlkYjFjMmY1OGU0NjNiNTQ",
+      "commit": {
+        "author": {
+          "name": "msucharda",
+          "email": "Suchardamartin@gmail.com",
+          "date": "2026-10-22T10:26:35Z"
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "date": "2026-10-22T10:26:35Z"
+        },
+        "message": "Send release asset upload body as binary byte[] (#78)\n\nAn if expression enumerated the byte[] body into object[], which\nInvoke-WebRequest sent as text of decimal byte values, so GitHub\nreported a different digest and the release stayed a draft.\n\nThe test stub now hashes what Invoke-WebRequest would actually send,\nand new tests check the upload body type and content and that a draft\nof another tag is left untouched.\n\nPart of #16\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+        "tree": {
+          "sha": "ed968e602c80ce674fbafb1fca012ca0c182a7c7",
+          "url": "https://api.github.com/repos/msucharda/devsecops-platform/git/trees/ed968e602c80ce674fbafb1fca012ca0c182a7c7"
+        },
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/git/commits/889855f56cdc047e2ac768d69db1c2f58e463b54",
+        "comment_count": 0,
+        "verification": {
+          "verified": true,
+          "reason": "valid",
+          "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq2eTbCRC1aQ7uu5UhlAAAIw0QADWzUGrzZ+wDq9ipxYpPyS5i\nUxPpLLinzpX4ZGSyBuA85YOZMM2aYyLVe8WY8VwQL7NhubMY+vEA8QnjeYhXUJJv\nHYHoachEcBcAeGk1xG40zRN4a0ohvT8+Oeq7wBJa/1DvxIqhjL0wFj67sLJ8jNEr\nqo++II+98kliOYb8ocqEsjxvw1vt8u7+ssPg8fZq1jRI9pY7eGKGkJ7EEQ2OMOSq\n40LopXB9ZdoBKxF0wyN8yeALxvI3teq2OBffw6mbIL7CN2vpgFY+EWN8/3mAH3q3\nKiwzflUswvEOscTDc3/7DWfytWNQOdsq0qCRRCYHmsm7t46TB/5aYV3bkdX5Pw4e\nk7KXR6Sr23F6WeZ9Px8ZEQZNDtBqRNt8LWsF3oQeqJfFk0Gv3HXfqv4tjQtNiCyn\nDZ1yKCDdbugBbWCWYVRwQfWBAkzVNVWdiy4MKwr2f4cnUaNccZf10iIhbh9wKVTA\nD8g5ohoqXrd0k48AW9IqmzI13RxGnt5StcjAKQfaLOpg+j/2AVhM8v0S59e3uPtp\nzu0kXSgqU1XGxie5R2VuTlDjmr+j0UfzCBFAPlEcNDf13F+Mwq62ozvVc2lbB3AX\ncuEl86QZYihdnpog/XrUwx6I3jPQYrrHyGLCTWrfevygYA7MVZZRot7CULLUtaXW\nCR21PPohR91OR5q0BtT1\n=Sxdc\n-----END PGP SIGNATURE-----\n",
+          "payload": "tree ed968e602c80ce674fbafb1fca012ca0c182a7c7\nparent afd8bd70733c38487f50241cb44b2bcd10ccab4c\nauthor msucharda <Suchardamartin@gmail.com> 1792664795 +0200\ncommitter GitHub <noreply@github.com> 1792664795 +0200\n\nSend release asset upload body as binary byte[] (#78)\n\nAn if expression enumerated the byte[] body into object[], which\nInvoke-WebRequest sent as text of decimal byte values, so GitHub\nreported a different digest and the release stayed a draft.\n\nThe test stub now hashes what Invoke-WebRequest would actually send,\nand new tests check the upload body type and content and that a draft\nof another tag is left untouched.\n\nPart of #16\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "verified_at": "2026-10-22T10:26:36Z"
+        }
+      },
+      "url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/889855f56cdc047e2ac768d69db1c2f58e463b54",
+      "html_url": "https://github.com/msucharda/devsecops-platform/commit/889855f56cdc047e2ac768d69db1c2f58e463b54",
+      "comments_url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/889855f56cdc047e2ac768d69db1c2f58e463b54/comments",
+      "author": {
+        "login": "msucharda",
+        "id": 20181747,
+        "node_id": "MDQ6VXNlcjIwMTgxNzQ3",
+        "avatar_url": "https://avatars.githubusercontent.com/u/20181747?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/msucharda",
+        "html_url": "https://github.com/msucharda",
+        "followers_url": "https://api.github.com/users/msucharda/followers",
+        "following_url": "https://api.github.com/users/msucharda/following{/other_user}",
+        "gists_url": "https://api.github.com/users/msucharda/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/msucharda/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/msucharda/subscriptions",
+        "organizations_url": "https://api.github.com/users/msucharda/orgs",
+        "repos_url": "https://api.github.com/users/msucharda/repos",
+        "events_url": "https://api.github.com/users/msucharda/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/msucharda/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "web-flow",
+        "id": 19864447,
+        "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/web-flow",
+        "html_url": "https://github.com/web-flow",
+        "followers_url": "https://api.github.com/users/web-flow/followers",
+        "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+        "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+        "organizations_url": "https://api.github.com/users/web-flow/orgs",
+        "repos_url": "https://api.github.com/users/web-flow/repos",
+        "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/web-flow/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "afd8bd70733c38487f50241cb44b2bcd10ccab4c",
+          "url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/afd8bd70733c38487f50241cb44b2bcd10ccab4c",
+          "html_url": "https://github.com/msucharda/devsecops-platform/commit/afd8bd70733c38487f50241cb44b2bcd10ccab4c"
+        }
+      ]
+    },
+    "merge_base_commit": {
+      "sha": "2a024a2c684fccdd0e56e158f5ceedc1f975f118",
+      "node_id": "C_kwDOU93EuNoAKDJhMDI0YTJjNjg0ZmNjZGQwZTU2ZTE1OGY1Y2VlZGMxZjk3NWYxMTg",
+      "commit": {
+        "author": {
+          "name": "msucharda",
+          "email": "Suchardamartin@gmail.com",
+          "date": "2026-10-22T06:54:12Z"
+        },
+        "committer": {
+          "name": "GitHub",
+          "email": "noreply@github.com",
+          "date": "2026-10-22T06:54:12Z"
+        },
+        "message": "Generalize local validation and agent work rules in AGENTS.md (#75)\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+        "tree": {
+          "sha": "f6ef05e0ea33a1070d59a3f99a06b781127a697e",
+          "url": "https://api.github.com/repos/msucharda/devsecops-platform/git/trees/f6ef05e0ea33a1070d59a3f99a06b781127a697e"
+        },
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/git/commits/2a024a2c684fccdd0e56e158f5ceedc1f975f118",
+        "comment_count": 0,
+        "verification": {
+          "verified": true,
+          "reason": "valid",
+          "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq2bMUCRC1aQ7uu5UhlAAA5OcQADHKbebNg+bgYXrs90+9J6BR\nAMD0Pi4IyEGJr9ArQjlAp2D1dFlvR2u92hD5Jx01ZToxzlI/Oc5g9rDGh4DSm5kd\nnBW9s46lVo7aIJUogGHWDEmsd+rTolJJoqayoj6tb8qCyHvdgVaYOf8wGY44JNTI\nvt4D2VByPeUTainYb0hvw4uxLJoX0cup7H8ht+YPZnJ1r+JFMfLKBaJqdVVvCEA+\nVxGVQOFdd9110H/7HL4BQsn73krI0ntQqcMDMU8WN3rwQ56kHtggHcNs2SQcJ242\nCiX2j9HbUJB1LY3xpdJcAwUQPOo8usftAcK02ptSrNytDyNNx4RyJmHn827VM3a5\n0FY27r7ydZ3985p5KxpSmUMnhqj+6on8HOXPXHC5K28MNYd5DRxXeANoXQoogbzE\nHZ/LH2qf2c1gctooiw2J0VmNUeESAAXEgeXGnpNC+S/msfyhzUeXY/M0I6m9lHdD\n+fh26SKhvgb57KgAyKHKSze3aoJWC1FmlxrCONrTS2U36cUy6JkB3JqPZP5qt1Fc\nUnyjq1NJcseB39U5wMrdxgBgljjFhy+PCAHbr6xkkQmXPprAIBksqQ0mnQzaqprt\nkymTFjTj4lc55XlDtvzkl/tL8dVeD6GJdp3llbw0AQAwwxKfOGsHqFJcSRTJe30/\nXXuRQuitSzCZb2kE1qc0\n=Gd0b\n-----END PGP SIGNATURE-----\n",
+          "payload": "tree f6ef05e0ea33a1070d59a3f99a06b781127a697e\nparent 7075fafe63f186a614f9f178f93f9e35c1e46aae\nparent 4009e36ad18a3af4dffc8aa7369b671b5dbf1a04\nauthor msucharda <Suchardamartin@gmail.com> 1792652052 +0200\ncommitter GitHub <noreply@github.com> 1792652052 +0200\n\nGeneralize local validation and agent work rules in AGENTS.md (#75)\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "verified_at": "2026-10-22T06:54:12Z"
+        }
+      },
+      "url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/2a024a2c684fccdd0e56e158f5ceedc1f975f118",
+      "html_url": "https://github.com/msucharda/devsecops-platform/commit/2a024a2c684fccdd0e56e158f5ceedc1f975f118",
+      "comments_url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/2a024a2c684fccdd0e56e158f5ceedc1f975f118/comments",
+      "author": {
+        "login": "msucharda",
+        "id": 20181747,
+        "node_id": "MDQ6VXNlcjIwMTgxNzQ3",
+        "avatar_url": "https://avatars.githubusercontent.com/u/20181747?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/msucharda",
+        "html_url": "https://github.com/msucharda",
+        "followers_url": "https://api.github.com/users/msucharda/followers",
+        "following_url": "https://api.github.com/users/msucharda/following{/other_user}",
+        "gists_url": "https://api.github.com/users/msucharda/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/msucharda/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/msucharda/subscriptions",
+        "organizations_url": "https://api.github.com/users/msucharda/orgs",
+        "repos_url": "https://api.github.com/users/msucharda/repos",
+        "events_url": "https://api.github.com/users/msucharda/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/msucharda/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "web-flow",
+        "id": 19864447,
+        "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/web-flow",
+        "html_url": "https://github.com/web-flow",
+        "followers_url": "https://api.github.com/users/web-flow/followers",
+        "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+        "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+        "organizations_url": "https://api.github.com/users/web-flow/orgs",
+        "repos_url": "https://api.github.com/users/web-flow/repos",
+        "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/web-flow/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "7075fafe63f186a614f9f178f93f9e35c1e46aae",
+          "url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/7075fafe63f186a614f9f178f93f9e35c1e46aae",
+          "html_url": "https://github.com/msucharda/devsecops-platform/commit/7075fafe63f186a614f9f178f93f9e35c1e46aae"
+        },
+        {
+          "sha": "4009e36ad18a3af4dffc8aa7369b671b5dbf1a04",
+          "url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/4009e36ad18a3af4dffc8aa7369b671b5dbf1a04",
+          "html_url": "https://github.com/msucharda/devsecops-platform/commit/4009e36ad18a3af4dffc8aa7369b671b5dbf1a04"
+        }
+      ]
+    },
+    "status": "diverged",
+    "ahead_by": 1,
+    "behind_by": 2,
+    "total_commits": 1,
+    "commits": [
+      {
+        "sha": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+        "node_id": "C_kwDOU93EuNoAKDVhODZkMjhhYTIzMmZmZjcyYWYxMzdjMjljMWFiZDllNzVmMzk4YTM",
+        "commit": {
+          "author": {
+            "name": "msucharda",
+            "email": "Suchardamartin@gmail.com",
+            "date": "2026-10-22T09:08:00Z"
+          },
+          "committer": {
+            "name": "msucharda",
+            "email": "Suchardamartin@gmail.com",
+            "date": "2026-10-22T09:08:00Z"
+          },
+          "message": "Send release asset upload body as binary byte[]\n\nAn if expression enumerated the byte[] body into object[], which\nInvoke-WebRequest sent as text of decimal byte values, so GitHub\nreported a different digest and the release stayed a draft.\n\nThe test stub now hashes what Invoke-WebRequest would actually send,\nand new tests check the upload body type and content and that a draft\nof another tag is left untouched.\n\nPart of #16\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>",
+          "tree": {
+            "sha": "8d5ed5aa86f44fe112d5f37b8ebc32098317bb22",
+            "url": "https://api.github.com/repos/msucharda/devsecops-platform/git/trees/8d5ed5aa86f44fe112d5f37b8ebc32098317bb22"
+          },
+          "url": "https://api.github.com/repos/msucharda/devsecops-platform/git/commits/5a86d28aa232fff72af137c29c1abd9e75f398a3",
+          "comment_count": 0,
+          "verification": {
+            "verified": false,
+            "reason": "unsigned",
+            "signature": null,
+            "payload": null,
+            "verified_at": null
+          }
+        },
+        "url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/5a86d28aa232fff72af137c29c1abd9e75f398a3",
+        "html_url": "https://github.com/msucharda/devsecops-platform/commit/5a86d28aa232fff72af137c29c1abd9e75f398a3",
+        "comments_url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/5a86d28aa232fff72af137c29c1abd9e75f398a3/comments",
+        "author": {
+          "login": "msucharda",
+          "id": 20181747,
+          "node_id": "MDQ6VXNlcjIwMTgxNzQ3",
+          "avatar_url": "https://avatars.githubusercontent.com/u/20181747?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/msucharda",
+          "html_url": "https://github.com/msucharda",
+          "followers_url": "https://api.github.com/users/msucharda/followers",
+          "following_url": "https://api.github.com/users/msucharda/following{/other_user}",
+          "gists_url": "https://api.github.com/users/msucharda/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/msucharda/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/msucharda/subscriptions",
+          "organizations_url": "https://api.github.com/users/msucharda/orgs",
+          "repos_url": "https://api.github.com/users/msucharda/repos",
+          "events_url": "https://api.github.com/users/msucharda/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/msucharda/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "committer": {
+          "login": "msucharda",
+          "id": 20181747,
+          "node_id": "MDQ6VXNlcjIwMTgxNzQ3",
+          "avatar_url": "https://avatars.githubusercontent.com/u/20181747?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/msucharda",
+          "html_url": "https://github.com/msucharda",
+          "followers_url": "https://api.github.com/users/msucharda/followers",
+          "following_url": "https://api.github.com/users/msucharda/following{/other_user}",
+          "gists_url": "https://api.github.com/users/msucharda/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/msucharda/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/msucharda/subscriptions",
+          "organizations_url": "https://api.github.com/users/msucharda/orgs",
+          "repos_url": "https://api.github.com/users/msucharda/repos",
+          "events_url": "https://api.github.com/users/msucharda/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/msucharda/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "parents": [
+          {
+            "sha": "2a024a2c684fccdd0e56e158f5ceedc1f975f118",
+            "url": "https://api.github.com/repos/msucharda/devsecops-platform/commits/2a024a2c684fccdd0e56e158f5ceedc1f975f118",
+            "html_url": "https://github.com/msucharda/devsecops-platform/commit/2a024a2c684fccdd0e56e158f5ceedc1f975f118"
+          }
+        ]
+      }
+    ]
+  }
+}

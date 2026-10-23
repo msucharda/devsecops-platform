@@ -1,0 +1,59 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/rulesets/rule-suites",
+    "operationId": "repos/get-repo-rule-suites",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rule-suites#list-repository-rule-suites",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/rule-suites",
+    "variant": "msucharda/devsecops-platform refs/heads/main with result bypass and pass",
+    "note": "Read on 2026-10-22 with time_period=month; one bypass and two pass entries are kept. The schema has no required fields; the gate reads after_sha and result."
+  },
+  "required": {
+    "[]": [
+      "id",
+      "after_sha",
+      "ref",
+      "result"
+    ]
+  },
+  "body": [
+    {
+      "id": 4636309413,
+      "actor_id": 20181747,
+      "actor_name": "msucharda",
+      "before_sha": "802b1cdda9d8c871015acff3d4e4b85792842637",
+      "after_sha": "e85419ea59d70a41da1b9f8a80ec0dd27c197861",
+      "ref": "refs/heads/main",
+      "repository_id": 1407042744,
+      "repository_name": "devsecops-platform",
+      "pushed_at": "2026-10-21T09:36:41+02:00",
+      "result": "bypass"
+    },
+    {
+      "id": 4669228224,
+      "actor_id": 20181747,
+      "actor_name": "msucharda",
+      "before_sha": "889855f56cdc047e2ac768d69db1c2f58e463b54",
+      "after_sha": "ecd44ef63cf37d6dceab9c1f75b9c981ed59ef8e",
+      "ref": "refs/heads/main",
+      "repository_id": 1407042744,
+      "repository_name": "devsecops-platform",
+      "pushed_at": "2026-10-22T19:33:22+02:00",
+      "result": "pass"
+    },
+    {
+      "id": 4661126232,
+      "actor_id": 20181747,
+      "actor_name": "msucharda",
+      "before_sha": "afd8bd70733c38487f50241cb44b2bcd10ccab4c",
+      "after_sha": "889855f56cdc047e2ac768d69db1c2f58e463b54",
+      "ref": "refs/heads/main",
+      "repository_id": 1407042744,
+      "repository_name": "devsecops-platform",
+      "pushed_at": "2026-10-22T12:26:35+02:00",
+      "result": "pass"
+    }
+  ]
+}

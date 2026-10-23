@@ -1,0 +1,44 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/rules/branches/{branch}",
+    "operationId": "repos/get-branch-rules",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-rules-for-a-branch",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/repository-rule-merge-queue",
+    "variant": "oneOf repository-rule-merge-queue with repository-rule-ruleset-info",
+    "note": "The documented example has no merge_queue rule; this body follows the merge_queue schema and the ruleset info schema field by field."
+  },
+  "required": {
+    "[]": [
+      "type"
+    ],
+    "[].parameters": [
+      "check_response_timeout_minutes",
+      "grouping_strategy",
+      "max_entries_to_build",
+      "max_entries_to_merge",
+      "merge_method",
+      "min_entries_to_merge",
+      "min_entries_to_merge_wait_minutes"
+    ]
+  },
+  "body": [
+    {
+      "type": "merge_queue",
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "monalisa/my-repo",
+      "ruleset_id": 42,
+      "parameters": {
+        "check_response_timeout_minutes": 60,
+        "grouping_strategy": "ALLGREEN",
+        "max_entries_to_build": 5,
+        "max_entries_to_merge": 5,
+        "merge_method": "SQUASH",
+        "min_entries_to_merge": 1,
+        "min_entries_to_merge_wait_minutes": 5
+      }
+    }
+  ]
+}

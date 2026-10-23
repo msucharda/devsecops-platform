@@ -1,0 +1,50 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+    "operationId": "pulls/list-files",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests-files",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/diff-entry[]",
+    "variant": "msucharda/devsecops-platform#78",
+    "note": "Read on 2026-10-22. The optional patch is kept only for .github files, which the gate reads. State at the merge (10:26:36Z): all checks green, Copilot reviewed the head, one commit behind main."
+  },
+  "required": {
+    "[]": [
+      "additions",
+      "blob_url",
+      "changes",
+      "contents_url",
+      "deletions",
+      "filename",
+      "raw_url",
+      "sha",
+      "status"
+    ]
+  },
+  "body": [
+    {
+      "sha": "9b2bf0d45bb26c9c2aee3f40d1467e7f1b5dc4c4",
+      "filename": "tools/Publish-PlatformRelease.ps1",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1,
+      "changes": 4,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/5a86d28aa232fff72af137c29c1abd9e75f398a3/tools%2FPublish-PlatformRelease.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/5a86d28aa232fff72af137c29c1abd9e75f398a3/tools%2FPublish-PlatformRelease.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2FPublish-PlatformRelease.ps1?ref=5a86d28aa232fff72af137c29c1abd9e75f398a3"
+    },
+    {
+      "sha": "1714cd0a842d72cd6141bf60a32689e65023470e",
+      "filename": "tools/tests/PlatformRelease.Tests.ps1",
+      "status": "modified",
+      "additions": 42,
+      "deletions": 1,
+      "changes": 43,
+      "blob_url": "https://github.com/msucharda/devsecops-platform/blob/5a86d28aa232fff72af137c29c1abd9e75f398a3/tools%2Ftests%2FPlatformRelease.Tests.ps1",
+      "raw_url": "https://github.com/msucharda/devsecops-platform/raw/5a86d28aa232fff72af137c29c1abd9e75f398a3/tools%2Ftests%2FPlatformRelease.Tests.ps1",
+      "contents_url": "https://api.github.com/repos/msucharda/devsecops-platform/contents/tools%2Ftests%2FPlatformRelease.Tests.ps1?ref=5a86d28aa232fff72af137c29c1abd9e75f398a3"
+    }
+  ]
+}

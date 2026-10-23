@@ -1,0 +1,320 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/3a444c04d005e5d91e29ee0658fd5c9bbeaecf24/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest",
+    "variant": "msucharda/devsecops-platform#71",
+    "note": "Selection of MergeGate.psm1 $script:PullRequestQuery, read on 2026-10-22. State at the merge (06:44:42Z) with the body of the edit at 00:47:07Z, before the open questions section was renamed at 06:30:44Z."
+  },
+  "required": {
+    "data.repository.pullRequest": [
+      "state",
+      "merged",
+      "headRefOid",
+      "baseRefName",
+      "baseRefOid",
+      "isDraft",
+      "mergeable",
+      "mergeStateStatus",
+      "body",
+      "commits",
+      "reviewThreads",
+      "reviews",
+      "timelineItems"
+    ],
+    "data.repository.pullRequest.reviewThreads": [
+      "totalCount",
+      "pageInfo",
+      "nodes"
+    ],
+    "data.repository.pullRequest.reviews": [
+      "totalCount",
+      "nodes"
+    ]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "number": 71,
+          "state": "OPEN",
+          "merged": false,
+          "mergedAt": null,
+          "mergedBy": null,
+          "mergeCommit": null,
+          "headRefOid": "000f3650f3f184f0976282e051ad79488cbeff1e",
+          "baseRefName": "main",
+          "baseRefOid": "f8cf4188f4bc229beee97e239799859e9b904d9e",
+          "isDraft": false,
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "CLEAN",
+          "body": "Part of #15\r\n\r\nModul `actions-catalog` spravuje repozitáře vendorovaných akcí v organizaci akcí a vytváří tagy schválených importů. PR obsahuje jen offline implementaci a testy. **Živá kritéria #15 nebyla provedena** (viz [Acceptance criteria](#acceptance-criteria)).\r\n\r\n## Změny\r\n\r\n- `modules/actions-catalog/`: Terraform modul, skripty `Invoke-CatalogChange.ps1` (apply) a `Read-CatalogState.ps1` (external data source pro plan a drift), `ActionsCatalog.psm1`, `module.yaml` s App oprávněními a ručními kroky, README a `tftest`.\r\n  - Apply pro každou akci katalogu vytvoří nebo převezme internal repozitář `{owner}-{repo}`, nastaví Actions access `enterprise`, přidá security týmu `push` a do prázdného repozitáře zapíše `.github/CODEOWNERS` se security týmem.\r\n  - Apply pro položku `releases` vytvoří lightweight tag rovný tagu upstreamu. Tag vznikne jen pro commit na chráněné `main` s receiptem `.vendoring.json` (`version 1`, `kind action`, `source`, `tag`). Existující tag modul nikdy nepřesune.\r\n  - Data source porovná živý stav s konfigurací. Postcondition selže při každém porušení, včetně chybějícího pravidla s povinným review code ownera.\r\n- Výchozí katalog: `actions/checkout`, `actions/upload-artifact`, `actions/download-artifact`, `actions/create-github-app-token`, `azure/login`, `hashicorp/setup-terraform`.\r\n- Testy: `tools/tests/ActionsCatalog.Tests.ps1` (stub podle dokumentovaného API, sdílené fixtures), `tools/tests/ActionsCatalog.Interruption.Tests.ps1` (harness přerušení), 5 nových security checks v `tools/tests/security-checks.psd1`, 13 nových fixtures.\r\n- `tools/MutationTesting.psm1`: hledá markery `# security-check:` i v `modules/` a považuje guard, který vypíše textový důvod, za zamítací guard. `AGENTS.md` popisuje obě změny.\r\n- Šablony `deploy.yml`, `drift.yml` a `teardown.yml` jsou přegenerované s jobem `actions-catalog`.\r\n- `tools/tests/ModuleOrder.Tests.ps1` (z #68): test přejmenuje prerekvizitu `organizations` ve všech modulech. Dříve ji přejmenoval jen v `enterprise-baseline` a s novým modulem selhal.\r\n\r\n## Acceptance criteria\r\n\r\n| Kritérium | Stav |\r\n|---|---|\r\n| Repozitář `{owner}-{repo}` internal, akce dostupné enterprise | Implementováno, ověřeno offline. Živě **NOT PERFORMED**. |\r\n| Katalog šesti akcí | Implementováno (výchozí hodnota `catalog`). Import **NOT PERFORMED**. |\r\n| Import otevře PR, merge vyžaduje schválení security týmu | CODEOWNERS a kontrola pravidla implementovány. Org ruleset je ruční krok. Živě **NOT PERFORMED**. |\r\n| Tag kopie = tag upstreamu | Implementováno, ověřeno offline. Žádný tag nevznikl. |\r\n| Workflow workloadů použije akci pinovanou na SHA | Výstup `releases` dává SHA. Živě **NOT PERFORMED**. |\r\n| PR s planem, merge, schválení, apply, druhý plan bez změny | **NOT PERFORMED** |\r\n| Tokenová akce, read-only plan, bez ruleset write | Plan identita má jen `read`. Modul nemá `organization_administration` ani ruleset write. Kontrola tokenové akce viz otevřené otázky. Živě **NOT PERFORMED**. |\r\n| Živé ověření workflow vendoringu (6 kritérií přesunutých z #14) | **NOT PERFORMED** |\r\n\r\n## Validace\r\n\r\nOvěřeno lokálně (stejné příkazy jako CI):\r\n\r\n- `./tools/Invoke-Tests.ps1 -CI` (Pester pod StrictMode): 2019 pass, 0 fail, 64 skip\r\n- `./tools/Invoke-Tests.ps1 -Tag Interruption`: 8 pass, 0 fail\r\n- `./tools/Invoke-MutationTests.ps1`: 241 mutantů: 237 zabito, 0 přežilo, 4 výjimky\r\n- `Test-PowerShell.ps1`, `Test-ModuleManifests.ps1`, `Test-InstanceConfiguration.ps1`, generátory workflow s `-Check`: prošly.\r\n- `terraform fmt`, `validate`, `test` (20 pass), `tflint`, `trivy` pro `modules/actions-catalog`: prošly.\r\n- `actionlint` lokálně neběžel (chybí `go`). Ověří ho CI.\r\n\r\n## Kontrakt API\r\n\r\nGitHub REST, `X-GitHub-Api-Version: 2026-03-10`. Schéma: [`ghec.2026-03-10.json`](https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json).\r\n\r\n- [Get a repository](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/repos?apiVersion=2026-03-10#get-a-repository), [Create an organization repository](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/repos?apiVersion=2026-03-10#create-an-organization-repository)\r\n- [Get](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions?apiVersion=2026-03-10#get-the-level-of-access-for-workflows-outside-of-the-repository) a [Set the level of access for workflows outside of the repository](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions?apiVersion=2026-03-10#set-the-level-of-access-for-workflows-outside-of-the-repository)\r\n- [Get a team by name](https://docs.github.com/en/enterprise-cloud@latest/rest/teams/teams?apiVersion=2026-03-10#get-a-team-by-name), [Check team permissions for a repository](https://docs.github.com/en/enterprise-cloud@latest/rest/teams/teams?apiVersion=2026-03-10#check-team-permissions-for-a-repository) (Accept `application/vnd.github.v3.repository+json`), [Add or update team repository permissions](https://docs.github.com/en/enterprise-cloud@latest/rest/teams/teams?apiVersion=2026-03-10#add-or-update-team-repository-permissions)\r\n- [Get repository content](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/contents?apiVersion=2026-03-10#get-repository-content) (varianty directory, file, symlink, submodule; kód přijme jen base64 file), [Create or update file contents](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/contents?apiVersion=2026-03-10#create-or-update-file-contents)\r\n- [Get a reference](https://docs.github.com/en/enterprise-cloud@latest/rest/git/refs?apiVersion=2026-03-10#get-a-reference), [Create a reference](https://docs.github.com/en/enterprise-cloud@latest/rest/git/refs?apiVersion=2026-03-10#create-a-reference)\r\n- [Compare two commits](https://docs.github.com/en/enterprise-cloud@latest/rest/commits/commits?apiVersion=2026-03-10#compare-two-commits)\r\n- [Get rules for a branch](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules?apiVersion=2026-03-10#get-rules-for-a-branch)\r\n\r\nRozpor mezi dokumentací a pozorovaným chováním nebyl zjištěn. Živé chování nebylo pozorováno.\r\n\r\n## Security checkpoint a review\r\n\r\nSlepý security checkpoint (gpt-6.1-sol, jen diff, zadání a dokumentace API):\r\n\r\n- Tvar API a obnova po přerušení: bez nálezu.\r\n- Vysoký nález: tajný (`secret`) security tým prošel kontrolou, ale CODEOWNERS ho ignoruje. Oprava: kontrola vyžaduje `privacy` přesně `closed`.\r\n- Vysoký nález: pravidlo bez `dismiss_stale_reviews_on_push` ponechá schválení po dalším pushi. Oprava: kontrola pravidla vyžaduje `dismiss_stale_reviews_on_push: true`.\r\n\r\nKoncové code review (gpt-6.1-sol):\r\n\r\n- Vysoký nález: tag vznikl bez kontroly schvalovacího pravidla, CODEOWNERS a týmu. Oprava: před tvorbou tagu modul přečte stav repozitáře a při porušení skončí chybou.\r\n- Vysoký nález: pole (`[]`) v receiptu nebo v odpovědi API prošlo porovnáním `-cne`, protože PowerShell pole filtruje. Oprava: kontroly vyžadují řetězec. Negativní testy pokrývají prázdné i neprázdné pole.\r\n- Střední nález: `main` se mohl změnit mezi kontrolou a tvorbou tagu. Oprava: porovnání proti pevnému SHA `main` a opakované čtení `main` před tvorbou tagu. Zbývá okno mezi posledním čtením a `POST git/refs`, které API neumí podmínit.\r\n\r\nCopilot review, kolo 1 (4 nálezy):\r\n\r\n- Opraveno: pravidlo z rulesetu repozitáře prošlo kontrolou, ale apply credential ho může změnit. Kontrola vyžaduje `ruleset_source_type: Organization` a `ruleset_source` rovné organizaci akcí.\r\n- Opraveno: receipt jako pole s jedním objektem prošel kontrolou. Parsování používá `-NoEnumerate`.\r\n- Opraveno: apply otevřel repozitář pro enterprise před kontrolou CODEOWNERS. Nastavení `access_level` je poslední krok.\r\n- Follow-up [#72](https://github.com/msucharda/devsecops-platform/issues/72): tag ověřuje dosažitelnost z `main`, ne schválení přesné revize. Oprava vyžaduje oprávnění `pull_requests: read` a rozhodnutí o politice.\r\n\r\nCopilot review, kolo 2 (poslední): nález v souhrnu review bez vlákna. Opraveno: název kopie `{owner}-{repo}` mohl překročit limit GitHubu 100 znaků. Validace v Terraformu i v `Assert-CatalogInput` limit vynucuje.\r\n\r\nCopilot review po kole 2 (bezpečnostní nález, opraveno v 6b442e2): apply otevřel akce pro enterprise (`access_level: enterprise`) i bez schvalovacího pravidla rulesetu organizace. Kontrola stavu chybu nahlásila až po zápisu. `Initialize-CatalogRepository` teď pravidlo ověří před sdílením. Bez pravidla skončí chybou a `access_level` nezmění. Ruleset proto musí existovat před prvním apply. Ověřeno: Pester catalog 220/220, harness přerušení 3/3, mutační testy pěti catalog checks bez přeživších mutantů.\r\n\r\n## Fakta\r\n\r\n- Ověřeno (dokumentace): tvary odpovědí a varianty výše; check team permissions bez repository media type vrací 204 pro jakékoli oprávnění týmu.\r\n- Ověřeno (kód #14 a #16 v `main`): receipt má `version: 1`, `kind`, `source`, `tag`; kopie se jmenuje `{owner}-{repo}` (`docs/vendoring.md`).\r\n- Ověřeno (kód): `New-PlatformGitHubToken.ps1` vyžaduje u modulu s `resources.organizations` výběr repozitářů instalace `all`.\r\n- Neověřeno živě: repozitář bez commitů vrací u `git/ref` HTTP 409; prázdný repozitář hlásí `default_branch: main`; `PUT contents` do prázdného repozitáře vytvoří `main`; oprávnění pro `rules/branches` stačí `administration: read`; workflow workloadů použije akci pinovanou na SHA.\r\n\r\n## Otevřené otázky\r\n\r\nNávrhy níže nejsou rozhodnutí. Čekají na schválení.\r\n\r\n1. Zdroj pravdy pro release: modul má parametr `releases` (upstream → `{ tag, commit }`), #16 má katalog `vendoring/actions.json` (upstream → `{ repository, sha }`). Má modul číst `vendoring/actions.json`, nebo zůstanou dva zdroje?\r\n2. Destroy nic nemaže. Repozitáře a tagy zůstanou do smazání organizace akcí. Je to přijatelné pro teardown?\r\n3. Org ruleset s povinným review code ownera je ruční krok. Modul nemá ruleset write (ADR 0016) a `rules/branches` nevrací bypass actors. Absenci bypassu proto modul neověří. Stačí ruční krok?\r\n4. Instalace App musí mít výběr repozitářů `all`, protože modul vytváří nové repozitáře. Je to přijatelné?\r\n5. Tokenová akce `actions/create-github-app-token` v3.3.0 (`64ab729a6294000f5aa4a4bc0b73d1f32bc45510`) nemá vstupy pro enterprise oprávnění. Platforma proto používá `New-PlatformGitHubToken.ps1`. Splňuje to kritérium o tokenové akci?\r\n6. Parametry modulu nemají schéma v konfiguraci instance (stejně jako `enterprise-baseline`). Validaci dělá Terraform. Má vzniknout schéma?\r\n7. Rozšíření mutačních testů na `modules/` mění sdílený nástroj. Je to správné místo pro kontroly modulů?\r\n8. `docs/vendoring.md` jsem neupravil kvůli souběžné práci na #16. Má dokument odkazovat na modul?\r\n9. Důkaz schválení přesné revize releasu (#72): má modul získat `pull_requests: read` a ověřovat merge commit a review security týmu?\r\n",
+          "createdAt": "2026-10-21T23:21:33Z",
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "oid": "000f3650f3f184f0976282e051ad79488cbeff1e",
+                  "committedDate": "2026-10-22T05:50:28Z"
+                }
+              }
+            ]
+          },
+          "reviewThreads": {
+            "totalCount": 5,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "modules/actions-catalog/scripts/ActionsCatalog.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T23:32:42Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055940"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": false,
+                "path": "modules/actions-catalog/scripts/ActionsCatalog.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T23:32:43Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055973"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "modules/actions-catalog/scripts/ActionsCatalog.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T23:32:43Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055998"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "modules/actions-catalog/scripts/ActionsCatalog.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-21T23:32:43Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343056019"
+                    }
+                  ]
+                }
+              },
+              {
+                "isResolved": true,
+                "isOutdated": true,
+                "path": "modules/actions-catalog/scripts/ActionsCatalog.psm1",
+                "comments": {
+                  "nodes": [
+                    {
+                      "author": {
+                        "login": "copilot-pull-request-reviewer"
+                      },
+                      "createdAt": "2026-10-22T00:23:52Z",
+                      "url": "https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343339744"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "reviews": {
+            "totalCount": 10,
+            "nodes": [
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T23:32:43Z",
+                "commit": {
+                  "oid": "568205fb7f5d8aab9ca3258e848dd8daab027eb8"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\nUnresolved security checks permit publishing revisions without exact approval evidence and sharing repositories before governance validation succeeds.\n\n<details open>\n<summary><strong>4 open issues</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Reject repository-scoped rules controlled by the publishing credential](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055940) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Require approval evidence for the exact released revision](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055973) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Reject singleton-array receipts during JSON conversion](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055998) · New\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Validate governance before enabling enterprise repository access](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343056019) · New\n</details>\n\n<details>\n<summary><strong>1 file not reviewed</strong></summary>\n\n<ul>\n<li><strong><code>modules/actions-catalog/.terraform.lock.hcl</code></strong>: Generated file</li>\n</ul>\n</details>\n\n<details>\n<summary><strong>What changed in this PR</strong></summary>\n\nAdds the offline implementation of `actions-catalog` for #15, providing repositories and release tags for the platform’s vendored actions. Live deployment and acceptance checks remain unperformed.\n\n**Changes:**\n- Adds the six-action catalog, repository initialization, release validation, and read-only state checks.\n- Integrates the module into deployment, drift, and teardown workflows.\n- Adds API fixtures, interruption tests, and mutation coverage for security checks.\n\n| File | Description |\r\n| ---- | ----------- |\r\n| `tools/​tests/​security-checks.psd1` | Registers five catalog security checks. |\r\n| `tools/​tests/​MutationTesting.Tests.ps1` | Tests module discovery and reason-output guards. |\r\n| `tools/​tests/​ModuleOrder.Tests.ps1` | Updates prerequisite renaming across modules. |\r\n| `tools/​tests/​fixtures/​github-api/​teams/​get-by-name.json` | Adds team lookup fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​teams/​check-permissions-for-repo-in-org.json` | Adds team repository permissions fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​get-content.symlink.json` | Adds symlink response fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​get-content.submodule.json` | Adds submodule response fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​get-content.file.json` | Adds file response fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​get-content.directory.json` | Adds directory response fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​get-branch-rules.pull-request.json` | Adds approval-rule fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​get-branch-rules.json` | Adds branch rules fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​create-or-update-file-contents.json` | Adds file creation response fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​create-in-org.json` | Adds repository creation fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​repos/​compare-commits.json` | Expands comparison annotations and required fields. |\r\n| `tools/​tests/​fixtures/​github-api/​git/​create-ref.json` | Adds reference creation fixture. |\r\n| `tools/​tests/​fixtures/​github-api/​actions/​get-workflow-access-to-repository.json` | Adds Actions access fixture. |\r\n| `tools/​tests/​ActionsCatalog.Tests.ps1` | Tests catalog operations and validation. |\r\n| `tools/​tests/​ActionsCatalog.Interruption.Tests.ps1` | Tests recovery after interrupted writes. |\r\n| `tools/​MutationTesting.psm1` | Supports module checks and reason-output guards. |\r\n| `templates/​instance/​.github/​workflows/​teardown.yml` | Adds catalog teardown ordering. |\r\n| `templates/​instance/​.github/​workflows/​drift.yml` | Adds catalog drift checks. |\r\n| `templates/​instance/​.github/​workflows/​deploy.yml` | Adds catalog plan and apply jobs. |\r\n| `modules/​actions-catalog/​versions.tf` | Declares Terraform requirements and backend. |\r\n| `modules/​actions-catalog/​variables.tf` | Defines catalog inputs and validation. |\r\n| `modules/​actions-catalog/​tests/​actions-catalog.tftest.hcl` | Tests resource configuration and outputs. |\r\n| `modules/​actions-catalog/​scripts/​Read-CatalogState.ps1` | Exposes state checks to Terraform. |\r\n| `modules/​actions-catalog/​scripts/​Invoke-CatalogChange.ps1` | Dispatches repository and tag operations. |\r\n| `modules/​actions-catalog/​scripts/​ActionsCatalog.psm1` | Implements API operations and security checks. |\r\n| `modules/​actions-catalog/​README.md` | Documents lifecycle, permissions, and limitations. |\r\n| `modules/​actions-catalog/​outputs.tf` | Exposes repositories and release references. |\r\n| `modules/​actions-catalog/​module.yaml` | Declares prerequisites, manual steps, and permissions. |\r\n| `modules/​actions-catalog/​main.tf` | Connects provisioning and state validation. |\r\n| `modules/​actions-catalog/​.terraform.lock.hcl` | Locks the external provider. |\r\n| `AGENTS.md` | Documents expanded mutation-test support. |\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T23:51:33Z",
+                "commit": {
+                  "oid": "851103086a96383caa54ca2a492e9604d0c2eb8a"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T23:51:36Z",
+                "commit": {
+                  "oid": "851103086a96383caa54ca2a492e9604d0c2eb8a"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T23:51:39Z",
+                "commit": {
+                  "oid": "851103086a96383caa54ca2a492e9604d0c2eb8a"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-21T23:51:41Z",
+                "commit": {
+                  "oid": "851103086a96383caa54ca2a492e9604d0c2eb8a"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-22T00:00:58Z",
+                "commit": {
+                  "oid": "851103086a96383caa54ca2a492e9604d0c2eb8a"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🔵 Needs a closer look\n\nSecurity-sensitive publishing still needs human decisions and live validation, and the repository-name validation issue remains unresolved.\n\n**No open issues** 🎉\n\n<details>\n<summary><strong>1 previously missed issue</strong></summary>\n\nIn code that hasn't changed since last review\n\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Validate transformed repository name stays within 100-character limit</summary>\n\n`modules/​actions-catalog/​variables.tf:80`\n\nThe validators limit the upstream repository component to 100 characters, but the destination also includes the owner and a hyphen. For example, `actions/` plus 93 `a` characters passes both validators and becomes a 101-character destination, exceeding GitHub's 100-character repository-name limit. An initial plan can therefore succeed while repository creation fails during apply; direct PowerShell calls have the same problem. Require `length(replace(upstream, \"/\", \"-\")) <= 100` here and the equivalent bound in `Assert-CatalogInput` before any API request. Add 100-character acceptance and 101-character rejection cases to the Terraform and PowerShell tests.\n</details>\n</details>\n\n<details>\n<summary><strong>4 resolved since last review</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Validate governance before enabling enterprise repository access](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343056019)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Reject singleton-array receipts during JSON conversion](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055998)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Require approval evidence for the exact released revision](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055973)\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Reject repository-scoped rules controlled by the publishing credential](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343055940)\n</details>\n\n<details>\n<summary><strong>1 file not reviewed</strong></summary>\n\n<ul>\n<li><strong><code>modules/actions-catalog/.terraform.lock.hcl</code></strong>: Generated file</li>\n</ul>\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-22T00:23:52Z",
+                "commit": {
+                  "oid": "d26d3077d2981e211b7bb11f4672b781f5782034"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\nEnterprise sharing can persist before required approval-rule validation succeeds, leaving an ungoverned repository accessible after a failed apply.\n\n<details open>\n<summary><strong>1 open issue</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Validate approval rules before enabling enterprise repository sharing](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343339744) · New\n</details>\n\n<details>\n<summary><strong>1 previously missed issue</strong></summary>\n\nIn code that hasn't changed since last review\n\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Reject non-string comparison statuses during release validation</summary>\n\n`modules/​actions-catalog/​scripts/​ActionsCatalog.psm1:352`\n\nThe comparison status is checked for membership without first checking its type. PowerShell can match a singleton array such as `{\"status\":[\"identical\"]}` or `{\"status\":[\"ahead\"]}` against the allowed strings, so a malformed API response can pass this part of release validation. Require `status` to be a string before checking its value, and add negative tests for singleton-array statuses to preserve fail-closed behavior.\n</details>\n</details>\n\n<details>\n<summary><strong>1 file not reviewed</strong></summary>\n\n<ul>\n<li><strong><code>modules/actions-catalog/.terraform.lock.hcl</code></strong>: Generated file</li>\n</ul>\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "msucharda"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-22T00:46:47Z",
+                "commit": {
+                  "oid": "6b442e2c3a3e0a3ffae44587ccf926924af67896"
+                },
+                "body": ""
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-22T00:56:55Z",
+                "commit": {
+                  "oid": "6b442e2c3a3e0a3ffae44587ccf926924af67896"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🔵 Needs a closer look\n\nSecurity-sensitive enterprise sharing and release publication need human sign-off on manual governance, unresolved approval policy, and unperformed live validation.\n\n**No open issues** 🎉\n\n<details>\n<summary><strong>1 resolved since last review</strong></summary>\n\n- <picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/high-v2-light.png\" alt=\"High severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> [Validate approval rules before enabling enterprise repository sharing](https://github.com/msucharda/devsecops-platform/pull/71#discussion_r4343339744)\n</details>\n\n<details>\n<summary><strong>1 file not reviewed</strong></summary>\n\n<ul>\n<li><strong><code>modules/actions-catalog/.terraform.lock.hcl</code></strong>: Generated file</li>\n</ul>\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              },
+              {
+                "author": {
+                  "login": "copilot-pull-request-reviewer"
+                },
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-22T06:42:20Z",
+                "commit": {
+                  "oid": "000f3650f3f184f0976282e051ad79488cbeff1e"
+                },
+                "body": "<!-- ccr-overview-v2 -->\n\n### 🔵 Needs a closer look\n\nEnterprise-wide action publication has an unresolved validation issue and depends on manual protections and unverified live authorization behavior.\n\n**No open issues** 🎉\n\n<details>\n<summary><strong>1 previously missed issue</strong></summary>\n\nIn code that hasn't changed since last review\n\n<details>\n<summary><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-dark.svg\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.svg\"><img src=\"https://github.githubassets.com/static/images/icons/copilot-code-review/medium-v2-light.png\" alt=\"Medium severity\" width=\"62\" height=\"18\" align=\"texttop\"></picture> Reject array-valued comparison statuses before release checks</summary>\n\n`modules/​actions-catalog/​scripts/​ActionsCatalog.psm1:352`\n\nA comparison response with `status: [\"ahead\"]` or `status: [\"identical\"]` passes this guard. PowerShell accepts these singleton arrays in the `-cnotin` comparison, so the release check treats a malformed ancestry verdict as valid and can proceed to tag creation if the remaining checks pass. Require `status` to be a string before checking its value, and add negative regression cases for singleton-array statuses.\n</details>\n</details>\n\n<details>\n<summary><strong>1 file not reviewed</strong></summary>\n\n<ul>\n<li><strong><code>modules/actions-catalog/.terraform.lock.hcl</code></strong>: Generated file</li>\n</ul>\n</details>\n\n<sub>Review effort: Balanced</sub>"
+              }
+            ]
+          },
+          "timelineItems": {
+            "pageInfo": {
+              "hasPreviousPage": false
+            },
+            "nodes": [
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T23:21:34Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-21T23:51:26Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-22T00:16:44Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-22T00:46:39Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              },
+              {
+                "__typename": "ReviewRequestedEvent",
+                "createdAt": "2026-10-22T06:30:41Z",
+                "requestedReviewer": {
+                  "__typename": "Bot",
+                  "login": "copilot-pull-request-reviewer"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
