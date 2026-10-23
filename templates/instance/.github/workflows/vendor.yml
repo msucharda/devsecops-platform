@@ -176,6 +176,7 @@ jobs:
         with:
           repository: ${{ inputs.target-repository }}
           ref: main
+          fetch-depth: 0
           path: target
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
@@ -186,7 +187,7 @@ jobs:
           TARGET_REPOSITORY: ${{ inputs.target-repository }}
           IMPORT_KIND: ${{ inputs.kind }}
         run: |
-          ./trusted/platform/tools/Publish-VendoringPullRequest.ps1 -PreparedPath ./candidate/prepared -TargetPath ./target -ReceiptPath ./candidate/source/receipt.json -ModeManifestPath ./candidate/modes.json -Kind $env:IMPORT_KIND -Repository $env:TARGET_REPOSITORY -ApiUrl $env:GITHUB_API_URL -RunIdentifier "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" -GitHubOutputPath $env:GITHUB_OUTPUT -SummaryPath $env:GITHUB_STEP_SUMMARY
+          ./trusted/platform/tools/Publish-VendoringPullRequest.ps1 -PreparedPath ./candidate/prepared -TargetPath ./target -ReceiptPath ./candidate/source/receipt.json -ModeManifestPath ./candidate/modes.json -Kind $env:IMPORT_KIND -Repository $env:TARGET_REPOSITORY -ApiUrl $env:GITHUB_API_URL -GitHubOutputPath $env:GITHUB_OUTPUT -SummaryPath $env:GITHUB_STEP_SUMMARY
       - name: Revoke target installation token
         if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh

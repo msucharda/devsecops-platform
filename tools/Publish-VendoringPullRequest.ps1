@@ -1,5 +1,7 @@
 #Requires -Version 7.4
 [CmdletBinding()]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'RunIdentifier',
+    Justification = 'Retained for older instance workflows; import identity must not depend on a run.')]
 [OutputType([pscustomobject])]
 param(
     [Parameter(Mandatory)][string] $PreparedPath,
@@ -9,13 +11,14 @@ param(
     [Parameter(Mandatory)][ValidateSet('action', 'release')][string] $Kind,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$')][string] $Repository,
     [Parameter(Mandatory)][string] $ApiUrl,
-    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9-]+$')][string] $RunIdentifier,
+    [ValidatePattern('^[A-Za-z0-9-]+$')][string] $RunIdentifier,
     [string] $GitHubOutputPath,
     [string] $SummaryPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$Kind = $Kind.ToLowerInvariant()
 $owner = $Repository.Split('/')[0]
 if (([uri] $ApiUrl).Scheme -cne 'https' -or -not $env:PLATFORM_GITHUB_TOKENS -or $env:GH_TOKEN -cnotmatch '^ghs_') {
     throw 'Publishing requires an HTTPS API and a verified target installation token; GITHUB_TOKEN and PAT/OAuth are not supported.'
@@ -33,15 +36,6 @@ if ($scope.total_count -ne 1 -or @($scope.repositories).Count -ne 1 -or $scope.r
 }
 $target = (Resolve-Path -LiteralPath $TargetPath).Path
 $prepared = (Resolve-Path -LiteralPath $PreparedPath).Path
-foreach ($item in @(Get-ChildItem -LiteralPath $target -Recurse -Force |
-    Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })) {
-    $relative = [IO.Path]::GetRelativePath($target, $item.FullName).Replace('\', '/')
-    if (($Kind -eq 'release' -and $relative.StartsWith('platform/')) -or
-        ($Kind -eq 'release' -and $relative -ceq 'platform') -or
-        ($Kind -eq 'action' -and -not $relative.StartsWith('.github/'))) {
-        throw "Target vendoring boundary contains symbolic link '$relative'."
-    }
-}
 $receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json -AsHashtable
 if ($receipt['Commit'] -cnotmatch '^[a-f0-9]{40}$' -or $receipt['Sha256'] -cnotmatch '^[a-f0-9]{64}$' -or
     $receipt['Attestation'] -cnotin @('verified', 'not-present', 'manual-not-verified') -or
@@ -49,6 +43,7 @@ if ($receipt['Commit'] -cnotmatch '^[a-f0-9]{40}$' -or $receipt['Sha256'] -cnotm
     $receipt['Tag'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._/-]*$') {
     throw 'Invalid source receipt.'
 }
+$receipt['Repository'] = $receipt['Repository'].ToLowerInvariant()
 function Invoke-VendoringGit {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string[]] $Arguments)
@@ -56,6 +51,136 @@ function Invoke-VendoringGit {
     $result = & git -C $target -c core.hooksPath=/.vendoring-no-hooks -c core.quotepath=false @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Git vendoring command '$($Arguments[0])' failed with exit code $LASTEXITCODE." }
     return $result
+}
+
+function Invoke-VendoringRemoteGit {
+    param([Parameter(Mandatory)][string[]] $Arguments)
+    $names = @('GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0')
+    $saved = @{}
+    foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+    try {
+        $env:GIT_CONFIG_COUNT = '1'
+        $env:GIT_CONFIG_KEY_0 = "http.$remote.extraheader"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:$($env:GH_TOKEN)"))
+        $env:GIT_CONFIG_VALUE_0 = "AUTHORIZATION: basic $encoded"
+        Invoke-VendoringGit (@('-c', 'credential.helper=') + $Arguments)
+    }
+    finally {
+        foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    }
+}
+
+# security-check: vendoring-resume-pr
+function Assert-VendoringPullRequest {
+    param($PullRequest, [string] $Branch, [string] $HeadSha)
+    if ($PullRequest -isnot [Collections.IDictionary]) { throw 'Invalid vendoring PR response.' }
+    foreach ($side in @('head', 'base')) {
+        $reference = $PullRequest[$side]
+        if ($reference -isnot [Collections.IDictionary] -or $reference['repo'] -isnot [Collections.IDictionary] -or
+            $reference['repo']['full_name'] -ine $Repository) { throw "Vendoring PR $side repository does not match the target." }
+    }
+    if ($PullRequest['head']['ref'] -cne $Branch) { throw 'Vendoring PR head does not match the import branch.' }
+    if ($PullRequest['base']['ref'] -cne 'main') { throw 'Vendoring PR base is not main.' }
+    if ($PullRequest['head']['sha'] -cne $HeadSha) { throw 'Vendoring PR head SHA changed; retry after inspection.' }
+    if ($PullRequest['state'] -cnotin @('open', 'closed')) { throw 'Vendoring PR state is unknown.' }
+    if ($PullRequest['number'] -notmatch '^[1-9][0-9]*$' -or
+        $PullRequest['html_url'] -ine "https://$hostName/$Repository/pull/$($PullRequest['number'])") {
+        throw 'Vendoring PR URL does not match the target.'
+    }
+    $author = $PullRequest['user']
+    if ($author -isnot [Collections.IDictionary]) { throw 'Vendoring PR author must be an object identifying an App bot.' }
+    if ($author['type'] -isnot [string] -or $author['type'] -cne 'Bot') { throw 'Vendoring PR author type is not Bot.' }
+    if ($author['login'] -isnot [string] -or $author['login'] -cnotmatch '\A\S+\[bot\]\z') {
+        throw 'Vendoring PR author login is not an App bot.'
+    }
+    $mergedAt = [DateTimeOffset]::MinValue
+    if ($PullRequest['state'] -eq 'closed' -and
+        -not [DateTimeOffset]::TryParse($PullRequest['merged_at'], [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref] $mergedAt)) {
+        throw 'Vendoring PR was closed without merging; restore it manually instead of creating a duplicate.'
+    }
+}
+
+# security-check: vendoring-resume-tree
+function Assert-VendoringResumeTree {
+    param([string] $ExpectedTree, [string] $RemoteTree)
+    if ($RemoteTree -cne $ExpectedTree) { throw 'Existing import branch has different content or provenance; it will not be overwritten.' }
+}
+
+# security-check: vendoring-resume-ref
+function Get-VendoringResumeRef {
+    $remoteRefs = @(Invoke-VendoringRemoteGit @('ls-remote', '--heads', $remote, "refs/heads/$branch"))
+    if ($remoteRefs.Count -eq 0) { return $null }
+    if ($remoteRefs.Count -ne 1 -or $remoteRefs[0] -cnotmatch "^([a-f0-9]{40})\s+refs/heads/$([regex]::Escape($branch))$") {
+        throw 'Cannot resolve the existing import branch to one commit.'
+    }
+    $sha = $Matches[1]
+    $null = Invoke-VendoringRemoteGit @('fetch', '--quiet', '--no-tags', $remote, $sha)
+    $parents = (Invoke-VendoringGit @('rev-list', '--parents', '-n', '1', $sha)).Split(' ')
+    if ($parents.Count -ne 2) { throw 'Existing import branch must contain a single-parent import commit.' }
+    $parent = $parents[1]
+    if ((Invoke-VendoringGit @('merge-base', $mainSha, $parent)) -cne $parent) {
+        throw 'Existing import branch is not based on target main history.'
+    }
+    return @{ Sha = $sha; Parent = $parent }
+}
+
+# security-check: vendoring-pr-lookup
+function Get-VendoringExistingPullRequest {
+    $queryHead = [uri]::EscapeDataString("${owner}:$branch")
+    $pullRequests = Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/repos/$Repository/pulls?state=all&head=$queryHead&per_page=100" -Headers $headers
+    if ($pullRequests -isnot [Collections.IList] -or $pullRequests.Count -gt 1) {
+        throw 'Vendoring PR lookup must return an array with at most one import PR.'
+    }
+    if ($pullRequests.Count -eq 1 -and -not $remoteSha) { throw 'Existing vendoring PR has no import branch; restore it manually.' }
+    return ,$pullRequests
+}
+
+# security-check: vendoring-publish-head
+function Assert-VendoringPublishHead {
+    $refs = @(Invoke-VendoringRemoteGit @('ls-remote', '--heads', $remote, "refs/heads/$branch"))
+    if ($refs.Count -ne 1 -or $refs[0] -cne "$remoteSha`trefs/heads/$branch") {
+        throw 'Import branch changed before PR creation; retry after inspection.'
+    }
+}
+
+function Get-VendoringBoundaryDifference {
+    param([string] $ReferenceSha, [string] $TargetSha)
+    $paths = if ($Kind -eq 'release') { @('platform') } else { @('.', ':(top,exclude).github') }
+    Invoke-VendoringGit (@('diff', '--name-only', '--no-renames', $ReferenceSha, $TargetSha, '--') + $paths)
+}
+
+# security-check: vendoring-main-ref
+function Get-VendoringMainRef {
+    $refs = @(Invoke-VendoringRemoteGit @('ls-remote', '--heads', $remote, 'refs/heads/main'))
+    if ($refs.Count -ne 1 -or $refs[0] -cnotmatch '^([a-f0-9]{40})\s+refs/heads/main$') {
+        throw 'Cannot resolve target main to one commit.'
+    }
+    return $Matches[1]
+}
+
+# security-check: vendoring-publish-main
+function Assert-VendoringPublishMain {
+    if ((Get-VendoringMainRef) -cne $mainSha) {
+        throw 'Target main changed during vendoring; retry from main.'
+    }
+}
+
+# security-check: vendoring-resume-main
+function Assert-VendoringResumeBase {
+    param([string] $ParentSha)
+    $differences = @(Get-VendoringBoundaryDifference -ReferenceSha $ParentSha -TargetSha $mainSha)
+    if ($differences.Count -gt 0) {
+        throw "Target main changed inside the vendoring boundary; delete the orphaned import branch '$branch' and run the import again."
+    }
+}
+
+# security-check: vendoring-merged-main
+function Assert-VendoringMergedImport {
+    $differences = @(Get-VendoringBoundaryDifference -ReferenceSha $mainSha -TargetSha $remoteSha)
+    if ($differences.Count -gt 0) {
+        throw 'Import identity was merged but target main no longer contains it; manual intervention is required.'
+    }
 }
 if (@(Invoke-VendoringGit @('status', '--porcelain')).Count -gt 0) { throw 'Target checkout must be clean before vendoring.' }
 if ((Invoke-VendoringGit @('branch', '--show-current')) -cne 'main') { throw 'Target checkout must start on protected main.' }
@@ -88,11 +213,32 @@ if ($ModeManifestPath) {
         }
     }
 }
+$identity = ConvertTo-Json -InputObject @($Kind, $receipt['Repository'], $receipt['Tag']) -Compress
+$identityHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity))).ToLowerInvariant()
+$branch = "vendor/$Kind/$identityHash"
+$hostName = ([uri] $ApiUrl).Host -replace '^api\.', ''
+$remote = "https://$hostName/$Repository.git"
+$mainSha = Get-VendoringMainRef
+$null = Invoke-VendoringRemoteGit @('fetch', '--quiet', '--no-tags', $remote, $mainSha)
+$remoteSha = $null
+$start = $mainSha
+if ($resumeRef = Get-VendoringResumeRef) {
+    $remoteSha = $resumeRef.Sha
+    $start = $resumeRef.Parent
+}
+$null = Invoke-VendoringGit @('switch', '--quiet', '--detach', $start)
+foreach ($item in @(Get-ChildItem -LiteralPath $target -Recurse -Force |
+    Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })) {
+    $relative = [IO.Path]::GetRelativePath($target, $item.FullName).Replace('\', '/')
+    if (($Kind -eq 'release' -and $relative.StartsWith('platform/')) -or
+        ($Kind -eq 'release' -and $relative -ceq 'platform') -or
+        ($Kind -eq 'action' -and -not $relative.StartsWith('.github/'))) {
+        throw "Target vendoring boundary contains symbolic link '$relative'."
+    }
+}
 $oldFiles = @(Invoke-VendoringGit @('ls-files')) | Where-Object {
     if ($Kind -eq 'release') { $_.StartsWith('platform/') } else { -not $_.StartsWith('.github/') -and $_ -cne '.vendoring.json' }
 }
-$branch = "vendor/$Kind/$($receipt['Sha256'].Substring(0, 12))-$RunIdentifier"
-$null = Invoke-VendoringGit @('switch', '--quiet', '-c', $branch)
 foreach ($relative in $oldFiles) {
     if (-not $newFiles.Contains($relative)) {
         $null = Invoke-VendoringGit @('rm', '--quiet', '--', $relative)
@@ -122,29 +268,37 @@ foreach ($relative in @($newFiles) + @($metadataPath)) {
         $null = Invoke-VendoringGit @('update-index', $flag, '--', $relative)
     }
 }
-$diff = Invoke-VendoringGit @('diff', '--cached', '--stat')
+if ($remoteSha) {
+    Assert-VendoringResumeTree -ExpectedTree (Invoke-VendoringGit @('write-tree')) `
+        -RemoteTree (Invoke-VendoringGit @('rev-parse', "${remoteSha}^{tree}"))
+    $null = Invoke-VendoringGit @('reset', '--quiet', $remoteSha)
+}
+$diff = if ($remoteSha) { 'Existing import branch' } else { Invoke-VendoringGit @('diff', '--cached', '--stat') }
 if (-not $diff) {
     $result = [pscustomobject]@{ HasChanges = $false; Branch = $branch; PullRequest = $null }
 }
 else {
-    $null = Invoke-VendoringGit @('-c', 'user.name=Platform vendoring', '-c', 'user.email=platform-vendoring@users.noreply.github.com',
-        'commit', '--quiet', '-m', "Vendor $($receipt['Repository']) at $($receipt['Tag'])")
-    $hostName = ([uri] $ApiUrl).Host -replace '^api\.', ''
-    $remote = "https://$hostName/$Repository.git"
-    $names = @('GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0')
-    $saved = @{}
-    foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
-    try {
-        $env:GIT_CONFIG_COUNT = '1'
-        $env:GIT_CONFIG_KEY_0 = "http.$remote.extraheader"
-        $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:$($env:GH_TOKEN)"))
-        $env:GIT_CONFIG_VALUE_0 = "AUTHORIZATION: basic $encoded"
-        $null = Invoke-VendoringGit @('-c', 'credential.helper=', 'push', '--quiet', $remote, "HEAD:refs/heads/$branch")
+    $pullRequests = Get-VendoringExistingPullRequest
+    if ($pullRequests.Count -eq 1) {
+        $pullRequest = $pullRequests[0] | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
+        Assert-VendoringPullRequest -PullRequest $pullRequest -Branch $branch -HeadSha $remoteSha
+        if ($pullRequest['state'] -ceq 'closed') {
+            Assert-VendoringMergedImport
+            Assert-VendoringPublishMain
+        }
+        $url = if ($pullRequest['state'] -ceq 'open') { $pullRequest['html_url'] } else { $null }
+        $result = [pscustomobject]@{ HasChanges = $pullRequest['state'] -ceq 'open'; Branch = $branch; PullRequest = $url }
     }
-    finally {
-        foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
-    }
-    $body = @"
+    else {
+        if ($remoteSha) { Assert-VendoringResumeBase -ParentSha $resumeRef.Parent }
+        else {
+            $null = Invoke-VendoringGit @('-c', 'user.name=Platform vendoring', '-c', 'user.email=platform-vendoring@users.noreply.github.com',
+                'commit', '--quiet', '-m', "Vendor $($receipt['Repository']) at $($receipt['Tag'])")
+            # An empty lease is create-only: a concurrent publisher must never be overwritten.
+            $null = Invoke-VendoringRemoteGit @('push', '--quiet', "--force-with-lease=refs/heads/${branch}:", $remote, "HEAD:refs/heads/$branch")
+            $remoteSha = Invoke-VendoringGit @('rev-parse', 'HEAD')
+        }
+        $body = @"
 Vendoring $($receipt['Repository']) at tag $($receipt['Tag']), commit $($receipt['Commit']).
 
 Source SHA256: $($receipt['Sha256'])
@@ -154,13 +308,17 @@ Cloud PR plan: **NOT PERFORMED**. This App-created PR receives no cloud credenti
 Review and merge into protected main must precede the main plan and approved apply (ADR 0016).
 Release workflow templates stay under platform/; promotion of live workflows is a separate reviewed manual step.
 "@
-    $pullRequest = Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/repos/$Repository/pulls" -Method POST -Headers $headers `
-        -ContentType application/json -Body (ConvertTo-Json -InputObject @{
-            title = "Vendor $($receipt['Repository']) $($receipt['Tag'])"
-            head = $branch; base = 'main'; body = $body
-        } -Compress)
-    if (-not $pullRequest.html_url) { throw "GitHub did not return a PR URL; branch '$branch' was pushed and requires inspection." }
-    $result = [pscustomobject]@{ HasChanges = $true; Branch = $branch; PullRequest = $pullRequest.html_url }
+        Assert-VendoringPublishHead
+        Assert-VendoringPublishMain
+        $pullRequest = Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/repos/$Repository/pulls" -Method POST -Headers $headers `
+            -ContentType application/json -Body (ConvertTo-Json -InputObject @{
+                title = "Vendor $($receipt['Repository']) $($receipt['Tag'])"
+                head = $branch; base = 'main'; body = $body
+            } -Compress)
+        $pullRequest = $pullRequest | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
+        Assert-VendoringPullRequest -PullRequest $pullRequest -Branch $branch -HeadSha $remoteSha
+        $result = [pscustomobject]@{ HasChanges = $true; Branch = $branch; PullRequest = $pullRequest['html_url'] }
+    }
 }
 if ($GitHubOutputPath) {
     [IO.File]::AppendAllText([IO.Path]::GetFullPath($GitHubOutputPath),

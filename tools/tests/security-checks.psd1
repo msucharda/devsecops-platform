@@ -4,6 +4,60 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'vendoring-main-ref'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid target main ref: <Case>*', '*opens an App PR*') }
+            )
+        }
+        @{
+            Name = 'vendoring-publish-main'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*remote main moving during*', '*remote main moving before confirming*', '*opens an App PR*', '*unchanged*') }
+            )
+        }
+        @{
+            Name = 'vendoring-resume-main'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*resumes an orphaned <ImportKind> import with main changes <Change>*') }
+            )
+        }
+        @{
+            Name = 'vendoring-merged-main'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*merged import that main no longer contains: <Case>*', '*unchanged*', '*merged import after changes outside*') }
+            )
+        }
+        @{
+            Name = 'vendoring-publish-head'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*changed import branch before PR*', '*opens an App PR*') }
+            )
+        }
+        @{
+            Name = 'vendoring-resume-ref'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid resume ref: <Case>*', '*recovers the published branch*') }
+            )
+        }
+        @{
+            Name = 'vendoring-pr-lookup'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*malformed or ambiguous PR lookup: <Case>*', '*existing PR has lost its branch*', '*recovers the published branch*', '*ambiguous PR history across bases*', '*retargeted <ImportKind> PR*') }
+            )
+        }
+        @{
+            Name = 'vendoring-resume-pr'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid resumed PR: <Case>*', '*invalid App PR author: <Case>*', '*accepts documented nullable PR*', '*recovers the published branch*', '*unchanged*', '*malformed merge timestamp*') }
+            )
+        }
+        @{
+            Name = 'vendoring-resume-tree'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*changed content or provenance*', '*recovers the published branch*') }
+            )
+        }
+        @{
             Name = 'release-tag-commit'
             Tests = @(
                 @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*tag-commit mismatch*', '*annotated tag whose tag object*') }
@@ -131,6 +185,11 @@
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
+        @{
+            Mutant = 'Assert-VendoringPublishMain: operator ''-cne'' -> -ine in ''(Get-VendoringMainRef) -cne $mainSha''#1'
+            Reason = 'Equivalent mutant: both the captured SHA and every subsequent SHA come from Get-VendoringMainRef, whose case-sensitive pattern requires exactly 40 lowercase hexadecimal characters. Case-insensitive comparison cannot accept a different value in that domain.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/88'
+        }
         @{
             Mutant = 'Assert-OpenIssue: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Issue[''number''] -cnotmatch ''^[1-9][0-9]*$''''#1'
             Reason = 'Equivalent mutant: the pattern contains only digit classes, and no character matches a digit class case-insensitively but not case-sensitively.'
