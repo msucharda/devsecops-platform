@@ -25,7 +25,11 @@ variable "reviewers" {
 }
 
 resource "terraform_data" "organization" {
-  input = var.target_organizations[0]
+  input = {
+    organization  = var.target_organizations[0]
+    instance      = var.instance
+    prerequisites = var.prerequisites
+  }
 }
 
 output "organizations" {
