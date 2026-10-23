@@ -51,10 +51,12 @@ Identitu role a týmu před zápisem i po něm modul porovná s planem. Záměnu
 
 **Přiznaná mezera nápravy driftu:** pokud někdo přiřazení role ručně odebere, plan, drift i běžný apply selžou. Terraform bez změny vstupů znovu nespustí create provisioner existujícího prostředku. Uživatel 23. 10. 2026 schválil explicitní náhradu prostředku `assignment` místo změny runneru.
 
-V inicializovaném pracovním adresáři modulu použij stejný backend, tfvars a apply token jako pro postiženou organizaci. Tfvars musí obsahovat právě tuto organizaci; state musí zůstat `organizations/<login>/terraform.tfstate` v kontejneru modulu. Spusť:
+Připrav samostatný pracovní kontext se stejným backendem, tfvars a apply tokenem jako pro postiženou organizaci. Dočasný kontext runneru po jeho dokončení neexistuje. Inicializuj backend pro state `organizations/<login>/terraform.tfstate` v kontejneru modulu. Tfvars musí obsahovat právě tuto organizaci v `target_organizations` a úplnou mapu `instance.organizations`; apply token této organizace nastav v `REST_API_BEARER`.
 
-```text
-terraform apply -replace=terraform_data.assignment
+V pracovním adresáři modulu spusť následující příkaz. Cestu nahraď cestou k připravenému souboru parametrů; runnerův název `inputs.tfvars.json` Terraform automaticky nenačítá.
+
+```powershell
+terraform apply -var-file="<cesta k inputs.tfvars.json>" -replace=terraform_data.assignment
 ```
 
 Zkontroluj a schval plan náhrady. Nahrazuj jen `assignment`, nikoli `role_guard`; neměň backend ani nevypínej state lock. Potom spusť běžný plan, který musí skončit bez změn. Pokud role chybí ve více organizacích, proveď nápravu odděleně v každé z nich.

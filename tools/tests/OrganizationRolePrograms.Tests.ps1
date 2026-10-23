@@ -564,26 +564,28 @@ locals { api_url = "$apiUrl" }
         }
 
         It 'repairs detected role removal only after explicit assignment replacement' -Tag RoleRepair {
+            $variableFile = Join-Path $parent 'inputs.tfvars.json'
+            Move-Item -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Destination $variableFile
             $roleStub.Assignments = @()
-            $apply = Invoke-RoleTerraform apply -input=false -auto-approve
+            $apply = Invoke-RoleTerraform apply -input=false -auto-approve "-var-file=$variableFile"
             $apply.ExitCode | Should -Be 0 -Because $apply.Output
             $roleStub.Assignments = @()
 
-            $plan = Invoke-RoleTerraform plan -input=false -detailed-exitcode
+            $plan = Invoke-RoleTerraform plan -input=false -detailed-exitcode "-var-file=$variableFile"
             $plan.ExitCode | Should -Be 1
             $plan.Output | Should -Match 'no direct security_manager role\s+assignment'
-            $ordinaryApply = Invoke-RoleTerraform apply -input=false -auto-approve
+            $ordinaryApply = Invoke-RoleTerraform apply -input=false -auto-approve "-var-file=$variableFile"
             $ordinaryApply.ExitCode | Should -Be 1
             $ordinaryApply.Output | Should -Match 'no direct security_manager role\s+assignment'
             $roleStub.Writes.ToArray() | Should -Be @('PUT')
 
-            $repair = Invoke-RoleTerraform apply -input=false -auto-approve '-replace=terraform_data.assignment'
+            $repair = Invoke-RoleTerraform apply -input=false -auto-approve "-var-file=$variableFile" '-replace=terraform_data.assignment'
 
             $repair.ExitCode | Should -Be 0 -Because $repair.Output
             $roleStub.Writes.ToArray() | Should -Be @('PUT', 'PUT')
-            $subsequentPlan = Invoke-RoleTerraform plan -input=false -detailed-exitcode
+            $subsequentPlan = Invoke-RoleTerraform plan -input=false -detailed-exitcode "-var-file=$variableFile"
             $subsequentPlan.ExitCode | Should -Be 0 -Because $subsequentPlan.Output
-            $destroy = Invoke-RoleTerraform destroy -input=false -auto-approve
+            $destroy = Invoke-RoleTerraform destroy -input=false -auto-approve "-var-file=$variableFile"
             $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
             $roleStub.Writes.ToArray() | Should -Be @('PUT', 'PUT', 'DELETE')
         }

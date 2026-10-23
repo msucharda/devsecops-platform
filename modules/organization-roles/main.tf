@@ -59,6 +59,8 @@ resource "terraform_data" "assignment" {
   }
 }
 
+# Only the postcondition consumes this independent live-state read.
+# tflint-ignore: terraform_unused_declarations
 data "external" "role_state" {
   program = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Read-OrganizationRoleState.ps1"]
   query = {
