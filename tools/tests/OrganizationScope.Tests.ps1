@@ -116,6 +116,8 @@ Describe 'Organization token isolation' {
     It 'rejects a non-object token map: <Case>' -ForEach @(
         @{ Case = 'null'; Json = 'null' }
         @{ Case = 'array'; Json = '[]' }
+        # Deliberately invalid: a singleton array must not be unwrapped into a valid token object.
+        @{ Case = 'singleton object array'; Json = '[{"demo-platform":"token"}]' }
         @{ Case = 'string'; Json = '"token"' }
     ) {
         { Get-PlatformOrganizationToken -Organization @('demo-platform') -Json $Json } |

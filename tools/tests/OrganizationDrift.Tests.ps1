@@ -43,6 +43,16 @@ Describe 'Per-organization drift completeness' {
         Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=false`ncomplete=true`n"
     }
 
+    It 'rejects a singleton array wrapping complete organization results' {
+        # Deliberately invalid: per-organization results must be a JSON object, not an array.
+        $results = @($results)
+
+        Invoke-OrganizationDriftReport
+
+        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`n"
+        Get-Content -LiteralPath $reportPath -Raw | Should -Match 'did not publish per-organization results'
+    }
+
     It 'names the organization with drift' {
         $results['demo-workloads'].changes = $true
         $needs.module_scoped.outputs.changes = 'true'

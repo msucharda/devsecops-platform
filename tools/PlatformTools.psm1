@@ -689,7 +689,7 @@ function Get-PlatformOrganizationToken {
     if ([string]::IsNullOrWhiteSpace($Json)) {
         throw 'Organization-scoped execution requires a readable PLATFORM_GITHUB_TOKENS object.'
     }
-    try { $tokens = ConvertFrom-Json -InputObject $Json -AsHashtable -ErrorAction Stop }
+    try { $tokens = ConvertFrom-Json -InputObject $Json -AsHashtable -NoEnumerate -ErrorAction Stop }
     catch { throw 'Organization-scoped execution requires a readable PLATFORM_GITHUB_TOKENS object.' }
     if ($tokens -isnot [System.Collections.IDictionary]) {
         throw 'Organization-scoped execution requires a PLATFORM_GITHUB_TOKENS object.'

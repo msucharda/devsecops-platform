@@ -105,7 +105,7 @@ if ($needs) {
                     if ($organizationScoped) {
                         $results = $null
                         try {
-                            $results = ConvertFrom-Json -InputObject (Get-NeedValue $needs $root.Job 'organizations') -AsHashtable -ErrorAction Stop
+                            $results = ConvertFrom-Json -InputObject (Get-NeedValue $needs $root.Job 'organizations') -AsHashtable -NoEnumerate -ErrorAction Stop
                         }
                         catch { $results = $null }
                         if ($results -isnot [System.Collections.IDictionary]) {
