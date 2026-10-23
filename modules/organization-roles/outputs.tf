@@ -8,7 +8,7 @@ output "security_manager" {
   value = {
     team     = var.security_team
     role_id  = tonumber(data.external.role_plan_state.result.role_id)
-    team_id  = tonumber(data.external.role_plan_state.result.team_id)
+    team_id  = data.external.role_plan_state.result.team_id == "" ? null : tonumber(data.external.role_plan_state.result.team_id)
     assigned = true
   }
 }

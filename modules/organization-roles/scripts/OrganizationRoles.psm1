@@ -66,7 +66,8 @@ function Test-SecurityManagerAssignment {
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Assignment,
         [Parameter(Mandatory)][System.Collections.IDictionary] $SecurityTeam,
-        [Parameter(Mandatory)][string] $Team
+        [Parameter(Mandatory)][string] $Team,
+        [switch] $MatchIdOnly
     )
 
     $matched = [Collections.Generic.List[object]]::new()
@@ -82,27 +83,26 @@ function Test-SecurityManagerAssignment {
         if ($entry['type'] -ceq 'enterprise') { continue }
         $sameId = $entry['id'] -eq $SecurityTeam['id']
         $sameSlug = [string]::Equals($entry['slug'], $Team, [StringComparison]::OrdinalIgnoreCase)
-        if (($sameId -or $sameSlug) -and -not ($sameId -and $sameSlug)) {
+        if (-not $MatchIdOnly -and ($sameId -or $sameSlug) -and -not ($sameId -and $sameSlug)) {
             throw 'The team role assignment has a mismatched security-team identity.'
         }
         if (($sameId -or $entry.Contains('assignment')) -and
             ($entry['assignment'] -isnot [string] -or $entry['assignment'] -cnotin @('direct', 'indirect', 'mixed'))) {
             throw 'The team role assignment has an unreadable or unsupported assignment classification.'
         }
-        if ($sameId -and $sameSlug) { $matched.Add($entry) }
+        if ($sameId -and ($MatchIdOnly -or $sameSlug)) { $matched.Add($entry) }
     }
     if ($matched.Count -gt 1) { throw 'The security team role assignment is listed more than once.' }
     return $matched.Count -eq 1 -and $matched[0]['assignment'] -cin @('direct', 'mixed')
 }
 
 # security-check: organization-roles-state
-function Get-OrganizationSecurityManagerState {
+function Get-SecurityManagerRole {
     [CmdletBinding()]
     [OutputType([System.Collections.IDictionary])]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
-        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\z')][string] $Organization,
-        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\z')][string] $Team
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\z')][string] $Organization
     )
 
     $roles = (Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method GET -Path "/orgs/$Organization/organization-roles").Body
@@ -118,9 +118,48 @@ function Get-OrganizationSecurityManagerState {
     if ($selected.Count -ne 1) { throw "Organization '$Organization' has no unique predefined security_manager role." }
     $role = $selected[0]
     Assert-SecurityManagerRole -Role $role -Organization $Organization
-    $securityTeam = (Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method GET -Path "/orgs/$Organization/teams/$Team").Body
+    return $role
+}
+
+# security-check: organization-roles-team-state
+function Get-SecurityManagerTeam {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\z')][string] $Organization,
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\z')][string] $Team,
+        [switch] $AllowMissingTeam
+    )
+
+    $acceptedStatus = @(200)
+    if ($AllowMissingTeam) { $acceptedStatus += 404 }
+    $response = Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method GET -Path "/orgs/$Organization/teams/$Team" -AcceptStatus $acceptedStatus
+    if ($response.Status -eq 404) {
+        if ($response.Body -isnot [System.Collections.IDictionary]) { throw "The security team '$Team' not-found response is unreadable." }
+        return $null
+    }
+    $securityTeam = $response.Body
     if ($securityTeam -isnot [System.Collections.IDictionary]) { throw "The security team '$Team' is unreadable." }
     Assert-SecurityManagerTeam -SecurityTeam $securityTeam -Organization $Organization -Team $Team
+    return $securityTeam
+}
+
+function Get-OrganizationSecurityManagerState {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\z')][string] $Organization,
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\z')][string] $Team,
+        [switch] $AllowMissingTeam
+    )
+
+    $role = Get-SecurityManagerRole -ApiUrl $ApiUrl -Organization $Organization
+    $securityTeam = Get-SecurityManagerTeam -ApiUrl $ApiUrl -Organization $Organization -Team $Team -AllowMissingTeam:$AllowMissingTeam
+    if ($null -eq $securityTeam) {
+        return [ordered]@{ role_id = $role['id']; team_id = $null; assigned = $false }
+    }
     $assignments = (Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method GET -AllPages `
             -Path "/orgs/$Organization/organization-roles/$($role['id'])/teams?per_page=100").Body
     $assigned = Test-SecurityManagerAssignment -Assignment $assignments -SecurityTeam $securityTeam -Team $Team
@@ -171,18 +210,39 @@ function Remove-OrganizationSecurityManager {
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
         [Parameter(Mandatory)][string] $Organization,
-        [Parameter(Mandatory)][string] $Team,
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\z')][string] $Team,
         [Parameter(Mandatory)][ValidateRange(1, [long]::MaxValue)][long] $RoleId,
         [Parameter(Mandatory)][ValidateRange(1, [long]::MaxValue)][long] $TeamId
     )
 
-    $identity = @{ ApiUrl = $ApiUrl; Organization = $Organization; Team = $Team; RoleId = $RoleId; TeamId = $TeamId }
-    $state = Assert-OrganizationSecurityManagerIdentity @identity
-    if (-not $state['assigned']) { return }
+    $role = Get-SecurityManagerRole -ApiUrl $ApiUrl -Organization $Organization
+    if ($role['id'] -ne $RoleId) { throw 'The security_manager role identity changed after the intent was stored.' }
+    $assignments = (Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method GET -AllPages `
+            -Path "/orgs/$Organization/organization-roles/$RoleId/teams?per_page=100").Body
+    $savedTeam = @{ id = $TeamId }
+    if (-not (Test-SecurityManagerAssignment -Assignment $assignments -SecurityTeam $savedTeam -Team $Team -MatchIdOnly)) {
+        Write-Verbose "The saved team '$TeamId' has no direct security_manager assignment."
+        return
+    }
+    $assignedTeam = @($assignments | Where-Object { $_['type'] -ceq 'organization' -and $_['id'] -eq $TeamId })[0]
+    $currentSlug = $assignedTeam['slug']
+    $securityTeam = Get-SecurityManagerTeam -ApiUrl $ApiUrl -Organization $Organization -Team $currentSlug
+    if ($securityTeam['id'] -ne $TeamId) { throw 'The security team identity changed before removal.' }
     $null = Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method DELETE `
-        -Path "/orgs/$Organization/organization-roles/teams/$Team/$RoleId" -AcceptStatus @(204, 404)
-    $state = Assert-OrganizationSecurityManagerIdentity @identity
-    if ($state['assigned']) { throw 'The security_manager role is still assigned after DELETE.' }
+        -Path "/orgs/$Organization/organization-roles/teams/$currentSlug/$RoleId" -AcceptStatus @(204, 404)
+    $currentTeam = Get-SecurityManagerTeam -ApiUrl $ApiUrl -Organization $Organization -Team $currentSlug -AllowMissingTeam
+    if ($null -ne $currentTeam -and $currentTeam['id'] -ne $TeamId) {
+        $newTeamId = $currentTeam['id']
+        $modulePath = (Join-Path $PSScriptRoot 'OrganizationRoles.psm1').Replace("'", "''")
+        $quotedApiUrl = $ApiUrl.Replace("'", "''")
+        $restoreCommand = "Import-Module '$modulePath' -Force; Set-OrganizationSecurityManager -ApiUrl '$quotedApiUrl' -Organization '$Organization' -Team '$currentSlug' -RoleId $RoleId -TeamId $newTeamId"
+        throw "The security team identity changed after DELETE: original_team_id=$TeamId; new_team_id=$newTeamId; slug=$currentSlug; role_id=$RoleId. The replacement team's role may have been removed. Stop concurrent team lifecycle changes and confirm that the new team should have security_manager. Set REST_API_BEARER to the apply token for organization '$Organization', then restore the role with:`n$restoreCommand`nThis command revalidates both IDs. No automatic restoration was attempted."
+    }
+    $remaining = (Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method GET -AllPages `
+            -Path "/orgs/$Organization/organization-roles/$RoleId/teams?per_page=100").Body
+    if (Test-SecurityManagerAssignment -Assignment $remaining -SecurityTeam $savedTeam -Team $Team -MatchIdOnly) {
+        throw 'The security_manager role is still assigned after DELETE.'
+    }
 }
 
 # security-check: organization-roles-input

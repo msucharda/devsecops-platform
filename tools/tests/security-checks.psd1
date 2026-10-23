@@ -4,6 +4,12 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'organizations-api-pagination'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*Assignment pagination*', '*incomplete assignment listing*') }
+            )
+        }
+        @{
             Name = 'token-app-repository-selection'
             Tests = @(
                 @{ Path = 'tools/tests/GitHubAppToken.Tests.ps1'; FullName = @('*Explicit manifest installation selection*', '*issues a read-only module token map with <Selection> repository selection*', '*issues an organization-only module token without repository access*') }
@@ -30,13 +36,19 @@
         @{
             Name = 'organization-roles-assignment'
             Tests = @(
-                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*accepts the documented nullable-role*', '*array masquerading as an assignment*', '*numeric team slug*', '*non-object role assignment*', '*missing assignment*', '*documented assignment*', '*enterprise team as the organization team*', '*unreadable team role assignment*', '*duplicate assignments*', '*matches only the team*', '*unrelated*', '*optional assignment*') }
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*accepts the documented nullable-role*', '*array masquerading as an assignment*', '*numeric team slug*', '*non-object role assignment*', '*missing assignment*', '*documented assignment*', '*enterprise team as the organization team*', '*unreadable team role assignment*', '*duplicate assignments*', '*matches only the team*', '*unrelated*', '*optional assignment*', '*saved team ID*', '*replacement team appearing*', '*saved team after a rename*') }
             )
         }
         @{
             Name = 'organization-roles-state'
             Tests = @(
                 @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*accepts the documented nullable-role*', '*unsupported roles wrapper*', '*unreadable role array item*', '*non-object full team*', '*missing or ambiguous security_manager*', '*unreadable roles instead of an array*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-team-state'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*non-object full team*', '*documented team absence*', '*team lookup*') }
             )
         }
         @{
@@ -54,7 +66,7 @@
         @{
             Name = 'organization-roles-removal-result'
             Tests = @(
-                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*removes only the declared*', '*removes a pre-existing assignment*', '*recovers a completed removal*', '*DELETE success response*', '*DELETE 404*', '*preserves an unrelated*') }
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*removes only the declared*', '*removes a pre-existing assignment*', '*recovers a completed removal*', '*DELETE success response*', '*DELETE 404*', '*preserves an unrelated*', '*saved team ID*', '*replacement team appearing*', '*changed stored role before removing*', '*saved team after a rename*', '*replacement created after*', '*team disappearance after DELETE*') }
             )
         }
         @{

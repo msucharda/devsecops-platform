@@ -11,6 +11,13 @@ data "external" "role_plan_state" {
     organization = local.organization
     team         = var.security_team
   }
+
+  lifecycle {
+    postcondition {
+      condition     = self.result.team_id != ""
+      error_message = "The organization security team does not exist."
+    }
+  }
 }
 
 # Keep destroy cleanup separate from a possibly tainted assignment resource.
@@ -21,20 +28,12 @@ resource "terraform_data" "role_guard" {
     team         = var.security_team
     role_name    = "security_manager"
     role_id      = tonumber(data.external.role_plan_state.result.role_id)
-    team_id      = tonumber(data.external.role_plan_state.result.team_id)
+    team_id      = data.external.role_plan_state.result.team_id == "" ? null : tonumber(data.external.role_plan_state.result.team_id)
   }
   triggers_replace = [
     local.api_url, local.organization,
     data.external.role_plan_state.result.role_id, data.external.role_plan_state.result.team_id,
   ]
-
-  provisioner "local-exec" {
-    interpreter = local.program
-    command     = "AssertIdentity"
-    environment = {
-      ORGANIZATION_ROLES_INPUT = jsonencode(self.input)
-    }
-  }
 
   provisioner "local-exec" {
     when        = destroy

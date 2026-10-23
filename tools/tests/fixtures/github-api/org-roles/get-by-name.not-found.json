@@ -1,0 +1,21 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/teams/{team_slug}",
+    "operationId": "teams/get-by-name",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/teams/teams#get-a-team-by-name",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 404,
+    "schema": "#/components/schemas/basic-error",
+    "variant": "404: resource not found",
+    "note": "The operation references #/components/responses/not_found. That response has no example and basic-error has no required properties. This schema-backed representative body uses only documented string properties; it is not claimed to be an endpoint example. The control uses the HTTP status, not the message text."
+  },
+  "required": {
+    "": []
+  },
+  "body": {
+    "message": "Not Found",
+    "documentation_url": "https://docs.github.com/rest",
+    "status": "404"
+  }
+}

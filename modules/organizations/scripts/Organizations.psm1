@@ -39,6 +39,43 @@ function Assert-OrganizationsId {
     if (($Value -isnot [int] -and $Value -isnot [long]) -or $Value -lt 1) { throw "$Description has no valid ID." }
 }
 
+# https://docs.github.com/en/enterprise-cloud@latest/rest/using-the-rest-api/using-pagination-in-the-rest-api
+# security-check: organizations-api-pagination
+function Get-OrganizationsNextPage {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyCollection()][object[]] $Link,
+        [Parameter(Mandatory)][string] $Origin,
+        [Parameter(Mandatory)][string] $CurrentUri,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.HashSet[string]] $Visited
+    )
+
+    if ($null -eq $Link) { return $null }
+    if ($Link.Count -eq 0) { throw 'GitHub returned an unreadable pagination header.' }
+    $null = $Visited.Add(([uri] $CurrentUri).AbsoluteUri)
+    $next = $null
+    foreach ($header in $Link) {
+        if ($header -isnot [string]) { throw 'GitHub returned an unreadable pagination header.' }
+        foreach ($part in $header.Split(',')) {
+            if ($part -notmatch '^\s*<(?<url>[^>]+)>\s*;\s*rel="(?<relation>next|prev|first|last)"\s*$') {
+                throw 'GitHub returned an unreadable pagination link.'
+            }
+            if ($Matches['relation'] -ne 'next') { continue }
+            if ($null -ne $next) { throw 'GitHub returned multiple next-page links.' }
+            $next = $Matches['url']
+            if (-not $next.StartsWith("$Origin/", [StringComparison]::Ordinal)) {
+                throw "GitHub returned a pagination link outside '$Origin'."
+            }
+            $nextUri = [uri] $next
+            if ($nextUri.Fragment) {
+                throw 'GitHub returned an unreadable pagination target.'
+            }
+            if ($Visited.Contains($nextUri.AbsoluteUri)) { throw 'GitHub returned a cyclic pagination link.' }
+        }
+    }
+    return $next
+}
+
 function Invoke-OrganizationsApi {
     <#
     .SYNOPSIS
@@ -67,6 +104,7 @@ function Invoke-OrganizationsApi {
     $operation = "$Method $($Path.Split('?')[0])"
     $uri = "$origin$Path"
     $items = [Collections.Generic.List[object]]::new()
+    $visited = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     while ($uri) {
         $request = @{
             Uri = $uri; Method = $Method; Headers = $headers; SkipHttpErrorCheck = $true
@@ -84,18 +122,7 @@ function Invoke-OrganizationsApi {
         if (-not $AllPages) { return @{ Status = $status; Body = $parsed } }
         if ($parsed -isnot [array]) { throw "GitHub returned no JSON array for $operation." }
         foreach ($item in $parsed) { $items.Add($item) }
-        $uri = $null
-        foreach ($link in @($reply.Headers['Link'])) {
-            foreach ($part in ([string] $link).Split(',')) {
-                if ($part -match '^\s*<(?<url>[^>]+)>\s*;\s*rel="next"\s*$') {
-                    $next = $Matches['url']
-                    if (-not $next.StartsWith("$origin/", [StringComparison]::Ordinal)) {
-                        throw "GitHub returned a pagination link outside '$origin'."
-                    }
-                    $uri = $next
-                }
-            }
-        }
+        $uri = Get-OrganizationsNextPage -Link $reply.Headers['Link'] -Origin $origin -CurrentUri $uri -Visited $visited
     }
     return @{ Status = 200; Body = $items.ToArray() }
 }

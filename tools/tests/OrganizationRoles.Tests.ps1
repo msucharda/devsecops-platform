@@ -15,7 +15,9 @@ BeforeAll {
             'PUT /orgs/demo-actions/organization-roles/teams/security/8030' {
                 $roleStub.Writes.Add('PUT')
                 $other = @($roleStub.Assignments | Where-Object { $_.type -cne 'organization' -or $_.slug -ine 'security' })
-                $assigned = Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-null -Set @{ '0.slug' = 'security' }
+                $assigned = Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-null -Set @{
+                    '0.id' = $roleStub.Team.id; '0.slug' = 'security'
+                }
                 $roleStub.Assignments = $other + @($assigned)
             }
             'DELETE /orgs/demo-actions/organization-roles/teams/security/8030' {
@@ -444,12 +446,108 @@ Describe 'Organization security manager role' {
         (Get-OrganizationSecurityManagerState @target).assigned | Should -BeFalse
     }
 
-    It 'rejects a changed stored <Identity> before removing' -Tag RoleRemove -ForEach @(
-        @{ Identity = 'role'; RoleId = 8031; TeamId = 1 }
-        @{ Identity = 'team'; RoleId = 8030; TeamId = 2 }
-    ) {
-        { Remove-OrganizationSecurityManager @target -RoleId $RoleId -TeamId $TeamId } | Should -Throw '*identity changed*'
+    It 'rejects a changed stored role before removing' -Tag RoleRemove {
+        { Remove-OrganizationSecurityManager @target -RoleId 8031 -TeamId 1 } | Should -Throw '*role identity changed*'
         $roleStub.Writes.Count | Should -Be 0
+    }
+
+    It 'does nothing when the saved team ID is absent even if its old slug is reused' -Tag RoleRemove {
+        $roleStub.Team.id = 99
+        $roleStub.Assignments = Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-null -Set @{
+            '0.id' = 99; '0.slug' = 'security'
+        }
+
+        Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1
+
+        $roleStub.Writes.Count | Should -Be 0
+        $roleStub.Assignments[0].id | Should -Be 99
+    }
+
+    It 'rejects a replacement team appearing before DELETE' -Tag RoleRemove {
+        $roleStub.Team.id = 99
+
+        { Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1 } | Should -Throw '*team identity changed before removal*'
+        $roleStub.Writes.Count | Should -Be 0
+    }
+
+    It 'removes the saved team after a rename without touching another team' -Tag RoleRemove {
+        $roleStub.Team.slug = 'renamed-security'
+        $roleStub.Assignments[0].slug = 'renamed-security'
+        $roleStub.Assignments += Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-object -Set @{
+            '0.id' = 2; '0.slug' = 'other'
+        }
+        Mock -ModuleName Organizations Invoke-WebRequest {
+            $address = [uri] $Uri
+            if ($address.AbsolutePath -ceq '/orgs/demo-actions/teams/renamed-security') {
+                return [pscustomobject]@{
+                    StatusCode = 200; Headers = @{}
+                    Content = (ConvertTo-Json -InputObject $roleStub.Team -Depth 30 -Compress)
+                }
+            }
+            if (([string] $Method).ToUpperInvariant() -ceq 'DELETE') {
+                $address.AbsolutePath | Should -BeExactly '/orgs/demo-actions/organization-roles/teams/renamed-security/8030'
+                $roleStub.Writes.Add('DELETE')
+                $roleStub.Assignments = @($roleStub.Assignments | Where-Object { $_.id -ne 1 })
+                return [pscustomobject]@{ StatusCode = 204; Content = ''; Headers = @{} }
+            }
+            Invoke-RoleApiStub -Method ([string] $Method).ToUpperInvariant() -Path $address.PathAndQuery
+        }
+
+        Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1
+
+        $roleStub.Writes.ToArray() | Should -Be @('DELETE')
+        $roleStub.Assignments.Count | Should -Be 1
+        $roleStub.Assignments[0].id | Should -Be 2
+    }
+
+    It 'detects a replacement created after the final team lookup and explains guarded recovery' -Tag RoleReplacementRace, RoleRemove {
+        $roleStub.ReplacementCreated = $false
+        Mock -ModuleName Organizations Invoke-WebRequest {
+            $address = [uri] $Uri
+            $reply = Invoke-RoleApiStub -Method ([string] $Method).ToUpperInvariant() -Path $address.PathAndQuery
+            if ($address.AbsolutePath -ceq '/orgs/demo-actions/teams/security' -and -not $roleStub.ReplacementCreated) {
+                # A concurrent actor replaces the team after the server produced the valid lookup response.
+                $roleStub.Team.id = 99
+                $roleStub.Assignments = Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-null -Set @{
+                    '0.id' = 99; '0.slug' = 'security'
+                }
+                $roleStub.ReplacementCreated = $true
+            }
+            return $reply
+        }
+
+        $failure = { Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1 } |
+            Should -Throw '*security team identity changed after DELETE*' -PassThru
+
+        $failure.Exception.Message | Should -Match 'original_team_id=1; new_team_id=99; slug=security; role_id=8030'
+        $failure.Exception.Message | Should -Match 'Stop concurrent team lifecycle changes'
+        $failure.Exception.Message | Should -Match 'REST_API_BEARER'
+        $failure.Exception.Message | Should -Match ([regex]::Escape("Set-OrganizationSecurityManager -ApiUrl '$($target.ApiUrl)' -Organization 'demo-actions' -Team 'security' -RoleId 8030 -TeamId 99"))
+        $roleStub.Writes.ToArray() | Should -Be @('DELETE')
+
+        # Recovery is an explicit caller action, not part of the failed removal.
+        Set-OrganizationSecurityManager @target -RoleId 8030 -TeamId 99
+
+        $roleStub.Writes.ToArray() | Should -Be @('DELETE', 'PUT')
+        (Get-OrganizationSecurityManagerState @target).team_id | Should -Be 99
+        (Get-OrganizationSecurityManagerState @target).assigned | Should -BeTrue
+    }
+
+    It 'accepts confirmed team disappearance after DELETE without restoring any role' -Tag RoleRemove {
+        Mock -ModuleName Organizations Invoke-WebRequest {
+            $address = [uri] $Uri
+            if ($address.AbsolutePath -ceq '/orgs/demo-actions/teams/security' -and $roleStub.Writes.Count -gt 0) {
+                return [pscustomobject]@{
+                    StatusCode = 404; Headers = @{}
+                    Content = (ConvertTo-Json -InputObject (Get-GitHubApiFixture -Name org-roles/get-by-name.not-found) -Depth 30 -Compress)
+                }
+            }
+            Invoke-RoleApiStub -Method ([string] $Method).ToUpperInvariant() -Path $address.PathAndQuery
+        }
+
+        Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1
+
+        $roleStub.Writes.ToArray() | Should -Be @('DELETE')
     }
 
     It 'rejects a DELETE success response when the assignment was not removed' -Tag RoleRemove {
@@ -475,6 +573,187 @@ Describe 'Organization security manager role' {
 
         (Get-OrganizationSecurityManagerState @target).assigned | Should -BeFalse
         $roleStub.Writes.ToArray() | Should -Be @('DELETE')
+    }
+
+    It 'rejects an incomplete assignment listing with unreadable pagination before no-op' -Tag RolePagination {
+        Mock -ModuleName Organizations Invoke-WebRequest {
+            if (([uri] $Uri).AbsolutePath -ceq '/orgs/demo-actions/organization-roles/8030/teams') {
+                $page = Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-object -Set @{
+                    '0.id' = 2; '0.slug' = 'other'
+                }
+                # Intentionally invalid metadata cannot prove this partial page is complete.
+                return [pscustomobject]@{
+                    StatusCode = 200
+                    Content = (ConvertTo-Json -InputObject $page -Depth 30 -Compress)
+                    Headers = @{ Link = 'unreadable pagination' }
+                }
+            }
+            Invoke-RoleApiStub -Method ([string] $Method).ToUpperInvariant() -Path ([uri] $Uri).PathAndQuery
+        }
+
+        { Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1 } | Should -Throw '*unreadable pagination*'
+        $roleStub.Writes.Count | Should -Be 0
+    }
+
+    Context 'Assignment pagination' -Tag RolePagination {
+        BeforeEach {
+            $roleStub.Page2Url = "$($target.ApiUrl)/orgs/demo-actions/organization-roles/8030/teams?per_page=100&page=2"
+            $roleStub.PageLink = "<$($roleStub.Page2Url)>; rel=`"next`", <$($roleStub.Page2Url)>; rel=`"last`""
+            $roleStub.Page2Status = 200
+            $roleStub.InvalidPage2 = $false
+            $roleStub.PagesRead = [Collections.Generic.List[string]]::new()
+            $roleStub.OtherAssignment = Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-object -Set @{
+                '0.id' = 2; '0.slug' = 'other'
+            }
+            Mock -ModuleName Organizations Invoke-WebRequest {
+                $address = [uri] $Uri
+                if ($address.AbsolutePath -ceq '/orgs/demo-actions/organization-roles/8030/teams') {
+                    $roleStub.PagesRead.Add($address.Query)
+                    # A broken cycle guard must fail instead of hanging its mutation worker.
+                    if ($roleStub.PagesRead.Count -gt 5) {
+                        throw 'The client exceeded the test transport request budget.'
+                    }
+                    if ($address.Query -match '[?&]page=2(?:&|$)') {
+                        # A scalar page is intentionally invalid for this list endpoint.
+                        $page = if ($roleStub.InvalidPage2) { 'unreadable' } else { , @($roleStub.Assignments | Where-Object { $_.id -eq 1 }) }
+                        return [pscustomobject]@{
+                            StatusCode = $roleStub.Page2Status
+                            Content = (ConvertTo-Json -InputObject $page -Depth 30 -Compress)
+                            Headers = @{ Link = "<$($target.ApiUrl)/orgs/demo-actions/organization-roles/8030/teams?per_page=100>; rel=`"first`", <$($target.ApiUrl)/orgs/demo-actions/organization-roles/8030/teams?per_page=100>; rel=`"prev`"" }
+                        }
+                    }
+                    return [pscustomobject]@{
+                        StatusCode = 200
+                        Content = (ConvertTo-Json -InputObject $roleStub.OtherAssignment -Depth 30 -Compress)
+                        Headers = @{ Link = $roleStub.PageLink }
+                    }
+                }
+                Invoke-RoleApiStub -Method ([string] $Method).ToUpperInvariant() -Path $address.PathAndQuery
+            }
+        }
+
+        It 'reads all assignment pages before DELETE and again to verify removal' {
+            Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1
+
+            $roleStub.Writes.ToArray() | Should -Be @('DELETE')
+            @($roleStub.PagesRead | Where-Object { $_ -match '[?&]page=2(?:&|$)' }).Count | Should -Be 2
+            $roleStub.Assignments.Count | Should -Be 0
+        }
+
+        It 'verifies all assignment pages before accepting absence without DELETE' {
+            $roleStub.Assignments = $roleStub.OtherAssignment
+
+            Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1
+
+            $roleStub.PagesRead.Count | Should -Be 2
+            $roleStub.Writes.Count | Should -Be 0
+            $roleStub.Assignments[0].id | Should -Be 2
+        }
+
+        It 'follows next across separate Link header values' {
+            $roleStub.PageLink = @("<$($roleStub.Page2Url)>; rel=`"next`"", "<$($roleStub.Page2Url)>; rel=`"last`"")
+
+            Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1
+
+            $roleStub.Writes.ToArray() | Should -Be @('DELETE')
+        }
+
+        It 'follows a case-insensitive registered next relation instead of accepting a partial page' {
+            $roleStub.PageLink = "<$($roleStub.Page2Url)>; rel=`"NEXT`""
+
+            Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1
+
+            $roleStub.Writes.ToArray() | Should -Be @('DELETE')
+        }
+
+        It 'rejects an incomplete assignment listing with <Case> before no-op' -ForEach @(
+            @{ Case = 'blank Link'; Link = ''; ErrorPattern = '*unreadable pagination*' }
+            @{ Case = 'non-string Link'; Link = 1; ErrorPattern = '*unreadable pagination*' }
+            @{ Case = 'empty Link collection'; Link = @(); ErrorPattern = '*unreadable pagination*' }
+            @{ Case = 'unsupported relation'; Link = '<https://api.example.ghe.com/next>; rel="unknown"'; ErrorPattern = '*unreadable pagination*' }
+            @{ Case = 'foreign origin'; Link = '<https://other.invalid/next>; rel="next"'; ErrorPattern = '*pagination link outside*' }
+            @{ Case = 'URL fragment'; Link = '<https://api.example.ghe.com/next#fragment>; rel="next"'; ErrorPattern = '*unreadable pagination target*' }
+            @{ Case = 'duplicate next links'; Link = '<https://api.example.ghe.com/next>; rel="next", <https://api.example.ghe.com/another>; rel="next"'; ErrorPattern = '*multiple next-page links*' }
+            @{ Case = 'cyclic next link'; Link = '<https://api.example.ghe.com/orgs/demo-actions/organization-roles/8030/teams?per_page=100>; rel="next"'; ErrorPattern = '*cyclic pagination link*' }
+        ) {
+            # Intentionally invalid pagination metadata cannot prove the first page is complete.
+            $roleStub.PageLink = $Link
+
+            { Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1 } | Should -Throw $ErrorPattern
+            $roleStub.Writes.Count | Should -Be 0
+        }
+
+        It 'rejects an incomplete assignment listing when the next page fails' {
+            $roleStub.Page2Status = 500
+
+            { Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1 } | Should -Throw '*HTTP 500*'
+            $roleStub.Writes.Count | Should -Be 0
+        }
+
+        It 'rejects an incomplete assignment listing when the next page has no array' {
+            $roleStub.InvalidPage2 = $true
+
+            { Remove-OrganizationSecurityManager @target -RoleId 8030 -TeamId 1 } | Should -Throw '*no JSON array*'
+            $roleStub.Writes.Count | Should -Be 0
+        }
+    }
+
+    Context 'Team lookup absence' {
+        BeforeEach {
+            $roleStub.TeamStatus = 404
+            $roleStub.TeamBody = Get-GitHubApiFixture -Name org-roles/get-by-name.not-found
+            Mock -ModuleName Organizations Invoke-WebRequest {
+                if (([uri] $Uri).AbsolutePath -ceq '/orgs/demo-actions/teams/security') {
+                    return [pscustomobject]@{
+                        StatusCode = $roleStub.TeamStatus
+                        Content = (ConvertTo-Json -InputObject $roleStub.TeamBody -Depth 30 -Compress)
+                        Headers = @{}
+                    }
+                }
+                Invoke-RoleApiStub -Method ([string] $Method).ToUpperInvariant() -Path ([uri] $Uri).PathAndQuery
+            }
+        }
+
+        It 'reports documented team absence only when explicitly allowed' {
+            $state = Get-OrganizationSecurityManagerState @target -AllowMissingTeam
+
+            $state.role_id | Should -Be 8030
+            $state.team_id | Should -BeNullOrEmpty
+            $state.assigned | Should -BeFalse
+        }
+
+        It 'rejects documented team absence in the strict team lookup' {
+            { Get-OrganizationSecurityManagerState @target } | Should -Throw '*HTTP 404*'
+        }
+
+        It 'rejects unsupported HTTP <Status> instead of treating a team lookup as absence' -ForEach @(
+            @{ Status = 403 }
+            @{ Status = 500 }
+        ) {
+            # Intentionally unsupported responses: only the documented 404 denotes absence.
+            $roleStub.TeamStatus = $Status
+
+            { Get-OrganizationSecurityManagerState @target -AllowMissingTeam } | Should -Throw "*HTTP $Status*"
+        }
+
+        It 'rejects an unreadable successful team lookup even when absence is allowed' {
+            # Intentionally invalid: a successful team-full response cannot be an array.
+            $roleStub.TeamStatus = 200
+            $roleStub.TeamBody = @()
+
+            { Get-OrganizationSecurityManagerState @target -AllowMissingTeam } | Should -Throw '*security team*unreadable*'
+        }
+
+        It 'rejects an unreadable not-found team lookup: <Case>' -ForEach @(
+            @{ Case = 'array'; Body = @() }
+            @{ Case = 'null'; Body = $null }
+            @{ Case = 'scalar'; Body = 'unreadable' }
+        ) {
+            # Intentionally invalid: the documented basic-error response is an object.
+            $roleStub.TeamBody = $Body
+
+            { Get-OrganizationSecurityManagerState @target -AllowMissingTeam } | Should -Throw '*not-found response is unreadable*'
+        }
     }
 
     It 'preserves an unrelated team assignment while removing the declared assignment' -Tag RoleRemove {

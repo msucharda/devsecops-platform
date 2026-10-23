@@ -41,11 +41,23 @@ Modul deklarativně vlastní přiřazení této role tomuto týmu. Nerozlišuje 
 
 Apply při vytvoření prostředku přiřadí chybějící roli. Při existujícím přiřazení nic nezapisuje. Přerušení po PUT před uložením Terraform state nevyžaduje journal: další apply najde existující přiřazení a zachová ho bez dalšího PUT.
 
-Destroy odebere přímé přiřazení deklarovanému security týmu, **včetně dřívějšího ručního přiřazení**. Již odebraná role a odpověď DELETE 404 znamenají dokončené odebrání. Ostatní týmy, jejich přiřazení, členství a SCIM linky zachová.
+Destroy odebere přímé přiřazení security týmu uloženému ve state, **včetně dřívějšího ručního přiřazení**. Rozhoduje podle uložených `role_id` a `team_id`, nikoli podle původního slugu. Přejmenovaný tým dohledá v úplném seznamu přiřazení. Náhradní tým se stejným slugem a jiným ID nezmění za provozního předpokladu uvedeného níže. Ostatní týmy, jejich přiřazení, členství a SCIM linky zachová.
+
+Před odebráním i po něm modul načte všechny stránky přiřazení. Bez DELETE skončí jen po úspěšně ověřené nepřítomnosti přímého přiřazení uloženému týmu. Nečitelná odpověď, chyba další stránky nebo neplatné stránkování ukončí destroy chybou. DELETE 404 je přípustné jen při ověřené nepřítomnosti po požadavku.
+
+Smazaný tým dál zastaví běžný plan, ale neblokuje destroy prostředků ve state. Reader vrátí strukturovanou nepřítomnost pouze pro dokumentované GET 404. Terraform postcondition ji při běžném planu odmítne; při destroy refreshi dovolí cleanup podle uložené identity. Chyby oprávnění, serveru a nečitelné úspěšné odpovědi se za nepřítomnost nepovažují.
 
 **Přiznaná mezera teardownu:** destroy pracuje jen s prostředky v Terraform state. Pokud běh skončí po PUT před uložením state, musíš před destroy obnovit apply. Bez něj může role security týmu zůstat přiřazená. Samostatný stateless cleanup modul neprovádí. Při úplném teardownu ji odstraní až smazání organizací actions a workloads v `organizations` ([#22](https://github.com/msucharda/devsecops-platform/issues/22)) a smazání organizace platformy přes `Remove-Bootstrap`.
 
-Identitu role a týmu před zápisem i po něm modul porovná s planem. Záměnu týmu za jiný tým se stejným slugem odmítne. Odebrání role deklarovanému security týmu zachytí plan i drift. Přiřazení jiným týmům modul nespravuje.
+Při apply modul porovná identitu role a týmu s planem před zápisem i po něm. Záměnu týmu za jiný tým se stejným slugem odmítne. Destroy před DELETE znovu ověří, že aktuální slug patří uloženému ID. Odebrání role deklarovanému security týmu zachytí plan i drift. Přiřazení jiným týmům modul nespravuje.
+
+### Provozní předpoklad identity týmu
+
+**Během apply/destroy nikdo souběžně nemaže, nepřejmenovává ani nevytváří security tým.** Slib „nikdy nezměnit náhradní tým“ platí jen za tohoto předpokladu. [Připnuté OpenAPI](https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json) definuje odebrání role pouze přes `org`, `team_slug` a `role_id`. Nedokumentuje odebrání podle neměnného ID týmu ani podmíněný DELETE vázaný na očekávané ID.
+
+Kontrola ID těsně před DELETE souběžnou záměnu nevyloučí. Modul proto po DELETE znovu ověří identitu slugu. Pokud patří jinému ID, skončí chybou s původním a novým team ID, slugem, role ID a přesným příkazem obnovy. Novému týmu už mohla být role odebrána. Automatickou obnovu modul neprovádí.
+
+Při této chybě nejprve zastav souběžnou správu týmu. Ověř, že nový tým má dostat `security_manager`. Nastav jeho organizační apply token do `REST_API_BEARER` a spusť příkaz z chyby: importuje knihovnu modulu a zavolá `Set-OrganizationSecurityManager` s explicitním novým team ID a uloženým role ID. Příkaz obě identity znovu ověří před přiřazením i po něm. Teprve potom opakuj přerušenou operaci.
 
 ### Ruční náprava odebrané role
 

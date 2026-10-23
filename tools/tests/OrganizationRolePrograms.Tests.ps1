@@ -122,6 +122,17 @@ Describe 'Organization role Terraform programs' {
                             $roleStub['RejectNext'] = $null
                             $reply = [pscustomobject]@{ StatusCode = 503; Content = '{"message":"Injected interruption before applying the write."}' }
                         }
+                        elseif ($roleStub['TeamMissing'] -and $request[0] -ceq 'GET' -and
+                            $request[1] -ceq '/orgs/demo-actions/teams/security') {
+                            $notFound = Get-GitHubApiFixture -Name org-roles/get-by-name.not-found
+                            $reply = [pscustomobject]@{ StatusCode = 404; Content = (ConvertTo-Json $notFound -Compress) }
+                        }
+                        elseif ($roleStub['FailNextRoleRead'] -and $request[0] -ceq 'GET' -and
+                            $request[1] -ceq '/orgs/demo-actions/organization-roles') {
+                            # Intentionally unsupported response at the first apply-time identity read.
+                            $roleStub['FailNextRoleRead'] = $false
+                            $reply = [pscustomobject]@{ StatusCode = 500; Content = '' }
+                        }
                         else { $reply = Invoke-RoleApiStub -Method $request[0] -Path $request[1] }
                         if ($roleStub['DropNext'] -ceq $request[0]) {
                             $roleStub['DropNext'] = $null
@@ -546,6 +557,32 @@ locals { api_url = "$apiUrl" }
             (ConvertFrom-Json -InputObject $read.Output -AsHashtable).assigned | Should -BeExactly 'false'
         }
 
+        It 'removes a pre-existing role after the apply-time identity read fails' -Tag RoleGuardTaint {
+            $roleStub.Assignments += Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-object -Set @{
+                '0.id' = 2; '0.slug' = 'other'
+            }
+            $plan = Invoke-RoleTerraform plan -input=false '-out=identity.plan'
+            $plan.ExitCode | Should -Be 0 -Because $plan.Output
+            $roleStub.FailNextRoleRead = $true
+
+            $interrupted = Invoke-RoleTerraform apply -input=false -auto-approve identity.plan
+
+            $interrupted.ExitCode | Should -Be 1 -Because $interrupted.Output
+            $interrupted.Output | Should -Match 'HTTP 500'
+            $roleStub.Writes.Count | Should -Be 0
+            $state = Invoke-RoleTerraform show -json
+            $state.ExitCode | Should -Be 0 -Because $state.Output
+            $addresses = (ConvertFrom-Json -InputObject $state.Output -AsHashtable).values.root_module.resources |
+                ForEach-Object { $_['address'] }
+            @($addresses) | Should -Contain 'terraform_data.role_guard'
+
+            $destroy = Invoke-RoleTerraform destroy -input=false -auto-approve
+
+            $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
+            $roleStub.Writes.ToArray() | Should -Be @('DELETE')
+            @($roleStub.Assignments.id) | Should -Be @(2)
+        }
+
         It 'detects removal of a <Origin> assignment during a real plan' -Tag RoleState -ForEach @(
             @{ Origin = 'new'; Existing = $false }
             @{ Origin = 'pre-existing'; Existing = $true }
@@ -607,6 +644,51 @@ locals { api_url = "$apiUrl" }
             $destroy = Invoke-RoleTerraform destroy -input=false -auto-approve
             $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
             $roleStub.Writes.ToArray() | Should -Be @('DELETE')
+        }
+
+        It 'rejects plan but completes destroy after the security team is deleted' -Tag RoleTeamMissing {
+            $roleStub.Assignments += Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-object -Set @{
+                '0.id' = 2; '0.slug' = 'other'
+            }
+            $apply = Invoke-RoleTerraform apply -input=false -auto-approve
+            $apply.ExitCode | Should -Be 0 -Because $apply.Output
+            $roleStub.TeamMissing = $true
+            $roleStub.Assignments = Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-object -Set @{
+                '0.id' = 2; '0.slug' = 'other'
+            }
+            $plan = Invoke-RoleTerraform plan -input=false -detailed-exitcode
+            $plan.ExitCode | Should -Be 1
+            $plan.Output | Should -Match 'The organization security team does not exist'
+            $missingApply = Invoke-RoleTerraform apply -input=false -auto-approve
+            $missingApply.ExitCode | Should -Be 1
+            $roleStub.Writes.Count | Should -Be 0
+
+            $destroy = Invoke-RoleTerraform destroy -input=false -auto-approve
+
+            $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
+            $roleStub.Writes.Count | Should -Be 0
+            @($roleStub.Assignments.id) | Should -Be @(2)
+        }
+
+        It 'destroys only the saved identity after the security team is recreated' -Tag RoleTeamIdentity {
+            $roleStub.Assignments += Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-object -Set @{
+                '0.id' = 2; '0.slug' = 'other'
+            }
+            $apply = Invoke-RoleTerraform apply -input=false -auto-approve
+            $apply.ExitCode | Should -Be 0 -Because $apply.Output
+            $roleStub.Team.id = 99
+            $roleStub.Assignments = Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-null -Set @{
+                '0.id' = 99; '0.slug' = 'security'
+            }
+            $roleStub.Assignments += Get-GitHubApiFixture -Name org-roles/list-org-role-teams.organization.parent-object -Set @{
+                '0.id' = 2; '0.slug' = 'other'
+            }
+
+            $destroy = Invoke-RoleTerraform destroy -input=false -auto-approve
+
+            $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
+            $roleStub.Writes.Count | Should -Be 0
+            @($roleStub.Assignments.id) | Should -Be @(99, 2)
         }
 
         It 'rejects a changed team ID after a saved plan before any role write' -Tag RoleState {
