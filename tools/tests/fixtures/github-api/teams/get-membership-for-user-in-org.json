@@ -1,0 +1,19 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/teams/{team_slug}/memberships/{username}",
+    "operationId": "teams/get-membership-for-user-in-org",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/teams/members#get-team-membership-for-a-user",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/team-membership"
+  },
+  "required": {
+    "": ["role", "state", "url"]
+  },
+  "body": {
+    "url": "https://api.github.com/teams/1/memberships/octocat",
+    "role": "maintainer",
+    "state": "active"
+  }
+}

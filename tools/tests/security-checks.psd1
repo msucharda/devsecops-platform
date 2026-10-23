@@ -4,6 +4,12 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'deployment-pr-branch'
+            Tests = @(
+                @{ Path = 'tools/tests/PullRequestAuthorization.Tests.ps1'; FullName = @('*vendoring branch*', '*ordinary branch*', '*unreadable head branch*') }
+            )
+        }
+        @{
             Name = 'vendoring-main-ref'
             Tests = @(
                 @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid target main ref: <Case>*', '*opens an App PR*') }
