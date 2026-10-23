@@ -11,18 +11,7 @@ Describe 'Organization-scoped module execution' {
         $null = New-Item -ItemType Directory -Path $modules -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/organization-module') -Destination (Join-Path $modules 'scoped') -Recurse
         $organizations = @('demo-platform', 'demo-actions', 'demo-workloads')
-        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
-        $instance.modules = @{ scoped = @{ parameters = @{ target_organizations = $organizations } } }
-        $instance.githubApps = @{
-            reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{ organization_administration = 'read' }; resources = @{ organizations = $organizations } }
-            writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = $organizations } }
-        }
-        $instance.credentials = @{
-            scoped = @{
-                plan = @{ environment = 'scoped-plan'; githubApp = 'reader' }
-                apply = @{ environment = 'scoped-apply'; githubApp = 'writer' }
-            }
-        }
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/organization-module-instance.yaml') -Raw)
         $instancePath = Join-Path $directory 'instance.yaml'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
         $arguments = @{

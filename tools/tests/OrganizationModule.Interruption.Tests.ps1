@@ -12,18 +12,22 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
         $null = New-Item -ItemType Directory -Path $modules -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/organization-module') -Destination (Join-Path $modules 'scoped') -Recurse
         $organizations = @('demo-platform', 'demo-actions', 'demo-workloads')
-        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
-        $instance.modules = @{ scoped = @{ parameters = @{ target_organizations = $organizations } } }
-        $instance.githubApps = @{
-            reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{ organization_administration = 'read' }; resources = @{ organizations = $organizations } }
-            writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = $organizations } }
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/organization-module-instance.yaml') -Raw)
+        $fixtureRoot = Join-Path $modules 'scoped'
+        $null = New-Item -ItemType Directory -Path (Join-Path $fixtureRoot 'rulesets')
+        Copy-Item -LiteralPath (Join-Path $fixtureRoot 'main.tf') -Destination (Join-Path $fixtureRoot 'rulesets/main.tf')
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $fixtureRoot 'module.yaml') -Raw)
+        $manifest.permissions.githubApp.rulesetPlan = @{
+            permissions = @{ organization_administration = 'write' }
+            resources = @{ organizations = 'target_organizations' }
+            purpose = 'organization-rulesets-full-read'
         }
-        $instance.credentials = @{
-            scoped = @{
-                plan = @{ environment = 'scoped-plan'; githubApp = 'reader' }
-                apply = @{ environment = 'scoped-apply'; githubApp = 'writer' }
-            }
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath (Join-Path $fixtureRoot 'module.yaml')
+        $instance.githubApps.rulesets = @{
+            appId = '103'; installationId = '203'; enterprise = 'example'
+            permissions = @{ organization_administration = 'write' }; resources = @{ organizations = $organizations }
         }
+        $instance.credentials.scoped.rulesetPlan = @{ environment = 'scoped-ruleset-plan'; githubApp = 'rulesets' }
         $instancePath = Join-Path $directory 'instance.yaml'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
         $runnerArguments = @{
@@ -37,44 +41,61 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
         $interruptionPlan = Get-InterruptionPlan
         $remoteOrganizations = @{}
         $backendPaths = @{}
+        $destroyPlans = @{}
 
         # This stub models the Terraform process boundary, not a GitHub API. API write/recovery contracts
         # are exercised separately by the real Terraform and documented GitHub API stubs.
         function terraform {
             $verb = $args[1]
-            $selectedOrganization = @((ConvertFrom-Json -InputObject $env:PLATFORM_GITHUB_TOKENS -AsHashtable).Keys)[0]
+            $global:LASTEXITCODE = 0
+            if ($verb -eq 'init') {
+                $backendPaths[$env:TF_DATA_DIR] = ($args | Where-Object { $_ -like '-backend-config=path=*' }) -replace '^-backend-config=path=', ''
+                $null = New-Item -ItemType Directory -Path $env:TF_DATA_DIR -Force
+                Set-Content -LiteralPath (Join-Path $env:TF_DATA_DIR 'terraform.tfstate') -Value '{"backend":{"type":"local"}}'
+                return ''
+            }
+            $terraformStatePath = $backendPaths[$env:TF_DATA_DIR]
+            $selectedOrganization = Split-Path (Split-Path $terraformStatePath -Parent) -Leaf
+            $terraformObjectIdentity = "$selectedOrganization/$(Split-Path $terraformStatePath -Leaf)"
             $publicOutputs = @{
                 organizations = @{ sensitive = $false; value = @($selectedOrganization) }
-                identity = @{ sensitive = $false; value = "id-$selectedOrganization" }
+                identity = @{ sensitive = $false; value = "id-$terraformObjectIdentity" }
             }
-            $global:LASTEXITCODE = 0
             switch ($verb) {
-                init {
-                    $backendPaths[$env:TF_DATA_DIR] = ($args | Where-Object { $_ -like '-backend-config=path=*' }) -replace '^-backend-config=path=', ''
-                    $null = New-Item -ItemType Directory -Path $env:TF_DATA_DIR -Force
-                    Set-Content -LiteralPath (Join-Path $env:TF_DATA_DIR 'terraform.tfstate') -Value '{"backend":{"type":"local"}}'
-                    return ''
-                }
                 plan {
-                    if (-not (Test-Path -LiteralPath $backendPaths[$env:TF_DATA_DIR])) { $global:LASTEXITCODE = 2 }
+                    $destroyPlans[$env:TF_DATA_DIR] = $args -contains '-destroy'
+                    if ($destroyPlans[$env:TF_DATA_DIR] -or -not (Test-Path -LiteralPath $terraformStatePath)) { $global:LASTEXITCODE = 2 }
                     return ''
                 }
                 show {
-                    return ConvertTo-Json -InputObject @{ planned_values = @{ outputs = $publicOutputs } } -Depth 10 -Compress
+                    $data = if ($args.Count -gt 3) {
+                        @{ planned_values = @{ outputs = $(if ($destroyPlans[$env:TF_DATA_DIR]) { @{} } else { $publicOutputs }) } }
+                    } elseif (Test-Path -LiteralPath $terraformStatePath) {
+                        @{ values = @{ outputs = $publicOutputs } }
+                    } else { @{} }
+                    return ConvertTo-Json -InputObject $data -Depth 10 -Compress
                 }
                 apply {
-                    if (Test-Path -LiteralPath $backendPaths[$env:TF_DATA_DIR]) { return '' }
-                    Invoke-InterruptionStep -Plan $interruptionPlan -Request "apply $selectedOrganization" -Identity $selectedOrganization -Apply {
-                        $remoteOrganizations[$selectedOrganization] = "id-$selectedOrganization"
-                        Set-Content -LiteralPath $backendPaths[$env:TF_DATA_DIR] -Value "id-$selectedOrganization"
-                        ''
-                    } -Interrupt {
-                        $global:LASTEXITCODE = 1
-                        'Injected Terraform process interruption.'
+                    $interrupt = { $global:LASTEXITCODE = 1; 'Injected Terraform process interruption.' }
+                    if ($destroyPlans[$env:TF_DATA_DIR]) {
+                        Invoke-InterruptionStep -Plan $interruptionPlan -Request "destroy $terraformObjectIdentity" -Apply {
+                            $null = $remoteOrganizations.Remove($terraformObjectIdentity)
+                            Remove-Item -LiteralPath $terraformStatePath
+                            ''
+                        } -Interrupt $interrupt
+                    } elseif (-not (Test-Path -LiteralPath $terraformStatePath)) {
+                        Invoke-InterruptionStep -Plan $interruptionPlan -Request "apply $terraformObjectIdentity" -Identity $terraformObjectIdentity -Apply {
+                            $remoteOrganizations[$terraformObjectIdentity] = "id-$terraformObjectIdentity"
+                            Set-Content -LiteralPath $terraformStatePath -Value "id-$terraformObjectIdentity"
+                            ''
+                        } -Interrupt $interrupt
                     }
                     return
                 }
-                output { return ConvertTo-Json -InputObject $publicOutputs -Depth 10 -Compress }
+                output {
+                    $data = if (Test-Path -LiteralPath $terraformStatePath) { $publicOutputs } else { @{} }
+                    return ConvertTo-Json -InputObject $data -Depth 10 -Compress
+                }
                 default { throw "Unexpected Terraform command '$verb'." }
             }
         }
@@ -123,24 +144,6 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
         @{ Root = 'ordinary'; Rulesets = $false }
         @{ Root = 'rulesets'; Rulesets = $true }
     ) {
-        if ($Rulesets) {
-            $fixtureRoot = Join-Path $modules 'scoped'
-            $null = New-Item -ItemType Directory -Path (Join-Path $fixtureRoot 'rulesets')
-            Copy-Item -LiteralPath (Join-Path $fixtureRoot 'main.tf') -Destination (Join-Path $fixtureRoot 'rulesets/main.tf')
-            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $fixtureRoot 'module.yaml') -Raw)
-            $manifest.permissions.githubApp.rulesetPlan = @{
-                permissions = @{ organization_administration = 'write' }
-                resources = @{ organizations = 'target_organizations' }
-                purpose = 'organization-rulesets-full-read'
-            }
-            ConvertTo-Yaml $manifest | Set-Content -LiteralPath (Join-Path $fixtureRoot 'module.yaml')
-            $instance.githubApps.rulesets = @{
-                appId = '103'; installationId = '203'; enterprise = 'example'
-                permissions = @{ organization_administration = 'write' }; resources = @{ organizations = $organizations }
-            }
-            $instance.credentials.scoped.rulesetPlan = @{ environment = 'scoped-ruleset-plan'; githubApp = 'rulesets' }
-            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
-        }
         $run = { $null = & $runner -Action apply -Rulesets:$Rulesets @runnerArguments 6>$null }
 
         $result = @(Invoke-InterruptionMatrix -Plan $interruptionPlan -Reset $reset -Run $run -Snapshot $snapshot `
@@ -149,5 +152,50 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
         $report = Format-InterruptionResult -Name "Organization runner ($Root)" -Result $result
         Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
+    }
+
+    Context 'Interrupted teardown' -Tag OrganizationTeardown {
+        It 'resumes all organizations and both roots with rulesets destroyed first and empty states skipped' {
+            $instance.teardown = @{ allowed = $true }
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            $reset = {
+                $remoteOrganizations.Clear()
+                & $restoreLocal @{}
+                foreach ($stateName in @('terraform.rulesets.tfstate', 'terraform.tfstate')) {
+                    foreach ($organizationName in $organizations) {
+                        $stateDirectory = Join-Path $runnerArguments.StatePath "scoped/organizations/$organizationName"
+                        $null = New-Item -ItemType Directory -Path $stateDirectory -Force
+                        $identity = "$organizationName/$stateName"
+                        $remoteOrganizations[$identity] = "id-$identity"
+                        Set-Content -LiteralPath (Join-Path $stateDirectory $stateName) -Value "id-$identity"
+                    }
+                }
+            }
+            $run = {
+                $null = & $runner -Action destroy -Rulesets @runnerArguments 6>$null
+                $null = & $runner -Action destroy @runnerArguments 6>$null
+            }
+            $snapshot = { @{ remote = @{} + $remoteOrganizations; local = & $captureLocal } }
+
+            $result = @(Invoke-InterruptionMatrix -Plan $interruptionPlan -Reset $reset -Run $run -Snapshot $snapshot `
+                -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
+
+            $report = Format-InterruptionResult -Name 'Organization runner teardown' -Result $result
+            Write-Information $report -InformationAction Continue
+            @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
+            $remoteOrganizations.Count | Should -Be 0
+            $expectedRequests = @(
+                'destroy demo-platform/terraform.rulesets.tfstate'
+                'destroy demo-actions/terraform.rulesets.tfstate'
+                'destroy demo-workloads/terraform.rulesets.tfstate'
+                'destroy demo-platform/terraform.tfstate'
+                'destroy demo-actions/terraform.tfstate'
+                'destroy demo-workloads/terraform.tfstate'
+            )
+            ($interruptionPlan.Requests -join ',') | Should -Be ($expectedRequests -join ',')
+            $env:PLATFORM_GITHUB_TOKENS = $null
+            & $run
+            ($interruptionPlan.Requests -join ',') | Should -Be ($expectedRequests -join ',')
+        }
     }
 }
