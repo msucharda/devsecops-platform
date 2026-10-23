@@ -52,6 +52,18 @@
             )
         }
         @{
+            Name = 'organizations-installation-scope'
+            Tests = @(
+                @{ Path = 'tools/tests/Organizations.Tests.ps1'; FullName = @('*Manifest installation scope*') }
+            )
+        }
+        @{
+            Name = 'organizations-installation-selection'
+            Tests = @(
+                @{ Path = 'tools/tests/Organizations.Tests.ps1'; FullName = @('*App installations*installs the App without repository access*', '*App installations*installs an App on all repositories*', '*App installations*does not reinstall an App*', '*App installations*refuses an existing*', '*App installations*requires all repositories*') }
+            )
+        }
+        @{
             Name = 'vendoring-main-ref'
             Tests = @(
                 @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid target main ref: <Case>*', '*opens an App PR*') }
@@ -353,6 +365,21 @@
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
+        @{
+            Mutant = 'Get-OrganizationAppScopeViolation: operator ''-cnotmatch'' -> -inotmatch in ''$clientId -cnotmatch ''^[A-Za-z0-9][A-Za-z0-9.]{0,63}\z''''#1'
+            Reason = 'Equivalent mutant: the client ID pattern explicitly includes both uppercase and lowercase ASCII letters, digits and dots. Case-insensitive matching accepts no additional value.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/105'
+        }
+        @{
+            Mutant = 'Assert-OrganizationInstallationSelection: operator ''-cne'' -> -ine in ''$Installation[''repository_selection''] -cne ''all''''#1'
+            Reason = 'Equivalent mutant: every caller supplies an installation returned by Get-OrganizationAppInstallation, which rejects any selection other than the exact lowercase values all, selected and none before this comparison.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/105'
+        }
+        @{
+            Mutant = 'Assert-OrganizationInstallationSelection: operator ''-cnotin'' -> -inotin in ''$Installation[''repository_selection''] -cnotin @(''selected'', ''none'')''#1'
+            Reason = 'Equivalent mutant: every caller supplies an installation returned by Get-OrganizationAppInstallation, which rejects any selection other than the exact lowercase values all, selected and none before this comparison.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/105'
+        }
         @{
             Mutant = 'Assert-VendoringPublishMain: operator ''-cne'' -> -ine in ''(Get-VendoringMainRef) -cne $mainSha''#1'
             Reason = 'Equivalent mutant: both the captured SHA and every subsequent SHA come from Get-VendoringMainRef, whose case-sensitive pattern requires exactly 40 lowercase hexadecimal characters. Case-insensitive comparison cannot accept a different value in that domain.'
