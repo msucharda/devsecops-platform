@@ -7,6 +7,17 @@
   "properties": {
     "name": { "$ref": "#/definitions/moduleName" },
     "description": { "$ref": "#/definitions/nonBlankString" },
+    "organizationScoped": {
+      "description": "Run each root once per instance organization, with an isolated state and installation token.",
+      "const": true
+    },
+    "organizationParameters": {
+      "description": "Parameters supplied as organization-keyed mappings; each root receives only its organization's value.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+    },
     "prerequisites": {
       "type": "array",
       "uniqueItems": true,
@@ -119,6 +130,34 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "required": ["organizationParameters"] },
+      "then": { "required": ["organizationScoped"] }
+    },
+    {
+      "if": { "required": ["organizationScoped"] },
+      "then": {
+        "properties": {
+          "permissions": {
+            "properties": {
+              "githubApp": {
+                "required": ["plan", "apply"],
+                "additionalProperties": {
+                  "properties": {
+                    "resources": {
+                      "required": ["organizations"],
+                      "properties": { "organizations": { "const": "target_organizations" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "definitions": {
     "githubAppPhase": {
       "type": "object",

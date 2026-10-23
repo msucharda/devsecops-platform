@@ -1,5 +1,6 @@
 name: organization-rulesets
 description: Organization rulesets of the instance in an isolated rulesets root; dependent modules require their organizations in its outputs.
+organizationScoped: true
 prerequisites:
   - organizations
 manualSteps: []

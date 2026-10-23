@@ -132,7 +132,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - name: Read public outputs from state without planning
         shell: pwsh
-        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'actions-catalog' -Action output -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -ArtifactsPath ./artifacts/module-outputs
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'actions-catalog' -Action output -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -180,7 +180,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - name: Read public outputs from state without planning
         shell: pwsh
-        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'organization-rulesets' -Action output -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -ArtifactsPath ./artifacts/module-outputs
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'organization-rulesets' -Action output -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -228,7 +228,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - name: Read public outputs from state without planning
         shell: pwsh
-        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'organizations' -Action output -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -ArtifactsPath ./artifacts/module-outputs
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'organizations' -Action output -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -279,7 +279,7 @@ jobs:
         shell: pwsh
         run: |
           $results = @(
-            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
           )
           $empty = $results.Count -eq 1 -and @($results | Where-Object { $_.Empty -isnot [bool] -or -not $_.Empty }).Count -eq 0
           "empty=$($empty.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -363,7 +363,7 @@ jobs:
         shell: pwsh
         run: |
           $results = @(
-            ./instance/platform/tools/Invoke-Module.ps1 -Module 'actions-catalog' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'actions-catalog' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
           )
           $empty = $results.Count -eq 1 -and @($results | Where-Object { $_.Empty -isnot [bool] -or -not $_.Empty }).Count -eq 0
           "empty=$($empty.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -447,8 +447,8 @@ jobs:
         shell: pwsh
         run: |
           $results = @(
-            ./instance/platform/tools/Invoke-Module.ps1 -Module 'organization-rulesets' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
-            ./instance/platform/tools/Invoke-Module.ps1 -Module 'organization-rulesets' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -Rulesets
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'organization-rulesets' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'organization-rulesets' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -Rulesets
           )
           $empty = $results.Count -eq 2 -and @($results | Where-Object { $_.Empty -isnot [bool] -or -not $_.Empty }).Count -eq 0
           "empty=$($empty.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT

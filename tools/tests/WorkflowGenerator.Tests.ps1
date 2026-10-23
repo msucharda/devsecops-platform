@@ -25,6 +25,53 @@ BeforeAll {
 }
 
 Describe 'Deployment workflow generation' {
+    It 'derives per-organization drift outputs from an arbitrary organization-scoped module manifest' {
+        $modules = New-ModuleGraphFixture -ModuleName foundation -Change {
+            param($manifest)
+            $manifest.organizationScoped = $true
+            $manifest.permissions.githubApp = @{
+                plan = @{ permissions = @{ organization_administration = 'read' }; resources = @{ organizations = 'target_organizations' } }
+                apply = @{ permissions = @{ organization_administration = 'write' }; resources = @{ organizations = 'target_organizations' } }
+            }
+        }
+        $output = Join-Path $TestDrive 'generic-organizations.yml'
+        $driftOutput = Join-Path $TestDrive 'generic-organizations-drift.yml'
+
+        & $generator -ModulesPath $modules -OutputPath $output -DriftOutputPath $driftOutput
+
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $driftOutput -Raw)
+        $workflow.jobs.module_foundation.outputs.organizations | Should -Be '${{ steps.run.outputs.organizations }}'
+        $workflow.jobs.module_foundation.Contains('strategy') | Should -BeFalse
+        $workflow.jobs.module_application.outputs.Contains('organizations') | Should -BeFalse
+    }
+
+    It 'rejects organization-scoped manifest contracts with <Case>' -ForEach @(
+        @{ Case = 'organization parameters without scope'; Change = { param($m) $m.organizationParameters = @('reviewers') } }
+        @{ Case = 'an unrelated organization selector'; Change = {
+            param($m)
+            $m.organizationScoped = $true
+            $m.permissions.githubApp = @{
+                plan = @{ permissions = @{ organization_administration = 'read' }; resources = @{ organizations = 'other_organizations' } }
+                apply = @{ permissions = @{ organization_administration = 'write' }; resources = @{ organizations = 'other_organizations' } }
+            }
+        } }
+        @{ Case = 'enterprise-scoped credentials'; Change = {
+            param($m)
+            $m.organizationScoped = $true
+            $m.permissions.githubApp = @{
+                plan = @{ permissions = @{ organization_administration = 'read' }; resources = @{ enterprise = $true } }
+                apply = @{ permissions = @{ organization_administration = 'write' }; resources = @{ enterprise = $true } }
+            }
+        } }
+    ) {
+        $modules = New-ModuleGraphFixture -ModuleName foundation -Change $Change
+        $output = Join-Path $TestDrive 'invalid-organizations.yml'
+
+        { & $generator -ModulesPath $modules -OutputPath $output } | Should -Throw
+
+        Test-Path -LiteralPath $output | Should -BeFalse
+    }
+
     It 'loads the released enterprise-baseline manifest with phase-separated App access and enterprise prerequisites' {
         Import-Module (Join-Path $toolsPath 'PlatformTools.psm1') -Force
         $released = Join-Path (Split-Path $toolsPath -Parent) 'modules'

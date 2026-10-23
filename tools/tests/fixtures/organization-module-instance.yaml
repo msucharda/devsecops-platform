@@ -1,0 +1,50 @@
+instance:
+  name: demo
+regions:
+  primary: westeurope
+teams:
+  platform: [platform@example.test]
+  security: [security@example.test]
+modules:
+  scoped:
+    parameters:
+      target_organizations: [demo-platform, demo-actions, demo-workloads]
+githubApps:
+  reader:
+    appId: '101'
+    installationId: '201'
+    enterprise: example
+    permissions:
+      organization_administration: read
+    resources:
+      organizations: [demo-platform, demo-actions, demo-workloads]
+  writer:
+    appId: '102'
+    installationId: '202'
+    enterprise: example
+    permissions:
+      organization_administration: write
+    resources:
+      organizations: [demo-platform, demo-actions, demo-workloads]
+credentials:
+  scoped:
+    plan:
+      environment: scoped-plan
+      githubApp: reader
+    apply:
+      environment: scoped-apply
+      githubApp: writer
+manualPrerequisites:
+  tenant: true
+  enterpriseOidc: true
+  enterpriseScim: true
+  enterpriseOwner: true
+  subscriptions: true
+  licenses: true
+  privateInternalForksDisabled: true
+  repositoryManagementPoliciesEnforced: true
+  emuUserNamespacesRestricted: true
+  fineGrainedPatApprovalRequired: true
+  patMaxLifetime90Days: true
+  githubAppAvailabilityVerified: true
+  liveWorkflowsPromoted: true

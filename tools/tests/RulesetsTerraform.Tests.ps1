@@ -87,19 +87,35 @@ data "external" "ruleset_plan_state" {
 }
 '@
         }
-        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value '{"instance":{"github":{"host":"example.ghe.com"},"organizations":{"actions":"demo"}},"prerequisites":{},"target_organizations":["demo"]}'
-        $server.State = Initialize-RulesetsStub -Origin "http://127.0.0.1:$port"
+        $testOrganization = if (Get-Variable Organization -ErrorAction SilentlyContinue) { $Organization } else { 'demo' }
+        $testToken = if ($testOrganization -ceq 'demo') { 'stub-token' } else { "$testOrganization-token" }
+        $env:REST_API_BEARER = $testToken
+        $env:PLATFORM_GITHUB_TOKENS = ConvertTo-Json -InputObject @{ $testOrganization = $testToken } -Compress
+        $instanceOrganizations = if ($testOrganization -ceq 'demo') { @{ actions = 'demo' } } else {
+            @{ platform = 'demo-platform'; actions = 'demo-actions'; workloads = 'demo-workloads' }
+        }
+        Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json -Depth 10 -InputObject @{
+            instance = @{ github = @{ host = 'example.ghe.com' }; organizations = $instanceOrganizations }
+            prerequisites = @{}; target_organizations = @($testOrganization)
+        })
+        $server.State = Initialize-RulesetsStub -Origin "http://127.0.0.1:$port" -Organization $testOrganization -Token $testToken
         $init = Invoke-RulesetTerraform init -input=false
         $init.Code | Should -Be 0 -Because $init.Text
     }
 
-    It 'creates a ruleset, returns a second plan without changes and removes it on destroy' {
+    It 'creates a ruleset, returns a second plan without changes and removes it on destroy in <Organization>' -ForEach @(
+        @{ Organization = 'demo' }
+        @{ Organization = 'demo-platform' }
+        @{ Organization = 'demo-actions' }
+        @{ Organization = 'demo-workloads' }
+    ) {
         $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
         $apply.Code | Should -Be 0 -Because $apply.Text
         $plan = Invoke-RulesetTerraform plan -input=false -detailed-exitcode
         $plan.Code | Should -Be 0 -Because $plan.Text
         $server.State.Items.Count | Should -Be 1
         $created = $server.State.Items[0]
+        $created['source'] | Should -BeExactly $Organization
         $created['bypass_actors'].Count | Should -Be 0
         $created['rules'].Count | Should -Be 4
         $created['conditions']['ref_name']['include'] | Should -Be @('~DEFAULT_BRANCH')

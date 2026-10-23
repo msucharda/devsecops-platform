@@ -7,8 +7,12 @@ mock_provider "restapi" {}
 
 variables {
   instance = {
-    github        = { host = "example.ghe.com" }
-    organizations = { actions = "demo-actions" }
+    github = { host = "example.ghe.com" }
+    organizations = {
+      platform  = "demo-platform"
+      actions   = "demo-actions"
+      workloads = "demo-workloads"
+    }
   }
   prerequisites        = {}
   target_organizations = ["demo-actions"]
@@ -53,7 +57,7 @@ run "protects_default_branches_without_bypass" {
           type = "pull_request"
           parameters = {
             allowed_merge_methods             = ["merge", "rebase", "squash"]
-            dismiss_stale_reviews_on_push      = true
+            dismiss_stale_reviews_on_push     = true
             require_code_owner_review         = true
             require_last_push_approval        = false
             required_approving_review_count   = 1
@@ -66,11 +70,47 @@ run "protects_default_branches_without_bypass" {
   }
 }
 
-run "rejects_an_organization_other_than_the_actions_organization" {
+run "protects_the_platform_organization" {
+  command = plan
+
+  variables {
+    target_organizations = ["demo-platform"]
+  }
+
+  assert {
+    condition = (
+      toset(keys(restapi_object.ruleset)) == toset(["demo-platform"]) &&
+      restapi_object.ruleset["demo-platform"].path == "/orgs/demo-platform/rulesets" &&
+      length(jsondecode(restapi_object.ruleset["demo-platform"].data).bypass_actors) == 0 &&
+      length(jsondecode(restapi_object.ruleset["demo-platform"].data).rules) == 4
+    )
+    error_message = "The platform organization must receive the same complete ruleset without bypass."
+  }
+}
+
+run "protects_the_workload_organization" {
   command = plan
 
   variables {
     target_organizations = ["demo-workloads"]
+  }
+
+  assert {
+    condition = (
+      toset(keys(restapi_object.ruleset)) == toset(["demo-workloads"]) &&
+      restapi_object.ruleset["demo-workloads"].path == "/orgs/demo-workloads/rulesets" &&
+      length(jsondecode(restapi_object.ruleset["demo-workloads"].data).bypass_actors) == 0 &&
+      length(jsondecode(restapi_object.ruleset["demo-workloads"].data).rules) == 4
+    )
+    error_message = "The workload organization must receive the same complete ruleset without bypass."
+  }
+}
+
+run "rejects_an_organization_outside_the_instance" {
+  command = plan
+
+  variables {
+    target_organizations = ["foreign"]
   }
 
   expect_failures = [var.target_organizations]

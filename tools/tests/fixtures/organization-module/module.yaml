@@ -1,0 +1,20 @@
+name: scoped
+description: Offline organization-scoped module fixture.
+organizationScoped: true
+prerequisites: []
+manualSteps: []
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp:
+    plan:
+      permissions:
+        organization_administration: read
+      resources:
+        organizations: target_organizations
+    apply:
+      permissions:
+        organization_administration: write
+      resources:
+        organizations: target_organizations
+  adminPat: []

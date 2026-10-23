@@ -5,6 +5,7 @@ param(
     [ValidateSet('plan', 'apply', 'rulesetPlan')][string] $Phase = 'plan',
     [string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
+    [string] $PlatformOrganization = $env:GITHUB_REPOSITORY_OWNER,
     [switch] $Authorization,
     [System.Collections.IDictionary] $BootstrapApp,
     [string] $PrivateKey = $env:PLATFORM_APP_PRIVATE_KEY,
@@ -206,6 +207,9 @@ else {
     $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
     if ($Module -cnotin (Get-PlatformModuleSelection -Instance $instance -Modules $modules)) {
         throw "Module '$Module' is not selected."
+    }
+    if ($modules[$Module].Contains('organizationScoped')) {
+        $null = Get-PlatformModuleOrganization -Instance $instance -Manifest $modules[$Module] -PlatformOrganization $PlatformOrganization
     }
     $binding = $instance['credentials'][$Module][$Phase]
     if (-not $binding -or -not $binding.Contains('githubApp')) {

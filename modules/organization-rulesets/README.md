@@ -1,23 +1,26 @@
 # organization-rulesets
 
-Modul spravuje organizační ruleset `platform-default-branch` v organizaci z `target_organizations`. Ruleset vyžaduje review od CODEOWNERS na výchozí větvi všech repozitářů organizace a nemá bypass. Modul vznikl vyčleněním rootu `rulesets/` z modulu `enterprise-baseline` ([#73](https://github.com/msucharda/devsecops-platform/issues/73)).
+Modul spravuje organizační ruleset `platform-default-branch` ve všech organizacích instance: platformní, akcí a workloadů. Ruleset vyžaduje review od CODEOWNERS na výchozí větvi všech repozitářů organizace a nemá bypass. Modul vznikl vyčleněním rootu `rulesets/` z modulu `enterprise-baseline` ([#73](https://github.com/msucharda/devsecops-platform/issues/73)).
 
 Předpoklad: `organizations`. Na modulu závisí `actions-catalog`: katalog akcí vyžaduje schvalovací pravidlo v organizaci akcí ještě před prvním apply. Pořadí nasazení je `organizations` → `organization-rulesets` → `actions-catalog` → `enterprise-baseline`. Modul `enterprise-baseline` závisí na `actions-catalog` kvůli politice akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)). Ruleset by proto v `enterprise-baseline` vytvořil cyklus.
 
 ## Konfigurace
 
-`target_organizations` musí obsahovat právě jednu organizaci: organizaci akcí (Actions organization). Runner pro root s providerem `Mastercard/restapi` jiný počet organizací odmítne. Oba rooty navíc odmítnou jinou organizaci než `instance.organizations.actions` (bez ohledu na velikost písmen) a chybějící `instance.organizations`. Rulesety platformní a workload organizace proto modul zatím nespravuje. Podpora více organizací je otevřené rozhodnutí.
+Manifest deklaruje `organizationScoped: true`. `target_organizations` musí obsahovat přesně všechny organizace instance odvozené z vlastníka repozitáře přes `-PlatformOrganization`. Podmnožina, nadmnožina nebo jiná velikost písmen plan zastaví. Runner spustí pro každou organizaci samostatný Terraform proces se singleton seznamem a pouze jejím installation tokenem. Oba Terraform rooty odmítnou organizaci mimo deklarované organizace instance.
 
 ```yaml
 modules:
   organization-rulesets:
     parameters:
-      target_organizations: [demo-a1b2c3-actions]
+      target_organizations:
+        - demo-a1b2c3-platform
+        - demo-a1b2c3-actions
+        - demo-a1b2c3-workloads
 ```
 
 ## Hlavní root a výstupy
 
-Hlavní root nemá prostředky. Zveřejní výstup `organizations`: seřazený seznam `target_organizations`. Deploy job nahraje výstupy modulu až po úspěšném apply rootu `rulesets/`. Závislé moduly proto výstup dostanou, jen když ruleset existuje v požadovaném tvaru.
+Hlavní root nemá prostředky. Každý proces zveřejní singleton výstup `organizations`. Runner vytvoří společný artifact s úplným seznamem `organizations` a mapou `organization_outputs`, která obsahuje veřejné výstupy jednotlivých organizací. Artifact vznikne až po úspěchu všech organizací. Deploy job ho nahraje až po úspěšném apply rootu `rulesets/` ve všech organizacích. Závislé moduly proto výstup dostanou, jen když rulesety existují v požadovaném tvaru.
 
 `actions-catalog` v planu ověří, že výstup `organizations` obsahuje organizaci akcí (bez rozlišení velikosti písmen). Chybějící výstup, prázdný seznam, jiný typ nebo jiná organizace plan zastaví.
 
@@ -33,7 +36,7 @@ Root `rulesets/` spravuje v organizaci z `target_organizations` aktivní ruleset
 
 Root používá [organizační ruleset REST API](https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/rules), verzi `2026-03-10`: seznam `GET /orgs/{org}/rulesets`, detail `GET /orgs/{org}/rulesets/{ruleset_id}`, vytvoření `POST /orgs/{org}/rulesets`, změnu `PUT /orgs/{org}/rulesets/{ruleset_id}` a odstranění `DELETE /orgs/{org}/rulesets/{ruleset_id}`.
 
-- Runner ho spouští přes `Invoke-Module.ps1 -Module organization-rulesets -Rulesets` s akcí `plan`, `apply` nebo `destroy`. Má oddělený state `terraform.rulesets.tfstate`.
+- Runner ho spouští přes `Invoke-Module.ps1 -Module organization-rulesets -Rulesets` s akcí `plan`, `apply` nebo `destroy`. Každá organizace má v kontejneru modulu vlastní state `organizations/<login>/terraform.rulesets.tfstate`; hlavní root má `organizations/<login>/terraform.tfstate`. Login je lowercase. Starý state runner nehledá ani nemigruje; upgrade mezi RC release není podporovaný.
 - Prostředek `restapi_object.ruleset` používá provider `Mastercard/restapi` a installation token z `REST_API_BEARER`, který nastavuje runner. Root podporuje právě jednu organizaci na běh.
 - Skripty v `scripts/` volají REST API s tokenem z `REST_API_BEARER` a pevnou hlavičkou `X-GitHub-Api-Version: 2026-03-10`. Modul má vlastní kopii transportu; na skriptech jiného modulu nezávisí.
 - `terraform_data.ruleset_intent` uloží záměr před vzdáleným `POST`. Provider potom uchová GitHub ID ve state a mění i maže objekt podle něj, nikoli podle názvu. Přejmenování proto nezpůsobí smazání jiného rulesetu pod původním názvem.
@@ -58,7 +61,7 @@ Běžný plan vzdálené prostředky nemění.
 
 ## Teardown
 
-Teardown nejdřív odstraní root `rulesets/` a smaže ruleset. Teprve potom odstraní hlavní root. `actions-catalog` se odstraní před tímto modulem.
+Teardown nejdřív odstraní root `rulesets/` ve všech organizacích a smaže jejich rulesety. Teprve potom odstraní hlavní root ve všech organizacích. `actions-catalog` se odstraní před tímto modulem. Kontrola prázdného state čte každý root každé organizace ještě před vydáním tokenů. Po přerušení další běh naváže na stejný state; úspěšná první organizace se nezaloží znovu kvůli chybě druhé.
 
 ## Identita
 
@@ -69,3 +72,4 @@ Teardown nejdřív odstraní root `rulesets/` a smaže ruleset. Teprve potom ods
 - PR platformního týmu může spustit oba plan joby automaticky, bez dalšího schválení security týmem. Forky, jiní autoři ani App-created PR credentials automaticky nedostanou.
 - Apply schvaluje platformní tým a navíc security tým, protože ruleset určuje schvalovací pravidlo kódu.
 - Před nasazením se musí na GHE.com ověřit potřebná API, oprávnění i úplné čtení bypass aktérů. Nepodporovaná operace není důvod přidat PAT.
+- Plan, apply a ruleset plan Apps musí mít instalace přesně ve všech třech organizacích podle manifestu. Instalace jsou ruční; token issuer je ověří a cizí nebo chybějící organizaci odmítne.

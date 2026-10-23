@@ -14,7 +14,7 @@ variable "instance" {
 
   validation {
     condition     = var.instance.organizations != null
-    error_message = "The organization-rulesets module needs the actions organization: run the module runner with -PlatformOrganization."
+    error_message = "The organization-rulesets module needs the instance organizations: run the module runner with -PlatformOrganization."
   }
 }
 
@@ -39,10 +39,13 @@ variable "target_organizations" {
   validation {
     condition = try(
       length(var.target_organizations) == 1 &&
-      var.instance.organizations.actions != "" &&
-      lower(var.target_organizations[0]) == lower(var.instance.organizations.actions),
+      contains([
+        try(lower(var.instance.organizations.platform), ""),
+        lower(var.instance.organizations.actions),
+        try(lower(var.instance.organizations.workloads), "")
+      ], lower(var.target_organizations[0])),
       false
     )
-    error_message = "target_organizations must contain exactly the actions organization of the instance."
+    error_message = "target_organizations must contain exactly one organization of the instance."
   }
 }
