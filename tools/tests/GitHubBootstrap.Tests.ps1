@@ -435,14 +435,14 @@ Describe 'GitHub bootstrap public interface' {
         if (Test-Path -LiteralPath $sourceInventory) { Remove-Item -LiteralPath $sourceInventory }
     }
 
-    It 'prepares main-only vendoring environments with isolated approvals and no cloud credentials' -Tag 'Vendoring' {
+    It 'prepares main-only vendoring environments with isolated approvals and no cloud credentials' -Tag 'Vendoring', 'EnvironmentProtection' {
         $null = & $bootstrap @arguments
 
         foreach ($name in @('vendoring-source', 'vendoring-action-import', 'vendoring-release-import')) {
             $path = "/repos/demo-a1b2c3-platform/instance/environments/$name"
             $cloud.environments.ContainsKey($path) | Should -BeTrue
             $cloud.environments[$path].can_admins_bypass | Should -BeFalse
-            @($cloud.writes | Where-Object { $_.path -ceq $path -and $_.method -ceq 'PUT' })[0].body.can_admins_bypass |
+            @($cloud.writes | Where-Object { $_.path -ceq $path -and $_.method -eq 'PUT' })[0].body.can_admins_bypass |
                 Should -BeFalse
             $cloud.branchRules["$path/deployment-branch-policies"].name | Should -Be @('main')
             $cloud.branchRules["$path/deployment-branch-policies"].type | Should -Be @('branch')

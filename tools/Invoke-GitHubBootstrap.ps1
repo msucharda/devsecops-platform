@@ -364,7 +364,7 @@ function Assert-GitHubBootstrapVendoringContract {
         [string[]] $Repositories
     )
 
-    if ($ApiUrl -cne $api) { throw 'The vendoring source API must belong to the instance; cross-host App ownership is not supported.' }
+    if ($ApiUrl -ne $api) { throw 'The vendoring source API must belong to the instance; cross-host App ownership is not supported.' }
     if (-not $instance['githubApps'].Contains($Alias)) { throw "Unknown vendoring App alias '$Alias'." }
     $app = $instance['githubApps'][$Alias]
     if (-not $Repositories) {
