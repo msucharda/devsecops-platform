@@ -1,0 +1,53 @@
+{
+  "source": {
+    "operation": "PUT /repos/{owner}/{repo}/environments/{environment_name}",
+    "operationId": "repos/create-or-update-environment",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/deployments/environments#create-or-update-an-environment",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/environment",
+    "variant": "documented-example-with-observed-ghec-admin-bypass",
+    "note": "The body uses the documented environment example with all three protection-rule variants. The Team example omits its required type; the documented organization enum completes it. The additional can_admins_bypass:false is based on live responses from a reference GHE.com instance reported by the coordinator: approve-apply and enterprise-baseline-apply, observed 2026-10-16 and 2026-10-20. The instance hostname is intentionally omitted under ADR 0012. The pinned OpenAPI commit bb754941722779d8a5b3a2f25a5fbb7ce794e1ea does not document the field in either request or response. This change performs no live API request."
+  },
+  "required": {
+    "": ["id", "node_id", "name", "url", "html_url", "created_at", "updated_at"],
+    "protection_rules.[]": ["id", "node_id", "type"],
+    "protection_rules.[].reviewers.[].reviewer": ["id", "node_id", "url", "members_url", "name", "description", "permission", "html_url", "repositories_url", "slug", "parent", "type"]
+  },
+  "body": {
+    "id": 161088068,
+    "node_id": "MDExOkVudmlyb25tZW50MTYxMDg4MDY4",
+    "name": "staging",
+    "url": "https://api.github.com/repos/github/hello-world/environments/staging",
+    "html_url": "https://github.com/github/hello-world/deployments/activity_log?environments_filter=staging",
+    "created_at": "2020-11-23T22:00:40Z",
+    "updated_at": "2020-11-23T22:00:40Z",
+    "can_admins_bypass": false,
+    "protection_rules": [
+      {"id": 3736, "node_id": "MDQ6R2F0ZTM3MzY=", "type": "wait_timer", "wait_timer": 30},
+      {
+        "id": 3755,
+        "node_id": "MDQ6R2F0ZTM3NTU=",
+        "type": "required_reviewers",
+        "prevent_self_review": false,
+        "reviewers": [{
+          "type": "Team",
+          "reviewer": {
+            "id": 1, "node_id": "MDQ6VGVhbTE=",
+            "url": "https://api.github.com/teams/1",
+            "html_url": "https://github.com/orgs/github/teams/justice-league",
+            "name": "Justice League", "slug": "justice-league",
+            "description": "A great team.", "privacy": "closed",
+            "notification_setting": "notifications_enabled", "permission": "admin",
+            "members_url": "https://api.github.com/teams/1/members{/member}",
+            "repositories_url": "https://api.github.com/teams/1/repos",
+            "parent": null, "type": "organization"
+          }
+        }]
+      },
+      {"id": 3756, "node_id": "MDQ6R2F0ZTM3NTY=", "type": "branch_policy"}
+    ],
+    "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}
+  }
+}

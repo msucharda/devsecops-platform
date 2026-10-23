@@ -53,10 +53,30 @@ jobs:
               $env:IMPORT_EVENT -cnotin @('workflow_dispatch', 'push')) {
             throw 'Vendoring requires a trusted main push or workflow_dispatch; PR and non-main imports are not authorized.'
           }
+  check_writer:
+    name: Check the writer binding before preparing source
+    needs: authorize
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.kind == 'action' && 'vendoring-action-import' || 'vendoring-release-import' }}
+    steps:
+      - name: Require configured writer credentials before issuing any token
+        shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+        run: |
+          if ($env:PLATFORM_APP_ID -cnotmatch '^[1-9][0-9]*$' -or
+              $env:PLATFORM_APP_INSTALLATION_ID -cnotmatch '^[1-9][0-9]*$' -or
+              [string]::IsNullOrWhiteSpace($env:PLATFORM_APP_ENTERPRISE) -or
+              [string]::IsNullOrWhiteSpace($env:PLATFORM_APP_PRIVATE_KEY)) {
+            throw 'Vendoring writer credentials are not configured. Repeat the GitHub bootstrap with -VendoringActionApp or -VendoringReleaseApp before importing.'
+          }
 
   prepare:
     name: Prepare tagged source without write or cloud credentials
-    needs: authorize
+    needs: check_writer
     runs-on: ubuntu-latest
     environment: vendoring-source
     steps:

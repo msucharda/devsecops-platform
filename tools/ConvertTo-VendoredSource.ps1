@@ -18,7 +18,7 @@ if ($catalog['version'] -ne 1 -or $catalog['actions'] -isnot [Collections.IDicti
 }
 foreach ($entry in $catalog['actions'].PSBase.Keys) {
     $copy = $catalog['actions'][$entry]
-    if ($entry -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+    if ($entry -cnotmatch '^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$' -or
         $copy -isnot [Collections.IDictionary] -or
         $copy['repository'] -cne "$ActionsOrganization/$($entry.Replace('/', '-'))" -or
         $copy['sha'] -cnotmatch '^[a-f0-9]{40}$') {
@@ -103,7 +103,7 @@ foreach ($file in $files) {
             if ($reference -cnotmatch '^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(/[^@]+)?@([^@\s]+)$') {
                 throw "Unsupported uses '$reference' in '$relative'."
             }
-            $upstream = $Matches[1]
+            $upstream = $Matches[1].ToLowerInvariant()
             $subpath = $Matches[2]
             if (-not $catalog['actions'].Contains($upstream)) {
                 throw "Action '$upstream' is missing from the catalog (uses '$reference' in '$relative')."

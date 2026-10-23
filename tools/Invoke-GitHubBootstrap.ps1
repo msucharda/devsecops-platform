@@ -9,6 +9,11 @@ param(
     [Parameter(Mandatory)][string] $InventoryPath,
     [string] $AuthorizationApp,
     [string] $DriftReportApp,
+    [string] $VendoringActionApp,
+    [string] $VendoringReleaseApp,
+    [string] $VendoringSourceApp,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$')][string] $VendoringSourceRepository,
+    [ValidatePattern('^https://api\.(github\.com|[a-z0-9-]+\.ghe\.com)$')][string] $VendoringSourceApiUrl,
     [string] $AppKeysPath,
     [switch] $AcceptanceOnly,
     [switch] $ResourcesOnly,
@@ -291,6 +296,15 @@ function Get-GitHubBootstrapReviewer {
     }
 }
 
+# security-check: bootstrap-environment-bypass
+function Test-GitHubBootstrapAdminBypass {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Environment)
+
+    return $Environment['can_admins_bypass'] -is [bool] -and -not $Environment['can_admins_bypass']
+}
+
 function Initialize-GitHubBootstrapEnvironment {
     [CmdletBinding()]
     param(
@@ -309,14 +323,14 @@ function Initialize-GitHubBootstrapEnvironment {
         deployment_branch_policy = @{ protected_branches = $false; custom_branch_policies = $true }
     }
     $actualReviewers = @(Get-GitHubBootstrapReviewer -Environment $current)
-    if (-not $current -or $current['can_admins_bypass'] -ne $false -or
+    if (-not $current -or -not (Test-GitHubBootstrapAdminBypass -Environment $current) -or
         -not (Test-GitHubBootstrapValue -Actual $current['deployment_branch_policy'] -Desired $body['deployment_branch_policy']) -or
         -not (Test-GitHubBootstrapValue -Actual $actualReviewers -Desired $reviewers) -or
         @($current['protection_rules'] | Where-Object { $_['type'] -cnotin @('required_reviewers', 'branch_policy') }).Count -gt 0) {
         $current = Invoke-GitHubBootstrapApi -Path $path -Method PUT -Body $body
         $confirmed = @(Get-GitHubBootstrapReviewer -Environment $current)
         if (-not (Test-GitHubBootstrapValue -Actual $confirmed -Desired $reviewers) -or
-            $current['can_admins_bypass'] -ne $false -or
+            -not (Test-GitHubBootstrapAdminBypass -Environment $current) -or
             -not (Test-GitHubBootstrapValue -Actual $current['deployment_branch_policy'] -Desired $body['deployment_branch_policy'])) {
             throw "GHE.com did not enforce environment '$Name' protection. Do not deploy modules."
         }
@@ -336,6 +350,65 @@ function Initialize-GitHubBootstrapEnvironment {
     }
     elseif (@($secrets | Where-Object { $_['name'] -cne 'PLATFORM_APP_PRIVATE_KEY' }).Count) {
         throw "Environment '$Name' has undeclared secrets. Remove them through an approved access change."
+    }
+}
+
+# security-check: bootstrap-vendoring-contract
+function Assert-GitHubBootstrapVendoringContract {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Alias,
+        [Parameter(Mandatory)][string] $Organization,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Permissions,
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [string[]] $Repositories
+    )
+
+    if ($ApiUrl -ne $api) { throw 'The vendoring source API must belong to the instance; cross-host App ownership is not supported.' }
+    if (-not $instance['githubApps'].Contains($Alias)) { throw "Unknown vendoring App alias '$Alias'." }
+    $app = $instance['githubApps'][$Alias]
+    if (-not $Repositories) {
+        $map = $app['resources']['repositories']
+        $Repositories = if ($map) { @($map[$Organization]) } else { @() }
+    }
+    $expected = @{
+        enterprise = $connection['enterprise']; permissions = $Permissions
+        resources = @{ organizations = @($Organization); repositories = @{ $Organization = @($Repositories) } }
+    }
+    $actual = @{ enterprise = $app['enterprise']; permissions = $app['permissions']; resources = $app['resources'] }
+    if ((ConvertTo-PlatformCanonicalJson $actual) -cne (ConvertTo-PlatformCanonicalJson $expected)) {
+        throw "The vendoring App contract for '$Alias' requires isolated permissions and explicitly selected repositories in its target organization."
+    }
+}
+
+# security-check: bootstrap-vendoring-isolation
+function Assert-GitHubBootstrapVendoringIsolation {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Alias, [Parameter(Mandatory)][object[]] $Bindings)
+
+    foreach ($binding in $Bindings) {
+        if ($instance['githubApps'][$binding['alias']]['appId'] -eq $instance['githubApps'][$Alias]['appId']) {
+            throw 'A vendoring App must not share its identity with authorization, module phases, drift reporting or another vendoring environment.'
+        }
+    }
+}
+
+# security-check: bootstrap-vendoring-environment
+function Assert-GitHubBootstrapVendoringEnvironment {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Name, [string] $Alias)
+
+    $path = "/repos/$repository/environments/$Name"
+    $variables = @(Get-GitHubBootstrapCollection -Path "$path/variables" -Property 'variables')
+    $allowed = @('PLATFORM_APP_ID', 'PLATFORM_APP_INSTALLATION_ID', 'PLATFORM_APP_ENTERPRISE', 'PLATFORM_APP_KEY_FINGERPRINT')
+    if ($Name -eq 'vendoring-source') { $allowed += @('SOURCE_REPOSITORY', 'SOURCE_API_URL') }
+    if (@($variables | Where-Object { $_['name'] -cnotin $allowed }).Count) {
+        throw "Environment '$Name' has undeclared variables; cloud credentials are forbidden."
+    }
+    if (-not $Alias) {
+        $secrets = @(Get-GitHubBootstrapCollection -Path "$path/secrets" -Property 'secrets')
+        if ($secrets.Count -or $variables.Count) { throw "Environment '$Name' has credentials without an App binding." }
+        Write-Warning "Environment '$Name' has no App binding. Repeat the bootstrap with its vendoring App parameter before using this import."
     }
 }
 
@@ -593,7 +666,8 @@ function Initialize-GitHubBootstrapMainProtection {
 }
 if ($NoChanges) { Initialize-GitHubBootstrapMainProtection }
 $environmentNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($name in @('pr-authorization', 'approve-apply', 'approve-teardown-platform', 'teardown', 'drift-report')) {
+foreach ($name in @('pr-authorization', 'approve-apply', 'approve-teardown-platform', 'teardown', 'drift-report',
+    'vendoring-source', 'vendoring-action-import', 'vendoring-release-import')) {
     $null = $environmentNames.Add($name)
 }
 $environmentBindings = [Collections.Generic.List[object]]::new()
@@ -647,6 +721,9 @@ Initialize-GitHubBootstrapEnvironment -Name 'drift-report'
 Initialize-GitHubBootstrapEnvironment -Name 'approve-apply' -ReviewerId $teams['platform']['id'] -CredentialFree
 Initialize-GitHubBootstrapEnvironment -Name 'approve-teardown-platform' -ReviewerId $teams['platform']['id'] -CredentialFree
 Initialize-GitHubBootstrapEnvironment -Name 'teardown' -ReviewerId $teams['security']['id'] -CredentialFree
+Initialize-GitHubBootstrapEnvironment -Name 'vendoring-source'
+Initialize-GitHubBootstrapEnvironment -Name 'vendoring-action-import' -ReviewerId $teams['platform']['id']
+Initialize-GitHubBootstrapEnvironment -Name 'vendoring-release-import' -ReviewerId $teams['platform']['id']
 foreach ($binding in $environmentBindings) {
     # Security owns the organization controls and the code owner gate of the organization rulesets.
     $reviewer = if ($binding['phase'] -ceq 'apply' -and $binding['module'] -cin @('enterprise-baseline', 'organization-rulesets')) { $teams['security']['id'] } else { 0 }
@@ -775,6 +852,29 @@ if (-not $ResourcesOnly) {
         if ($secrets.Count) { throw "Environment 'drift-report' has an App key without a drift report App. Pass -DriftReportApp or remove the key." }
         Write-Warning 'No drift report App was configured. Nightly drift detection cannot open or update drift issues until -DriftReportApp is set up.'
     }
+    if ([bool] $VendoringSourceApp -ne [bool] $VendoringSourceRepository) {
+        throw 'A vendoring source App and source repository must be configured together.'
+    }
+    if (-not $VendoringSourceApiUrl) { $VendoringSourceApiUrl = $api }
+    $actionsOrganization = (Get-PlatformInstanceOrganization -InstanceName $instance['instance']['name'] -PlatformOrganization $organization)['actions']
+    $vendoringBindings = @(
+        @{ alias = $VendoringActionApp; environment = 'vendoring-action-import'; organization = $actionsOrganization
+            permissions = @{ contents = 'write'; pull_requests = 'write' }; repositories = @() }
+        @{ alias = $VendoringReleaseApp; environment = 'vendoring-release-import'; organization = $organization
+            permissions = @{ contents = 'write'; pull_requests = 'write' }; repositories = @('instance') }
+        @{ alias = $VendoringSourceApp; environment = 'vendoring-source'; organization = ($VendoringSourceRepository.Split('/')[0])
+            permissions = @{ contents = 'read'; attestations = 'read' }; repositories = @($VendoringSourceRepository.Split('/')[-1]) }
+    )
+    foreach ($binding in $vendoringBindings) {
+        Assert-GitHubBootstrapVendoringEnvironment -Name $binding['environment'] -Alias $binding['alias']
+        if (-not $binding['alias']) { continue }
+        Assert-GitHubBootstrapVendoringContract -Alias $binding['alias'] -Organization $binding['organization'] `
+            -Permissions $binding['permissions'] -Repositories $binding['repositories'] `
+            -ApiUrl $(if ($binding['environment'] -ceq 'vendoring-source') { $VendoringSourceApiUrl } else { $api })
+        Assert-GitHubBootstrapVendoringIsolation -Alias $binding['alias'] -Bindings $appBindings
+        $appBindings += @{ alias = $binding['alias']; environment = $binding['environment']
+            phase = $(if ($binding['environment'] -ceq 'vendoring-source') { 'plan' } else { 'apply' }) }
+    }
     $verifiedApps = @{}
     foreach ($binding in $appBindings) {
         $alias = $binding['alias']
@@ -792,9 +892,10 @@ if (-not $ResourcesOnly) {
         }
         $keyPath = Assert-GitHubBootstrapExternalPath -Path $key['privateKeyPath']
         $privateKey = Get-Content -LiteralPath $keyPath -Raw
+        $validationApi = if ($binding['environment'] -ceq 'vendoring-source') { $VendoringSourceApiUrl } else { $api }
         $result = & (Join-Path $PSScriptRoot 'New-PlatformGitHubToken.ps1') -BootstrapApp $app `
             -PrivateKey $privateKey -Phase $(if ($binding['phase'] -in @('authorization', 'driftReport')) { 'plan' } else { $binding['phase'] }) `
-            -Authorization:($binding['phase'] -eq 'authorization') -DriftReport:($binding['phase'] -eq 'driftReport') -ValidateOnly -ApiUrl $api `
+            -Authorization:($binding['phase'] -eq 'authorization') -DriftReport:($binding['phase'] -eq 'driftReport') -ValidateOnly -ApiUrl $validationApi `
             -RequestPolicy $RequestPolicy -TokenLifecycle $TokenLifecycle -VerifyRevocation:$VerifyTokenRevocation
         if (-not $result.Verified) { throw "App '$alias' verification did not complete." }
         $rsa = [Security.Cryptography.RSA]::Create()
@@ -864,6 +965,11 @@ if (-not $ResourcesOnly) {
         Initialize-GitHubBootstrapVariable -Environment $environment -Variables @{
             PLATFORM_APP_ID = $app['appId']; PLATFORM_APP_INSTALLATION_ID = $app['installationId']
             PLATFORM_APP_ENTERPRISE = $app['enterprise']; PLATFORM_APP_KEY_FINGERPRINT = $verified['fingerprint']
+        }
+    }
+    if ($VendoringSourceApp) {
+        Initialize-GitHubBootstrapVariable -Environment 'vendoring-source' -Variables @{
+            SOURCE_REPOSITORY = $VendoringSourceRepository; SOURCE_API_URL = $VendoringSourceApiUrl
         }
     }
     if ($AcceptanceOnly) {

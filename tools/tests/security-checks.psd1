@@ -10,6 +10,36 @@
             )
         }
         @{
+            Name = 'bootstrap-environment-bypass'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*main-only vendoring environments*', '*admin bypass confirmation*') }
+            )
+        }
+        @{
+            Name = 'action-import-catalog'
+            Tests = @(
+                @{ Path = 'tools/tests/ActionImport.Tests.ps1'; FullName = @('*derives a catalog target*', '*unlisted upstream*', '*configured canonical upstream*', '*Terraform default catalog*', '*invalid catalog state*') }
+            )
+        }
+        @{
+            Name = 'bootstrap-vendoring-contract'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*vendoring App isolation*verifies separate*', '*vendoring App isolation*rejects a vendoring binding*') }
+            )
+        }
+        @{
+            Name = 'bootstrap-vendoring-isolation'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*vendoring App isolation*verifies separate*', '*vendoring App isolation*rejects a vendoring binding*') }
+            )
+        }
+        @{
+            Name = 'bootstrap-vendoring-environment'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*vendoring App isolation*verifies separate*', '*vendoring App isolation*warns about each*', '*vendoring App isolation*rejects inherited*') }
+            )
+        }
+        @{
             Name = 'vendoring-main-ref'
             Tests = @(
                 @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid target main ref: <Case>*', '*opens an App PR*') }

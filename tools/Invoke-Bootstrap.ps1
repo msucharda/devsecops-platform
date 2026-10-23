@@ -4,7 +4,7 @@
 param(
     [Parameter(Mandatory)][string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
-    [Parameter(DontShow)][switch] $AllowUnboundApps,
+    [switch] $AllowUnboundApps,
     # Read-only report used by Test-BootstrapPrerequisites.ps1; stops before the first change.
     [Parameter(DontShow)][switch] $Preflight,
     [switch] $NoChanges,

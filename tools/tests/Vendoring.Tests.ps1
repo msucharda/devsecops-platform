@@ -4,6 +4,34 @@ BeforeAll {
 }
 
 Describe 'Vendored source preparation through the public command' {
+    It 'matches the complete owner and repository without case sensitivity and preserves subpath case' -Tag 'VendoringCase' {
+        $source = Join-Path $TestDrive 'mixed-case'
+        $workflow = Join-Path $source 'templates/instance/.github/workflows'
+        $null = New-Item -ItemType Directory -Path $workflow -Force
+        'jobs: {build: {steps: [{uses: Actions/Checkout/SubPath@v4}]}}' |
+            Set-Content -LiteralPath (Join-Path $workflow 'deploy.yml')
+        $output = Join-Path $TestDrive 'mixed-output'
+
+        & $prepare -SourcePath $source -OutputPath $output -CatalogPath (Join-Path $fixtures 'catalog.json') `
+            -ActionsOrganization customer-actions -Kind release
+
+        Get-Content -LiteralPath (Join-Path $output 'platform/templates/instance/.github/workflows/deploy.yml') -Raw |
+            Should -Match "uses: 'customer-actions/actions-checkout/SubPath@1111111111111111111111111111111111111111'"
+    }
+
+    It 'rejects a different action identity <Reference>' -Tag 'VendoringCase' -ForEach @(
+        @{ Reference = 'Other/Checkout@v4' }
+        @{ Reference = 'Actions/Other@v4' }
+    ) {
+        $source = Join-Path $TestDrive 'different-action'
+        $null = New-Item -ItemType Directory -Path $source -Force
+        "runs: {using: composite, steps: [{uses: $Reference}]}" | Set-Content -LiteralPath (Join-Path $source 'action.yml')
+        $output = Join-Path $TestDrive 'different-output'
+        { & $prepare -SourcePath $source -OutputPath $output -CatalogPath (Join-Path $fixtures 'catalog.json') `
+            -ActionsOrganization customer-actions -Kind action } | Should -Throw '*is missing from the catalog*'
+        Test-Path -LiteralPath $output | Should -BeFalse
+    }
+
     It 'rewrites composite and local manifests to catalog SHA pins without touching script text or comments' {
         $output = Join-Path $TestDrive 'prepared'
         & $prepare -SourcePath (Join-Path $fixtures 'action') -OutputPath $output `

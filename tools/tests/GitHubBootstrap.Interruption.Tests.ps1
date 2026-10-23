@@ -139,6 +139,12 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         # Interruptions of the resource steps are covered by the previous test.
         $arguments.ResourcesOnly = $true
         $null = & $bootstrap @arguments 3>$null 6>$null
+        Initialize-TestVendoringAppSet -Instance $instance -Cloud $cloud -KeysPath $keysPath -CasePath $casePath
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $arguments.VendoringActionApp = 'action-import'
+        $arguments.VendoringReleaseApp = 'release-import'
+        $arguments.VendoringSourceApp = 'source-import'
+        $arguments.VendoringSourceRepository = 'demo-a1b2c3-platform/private-source'
         $initialCloud = Copy-TestValue $cloud
         $initialInventory = [IO.File]::ReadAllText($inventory)
         $arguments.ResourcesOnly = $false
