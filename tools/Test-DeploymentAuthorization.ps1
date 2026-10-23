@@ -15,6 +15,23 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# security-check: deployment-pr-branch
+function Get-DeploymentPullRequestBranchDenial {
+    param([AllowNull()][object] $Branch)
+
+    if ($Branch -isnot [string]) {
+        return 'Pull request head branch is missing or unreadable; cloud plan NOT PERFORMED.'
+    }
+    if ([string]::IsNullOrWhiteSpace($Branch)) {
+        return 'Pull request head branch is missing or unreadable; cloud plan NOT PERFORMED.'
+    }
+    # GitHub refs are case-sensitive; this policy deliberately denies every casing of the vendor/ prefix.
+    if ($Branch -like 'vendor/*') {
+        return 'Pull request is from a vendoring import branch; cloud plan NOT PERFORMED. Plan runs after review and merge.'
+    }
+}
+
 $payload = Get-Content -LiteralPath $EventPath -Raw | ConvertFrom-Json -AsHashtable
 $allowed = $false
 $eligible = $false
@@ -33,6 +50,7 @@ elseif ($EventName -eq 'pull_request_target') {
     if ($revision -cnotmatch '^[a-f0-9]{40}$') {
         throw 'Pull request head must be an immutable commit.'
     }
+    $branchDenial = Get-DeploymentPullRequestBranchDenial -Branch $pr['head']['ref']
     if ($pr['base']['ref'] -cne 'main' -or $pr['base']['repo']['full_name'] -cne $Repository) {
         $reason = 'Pull request does not target protected main in the instance repository.'
     }
@@ -40,6 +58,9 @@ elseif ($EventName -eq 'pull_request_target') {
         $pr['head']['repo']['id'] -ne $pr['base']['repo']['id'] -or
         $pr['head']['repo']['full_name'] -cne $Repository) {
         $reason = 'Pull request is from a fork; cloud plan NOT PERFORMED.'
+    }
+    elseif ($branchDenial) {
+        $reason = $branchDenial
     }
     elseif ($pr['user']['type'] -cne 'User' -or $pr['user']['login'] -like '*[[]bot]' -or $pr['performed_via_github_app']) {
         $reason = 'Pull request was created by an App; cloud plan NOT PERFORMED. Plan runs after review and merge.'

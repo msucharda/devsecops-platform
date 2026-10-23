@@ -86,7 +86,7 @@ Ztráta odpovědi po push nebo vytvoření PR nevyžaduje lokální stavový sou
 
 PR otevře installation token, nikoli `GITHUB_TOKEN`. GITHUB_TOKEN workflow má pouze `contents: read` pro checkout důvěryhodných nástrojů. Tokeny se po použití odvolají i při chybě. Chyba push nebo vytvoření PR se nesmí vykázat jako úspěšný import. Nástroj nevynucuje merge ani nevytváří upstream tag v cíli; tagování schválené kopie řeší #15 po review.
 
-PR body a summary uvádějí **Cloud PR plan: NOT PERFORMED**. Stávající deployment authorization odmítne App autora před předáním cloudových credentials. Po review a merge do chráněné `main` proběhne nový plan před schváleným apply. Úspěšná příprava, validace YAML, vytvoření PR ani ruční krok nejsou cloudový plan.
+PR body a summary uvádějí **Cloud PR plan: NOT PERFORMED**. Deployment authorization odmítne App autora i každý PR se zdrojovou větví `vendor/*` před předáním cloudových credentials. Zákaz větve platí i pro lidského autora z platformního týmu a už při preflight kontrole. GitHub refs rozlišují velikost písmen; autorizační politika záměrně odmítá i prefixy `Vendor/`, `VENDOR/` a ostatní varianty velikosti písmen. Větev `feature/vendor-x` ani `vendoring-docs` tomuto zákazu nepodléhá; její autor musí splnit ostatní autorizační podmínky. Chybějící nebo nečitelný název zdrojové větve také plan nepovolí. Po review a merge do chráněné `main` proběhne nový plan před schváleným apply. Úspěšná příprava, validace YAML, vytvoření PR ani ruční krok nejsou cloudový plan.
 
 ### Ruční povýšení živých workflow v #16
 
