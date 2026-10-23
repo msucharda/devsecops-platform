@@ -8,7 +8,7 @@
     "status": 200,
     "schema": "#/components/schemas/environment",
     "variant": "documented-example-with-observed-ghec-admin-bypass",
-    "note": "The body uses the documented environment example with all three protection-rule variants. The Team example omits its required type; the documented organization enum completes it. The additional can_admins_bypass:false is based on a live GHE.com response reported by the coordinator: sucharda.ghe.com, approve-apply and enterprise-baseline-apply, observed 2026-10-16 and 2026-10-20. The pinned OpenAPI commit bb754941722779d8a5b3a2f25a5fbb7ce794e1ea does not document the field in either request or response. This change performs no live API request."
+    "note": "The body uses the documented environment example with all three protection-rule variants. The Team example omits its required type; the documented organization enum completes it. The additional can_admins_bypass:false is based on live responses from a reference GHE.com instance reported by the coordinator: approve-apply and enterprise-baseline-apply, observed 2026-10-16 and 2026-10-20. The instance hostname is intentionally omitted under ADR 0012. The pinned OpenAPI commit bb754941722779d8a5b3a2f25a5fbb7ce794e1ea does not document the field in either request or response. This change performs no live API request."
   },
   "required": {
     "": ["id", "node_id", "name", "url", "html_url", "created_at", "updated_at"],
