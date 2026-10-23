@@ -46,6 +46,7 @@ Describe 'Local CI reads ci.yml' {
         $run | Should -BeExactly "go run github.com/rhysd/actionlint/cmd/actionlint@v$($setting.ActionlintVersion) $($setting.ActionlintArguments -join ' ')"
         $setting.ActionlintArguments | Should -Contain '.github/workflows/ci.yml'
         $setting.InstanceWorkflowFiles | Should -Contain 'templates/instance/.github/workflows/import-release.yml'
+        $setting.InstanceWorkflowFiles | Should -Contain 'templates/instance/.github/workflows/import-action.yml'
     }
 
     It 'takes the tool pins from the CI actions' {

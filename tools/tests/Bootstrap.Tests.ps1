@@ -1135,6 +1135,40 @@ Describe 'Local Azure bootstrap' {
             }
         }
 
+        It 'permits missing App bindings only with explicit first-run permission' -Tag 'UnboundApps' {
+            $application.permissions.githubApp = @{
+                plan = @{
+                    permissions = @{ organization_administration = 'read' }
+                    resources = @{ organizations = 'target_organizations' }
+                }
+                apply = @{
+                    permissions = @{ organization_administration = 'write' }
+                    resources = @{ organizations = 'target_organizations' }
+                }
+            }
+            ConvertTo-Yaml $application | Set-Content -LiteralPath $applicationPath
+            $instance.modules.application.parameters = @{ target_organizations = @('example') }
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+            { & $preflight -InstancePath $instancePath -ModulesPath $modulesPath } |
+                Should -Throw '*credentials.application.plan.githubApp is required*'
+            { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+                Should -Throw '*credentials.application.plan.githubApp is required*'
+            $cloud.writes.Count | Should -Be 0
+            $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath -AllowUnboundApps)
+            @($rows | Where-Object Status -EQ 'Fail').Count | Should -Be 0
+            $cloud.writes.Count | Should -Be 0
+
+            $instance.credentials = @{ application = @{
+                plan = @{ environment = 'application-plan'; githubApp = 'missing' }
+                apply = @{ environment = 'application-apply' }
+            } }
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            { & $preflight -InstancePath $instancePath -ModulesPath $modulesPath -AllowUnboundApps } |
+                Should -Throw '*references unknown App*'
+            $cloud.writes.Count | Should -Be 0
+        }
+
         It 'reports every check without changing either cloud' {
             $rows = @(& $preflight -InstancePath $instancePath -ModulesPath $modulesPath)
 

@@ -6,6 +6,34 @@ BeforeAll {
     $rsa = [Security.Cryptography.RSA]::Create(2048)
     $privateKey = $rsa.ExportRSAPrivateKeyPem()
     $rsa.Dispose()
+
+    function Initialize-TestVendoringAppSet {
+        param($Instance, $Cloud, $KeysPath, $CasePath)
+
+        $keys = Get-Content -LiteralPath $KeysPath -Raw | ConvertFrom-Json -AsHashtable
+        foreach ($entry in @(
+            @{ alias = 'action-import'; id = '160'; installation = '260'; org = 'demo-a1b2c3-actions'; repo = 'actions-checkout'; permissions = @{ contents = 'write'; pull_requests = 'write' } }
+            @{ alias = 'release-import'; id = '161'; installation = '261'; org = 'demo-a1b2c3-platform'; repo = 'instance'; permissions = @{ contents = 'write'; pull_requests = 'write' } }
+            @{ alias = 'source-import'; id = '162'; installation = '262'; org = 'demo-a1b2c3-platform'; repo = 'private-source'; permissions = @{ contents = 'read'; attestations = 'read' } }
+        )) {
+            $Instance.githubApps[$entry.alias] = @{
+                appId = $entry.id; installationId = $entry.installation; enterprise = 'example'
+                permissions = $entry.permissions
+                resources = @{ organizations = @($entry.org); repositories = @{ $entry.org = @($entry.repo) } }
+            }
+            $Cloud.apps[$entry.id] = @{
+                installationId = $entry.installation; permissions = @{} + $entry.permissions + @{ metadata = 'read' }
+                selection = 'selected'; slug = $entry.alias.ToLowerInvariant(); repositories = @($entry.repo); organization = $entry.org
+            }
+            $path = Join-Path $CasePath "$($entry.alias).pem"
+            $key = [Security.Cryptography.RSA]::Create(2048)
+            try { $key.ExportRSAPrivateKeyPem() | Set-Content -LiteralPath $path }
+            finally { $key.Dispose() }
+            $keys[$entry.alias] = @{} + $keys.authorization
+            $keys[$entry.alias].privateKeyPath = $path
+        }
+        ConvertTo-Json -InputObject $keys -Depth 10 | Set-Content -LiteralPath $KeysPath
+    }
 }
 
 Describe 'GitHub bootstrap public interface' {
@@ -232,11 +260,24 @@ Describe 'GitHub bootstrap public interface' {
             }
             elseif ($path -like '*/environments/*' -and $path -notlike '*/variables*' -and $path -notlike '*/secrets*' -and $path -notlike '*/deployment-branch-policies*') {
                 if ($Method -eq 'PUT') {
-                    $reviewers = @($data.reviewers | ForEach-Object { @{ type = $_.type; reviewer = @{ id = $_.id } } })
+                    $documented = Get-GitHubApiFixture -Name repos/create-or-update-environment
+                    $reviewers = @($data.reviewers | ForEach-Object {
+                        $reviewer = @{} + $documented.protection_rules[1].reviewers[0].reviewer
+                        $reviewer.id = $_.id
+                        @{ type = $_.type; reviewer = $reviewer }
+                    })
                     $rules = @()
-                    if ($reviewers.Count) { $rules += @{ type = 'required_reviewers'; reviewers = $reviewers; prevent_self_review = $data.prevent_self_review } }
-                    $rules += @{ type = 'branch_policy' }
-                    $reply = @{ id = 40; protection_rules = $rules; deployment_branch_policy = $data.deployment_branch_policy; can_admins_bypass = $data.can_admins_bypass }
+                    if ($reviewers.Count) {
+                        $rule = @{} + $documented.protection_rules[1]
+                        $rule.reviewers = $reviewers
+                        $rule.prevent_self_review = $data.prevent_self_review
+                        $rules += $rule
+                    }
+                    $rules += $documented.protection_rules[2]
+                    $reply = Get-GitHubApiFixture -Name repos/create-or-update-environment -Set @{
+                        protection_rules = $rules; deployment_branch_policy = $data.deployment_branch_policy
+                    }
+                    $reply.can_admins_bypass = $data.can_admins_bypass
                     $cloud.environments[$path] = $reply
                 }
                 elseif ($cloud.environments.ContainsKey($path)) { $reply = $cloud.environments[$path] }
@@ -355,13 +396,21 @@ Describe 'GitHub bootstrap public interface' {
                 if (-not $selection) { $selection = 'all' }
             }
             if ($Uri -like '*/app') {
+                if ($cloud.ContainsKey('enterpriseOwnerVariant') -and $cloud.enterpriseOwnerVariant) {
+                    return Get-GitHubApiFixture -Name apps/get-app.owner-enterprise -Set @{
+                        id = [int] $appId; 'owner.slug' = $cloud.appOwner.login; permissions = $permissions
+                    }
+                }
                 return Get-GitHubApiFixture -Name apps/get-app.owner-simple-user -Set @{
                     id = [int] $appId; 'owner.login' = $cloud.appOwner.login; 'owner.type' = $cloud.appOwner.type; permissions = $permissions
                 }
             }
             if ($Uri -like '*/app/installations`?*') {
+                $appOrganization = if ($cloud.apps.ContainsKey($appId) -and $cloud.apps[$appId]['organization']) {
+                    $cloud.apps[$appId]['organization']
+                } else { 'demo-a1b2c3-platform' }
                 return Get-GitHubApiFixture -Name apps/list-installations -Set @{
-                    '0.id' = $installationId; '0.account.login' = 'demo-a1b2c3-platform'; '0.account.type' = 'Organization'
+                    '0.id' = $installationId; '0.account.login' = $appOrganization; '0.account.type' = 'Organization'
                     '0.target_type' = 'Organization'; '0.suspended_at' = $null; '0.permissions' = $permissions; '0.repository_selection' = $selection
                 }
             }
@@ -376,6 +425,25 @@ Describe 'GitHub bootstrap public interface' {
     AfterEach {
         foreach ($name in $savedTokens.Keys) { [Environment]::SetEnvironmentVariable($name, $savedTokens[$name]) }
         if (Test-Path -LiteralPath $sourceInventory) { Remove-Item -LiteralPath $sourceInventory }
+    }
+
+    It 'prepares main-only vendoring environments with isolated approvals and no cloud credentials' -Tag 'Vendoring' {
+        $null = & $bootstrap @arguments
+
+        foreach ($name in @('vendoring-source', 'vendoring-action-import', 'vendoring-release-import')) {
+            $path = "/repos/demo-a1b2c3-platform/instance/environments/$name"
+            $cloud.environments.ContainsKey($path) | Should -BeTrue
+            $cloud.environments[$path].can_admins_bypass | Should -BeFalse
+            $cloud.branchRules["$path/deployment-branch-policies"].name | Should -Be @('main')
+            $cloud.branchRules["$path/deployment-branch-policies"].type | Should -Be @('branch')
+            $reviewers = @($cloud.environments[$path].protection_rules | Where-Object type -EQ required_reviewers)
+            if ($name -eq 'vendoring-source') { $reviewers.Count | Should -Be 0 }
+            else { $reviewers[0].reviewers[0].reviewer.id | Should -Be 30 }
+            @($cloud.variables.Keys | Where-Object { $_ -like "$path/*" }).Count | Should -Be 0
+            @($cloud.secrets.Keys | Where-Object { $_ -like "$path/*" }).Count | Should -Be 0
+        }
+        @($cloud.resources.Values | Where-Object { $_.ContainsKey('properties') -and
+            $_.properties.ContainsKey('subject') -and $_.properties.subject -like '*environment:vendoring-*' }).Count | Should -Be 0
     }
 
     It 'creates the instance repository with the exact release and both organization teams' {
@@ -1033,6 +1101,97 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Clear()
         (& $bootstrap @arguments).HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
+    }
+
+    Context 'vendoring App isolation' -Tag 'Vendoring' {
+        BeforeEach {
+            Initialize-TestVendoringAppSet -Instance $instance -Cloud $cloud -KeysPath $keysPath -CasePath $casePath
+            $arguments.ResourcesOnly = $false
+            $arguments.VendoringActionApp = 'action-import'
+            $arguments.VendoringReleaseApp = 'release-import'
+            $arguments.VendoringSourceApp = 'source-import'
+            $arguments.VendoringSourceRepository = 'demo-a1b2c3-platform/private-source'
+        }
+
+        It 'verifies separate selected Apps with the <OwnerVariant> owner and uploads keys only to vendoring environments' -ForEach @(
+            @{ OwnerVariant = 'Simple User'; EnterpriseOwnerVariant = $false }
+            @{ OwnerVariant = 'Enterprise'; EnterpriseOwnerVariant = $true }
+        ) {
+            $cloud.enterpriseOwnerVariant = $EnterpriseOwnerVariant
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            $result = & $bootstrap @arguments
+            $result.CredentialsConfigured | Should -BeTrue
+            foreach ($entry in @(
+                @{ environment = 'vendoring-action-import'; id = '160' }
+                @{ environment = 'vendoring-release-import'; id = '161' }
+                @{ environment = 'vendoring-source'; id = '162' }
+            )) {
+                $path = "/repos/demo-a1b2c3-platform/instance/environments/$($entry.environment)"
+                $cloud.variables["$path/variables/PLATFORM_APP_ID"] | Should -BeExactly $entry.id
+                $cloud.secrets["$path/secrets/PLATFORM_APP_PRIVATE_KEY"].encrypted_value | Should -BeExactly 'encrypted-key'
+            }
+            $cloud.variables['/repos/demo-a1b2c3-platform/instance/environments/vendoring-source/variables/SOURCE_REPOSITORY'] |
+                Should -BeExactly 'demo-a1b2c3-platform/private-source'
+            $cloud.variables['/repos/demo-a1b2c3-platform/instance/environments/vendoring-source/variables/SOURCE_API_URL'] |
+                Should -BeExactly 'https://api.example.ghe.com'
+            $cloud.secrets.Count | Should -Be 4
+            $cloud.writes.Clear()
+            (& $bootstrap @arguments).HasChanges | Should -BeFalse
+            $cloud.writes.Count | Should -Be 0
+        }
+
+        It 'rejects a vendoring binding with <Case> before uploading keys' -ForEach @(
+            @{ Case = 'unknown alias'; Error = '*vendoring App alias*'; Change = { $arguments.VendoringActionApp = 'missing' } }
+            @{ Case = 'wrong enterprise'; Error = '*vendoring App contract*'; Change = { $instance.githubApps.'action-import'.enterprise = 'other' } }
+            @{ Case = 'extra permission'; Error = '*vendoring App contract*'; Change = { $instance.githubApps.'action-import'.permissions.workflows = 'write' } }
+            @{ Case = 'read-only writer'; Error = '*vendoring App contract*'; Change = { $instance.githubApps.'action-import'.permissions.contents = 'read' } }
+            # Intentionally invalid permission enum; schema validation must reject it before credential setup.
+            @{ Case = 'wrong permission case'; Error = '*enum*permissions.contents*'; Change = { $instance.githubApps.'action-import'.permissions.contents = 'Write' } }
+            @{ Case = 'wrong organization'; Error = '*repositories outside its organizations*'; Change = { $instance.githubApps.'action-import'.resources.organizations = @('other-actions') } }
+            @{ Case = 'extra organization'; Error = '*vendoring App contract*'; Change = { $instance.githubApps.'action-import'.resources.organizations += 'other-actions' } }
+            @{ Case = 'all repositories'; Error = '*selected repositories*'; Change = { $instance.githubApps.'action-import'.resources.Remove('repositories') } }
+            @{ Case = 'empty repository map'; Error = '*selected repositories*'; Change = { $instance.githubApps.'action-import'.resources.repositories = @{} } }
+            @{ Case = 'wrong release repository'; Error = '*vendoring App contract*'; Change = { $instance.githubApps.'release-import'.resources.repositories.'demo-a1b2c3-platform' = @('other') } }
+            @{ Case = 'release repository case'; Error = '*vendoring App contract*'; Change = { $instance.githubApps.'release-import'.resources.repositories.'demo-a1b2c3-platform' = @('Instance') } }
+            @{ Case = 'wrong source repository'; Error = '*vendoring App contract*'; Change = { $arguments.VendoringSourceRepository = 'demo-a1b2c3-platform/other' } }
+            @{ Case = 'missing source repository'; Error = '*source repository*'; Change = { $arguments.Remove('VendoringSourceRepository') } }
+            @{ Case = 'shared writer identity'; Error = '*share its identity*'; Change = { $instance.githubApps.'action-import'.appId = '161' } }
+            @{ Case = 'shared authorization identity'; Error = '*share its identity*'; Change = { $instance.githubApps.'action-import'.appId = '101' } }
+        ) {
+            . $Change
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            { & $bootstrap @arguments } | Should -Throw $Error
+            $cloud.secrets.Count | Should -Be 0
+        }
+
+        It 'warns about each unbound environment and rejects its stale key' {
+            $arguments.Remove('VendoringActionApp')
+            $arguments.Remove('VendoringReleaseApp')
+            $arguments.Remove('VendoringSourceApp')
+            $arguments.Remove('VendoringSourceRepository')
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            $null = & $bootstrap @arguments -WarningVariable warnings -WarningAction SilentlyContinue
+            foreach ($name in @('vendoring-source', 'vendoring-action-import', 'vendoring-release-import')) {
+                ($warnings -join "`n") | Should -Match $name
+                $path = "/repos/demo-a1b2c3-platform/instance/environments/$name/secrets/PLATFORM_APP_PRIVATE_KEY"
+                $cloud.secrets[$path] = @{ encrypted_value = 'stale' }
+                { & $bootstrap @arguments -WarningAction SilentlyContinue } | Should -Throw '*vendoring*without an App binding*'
+                $cloud.secrets.Remove($path)
+            }
+        }
+
+        It 'rejects inherited or cloud credentials <Case> instead of putting them in vendoring jobs' -ForEach @(
+            @{ Case = 'repository key'; Path = '/repos/demo-a1b2c3-platform/instance/actions/secrets/PLATFORM_APP_PRIVATE_KEY'; Variable = $false }
+            @{ Case = 'organization key'; Path = '/orgs/demo-a1b2c3-platform/actions/secrets/PLATFORM_APP_PRIVATE_KEY'; Variable = $false }
+            @{ Case = 'cloud secret'; Path = '/repos/demo-a1b2c3-platform/instance/environments/vendoring-action-import/secrets/AZURE_CLIENT_SECRET'; Variable = $false }
+            @{ Case = 'cloud variable'; Path = '/repos/demo-a1b2c3-platform/instance/environments/vendoring-action-import/variables/AZURE_CLIENT_ID'; Variable = $true }
+            @{ Case = 'noncanonical variable'; Path = '/repos/demo-a1b2c3-platform/instance/environments/vendoring-action-import/variables/platform_app_id'; Variable = $true }
+        ) {
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            if ($Variable) { $cloud.variables[$Path] = 'cloud' } else { $cloud.secrets[$Path] = @{ encrypted_value = 'inherited' } }
+            { & $bootstrap @arguments } | Should -Throw
+            @($cloud.writes | Where-Object { $_.path -like '*/secrets/PLATFORM_APP_PRIVATE_KEY' }).Count | Should -Be 0
+        }
     }
 
     Context 'drift report App' -Tag 'DriftReport' {

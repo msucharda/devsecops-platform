@@ -72,6 +72,15 @@ Bootstrap navíc přes API ověří tenant tokenů, členství uživatele v `tea
 
 Preflight nevyžaduje potvrzené příznaky `manualPrerequisites`. Každý příznak vypíše jako řádek se stavem `Confirmed` nebo `Manual`. Chybná konfigurace nebo schéma ukončí preflight chybou stejně jako bootstrap.
 
+Při prvním běhu Apps ještě nejsou registrované. Použij veřejný přepínač `-AllowUnboundApps` v preflightu i Azure bootstrapu:
+
+```powershell
+.\tools\Test-BootstrapPrerequisites.ps1 -InstancePath $cfg -AllowUnboundApps | Format-Table -Wrap
+$azure = .\tools\Invoke-Bootstrap.ps1 -InstancePath $cfg -AllowUnboundApps
+```
+
+Přepínač dovolí pouze chybějící vazby `credentials.<module>.<phase>.githubApp`. Neobejde validaci deklarované App, oprávnění, scope ani ručních předpokladů bootstrapu. Azure část žádný klíč GitHub App nepoužívá. Jakmile platformní tým Apps zaregistruje a doplní vazby, spouštěj další preflight i Azure bootstrap **bez** přepínače. Chybějící povinná vazba pak skončí chybou před změnou prostředků.
+
 | `Status` | Význam |
 |---|---|
 | `Pass` | API potvrdilo podmínku. |
@@ -123,7 +132,7 @@ OAuth login potřebuje scopes `admin:enterprise`, `admin:org`, `repo` a `workflo
 
 ```powershell
 gh auth login --hostname example.ghe.com --web --scopes admin:enterprise,admin:org,repo,workflow
-$azure = .\tools\Invoke-Bootstrap.ps1 -InstancePath $cfg
+$azure = .\tools\Invoke-Bootstrap.ps1 -InstancePath $cfg -AllowUnboundApps
 $arguments = @{
     InstancePath = $cfg
     AzureBootstrap = $azure
@@ -155,6 +164,9 @@ Platformní tým potom v **Enterprise settings → GitHub Apps** ručně registr
 | Autorizační App | Jen `members: read`, pouze organizace platformy, žádné repozitáře. Samostatná identita; nesmí ji sdílet modul. |
 | App fáze modulu | Přesně `permissions` a `resources` manifestu a aliasu v `instance.yaml`. Plan a apply používají odlišné identity. |
 | App ruleset planu | Jen `organization_administration: write`, přesně cílové organizace. Oddělená od běžného planu i apply. |
+| App importu release | Přesně `contents: write` a `pull_requests: write`, selected installation pouze na `instance` v organizaci platformy. Samostatná identita pro `vendoring-release-import`. |
+| App importu akcí | Přesně `contents: write` a `pull_requests: write`, selected installation na katalogové repozitáře pouze v organizaci akcí. Samostatná identita pro `vendoring-action-import`. |
+| App privátního zdroje | Volitelná, přesně `contents: read` a `attestations: read`, selected installation na jediný deklarovaný zdroj. Samostatná identita pro `vendoring-source`. Veřejný import ji nepoužije. |
 
 Vlož metadata do `githubApps` a vazby do `credentials` v pracovní kopii konfigurace. Autorizační alias, například `authorization`, patří také do `githubApps`; skriptu ho předáš přes `-AuthorizationApp`. Privátní klíče a jejich lokální manifest **nesmějí** ležet v release ani ve zdrojovém repozitáři.
 
@@ -188,6 +200,30 @@ Po ověření všech Apps skript vytvoří jeden commit se šablonou, konečnou 
 `gh secret set --no-store` zašifruje klíč pomocí libsodium; plaintext dostane jen přes stdin. Bootstrap uloží šifrovanou hodnotu jako environment secret `PLATFORM_APP_PRIVATE_KEY`. Odmítne stejnojmenný repository nebo organization secret, aby environment bez klíče nemohl zdědit širší credential. Environment variables obsahují App metadata, veřejný fingerprint klíče, identitu Azure a adresu backendu podle [kontraktu šablony](../templates/instance/README.md).
 
 Teprve po dokončení skript zapne Actions a vrátí `CredentialsConfigured: true`. `Organization`, `Repository`, `ReleaseVersion`, `InventoryPath` a `HasChanges` neobsahují credentials. První plan spusť ručně z chráněné `main`; zapnutí Actions zpětně nespustí push workflow inicializačního commitu.
+
+### Zapojení vendoringu po nasazení katalogu
+
+Bootstrap vždy vytvoří `vendoring-source`, `vendoring-action-import` a `vendoring-release-import`. Všechny omezí na `main`; oba writer environmenty navíc vyžadují platformní tým a zakazují administrátorský bypass. Žádný z nich nemá Azure identitu ani federated credential. Bootstrap odmítne neznámý secret nebo variable v těchto environmentech. Klíč bez App vazby také odmítne.
+
+Parametry `-VendoringReleaseApp`, `-VendoringActionApp` a `-VendoringSourceApp` vybírají aliasy z `githubApps`. Writer Apps nejsou podmínkou dokončení bootstrapu. Bez vazby zůstane environment prázdný a bootstrap vypíše varování. Import bez writer credentials skončí konkrétní chybou před vydáním prvního tokenu. `CredentialsConfigured: true` proto neznamená připravený vendoring ani živě ověřený import.
+
+Release writer lze zapojit při prvním dokončení GitHub bootstrapu. Action writer zapoj až po apply modulů `organizations` a `actions-catalog`, kdy existuje organizace akcí i cílové repozitáře. Každá App musí mít jinou identitu než autorizační App, moduly, drift reporter i ostatní vendoring Apps. Klíče přidej do stejného externího manifestu `keys.json`; platí stejná rotace do 90 dní.
+
+1. Zaregistruj a nainstaluj App s oprávněními a selected scope z tabulky. Veřejný import nepotřebuje source App.
+2. Pokud už instance existuje, doplň App metadata do `instance.yaml` přes PR a review security týmem. Po merge použij lokální kopii konfigurace shodnou s chráněnou `main`; bootstrap konfiguraci nepřepíše.
+3. Zopakuj bootstrap ze stejného schváleného release se stejným inventory, výstupem Azure bootstrapu a všemi již používanými App parametry:
+
+```powershell
+.\tools\Invoke-GitHubBootstrap.ps1 @arguments `
+    -AuthorizationApp authorization `
+    -AppKeysPath '<pracovni-adresar>\keys.json' `
+    -VendoringReleaseApp release-import `
+    -VendoringActionApp action-import
+```
+
+Pro privátní zdroj přidej `-VendoringSourceApp source-import -VendoringSourceRepository owner/repo`. `-VendoringSourceApiUrl` může určit `https://api.github.com` nebo `https://api.<enterprise>.ghe.com`; výchozí hodnota odpovídá hostu instance. Bootstrap ověří source App na tomto API a zapíše chráněné `SOURCE_REPOSITORY` a `SOURCE_API_URL`. Nedostupný zdroj vyžaduje deklarovaný ruční import podle [vendoringu](vendoring.md), nikoli širší credential.
+
+Po zapojení spusť `import-action.yml` a poté `import-release.yml`. Workflow ani environmenty ručně neupravuj. První import release přepíše upstream akce ve vendorovaných šablonách podle katalogu; povýšení živých workflow zůstává samostatný schválený PR podle #16.
 
 ### Environmenty, noční plan a teardown
 

@@ -10,6 +10,24 @@
             )
         }
         @{
+            Name = 'bootstrap-vendoring-contract'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*vendoring App isolation*verifies separate*', '*vendoring App isolation*rejects a vendoring binding*') }
+            )
+        }
+        @{
+            Name = 'bootstrap-vendoring-isolation'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*vendoring App isolation*verifies separate*', '*vendoring App isolation*rejects a vendoring binding*') }
+            )
+        }
+        @{
+            Name = 'bootstrap-vendoring-environment'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*vendoring App isolation*verifies separate*', '*vendoring App isolation*warns about each*', '*vendoring App isolation*rejects inherited*') }
+            )
+        }
+        @{
             Name = 'vendoring-main-ref'
             Tests = @(
                 @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid target main ref: <Case>*', '*opens an App PR*') }

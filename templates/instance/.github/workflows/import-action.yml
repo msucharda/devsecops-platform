@@ -1,0 +1,57 @@
+name: Import action
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Public upstream action repository, for example azure/login
+        type: string
+        required: true
+      tag:
+        description: Exact upstream tag
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve the catalog action target
+    runs-on: ubuntu-latest
+    outputs:
+      source-repository: ${{ steps.resolve.outputs.source-repository }}
+      target-repository: ${{ steps.resolve.outputs.target-repository }}
+      actions-organization: ${{ steps.resolve.outputs.actions-organization }}
+    steps:
+      - name: Check out trusted main tools and instance configuration
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install trusted runtime dependencies
+        shell: pwsh
+        run: ./platform/tools/Install-ToolDependencies.ps1
+      - name: Derive the action import inputs
+        id: resolve
+        shell: pwsh
+        env:
+          SOURCE_REPOSITORY: ${{ inputs.repository }}
+          SOURCE_TAG: ${{ inputs.tag }}
+        run: ./platform/tools/Resolve-ActionImport.ps1 -SourceRepository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -InstancePath ./instance.yaml -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -GitHubOutputPath $env:GITHUB_OUTPUT
+
+  import:
+    name: Import the tagged action into its catalog repository
+    needs: resolve
+    uses: ./.github/workflows/vendor.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    with:
+      source-repository: ${{ needs.resolve.outputs.source-repository }}
+      source-tag: ${{ inputs.tag }}
+      source-api-url: https://api.github.com
+      private-source: false
+      target-repository: ${{ needs.resolve.outputs.target-repository }}
+      kind: action
+      actions-organization: ${{ needs.resolve.outputs.actions-organization }}

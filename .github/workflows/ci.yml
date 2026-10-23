@@ -66,10 +66,10 @@ jobs:
         run: |
           project="$(mktemp -d)"
           mkdir -p "$project/.github/workflows"
-          cp templates/instance/.github/workflows/import-release.yml templates/instance/.github/workflows/vendor.yml "$project/.github/workflows/"
+          cp templates/instance/.github/workflows/import-release.yml templates/instance/.github/workflows/import-action.yml templates/instance/.github/workflows/vendor.yml "$project/.github/workflows/"
           git init -q "$project"
           cd "$project"
-          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/import-release.yml
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/import-release.yml .github/workflows/import-action.yml
       - name: Discover Terraform roots
         id: terraform-roots
         shell: pwsh
