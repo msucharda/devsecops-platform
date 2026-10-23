@@ -648,7 +648,8 @@ Initialize-GitHubBootstrapEnvironment -Name 'approve-apply' -ReviewerId $teams['
 Initialize-GitHubBootstrapEnvironment -Name 'approve-teardown-platform' -ReviewerId $teams['platform']['id'] -CredentialFree
 Initialize-GitHubBootstrapEnvironment -Name 'teardown' -ReviewerId $teams['security']['id'] -CredentialFree
 foreach ($binding in $environmentBindings) {
-    $reviewer = if ($binding['phase'] -ceq 'apply' -and $binding['module'] -ceq 'enterprise-baseline') { $teams['security']['id'] } else { 0 }
+    # Security owns the organization controls and the code owner gate of the organization rulesets.
+    $reviewer = if ($binding['phase'] -ceq 'apply' -and $binding['module'] -cin @('enterprise-baseline', 'organization-rulesets')) { $teams['security']['id'] } else { 0 }
     Initialize-GitHubBootstrapEnvironment -Name $binding['name'] -ReviewerId $reviewer
     $azurePhase = if ($binding['phase'] -ceq 'apply') { 'apply' } else { 'plan' }
     Initialize-GitHubBootstrapVariable -Environment $binding['name'] -Variables @{

@@ -16,7 +16,7 @@ Změnu App oprávnění musí navíc schválit security tým podle ADR 0016. Boo
 | `<plan-environment>-drift`, `<ruleset-plan-environment>-drift` | Noční varianty bez schválení, jen z `main`. Zachovají oddělené App klíče; používají plan identitu stejného modulu. |
 | `drift-report` | Bez schválení, jen z `main`. Samostatná App s právě `issues: write` jen pro repozitář instance. Žádná Azure identita. Job `report_drift` v `drift.yml` jí otevře nebo aktualizuje issue driftu. |
 | `approve-apply` | Jedno schválení platformním týmem pro celý běh. Žádné secrets. |
-| `<module>-apply` | Vlastní apply identity a App. Po společném gate bez dalšího schválení, kromě `enterprise-baseline-apply`, který vyžaduje security tým. |
+| `<module>-apply` | Vlastní apply identity a App. Po společném gate bez dalšího schválení, kromě `enterprise-baseline-apply` a `organization-rulesets-apply`, které vyžadují security tým. |
 | `approve-teardown-platform`, `teardown` | Navazující schválení platformním a potom security týmem. Žádné secrets, variables ani OIDC vazby. Používá je workflow `teardown`. |
 
 Explicitní názvy z `credentials` nahrazují výchozí názvy environmentů. Každý environment patří jen jednomu modulu a fázi. Bootstrap musí všechny environmenty omezit na deployment ref `main`, protože `pull_request_target` používá base ref. Nesmí přidat další schválení k PR planu ani ruleset planu. Doporučené pravidlo zabrání obejití schválení administrátorem.
@@ -43,7 +43,7 @@ PR nesmí měnit credential vazby ani App metadata a použít je už před merge
 
 Joby předávají jen necitlivé výstupy přímých předpokladů přes artifacty stejného běhu a fáze. Úspěch všech vybraných běžných i ruleset planů odemkne společný apply gate. Apply job modulu s rulesety provede běžný root i celý `rulesets/` root; příští modul čeká na úspěch obou.
 
-Root `enterprise-baseline/rulesets` spravuje aktivní organizační ruleset pro výchozí větve všech repozitářů bez bypassu. Vyžaduje jedno nové schválení po změně PR, review od CODEOWNERS a CodeQL bez bezpečnostních nálezů high nebo vyšších; zakazuje force push a smazání výchozí větve. Úplný detail včetně explicitního prázdného `bypass_actors` ověřuje oddělený ruleset plan i noční drift. Chybějící pole běh zastaví. Ruleset plan credential má širší `organization_administration: write`, nikoli read-only přístup. Importní App ruleset neobchází; importní PR musí získat review i požadované výsledky skenování.
+Root `organization-rulesets/rulesets` spravuje aktivní organizační ruleset pro výchozí větve všech repozitářů organizace akcí bez bypassu. Vyžaduje jedno nové schválení po změně PR, review od CODEOWNERS a CodeQL bez bezpečnostních nálezů high nebo vyšších; zakazuje force push a smazání výchozí větve. Úplný detail včetně explicitního prázdného `bypass_actors` ověřuje oddělený ruleset plan i noční drift. Chybějící pole běh zastaví. Ruleset plan credential má širší `organization_administration: write`, nikoli read-only přístup. Importní App ruleset neobchází; importní PR musí získat review i požadované výsledky skenování.
 
 Workflow používá SHA-pinované upstream akce, dokud platformní tým v #16 ručně nepovýší importované šablony s odkazy na schválené katalogové kopie. Automatický import mění jen `platform/`; App má pouze Contents a Pull requests, ne `workflows: write`. Ruční povýšení vyžaduje PR a review security týmem a není automaticky ověřený cloudový plan.
 

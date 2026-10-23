@@ -6,8 +6,8 @@ manualSteps:
     owner: platform
     description: >-
       Before the organizations module is destroyed, an enterprise owner deletes the actions and workloads
-      organizations of the instance in the enterprise settings, only after the enterprise-baseline destroy
-      succeeded. GitHub offers no organization deletion with
+      organizations of the instance in the enterprise settings, only after the destroy of every module that depends on
+      organizations succeeded. GitHub offers no organization deletion with
       the enterprise installation token; the module destroy only verifies that both organizations are gone
       and fails otherwise. Their names stay blocked; a new deployment needs a new bootstrap with a new
       deployment identifier.

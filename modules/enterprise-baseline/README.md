@@ -6,7 +6,7 @@ Předpoklady: `organizations` a `actions-catalog`. Manifest deklaruje oba moduly
 
 ## Stav implementace
 
-[#17](https://github.com/msucharda/devsecops-platform/issues/17) implementuje organizační oprávnění a ruční enterprise předpoklady. [#18](https://github.com/msucharda/devsecops-platform/issues/18) implementuje politiku akcí a výchozí oprávnění `GITHUB_TOKEN`; živou akceptaci na GHE.com zatím nikdo neprovedl. [#19](https://github.com/msucharda/devsecops-platform/issues/19) implementuje code security configuration a custom patterns. Samostatný root `rulesets/` implementuje organizační rulesety podle [#20](https://github.com/msucharda/devsecops-platform/issues/20).
+[#17](https://github.com/msucharda/devsecops-platform/issues/17) implementuje organizační oprávnění a ruční enterprise předpoklady. [#18](https://github.com/msucharda/devsecops-platform/issues/18) implementuje politiku akcí a výchozí oprávnění `GITHUB_TOKEN`; živou akceptaci na GHE.com zatím nikdo neprovedl. [#19](https://github.com/msucharda/devsecops-platform/issues/19) implementuje code security configuration a custom patterns. Organizační rulesety podle [#20](https://github.com/msucharda/devsecops-platform/issues/20) spravuje modul `organization-rulesets`.
 
 ## Spravovaná organizační nastavení
 
@@ -83,29 +83,9 @@ Modul v každé organizaci z `target_organizations` nastaví tato pole (API verz
 - Data source `external.actions_policy_state` čte `GET /orgs/{org}/actions/permissions` a `GET /orgs/{org}/actions/permissions/workflow` při každém planu a po apply. Chybějící pole, jiný typ nebo jiná velikost písmen je porušení, ne shoda. Drift zastaví plan; oprava je ruční obnova nebo apply s `-replace=terraform_data.actions_policy_settings["<org>"]`.
 - Identitní prostředek `terraform_data.actions_policy` při destroy obnoví výchozí hodnoty GitHubu z tabulky. Obsahový prostředek `terraform_data.actions_policy_settings` politiku zapisuje; změna politiky nahradí jen jeho, takže mezi starou a novou politikou nevznikne okno s výchozími hodnotami.
 
-## Organizační ruleset pro výchozí větev
+## Organizační rulesety
 
-Samostatný root `rulesets/` spravuje v každé organizaci z `target_organizations` aktivní ruleset `platform-default-branch`. Podmínka `repository_name.include: ["~ALL"]` zahrnuje všechny repozitáře; `ref_name.include: ["~DEFAULT_BRANCH"]` sleduje jejich aktuální výchozí větev. Oba seznamy `exclude` jsou prázdné.
-
-- Změna jen přes PR s jedním schválením. Nový commit schválení zruší.
-- PR vyžaduje review od CODEOWNERS.
-- Force push a smazání větve jsou zakázané.
-- Pravidlo `code_scanning` vyžaduje CodeQL s `security_alerts_threshold: high_or_higher`. Obecné alerty bez bezpečnostní závažnosti neblokuje (`alerts_threshold: none`).
-- `bypass_actors` je explicitně prázdné pole. Bypass nemá ani platformní tým, organization owner nebo importní App.
-
-Root používá [organizační ruleset REST API](https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/rules), verzi `2026-03-10`: seznam `GET /orgs/{org}/rulesets`, detail `GET /orgs/{org}/rulesets/{ruleset_id}`, vytvoření `POST /orgs/{org}/rulesets`, změnu `PUT /orgs/{org}/rulesets/{ruleset_id}` a odstranění `DELETE /orgs/{org}/rulesets/{ruleset_id}`.
-
-- Runner ho spouští přes `Invoke-Module.ps1 -Module enterprise-baseline -Rulesets` s akcí `plan`, `apply` nebo `destroy`. Má oddělený state `terraform.rulesets.tfstate`.
-- Prostředek `restapi_object.ruleset` používá provider `Mastercard/restapi` a installation token z `REST_API_BEARER`, který nastavuje runner. Stejně jako běžný root podporuje právě jednu organizaci na běh. Podpora více organizací vyžaduje samostatné běhy a state; není součástí této změny.
-- `terraform_data.ruleset_intent` uloží záměr před vzdáleným `POST`. Provider potom uchová GitHub ID ve state a mění i maže objekt podle něj, nikoli podle názvu. Přejmenování proto nezpůsobí smazání jiného rulesetu pod původním názvem.
-- Po ztracené odpovědi na `POST` čtení podle rezervovaného názvu `platform-default-branch` zjistí existující objekt. Terraform `import` block ho při dalším planu převezme do state místo vytvoření duplikátu. Existující state identita má přednost před tímto vyhledáním. Ztracenou odpověď na `PUT` nebo `DELETE` řeší refresh a opakovaný běh.
-- Před destroy runner spustí `Restore-RulesetState.ps1`. Skript ověří každý uložený objekt podle ID a zdrojové organizace. Pokud state obsahuje jen přerušený záměr vytvoření bez vzdáleného ID, nejprve objekt vyhledá podle názvu a přes `terraform import` uloží jeho ID. Potom cíleným apply uloží do záměru příznak `destroy_started = true`; používá interní proměnnou `ruleset_destroy_started`. Teprve potom runner vytvoří destroy plan. Záměr se maže až po nativním prostředku. Po přerušení mezi jejich odstraněním proto další destroy nepřevezme jiný objekt původního názvu. Skript podle názvu nic nemaže a existující ID nikdy nenahradí jiným objektem. Tento obnovovací krok vyžaduje runner; samostatné `terraform destroy` po přerušeném vytvoření ho nenahrazuje.
-- Duplicitní název, kolize velikosti písmen názvu, neznámý typ zdroje a neshodná identita v detailu zastaví čtení i zápis. Zděděný enterprise ruleset stejného názvu skript nepřevezme ani nesmaže.
-- Každý plan a ověření po apply čte úplný detail. Nezávislé čtení během planu kontroluje existující rulesety i při přidání organizace nebo jiné čekající změně; nesmí se odložit do apply. Chybějící, `null` nebo nepolové `bypass_actors` je chyba, ne důkaz prázdného bypassu. Bypass navíc, vypnutí vynucování, změna podmínek nebo pravidel zastaví plan jako drift. Pořadí pravidel a merge metod se ignoruje; prázdné serverové `required_reviewers` a vypnuté `dismissal_restriction` bez aktérů se považují za ekvivalent. `enabled` musí mít boolean typ.
-- Spravovaný ruleset podporuje jen variantu podmínek `repository_name` s `ref_name`. Varianty `repository_id` a `repository_property` odmítne s chybou. Ostatní místní rulesety nespravuje. Detaily zděděných enterprise rulesetů tento root neověřuje; noční kontrola jejich počet vykazuje jako nepokrytou oblast podle ADR 0016.
-- Drift spravovaných hodnot zastaví plan; provider `restapi` s `ignore_server_additions` ho automaticky neopravuje. Operátor obnoví požadované hodnoty včetně původního názvu. Smazaný ruleset refresh rozpozná a další schválený apply ho znovu vytvoří. Běžný plan nemění vzdálené prostředky.
-
-Importní PR podléhají stejnému review i skenování. Ruleset nevyžaduje vlastní CI status check cloudového planu; jeho neprovedení u App-created PR proto není samo o sobě blokací merge. Import nesmí dostat bypass. Skutečný průchod importu akce a release, chování CodeQL pro jejich obsah a čtení `bypass_actors` installation tokenem musí potvrdit živá akceptace na GHE.com. Offline testy to nedokazují.
+Organizační ruleset `platform-default-branch` spravuje modul [`organization-rulesets`](../organization-rulesets/README.md). Root `rulesets/` patřil do tohoto modulu do [#73](https://github.com/msucharda/devsecops-platform/issues/73). Modul `actions-catalog` ruleset vyžaduje před svým apply a tento modul závisí na `actions-catalog`. Ruleset v tomto modulu by proto vytvořil cyklus.
 
 ## Code security configuration
 
@@ -174,13 +154,11 @@ Seznam repozitářů modul čte přes [`GET /installation/repositories`](https:/
 Neznámý stav připojení (hodnota mimo dokumentovaný enum) a neznámý `mode` bypass reviewera plan zastaví. Chybějící `mode` znamená dokumentovanou výchozí hodnotu `ALWAYS`.
 ## Teardown
 
-Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu, včetně politiky akcí a oprávnění `GITHUB_TOKEN` (`all`, `all`, `read`, `false`), a smaže organizační rulesety, configurations a custom patterns. Destroy configuration nejdřív zruší její výchozí roli a potom ji smaže. GitHub odpojí repozitáře a ponechá jim nastavení bez vazby na configuration. Destroy patternu vyřeší jeho alerty jako `pattern deleted` (`post_delete_action: resolve_alerts`). Ruční enterprise předpoklady nemění. Případné ruční operace uvádí manifest včetně omezení odstranění. Destroy organizačních nastavení pošle `PATCH` jen se spravovanými poli a výchozími hodnotami z tabulky výše.
+Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu, včetně politiky akcí a oprávnění `GITHUB_TOKEN` (`all`, `all`, `read`, `false`), a smaže configurations a custom patterns. Destroy configuration nejdřív zruší její výchozí roli a potom ji smaže. GitHub odpojí repozitáře a ponechá jim nastavení bez vazby na configuration. Destroy patternu vyřeší jeho alerty jako `pattern deleted` (`post_delete_action: resolve_alerts`). Ruční enterprise předpoklady nemění. Případné ruční operace uvádí manifest včetně omezení odstranění. Destroy organizačních nastavení pošle `PATCH` jen se spravovanými poli a výchozími hodnotami z tabulky výše.
 
 ## Identita
 
 - Běžný plan používá installation token s `Organization Administration: read`; apply používá `write` pro organizace instance. Stejná oprávnění dokumentace uvádí pro čtení a změny code security configurations, custom patterns, pattern configurations a politiky GitHub Actions organizace.
-- Seznam a detail rulesetů vyžadují `write` i pro čtení. Plan rulesetů proto běží v samostatném jobu a environmentu s vlastní App identitou. Toto oprávnění umožňuje i změny jiných organizačních nastavení; výjimku přijímáme podle ADR 0016.
-- Privátní klíč ani token ruleset jobu nesmějí dostat ostatní plan joby. Stejné oddělení platí pro noční detekci driftu.
-- PR platformního týmu může spustit oba plan joby automaticky, bez dalšího schválení security týmem. Forky, jiní autoři ani App-created PR credentials automaticky nedostanou.
+- PR platformního týmu může spustit plan job automaticky, bez dalšího schválení security týmem. Forky, jiní autoři ani App-created PR credentials automaticky nedostanou.
 - Apply nadále schvaluje platformní tým a navíc security tým.
-- Před nasazením se musí na GHE.com ověřit potřebná API, oprávnění i úplné čtení bypass aktérů. Nepodporovaná operace není důvod přidat PAT.
+- Před nasazením se musí na GHE.com ověřit potřebná API a oprávnění. Nepodporovaná operace není důvod přidat PAT.

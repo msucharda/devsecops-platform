@@ -34,8 +34,8 @@ Describe 'Deployment workflow generation' {
         $manifest.permissions.githubApp.plan.permissions.Keys | Should -Be @('organization_administration')
         $manifest.permissions.githubApp.plan.permissions.organization_administration | Should -Be 'read'
         $manifest.permissions.githubApp.apply.permissions.organization_administration | Should -Be 'write'
-        $manifest.permissions.githubApp.rulesetPlan.purpose | Should -Be 'organization-rulesets-full-read'
-        foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
+        $manifest.permissions.githubApp.ContainsKey('rulesetPlan') | Should -BeFalse
+        foreach ($phase in @('plan', 'apply')) {
             $manifest.permissions.githubApp[$phase].resources.organizations | Should -Be 'target_organizations'
         }
         @($manifest.permissions.adminPat) | Should -BeNullOrEmpty
@@ -44,7 +44,27 @@ Describe 'Deployment workflow generation' {
         @($manifest.manualPrerequisites | Sort-Object) | Should -Be @(
             'emuUserNamespacesRestricted', 'fineGrainedPatApprovalRequired', 'liveWorkflowsPromoted', 'patMaxLifetime90Days',
             'privateInternalForksDisabled', 'repositoryManagementPoliciesEnforced')
-        Test-Path -LiteralPath (Join-Path $released 'enterprise-baseline/rulesets/versions.tf') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $released 'enterprise-baseline/rulesets') | Should -BeFalse
+    }
+
+    It 'loads the released organization-rulesets manifest with a separate ruleset plan after organizations' {
+        Import-Module (Join-Path $toolsPath 'PlatformTools.psm1') -Force
+        $released = Join-Path (Split-Path $toolsPath -Parent) 'modules'
+
+        $graph = Get-PlatformModuleGraph -ModulesPath $released
+        $manifest = $graph['organization-rulesets']
+
+        @($manifest.prerequisites) | Should -Be @('organizations')
+        @($graph['actions-catalog'].prerequisites) | Should -Contain 'organization-rulesets'
+        $manifest.permissions.githubApp.plan.permissions.Keys | Should -Be @('organization_administration')
+        $manifest.permissions.githubApp.plan.permissions.organization_administration | Should -Be 'read'
+        $manifest.permissions.githubApp.apply.permissions.organization_administration | Should -Be 'write'
+        $manifest.permissions.githubApp.rulesetPlan.purpose | Should -Be 'organization-rulesets-full-read'
+        foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
+            $manifest.permissions.githubApp[$phase].resources.organizations | Should -Be 'target_organizations'
+        }
+        @($manifest.manualSteps) | Should -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $released 'organization-rulesets/rulesets/versions.tf') | Should -BeTrue
     }
 
     It 'leaves nightly plans to the separate drift workflow' {

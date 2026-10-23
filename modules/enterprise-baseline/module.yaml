@@ -25,10 +25,4 @@ permissions:
         organization_administration: write
       resources:
         organizations: target_organizations
-    rulesetPlan:
-      permissions:
-        organization_administration: write
-      resources:
-        organizations: target_organizations
-      purpose: organization-rulesets-full-read
   adminPat: []
