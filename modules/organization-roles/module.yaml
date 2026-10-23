@@ -1,0 +1,52 @@
+name: organization-roles
+description: Přiřazení předdefinované role security_manager security týmu organizace bez správy týmu a jeho členství.
+organizationScoped: true
+prerequisites:
+  - organizations
+manualPrerequisites:
+  - organizationSecurityTeamsLinked
+manualSteps:
+  - id: link-security-teams
+    owner: platform
+    description: >-
+      Před prvním planem vytvoř security tým v každé organizaci platform, actions a workloads
+      a v nastavení týmu ho propoj se security skupinou Entra ID. Existující tým zachovej.
+      organizationSecurityTeamsLinked potvrď až po ručním ověření všech tří propojení.
+      Get-GitHubAppInstallationChecklist.ps1 vypíše týmy, skupiny a odkazy na nastavení.
+    limitations:
+      plan: Plan vyžaduje potvrzení a existující tým. Read-only App neověří skutečný IdP link.
+      drift: >-
+        Drift kontroluje tým a roli, nikoli IdP link. Změněný link ověř ručně.
+        Odebranou roli obnov explicitním apply s -replace=terraform_data.assignment podle README.
+      teardown: >-
+        Modul odebere i dřívější ruční přiřazení security týmu. Ostatní týmy, členství a IdP linky zachová.
+        Po přerušení zápisu bez uloženého state nejprve obnov apply; stateless cleanup se neprovádí.
+  - id: install-organization-role-apps
+    owner: platform
+    description: >-
+      Po apply organizations ručně nainstaluj oddělené plan a apply Apps do všech tří organizací instance
+      bez přístupu k repozitářům podle checklistu odvozeného z manifestů.
+      organization-roles vyber a jeho bindings ověř až po vytvoření těchto organizací a instalací.
+    limitations:
+      plan: Token issuer odmítne neočekávané organizace a výběr repozitářů odlišný od manifestu.
+      drift: Chybějící nebo změněné instalace zastaví vydání tokenu před čtením stavu role.
+      teardown: Instalace zachovej až do dokončení teardownu navazujícího modulu.
+permissions:
+  azure: []
+  microsoftGraph: []
+  githubApp:
+    plan:
+      permissions:
+        members: read
+        organization_custom_org_roles: read
+      resources:
+        organizations: target_organizations
+        installationSelection: none
+    apply:
+      permissions:
+        members: write
+        organization_custom_org_roles: read
+      resources:
+        organizations: target_organizations
+        installationSelection: none
+  adminPat: []

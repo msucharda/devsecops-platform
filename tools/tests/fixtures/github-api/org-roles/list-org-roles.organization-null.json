@@ -1,0 +1,56 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/organization-roles",
+    "operationId": "orgs/list-org-roles",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/organization-roles#get-all-organization-roles-for-an-organization",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/paths/~1orgs~1{org}~1organization-roles/get/responses/200/content/application~1json/schema",
+    "variant": "roles[].organization: null #/components/schemas/nullable-simple-user",
+    "note": "Body from #/components/examples/organization-role-list/value with each organization replaced by the documented nullable-simple-user null variant; the endpoint example itself only supplies objects. The response wrapper has no required array. Each role's required fields come from #/components/schemas/organization-role; null organizations have no nested object requirements. The example omits optional source, and no organization-role example supplies it; source is explicitly null as allowed by the organization-role source schema, exposing roles.0.source and roles.1.source for -Set without inventing an example origin. The documented source enum is Organization, Enterprise, Predefined (nullable). Role names remain Custom Role Manager and Auditor; neither example is security_manager."
+  },
+  "required": {
+    "": [],
+    "roles.[]": [
+      "id",
+      "name",
+      "permissions",
+      "organization",
+      "created_at",
+      "updated_at"
+    ]
+  },
+  "body": {
+    "total_count": 2,
+    "roles": [
+      {
+        "id": 8030,
+        "name": "Custom Role Manager",
+        "description": "Permissions to manage custom roles within an org",
+        "permissions": [
+          "write_organization_custom_repo_role",
+          "write_organization_custom_org_role",
+          "read_organization_custom_repo_role",
+          "read_organization_custom_org_role"
+        ],
+        "organization": null,
+        "created_at": "2022-07-04T22:19:11Z",
+        "updated_at": "2022-07-04T22:20:11Z",
+        "source": null
+      },
+      {
+        "id": 8031,
+        "name": "Auditor",
+        "description": "Permissions to read the organization audit log",
+        "permissions": [
+          "read_audit_logs"
+        ],
+        "organization": null,
+        "created_at": "2022-07-04T22:19:11Z",
+        "updated_at": "2022-07-04T22:20:11Z",
+        "source": null
+      }
+    ]
+  }
+}

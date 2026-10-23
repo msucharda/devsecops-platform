@@ -245,6 +245,9 @@ function Get-PlatformAppScope {
             $scope[$kind] = $parameters[$parameter]
         }
     }
+    if ($Declaration['resources']['installationSelection'] -ceq 'none') {
+        $scope['repositories'] = @{}
+    }
     $schema = Get-PlatformJsonSchema -Name module
     $resourceSchema = $schema.definitions.githubAppResources
     $resourceSchema.definitions = @{ githubOrganization = $schema.definitions.githubOrganization }
@@ -263,6 +266,26 @@ function Get-PlatformAppScope {
         }
     }
     return $scope
+}
+
+# security-check: platform-app-manifest-scope
+function Assert-PlatformAppManifestScope {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Declaration,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Expected,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Actual,
+        [Parameter(Mandatory)][string] $Context
+    )
+
+    if (-not $Declaration['resources'].Contains('installationSelection') -and
+        -not $Expected.Contains('repositories') -and $Actual.Contains('repositories') -and
+        $Actual['repositories'].Count -eq 0) {
+        $Expected['repositories'] = @{}
+    }
+    if ((ConvertTo-PlatformCanonicalJson $Expected) -cne (ConvertTo-PlatformCanonicalJson $Actual)) {
+        throw "$Context resources differ from the module's target resources."
+    }
 }
 
 function Get-PlatformInstance {
@@ -439,13 +462,8 @@ function Get-PlatformInstance {
                 }
                 if ($declaration -and $name -cin $selected) {
                     $resources = Get-PlatformAppScope -Instance $instance -Module $name -Declaration $declaration
-                    if (-not $resources.Contains('repositories') -and $identity['resources'].Contains('repositories') -and
-                        $identity['resources']['repositories'].Count -eq 0) {
-                        $resources['repositories'] = @{}
-                    }
-                    if ((ConvertTo-PlatformCanonicalJson $resources) -cne (ConvertTo-PlatformCanonicalJson $identity['resources'])) {
-                        throw "Invalid instance configuration '$Path': $bindingPath.githubApp resources differ from the module's target resources."
-                    }
+                    Assert-PlatformAppManifestScope -Declaration $declaration -Expected $resources -Actual $identity['resources'] `
+                        -Context "Invalid instance configuration '$Path': $bindingPath.githubApp"
                 }
                 $appId = $identity['appId']
                 $contract = ConvertTo-PlatformCanonicalJson @{
@@ -472,6 +490,51 @@ function Get-PlatformInstance {
         }
     }
     return $instance
+}
+
+function Get-PlatformAppInstallationRequirement {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Instance,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Modules,
+        [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]*(-[a-z0-9]+)*\.ghe\.com$')][string] $GitHubHost
+    )
+
+    foreach ($name in (Get-PlatformModuleSelection -Instance $Instance -Modules $Modules)) {
+        foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
+            if (-not $Modules[$name]['permissions']['githubApp'].Contains($phase)) { continue }
+            $declaration = $Modules[$name]['permissions']['githubApp'][$phase]
+            if ($declaration['resources'].Contains('enterprise')) { continue }
+            $resources = Get-PlatformAppScope -Instance $Instance -Module $name -Declaration $declaration
+            $binding = $Instance['credentials'][$name][$phase]
+            $alias = $binding['githubApp']
+            $appId = if ($alias) { $Instance['githubApps'][$alias]['appId'] } else { $null }
+            foreach ($organization in $resources['organizations']) {
+                $selection = 'all'
+                $repositories = @()
+                if ($resources.Contains('repositories')) {
+                    $selection = 'none'
+                    if ($resources['repositories'].Contains($organization)) {
+                        $repositories = @($resources['repositories'][$organization])
+                        $selection = 'selected'
+                    }
+                }
+                [pscustomobject]@{
+                    module = $name
+                    phase = $phase
+                    organization = $organization
+                    repositorySelection = $selection
+                    repositories = $repositories
+                    permissions = $declaration['permissions']
+                    appAlias = $alias
+                    appId = $appId
+                    registrationRequired = -not [bool] $alias
+                    organizationSettingsUrl = "https://$GitHubHost/organizations/$organization/settings/installations"
+                }
+            }
+        }
+    }
 }
 
 function Get-PlatformModuleSelection {
@@ -501,7 +564,7 @@ function Get-PlatformModuleSelection {
 }
 
 # Confirmed only after the instance repository exists, so bootstrap cannot require them.
-$script:PostBootstrapManualPrerequisite = @('liveWorkflowsPromoted')
+$script:PostBootstrapManualPrerequisite = @('liveWorkflowsPromoted', 'organizationSecurityTeamsLinked')
 
 function Get-PlatformManualPrerequisiteName {
     [CmdletBinding()]
@@ -706,4 +769,4 @@ function Get-PlatformOrganizationToken {
     return $tokens
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken

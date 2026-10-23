@@ -21,11 +21,15 @@ permissions:
     plan:
       permissions:
         organization_administration: read
+        metadata: read
       resources:
         organizations: target_organizations
+        installationSelection: all
     apply:
       permissions:
         organization_administration: write
+        metadata: read
       resources:
         organizations: target_organizations
+        installationSelection: all
   adminPat: []

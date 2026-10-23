@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:ApiVersion = '2026-03-10'
 # The installation schema documents all and selected; the create operation also accepts none.
-$script:RepositorySelections = @('all', 'selected', 'none')
+$script:RepositorySelections = @('all', 'selected')
 $script:RunbookReference = 'modules/organizations/README.md'
 
 function Assert-OrganizationsApiUrl {
@@ -49,7 +49,7 @@ function Invoke-OrganizationsApi {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
-        [Parameter(Mandatory)][ValidateSet('GET', 'POST', 'DELETE')][string] $Method,
+        [Parameter(Mandatory)][ValidateSet('GET', 'POST', 'PUT', 'DELETE')][string] $Method,
         [Parameter(Mandatory)][string] $Path,
         [AllowNull()][object] $Body,
         [int[]] $AcceptStatus = @(200),
@@ -368,9 +368,7 @@ function Assert-OrganizationInstallationSelection {
         }
         return
     }
-    # The documented response enum is all | selected; 'none' is accepted only as an undocumented value and proven
-    # by the same empty repository list as 'selected'.
-    if ($Installation['repository_selection'] -cnotin @('selected', 'none')) {
+    if ($Installation['repository_selection'] -cne 'selected') {
         throw "App '$clientId' is installed in '$Organization' with access to all repositories. The module installs it without repository access; reduce the access or uninstall the App and rerun the apply."
     }
     $repositories = @(Get-OrganizationInstallationRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization `

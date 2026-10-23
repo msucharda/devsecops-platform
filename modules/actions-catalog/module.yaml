@@ -29,6 +29,7 @@ permissions:
         metadata: read
       resources:
         organizations: target_organizations
+        installationSelection: all
     apply:
       permissions:
         administration: write
@@ -37,4 +38,5 @@ permissions:
         metadata: read
       resources:
         organizations: target_organizations
+        installationSelection: all
   adminPat: []

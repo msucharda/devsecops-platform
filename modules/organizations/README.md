@@ -42,7 +42,7 @@ GraphQL odpověď HTTP 200 s `errors` je chyba. Odpověď bez `id` nebo s jiným
 
 ### Instalace Apps
 
-Pro každou dvojici organizace a `app_client_ids` modul zavolá `POST /enterprises/{enterprise}/apps/organizations/{org}/installations` s `repository_selection: none`. U existující instalace s `repository_selection` `selected` nebo `none` modul přečte seznam repozitářů instalace (`GET .../installations/{installation_id}/repositories`, všechny stránky) a instalaci převezme, jen když je seznam prázdný. Dokumentovaný enum odpovědi obsahuje jen `all` a `selected`; hodnotu `none` modul proto neověřuje podle názvu, ale podle prázdného seznamu repozitářů. Běh C3 2026-10-21 to živě potvrdil: požadavek s `repository_selection: none` vrátil HTTP 201 s `repository_selection: "selected"` a instalace neměla přístup k žádnému repozitáři. Instalaci s přístupem ke všem repozitářům nebo k aspoň jednomu repozitáři odmítne. Stejnou kontrolu provede po vytvoření nové instalace. Kontrolu existující instalace provede jen čtením i create provisioner prostředku `installation_guard`, ještě než Terraform guard uloží do state. Odmítnutou instalaci proto modul po odebrání client ID neodinstaluje. Destroy instalace volá `DELETE .../installations/{installation_id}`; chybějící instalace nebo organizace je no-op.
+Pro každou dvojici organizace a `app_client_ids` modul zavolá `POST /enterprises/{enterprise}/apps/organizations/{org}/installations` s `repository_selection: none`. U existující instalace s `repository_selection: selected` modul přečte seznam repozitářů instalace (`GET .../installations/{installation_id}/repositories`, všechny stránky) a instalaci převezme, jen když je seznam prázdný. Dokumentovaný enum odpovědi obsahuje jen `all` a `selected`; hodnotu odpovědi `none` modul odmítne. Běh C3 2026-10-21 živě ověřil, že požadavek s `repository_selection: none` vrátil HTTP 201 s `repository_selection: "selected"` a instalace neměla přístup k žádnému repozitáři. Instalaci s přístupem ke všem repozitářům nebo k aspoň jednomu repozitáři odmítne. Stejnou kontrolu provede po vytvoření nové instalace. Kontrolu existující instalace provede jen čtením i create provisioner prostředku `installation_guard`, ještě než Terraform guard uloží do state. Odmítnutou instalaci proto modul po odebrání client ID neodinstaluje. Destroy instalace volá `DELETE .../installations/{installation_id}`; chybějící instalace nebo organizace je no-op.
 
 ### Kontrola stavu
 
@@ -51,7 +51,7 @@ Data source `organization_state` po změnách přečte skutečný stav a vrátí
 - organizace neexistuje,
 - App z `app_client_ids` není nainstalovaná (client ID se porovnává s rozlišením velikosti písmen),
 - App z `app_client_ids` má přístup ke všem repozitářům,
-- App z `app_client_ids` s `repository_selection` `selected` nebo `none` má přístup k aspoň jednomu repozitáři. Apps mimo modul modul nekontroluje; jejich přístup k repozitářům není součástí kontraktu modulu.
+- App z `app_client_ids` s `repository_selection: selected` má přístup k aspoň jednomu repozitáři. Apps mimo modul modul nekontroluje; jejich přístup k repozitářům není součástí kontraktu modulu.
 
 Nečitelná odpověď API ukončí čtení chybou; neznámý stav neprojde jako shoda. Plan i drift proto hlásí smazanou organizaci nebo odebranou App jako chybu.
 

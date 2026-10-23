@@ -133,6 +133,7 @@ Modul používá installation tokeny organizačních Apps podle [ADR 0016](../..
 - `administration: write` je potřeba pro tvorbu repozitáře, `access_level` a přístup týmu.
 - `contents: write` je potřeba pro commit CODEOWNERS a tvorbu tagu.
 - `members: read` je potřeba pro čtení týmu a jeho oprávnění.
+- Při registraci obou Apps zahrň `metadata: read`. Manifest deklaruje `installationSelection: all`; při ruční instalaci vyber všechny repozitáře organizace akcí, ne `No repositories`. Plan odmítne jiný výběr.
 - Plan je read-only. Žádná fáze nemá oprávnění k zápisu rulesetů.
 
 ### Tokenová akce

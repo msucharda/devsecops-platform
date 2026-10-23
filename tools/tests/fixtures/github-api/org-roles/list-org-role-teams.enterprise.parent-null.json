@@ -1,0 +1,48 @@
+{
+  "source": {
+    "operation": "GET /orgs/{org}/organization-roles/{role_id}/teams",
+    "operationId": "orgs/list-org-role-teams",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/organization-roles#list-teams-that-are-assigned-to-an-organization-role",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/team-role-assignment",
+    "variant": "type: enterprise; parent: null #/components/schemas/nullable-team-simple",
+    "note": "Array body from #/components/examples/team-items/value. That response example omits required type; enterprise selects the documented team-role-assignment type enum branch, not an observed endpoint example. Original example URLs and identifiers are retained; no enterprise URL or organization membership is inferred from them. Optional assignment is added as direct from #/components/schemas/team-role-assignment/properties/assignment/example. Assignment is optional with enum direct, indirect, mixed; indirect and mixed are not supplied by this endpoint's example. Optional organization_id, enterprise_id and permissions are absent from the response example and remain absent."
+  },
+  "required": {
+    "[]": [
+      "id",
+      "node_id",
+      "url",
+      "members_url",
+      "name",
+      "description",
+      "permission",
+      "html_url",
+      "repositories_url",
+      "slug",
+      "type",
+      "parent"
+    ]
+  },
+  "body": [
+    {
+      "id": 1,
+      "node_id": "MDQ6VGVhbTE=",
+      "url": "https://api.github.com/teams/1",
+      "html_url": "https://github.com/orgs/github/teams/justice-league",
+      "name": "Justice League",
+      "slug": "justice-league",
+      "description": "A great team.",
+      "privacy": "closed",
+      "notification_setting": "notifications_enabled",
+      "permission": "admin",
+      "members_url": "https://api.github.com/teams/1/members{/member}",
+      "repositories_url": "https://api.github.com/teams/1/repos",
+      "parent": null,
+      "type": "enterprise",
+      "assignment": "direct"
+    }
+  ]
+}
