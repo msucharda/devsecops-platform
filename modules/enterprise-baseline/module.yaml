@@ -1,5 +1,8 @@
 name: enterprise-baseline
 description: Organization controls of the instance organizations; enterprise controls outside App-only automation are manual prerequisites.
+organizationScoped: true
+organizationParameters:
+  - secret_scanning_bypass_reviewers
 prerequisites:
   - organizations
   - actions-catalog

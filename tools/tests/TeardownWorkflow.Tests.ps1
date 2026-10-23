@@ -184,7 +184,7 @@ Describe 'Teardown workflow generation' {
         $state = $steps[$stateIndex]
         $state.Contains('if') | Should -BeFalse
         $state.Contains('env') | Should -BeFalse
-        $state.run | Should -Match "Invoke-Module\.ps1 -Module 'enterprise-baseline' -Action state [^\n]*-ModulesPath \./instance/platform/modules\n"
+        $state.run | Should -Match "Invoke-Module\.ps1 -Module 'enterprise-baseline' -Action state [^\n]*-PlatformOrganization \`$env:GITHUB_REPOSITORY_OWNER\n"
         $state.run | Should -Match "Invoke-Module\.ps1 -Module 'enterprise-baseline' -Action state [^\n]*-Rulesets\n"
         foreach ($step in $steps[$tokenIndex..($steps.Count - 2)]) {
             $step.if | Should -BeExactly '${{ steps.state.outputs.empty != ''true'' }}'

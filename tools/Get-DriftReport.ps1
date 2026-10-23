@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][string] $ModulesPath,
     [Parameter(Mandatory)][string] $ReportPath,
     [Parameter(Mandatory)][string] $GitHubOutputPath,
+    [string] $PlatformOrganization = $env:GITHUB_REPOSITORY_OWNER,
     [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY,
     [string] $RunUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
 )
@@ -87,12 +88,59 @@ if ($needs) {
         }
         if ($null -ne $selected -and $null -ne $rulesetModules) {
             foreach ($module in $selected) {
+                $organizationScoped = $modules -and $modules.Contains($module) -and $modules[$module].Contains('organizationScoped')
+                $expectedOrganizations = @()
+                if ($organizationScoped -and $instance) {
+                    try {
+                        $expectedOrganizations = @(Get-PlatformModuleOrganization -Instance $instance -Manifest $modules[$module] -PlatformOrganization $PlatformOrganization)
+                    }
+                    catch { $incomplete.Add("Organization scope of '$module' could not be verified: $($_.Exception.Message)") }
+                }
                 $roots = @(@{ Job = 'module_' + $module.Replace('-', '_'); Label = 'Terraform plan' })
                 if ($module -cin $rulesetModules) { $roots += @{ Job = 'ruleset_plan_' + $module.Replace('-', '_'); Label = 'rulesets' } }
                 foreach ($root in $roots) {
                     $changes = Get-NeedValue $needs $root.Job 'changes'
                     # A plan can report changes before a later step fails the job; keep that drift visible.
-                    if ($changes -ceq 'true') { $drift.Add("- ``$module`` ($($root.Label))") }
+                    if ($changes -ceq 'true' -and -not $organizationScoped) { $drift.Add("- ``$module`` ($($root.Label))") }
+                    if ($organizationScoped) {
+                        $results = $null
+                        try {
+                            $results = ConvertFrom-Json -InputObject (Get-NeedValue $needs $root.Job 'organizations') -AsHashtable -ErrorAction Stop
+                        }
+                        catch { $results = $null }
+                        if ($results -isnot [System.Collections.IDictionary]) {
+                            $incomplete.Add("Plan job $($root.Job) did not publish per-organization results.")
+                            if ($changes -ceq 'true') { $drift.Add("- ``$module`` ($($root.Label); organization results unavailable)") }
+                        }
+                        else {
+                            if ($expectedOrganizations.Count -eq 0 -and $changes -ceq 'true') {
+                                $drift.Add("- ``$module`` ($($root.Label); organization scope unverified)")
+                            }
+                            if ((ConvertTo-PlatformCanonicalJson @($results.PSBase.Keys | Sort-Object -CaseSensitive)) -cne
+                                (ConvertTo-PlatformCanonicalJson @($expectedOrganizations | Sort-Object -CaseSensitive))) {
+                                $incomplete.Add("Plan job $($root.Job) organization result keys differ from the complete instance organization set.")
+                            }
+                            $organizationChanges = $false
+                            foreach ($organization in $expectedOrganizations) {
+                                $record = $results[$organization]
+                                if ($record -isnot [System.Collections.IDictionary]) {
+                                    $incomplete.Add("Plan job $($root.Job) has no readable result for '$organization'.")
+                                    continue
+                                }
+                                if ($record['changes'] -is [bool] -and $record['changes']) {
+                                    $organizationChanges = $true
+                                    $drift.Add("- ``$module`` / ``$organization`` ($($root.Label))")
+                                }
+                                if ($record['result'] -cne 'success' -or $record['changes'] -isnot [bool]) {
+                                    $incomplete.Add("Plan job $($root.Job) did not complete organization '$organization' with a boolean change state.")
+                                }
+                            }
+                            if ($changes -cin @('true', 'false') -and
+                                $changes -cne $organizationChanges.ToString().ToLowerInvariant()) {
+                                $incomplete.Add("Plan job $($root.Job) aggregate change state differs from its organization results.")
+                            }
+                        }
+                    }
                     if ((Get-NeedValue $needs $root.Job) -cne 'success' -or $changes -cnotin @('true', 'false')) {
                         $incomplete.Add("Plan job $($root.Job) did not complete with a published change state.")
                         continue

@@ -635,4 +635,75 @@ function Get-PlatformInstanceOrganization {
     }
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization
+# security-check: module-organization-scope
+function Get-PlatformModuleOrganization {
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Instance,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Manifest,
+        [Parameter(Mandatory)][AllowEmptyString()][string] $PlatformOrganization,
+        [string] $Organization
+    )
+
+    $names = Get-PlatformInstanceOrganization -InstanceName $Instance['instance']['name'] -PlatformOrganization $PlatformOrganization
+    [string[]] $expected = @($names.platform, $names.actions, $names.workloads)
+    $parameters = $Instance['modules'][$Manifest.name]['parameters']
+    if ($parameters -isnot [System.Collections.IDictionary]) {
+        throw "Organization-scoped module '$($Manifest.name)' requires module parameters."
+    }
+    $targets = $parameters['target_organizations']
+    if ($targets -isnot [System.Collections.IList]) {
+        throw "Organization-scoped module '$($Manifest.name)' requires a target_organizations list."
+    }
+    $expectedJson = ConvertTo-PlatformCanonicalJson @($expected | Sort-Object -CaseSensitive)
+    if ((ConvertTo-PlatformCanonicalJson @($targets | Sort-Object -CaseSensitive)) -cne $expectedJson) {
+        throw "Organization-scoped module '$($Manifest.name)' target_organizations must contain exactly all instance organizations: $($expected -join ', ')."
+    }
+    if ($Manifest.Contains('organizationParameters')) {
+        foreach ($parameter in $Manifest['organizationParameters']) {
+            $values = $parameters[$parameter]
+            if ($values -isnot [System.Collections.IDictionary]) {
+                throw "Organization parameter '$parameter' must be a mapping keyed by organization; a shared value cannot be copied across organizations."
+            }
+            if ((ConvertTo-PlatformCanonicalJson @($values.PSBase.Keys | Sort-Object -CaseSensitive)) -cne $expectedJson) {
+                throw "Organization parameter '$parameter' must contain exactly all instance organization keys."
+            }
+        }
+    }
+    if ($Organization -and $Organization -cnotin $expected) {
+        throw "Organization '$Organization' is not an instance organization."
+    }
+    return $expected
+}
+
+# security-check: module-organization-token
+function Get-PlatformOrganizationToken {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param(
+        [Parameter(Mandatory)][string[]] $Organization,
+        [AllowNull()][AllowEmptyString()][string] $Json
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        throw 'Organization-scoped execution requires a readable PLATFORM_GITHUB_TOKENS object.'
+    }
+    try { $tokens = ConvertFrom-Json -InputObject $Json -AsHashtable -ErrorAction Stop }
+    catch { throw 'Organization-scoped execution requires a readable PLATFORM_GITHUB_TOKENS object.' }
+    if ($tokens -isnot [System.Collections.IDictionary]) {
+        throw 'Organization-scoped execution requires a PLATFORM_GITHUB_TOKENS object.'
+    }
+    if ((ConvertTo-PlatformCanonicalJson @($tokens.PSBase.Keys | Sort-Object -CaseSensitive)) -cne
+        (ConvertTo-PlatformCanonicalJson @($Organization | Sort-Object -CaseSensitive))) {
+        throw 'Organization token keys must match exactly the execution organizations.'
+    }
+    foreach ($name in $Organization) {
+        if ($tokens[$name] -isnot [string] -or [string]::IsNullOrWhiteSpace($tokens[$name])) {
+            throw "Organization '$name' requires a non-blank installation token."
+        }
+    }
+    return $tokens
+}
+
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, ConvertTo-PlatformCanonicalJson, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken

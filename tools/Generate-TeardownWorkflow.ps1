@@ -207,7 +207,7 @@ foreach ($manifest in $modules.PSBase.Values) {
     Add-WorkflowBlock @"
       - name: Read public outputs from state without planning
         shell: pwsh
-        run: ./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action output $runnerArguments -ArtifactsPath ./artifacts/module-outputs
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action output $runnerArguments -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER
       - name: Upload public module outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -258,7 +258,7 @@ foreach ($manifest in $reversed) {
     $organizationScoped = @($manifest['permissions']['githubApp'].PSBase.Values |
         Where-Object { $_['resources'].Contains('organizations') }).Count -gt 0
     if ($organizationScoped) {
-        $stateRunner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action state $runnerArguments"
+        $stateRunner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action state $runnerArguments -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER"
         $stateCalls = @($stateRunner)
         if ($hasRulesets) { $stateCalls += "$stateRunner -Rulesets" }
         Add-WorkflowBlock @"

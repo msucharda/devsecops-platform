@@ -28,6 +28,38 @@ BeforeAll {
 }
 
 Describe 'Released module order' {
+    It 'keeps organization execution inside one job and publishes complete per-organization drift results' {
+        $deployPath = Join-Path $TestDrive 'deploy-organizations.yml'
+        $driftPath = Join-Path $TestDrive 'drift-organizations.yml'
+        $teardownPath = Join-Path $TestDrive 'teardown-organizations.yml'
+        & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $released -OutputPath $deployPath -DriftOutputPath $driftPath
+        & (Join-Path $toolsPath 'Generate-TeardownWorkflow.ps1') -ModulesPath $released -OutputPath $teardownPath
+        $deploy = ConvertFrom-Yaml (Get-Content -LiteralPath $deployPath -Raw)
+        $drift = ConvertFrom-Yaml (Get-Content -LiteralPath $driftPath -Raw)
+        $teardown = ConvertFrom-Yaml (Get-Content -LiteralPath $teardownPath -Raw)
+
+        foreach ($suffix in @('enterprise_baseline', 'organization_rulesets')) {
+            $drift.jobs["module_$suffix"].outputs.organizations | Should -Be '${{ steps.run.outputs.organizations }}'
+            foreach ($workflow in @($deploy, $drift)) {
+                $workflow.jobs["module_$suffix"].Contains('strategy') | Should -BeFalse
+                $workflow.jobs["ruleset_plan_organization_rulesets"].Contains('strategy') | Should -BeFalse
+            }
+            $runs = @($teardown.jobs["destroy_$suffix"].steps | Where-Object { $_.Contains('run') } | ForEach-Object { $_.run })
+            foreach ($run in @($runs | Where-Object { $_ -match 'Invoke-Module\.ps1' })) {
+                $run | Should -Match '-PlatformOrganization \$env:GITHUB_REPOSITORY_OWNER'
+            }
+        }
+        $drift.jobs.ruleset_plan_organization_rulesets.outputs.organizations | Should -Be '${{ steps.run.outputs.organizations }}'
+        $apply = @($deploy.jobs.apply_organization_rulesets.steps)
+        $ordinary = [array]::FindIndex($apply, [Predicate[object]] { param($s) $s.Contains('run') -and $s.run -match 'Invoke-Module.*-Action apply' -and $s.run -notmatch '\s-Rulesets(?:\s|$)' })
+        $rulesets = [array]::FindIndex($apply, [Predicate[object]] { param($s) $s.Contains('run') -and $s.run -match 'Invoke-Module.*-Action apply.*\s-Rulesets(?:\s|$)' })
+        $upload = [array]::FindIndex($apply, [Predicate[object]] { param($s) $s.Contains('uses') -and $s.uses -like 'actions/upload-artifact@*' })
+        $ordinary | Should -BeGreaterOrEqual 0
+        $rulesets | Should -BeGreaterThan $ordinary
+        $upload | Should -BeGreaterThan $rulesets
+        $apply[$upload].with.path | Should -Be './artifacts/module-outputs/organization-rulesets.json'
+    }
+
     It 'declares organizations as a prerequisite of enterprise-baseline' {
         Import-Module (Join-Path $toolsPath 'PlatformTools.psm1') -Force
         $graph = Get-PlatformModuleGraph -ModulesPath $released

@@ -64,7 +64,7 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
         $listener.Start()
         $port = $listener.LocalEndpoint.Port
-        # Serves GET and PATCH /orgs/demo; DropNextPatch applies a PATCH and closes the connection without a response.
+        # DropNextPatch applies the organization PATCH and closes the connection without a response.
         # GET and PUT of the actions policy apply DropNext (a request regex) by writing and closing the connection.
         # Other paths go to the code security stub, whose Drop also closes the connection without a response.
         $stub = Start-ThreadJob -ScriptBlock {
@@ -107,14 +107,14 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
                             $body = ConvertTo-Json -InputObject $policy[$resource] -Depth 5 -Compress
                         }
                     }
-                    elseif ($path -cne '/orgs/demo' -and $state.CodeSecurity) {
+                    elseif ($path -cne "/orgs/$($state.Organization.login)" -and $state.CodeSecurity) {
                         $reply = Invoke-CodeSecurityStubRequest -State $state.CodeSecurity -Method $method -PathAndQuery $path -Headers $headers -Body ([string]::new($buffer))
                         if ($reply.Drop) { continue }
                         $status = "$($reply.Status) Stub"
                         $body = [string] $reply.Body
                         $link = $reply.Link
                     }
-                    elseif ($path -cne '/orgs/demo' -or $method -notin @('GET', 'PATCH')) {
+                    elseif ($path -cne "/orgs/$($state.Organization.login)" -or $method -notin @('GET', 'PATCH')) {
                         $state.Requests.Add("$method $path")
                         $status = '404 Not Found'
                         $body = '{"message":"Not Found"}'
@@ -194,23 +194,25 @@ data "external" "actions_policy_state" {
 }
 '@
         }
+        $testOrganization = if (Get-Variable Organization -ErrorAction SilentlyContinue) { $Organization } else { 'demo' }
+        $testReviewer = if (Get-Variable ReviewerId -ErrorAction SilentlyContinue) { $ReviewerId } else { 42 }
         Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json -Depth 10 -InputObject @{
             instance = @{
                 name = 'demo'; github = @{ host = 'example.ghe.com'; enterprise = 'example' }
                 customPatterns = @(@{ name = 'Internal token'; secretRegex = 'itk_[0-9a-f]{32}' })
             }
-            target_organizations = @('demo')
+            target_organizations = @($testOrganization)
             prerequisites = @{}
-            secret_scanning_bypass_reviewers = @(@{ reviewer_type = 'TEAM'; reviewer_id = 42 })
+            secret_scanning_bypass_reviewers = @(@{ reviewer_type = 'TEAM'; reviewer_id = $testReviewer })
         })
-        $stubState.CodeSecurity = Initialize-CodeSecurityStub -Organization demo -Origin "http://127.0.0.1:$port" -Token stub-token
+        $stubState.CodeSecurity = Initialize-CodeSecurityStub -Organization $testOrganization -Origin "http://127.0.0.1:$port" -Token stub-token
         $stubState.Organization = Get-GitHubApiFixture -Name orgs/get -Set @{
-            login = 'demo'
+            login = $testOrganization
             members_can_change_repo_visibility = $false
             members_can_delete_repositories = $false
         }
         $stubState.ActionsPolicy = [hashtable]::Synchronized(@{
-            Paths = @{ '/orgs/demo/actions/permissions' = 'Actions'; '/orgs/demo/actions/permissions/workflow' = 'Workflow' }
+            Paths = @{ "/orgs/$testOrganization/actions/permissions" = 'Actions'; "/orgs/$testOrganization/actions/permissions/workflow" = 'Workflow' }
             # A new organization: GitHub defaults with the enterprise default of read-only workflow permissions.
             Actions = Get-GitHubApiFixture -Name actions/get-github-actions-permissions-organization -Set @{ allowed_actions = 'all'; sha_pinning_required = $false }
             Workflow = Get-GitHubApiFixture -Name actions/get-github-actions-default-workflow-permissions-organization -Set @{ can_approve_pull_request_reviews = $false }
@@ -240,6 +242,31 @@ data "external" "actions_policy_state" {
         }
         $init = Invoke-StubTerraform init -input=false
         $init.ExitCode | Should -Be 0 -Because $init.Output
+    }
+
+    It 'converges, detects drift and tears down the baseline in <Organization> with its local reviewers' -ForEach @(
+        @{ Organization = 'demo-platform'; ReviewerId = 11 }
+        @{ Organization = 'demo-actions'; ReviewerId = 22 }
+        @{ Organization = 'demo-workloads'; ReviewerId = 33 }
+    ) {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
+        $plan.ExitCode | Should -Be 0 -Because $plan.Output
+        foreach ($field in $managed.Keys) { $stubState.Organization[$field] | Should -Be $managed[$field] }
+        $stubState.Organization.login | Should -BeExactly $Organization
+        $configuration = $stubState.CodeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }
+        $configuration.secret_scanning_delegated_bypass_options.reviewers[0].reviewer_id | Should -Be $ReviewerId
+        $stubState.Organization.default_repository_permission = 'read'
+        $drift = Invoke-StubTerraform plan -input=false -detailed-exitcode
+        $drift.ExitCode | Should -Be 1 -Because $drift.Output
+        $drift.Output | Should -Match 'does not match the managed baseline'
+        $stubState.Organization.default_repository_permission = 'none'
+        $destroy = Invoke-StubTerraform destroy -input=false -auto-approve
+        $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
+        (Invoke-StubTerraform state list).Output.Trim() | Should -BeNullOrEmpty
+        foreach ($field in $defaults.Keys) { $stubState.Organization[$field] | Should -Be $defaults[$field] }
+        @($stubState.CodeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }) | Should -BeNullOrEmpty
     }
 
     It 'converges on the next apply when an apply loses the PATCH response' {

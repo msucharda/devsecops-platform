@@ -40,6 +40,18 @@
             )
         }
         @{
+            Name = 'module-organization-scope'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationScope.Tests.ps1'; FullName = @('Organization-scoped execution contract*') }
+            )
+        }
+        @{
+            Name = 'module-organization-token'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationScope.Tests.ps1'; FullName = @('Organization token isolation*') }
+            )
+        }
+        @{
             Name = 'vendoring-main-ref'
             Tests = @(
                 @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*invalid target main ref: <Case>*', '*opens an App PR*') }

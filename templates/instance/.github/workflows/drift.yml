@@ -235,6 +235,7 @@ jobs:
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['enterprise-baseline']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
+      organizations: ${{ steps.run.outputs.organizations }}
     permissions:
       contents: read
       id-token: write
@@ -316,6 +317,7 @@ jobs:
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['organization-rulesets']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
+      organizations: ${{ steps.run.outputs.organizations }}
     permissions:
       contents: read
       id-token: write
@@ -392,6 +394,7 @@ jobs:
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.rulesetEnvironments)['organization-rulesets']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
+      organizations: ${{ steps.run.outputs.organizations }}
       inheritedRulesets: ${{ steps.bypass.outputs.inheritedRulesets }}
     permissions:
       contents: read

@@ -97,6 +97,9 @@ function Add-DeploymentJob {
     if ($Drift) {
         $lines.Add('    outputs:')
         $lines.Add('      changes: ${{ steps.run.outputs.changes }}')
+        if ($Manifest.Contains('organizationScoped')) {
+            $lines.Add('      organizations: ${{ steps.run.outputs.organizations }}')
+        }
         if ($Phase -eq 'rulesetPlan') { $lines.Add('      inheritedRulesets: ${{ steps.bypass.outputs.inheritedRulesets }}') }
     }
     Add-WorkflowBlock @'

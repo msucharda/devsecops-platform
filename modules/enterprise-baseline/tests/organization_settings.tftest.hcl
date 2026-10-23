@@ -32,7 +32,7 @@ variables {
     }
   }
   prerequisites        = {}
-  target_organizations = ["demo-platform", "demo-workloads"]
+  target_organizations = ["demo-platform", "demo-actions", "demo-workloads"]
   secret_scanning_bypass_reviewers = [
     { reviewer_type = "TEAM", reviewer_id = 5678 },
   ]
@@ -42,7 +42,7 @@ run "manages_each_instance_organization_with_idempotent_patch" {
   command = plan
 
   assert {
-    condition     = toset(keys(restapi_object.organization_settings)) == toset(["demo-platform", "demo-workloads"])
+    condition     = toset(keys(restapi_object.organization_settings)) == toset(["demo-platform", "demo-actions", "demo-workloads"])
     error_message = "Every instance organization must have one managed settings object."
   }
 
@@ -110,7 +110,7 @@ run "publishes_the_managed_organizations" {
   command = plan
 
   assert {
-    condition     = output.organizations == tolist(["demo-platform", "demo-workloads"])
+    condition     = output.organizations == tolist(["demo-actions", "demo-platform", "demo-workloads"])
     error_message = "The module must publish the sorted managed organizations."
   }
 

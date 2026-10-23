@@ -15,6 +15,7 @@ param(
     [string] $ArtifactsPath = (Join-Path (Get-Location) 'artifacts/module-outputs'),
     [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY,
     [string] $GitHubOutputPath,
+    [Parameter(DontShow)][string] $Organization,
     # Owner of the instance repository; the organizations of the instance are derived from it.
     [string] $PlatformOrganization
 )
@@ -22,6 +23,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+$outputName = if ($Rulesets) { "$Module.rulesets" } else { $Module }
+$artifactFile = [IO.Path]::GetFullPath((Join-Path $ArtifactsPath "$outputName.json"))
+if ($Action -ne 'state' -and (Test-Path -LiteralPath $artifactFile -PathType Leaf)) {
+    [IO.File]::Delete($artifactFile)
+}
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 if ($GitHubOutputPath -and $Action -ne 'plan') {
     throw 'The workflow change output is supported only for plan.'
@@ -151,23 +157,26 @@ $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
 if ($Module -cnotin (Get-PlatformModuleSelection -Instance $instance -Modules $modules)) {
     throw "Module '$Module' is not selected in $.modules or required by a selected module."
 }
+$organizationScoped = $modules[$Module].Contains('organizationScoped') -and $modules[$Module]['organizationScoped']
+if ($Organization -and -not $organizationScoped) {
+    throw "Module '$Module' does not declare organizationScoped execution."
+}
 $moduleRoot = [IO.Path]::GetFullPath((Join-Path $ModulesPath $Module))
-$outputName = $Module
 $stateKey = 'terraform.tfstate'
 if ($Rulesets) {
     if (-not $modules[$Module]['permissions']['githubApp'].Contains('rulesetPlan')) {
         throw "Module '$Module' requires a declared ruleset exception before running its rulesets root."
     }
     $moduleRoot = Join-Path $moduleRoot 'rulesets'
-    $outputName = "$Module.rulesets"
     $stateKey = 'terraform.rulesets.tfstate'
 }
 if (-not (Test-Path -LiteralPath $moduleRoot -PathType Container)) {
     throw "Terraform root '$moduleRoot' does not exist."
 }
-$artifactFile = [IO.Path]::GetFullPath((Join-Path $ArtifactsPath "$outputName.json"))
-if ($Action -ne 'state' -and (Test-Path -LiteralPath $artifactFile -PathType Leaf)) {
-    [IO.File]::Delete($artifactFile)
+$executionOrganizations = @()
+if ($organizationScoped) {
+    $executionOrganizations = Get-PlatformModuleOrganization -Instance $instance -Manifest $modules[$Module] `
+        -PlatformOrganization $PlatformOrganization -Organization $Organization
 }
 $organizations = $null
 if ($PSBoundParameters.ContainsKey('PlatformOrganization')) {
@@ -189,7 +198,8 @@ if ($declaredPrerequisites.Count -gt 0 -and $Action -notin @('destroy', 'state')
 $manualStates = [System.Collections.Generic.List[object]]::new()
 $prerequisiteStates = [System.Collections.Generic.List[object]]::new()
 $summary = [System.Collections.Generic.List[string]]::new()
-$summary.Add("`n## Module ``$Module``: $Action")
+$organizationLabel = if ($Organization) { ' / `{0}`' -f $Organization } else { '' }
+$summary.Add("`n## Module ``$Module``${organizationLabel}: $Action")
 if ($Module -eq 'bootstrap' -and $Action -ne 'destroy') {
     $summary.Add('Required manual prerequisite confirmations are present. Live state is not automatically verified by this runner.')
 }
@@ -249,8 +259,12 @@ if ($Backend -eq 'local') {
         throw 'Local backend requires -StatePath.'
     }
     $stateDirectory = [IO.Path]::GetFullPath($StatePath)
+    if ($Organization) {
+        $stateDirectory = Join-Path $stateDirectory "$Module/organizations/$Organization"
+    }
     [IO.Directory]::CreateDirectory($stateDirectory) | Out-Null
-    $backendArguments += "-backend-config=path=$(Join-Path $stateDirectory "$outputName.tfstate")"
+    $localStateName = if ($Organization) { $stateKey } else { "$outputName.tfstate" }
+    $backendArguments += "-backend-config=path=$(Join-Path $stateDirectory $localStateName)"
 }
 else {
     if (-not $StorageAccountName -or -not $ResourceGroupName -or $Module.Length -lt 3) {
@@ -260,7 +274,7 @@ else {
         "-backend-config=storage_account_name=$StorageAccountName"
         "-backend-config=resource_group_name=$ResourceGroupName"
         "-backend-config=container_name=$Module"
-        "-backend-config=key=$stateKey"
+        "-backend-config=key=$(if ($Organization) { "organizations/$Organization/$stateKey" } else { $stateKey })"
         '-backend-config=use_azuread_auth=true'
     )
 }
@@ -290,6 +304,82 @@ if ($organizations) {
 if ($instance['modules'].Contains($Module) -and $instance['modules'][$Module].Contains('parameters')) {
     foreach ($name in $instance['modules'][$Module]['parameters'].PSBase.Keys) {
         $variables[$name] = $instance['modules'][$Module]['parameters'][$name]
+    }
+    if ($organizationScoped -and -not $Organization) {
+        $results = [ordered]@{}
+        foreach ($name in $executionOrganizations) {
+            $results[$name] = [ordered]@{ result = 'pending'; changes = $null }
+        }
+        $tokens = @{}
+        if ($Action -in @('plan', 'apply') -or ($Action -eq 'destroy' -and $env:PLATFORM_GITHUB_TOKENS)) {
+            $tokens = Get-PlatformOrganizationToken -Organization $executionOrganizations -Json $env:PLATFORM_GITHUB_TOKENS
+        }
+        $public = [ordered]@{ organizations = @($executionOrganizations); organization_outputs = [ordered]@{} }
+        $savedEnvironment = @{}
+        foreach ($name in @('GITHUB_TOKEN', 'GH_TOKEN', 'PLATFORM_GITHUB_TOKENS', 'TF_VAR_github_tokens', 'REST_API_BEARER')) {
+            $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
+        }
+        $empty = $true
+        try {
+            foreach ($name in $executionOrganizations) {
+                $selectedTokens = @{}
+                if ($tokens.Contains($name)) { $selectedTokens[$name] = $tokens[$name] }
+                $env:PLATFORM_GITHUB_TOKENS = ConvertTo-Json -InputObject $selectedTokens -Compress
+                $env:TF_VAR_github_tokens = $env:PLATFORM_GITHUB_TOKENS
+                $env:GITHUB_TOKEN = $selectedTokens[$name]
+                $env:GH_TOKEN = $selectedTokens[$name]
+                $env:REST_API_BEARER = $null
+                $childArguments = @{} + $PSBoundParameters
+                $childArguments.Remove('GitHubOutputPath')
+                $childArguments['Organization'] = $name
+                $childArguments['ArtifactsPath'] = Join-Path $ArtifactsPath "organizations/$name"
+                try {
+                    $result = & $PSCommandPath @childArguments
+                    if ($Action -eq 'state') { $empty = $empty -and $result.Empty }
+                    else {
+                        $public.organization_outputs[$name] = Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json -AsHashtable
+                        $results[$name].changes = $result.HasChanges
+                    }
+                    $results[$name].result = 'success'
+                }
+                catch {
+                    $results[$name].result = 'failure'
+                    throw
+                }
+            }
+            if ($Action -eq 'state') {
+                return [pscustomobject]@{ Module = $Module; Action = $Action; Empty = $empty; OrganizationResults = $results }
+            }
+            [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($artifactFile)) | Out-Null
+            [IO.File]::WriteAllText($artifactFile, (ConvertTo-Json -InputObject $public -Depth 100), [Text.UTF8Encoding]::new($false))
+            return [pscustomobject]@{
+                Module = $Module; Action = $Action
+                HasChanges = @($results.PSBase.Values | Where-Object { $_.changes -eq $true }).Count -gt 0
+                OutputsPath = $artifactFile; OrganizationResults = $results
+                ManualSteps = $manualStates.ToArray(); ManualPrerequisites = $prerequisiteStates.ToArray()
+            }
+        }
+        finally {
+            foreach ($name in $savedEnvironment.Keys) {
+                [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name])
+            }
+            if ($GitHubOutputPath) {
+                $content = "organizations=$(ConvertTo-Json -InputObject $results -Depth 10 -Compress)`n"
+                $hasChanges = @($results.PSBase.Values | Where-Object { $_.changes -eq $true }).Count -gt 0
+                if ($hasChanges -or @($results.PSBase.Values | Where-Object { $_.result -cne 'success' }).Count -eq 0) {
+                    $content += "changes=$($hasChanges.ToString().ToLowerInvariant())`n"
+                }
+                [IO.File]::AppendAllText([IO.Path]::GetFullPath($GitHubOutputPath), $content, [Text.UTF8Encoding]::new($false))
+            }
+        }
+    }
+    if ($Organization) {
+        $variables['target_organizations'] = @($Organization)
+        if ($modules[$Module].Contains('organizationParameters')) {
+            foreach ($parameter in $modules[$Module]['organizationParameters']) {
+                $variables[$parameter] = $variables[$parameter][$Organization]
+            }
+        }
     }
 }
 $prerequisites = @($modules[$Module]['prerequisites'])
@@ -331,7 +421,7 @@ if ($usesRestProvider -and $modules[$Module]['permissions'].Contains('githubApp'
         $parameter = [string] $phase['resources']['organizations']
         $count = @($variables[$parameter] | Where-Object { $null -ne $_ }).Count
         if ($count -ne 1) {
-            throw "Module '$Module' uses the REST provider and supports exactly one organization in '$parameter' per run; got $count. Multi-organization runs need one installation token per organization and are not supported yet."
+            throw "Module '$Module' uses the REST provider and supports exactly one organization in '$parameter' per run; got $count. Declare organizationScoped for isolated execution across the instance organizations."
         }
     }
 }
@@ -341,9 +431,31 @@ $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) "platform-module-$([g
 $previousDataDirectory = $env:TF_DATA_DIR
 $previousWorkspace = $env:TF_WORKSPACE
 $previousRestBearer = $env:REST_API_BEARER
+$organizationEnvironment = @{}
+if ($Organization) {
+    foreach ($name in @('GITHUB_TOKEN', 'GH_TOKEN', 'PLATFORM_GITHUB_TOKENS', 'TF_VAR_github_tokens')) {
+        $organizationEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
+    }
+}
+function Initialize-ModuleOrganizationEnvironment {
+    param([System.Collections.IDictionary] $Tokens)
+
+    $env:GITHUB_TOKEN = $Tokens[$Organization]
+    $env:GH_TOKEN = $Tokens[$Organization]
+    $env:PLATFORM_GITHUB_TOKENS = ConvertTo-Json -InputObject $Tokens -Compress
+    $env:TF_VAR_github_tokens = $env:PLATFORM_GITHUB_TOKENS
+    $env:REST_API_BEARER = $Tokens[$Organization]
+}
 try {
     $env:TF_DATA_DIR = Join-Path $temporaryDirectory 'data'
     $env:TF_WORKSPACE = 'default'
+    if ($Organization) {
+        $selectedTokens = @{}
+        if ($Action -in @('plan', 'apply')) {
+            $selectedTokens = Get-PlatformOrganizationToken -Organization @($Organization) -Json $organizationEnvironment['PLATFORM_GITHUB_TOKENS']
+        }
+        Initialize-ModuleOrganizationEnvironment -Tokens $selectedTokens
+    }
     # The REST provider reads its bearer from the environment; only the job's installation token may reach it.
     $env:REST_API_BEARER = $env:GITHUB_TOKEN
     $null = Invoke-ModuleTerraform -Arguments (@('init', '-input=false', '-no-color', '-reconfigure') + $backendArguments)
@@ -382,6 +494,10 @@ try {
             ManualSteps = $manualStates.ToArray()
             ManualPrerequisites = $prerequisiteStates.ToArray()
         }
+    }
+    if ($Organization -and $Action -eq 'destroy') {
+        $selectedTokens = Get-PlatformOrganizationToken -Organization @($Organization) -Json $organizationEnvironment['PLATFORM_GITHUB_TOKENS']
+        Initialize-ModuleOrganizationEnvironment -Tokens $selectedTokens
     }
     if ($Action -eq 'destroy') { Import-ModulePrerequisiteOutput -Name $prerequisites -Path $PrerequisiteOutputsPath -Target $variables['prerequisites'] }
     $variableFile = Join-Path $temporaryDirectory 'inputs.tfvars.json'
@@ -437,5 +553,8 @@ finally {
     $env:TF_DATA_DIR = $previousDataDirectory
     $env:TF_WORKSPACE = $previousWorkspace
     $env:REST_API_BEARER = $previousRestBearer
+    foreach ($name in $organizationEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $organizationEnvironment[$name])
+    }
     [IO.Directory]::Delete($temporaryDirectory, $true)
 }

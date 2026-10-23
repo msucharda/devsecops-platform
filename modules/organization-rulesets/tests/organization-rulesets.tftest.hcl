@@ -58,11 +58,37 @@ run "accepts_the_actions_organization_in_another_letter_case" {
   }
 }
 
-run "rejects_another_organization_of_the_instance" {
+run "accepts_the_workload_organization_of_the_instance" {
   command = plan
 
   variables {
     target_organizations = ["demo-a1b2c3-workloads"]
+  }
+
+  assert {
+    condition     = output.organizations == tolist(["demo-a1b2c3-workloads"])
+    error_message = "The workload organization must have its own root invocation."
+  }
+}
+
+run "accepts_the_platform_organization_of_the_instance" {
+  command = plan
+
+  variables {
+    target_organizations = ["demo-a1b2c3-platform"]
+  }
+
+  assert {
+    condition     = output.organizations == tolist(["demo-a1b2c3-platform"])
+    error_message = "The platform organization must have its own root invocation."
+  }
+}
+
+run "rejects_an_organization_outside_the_instance" {
+  command = plan
+
+  variables {
+    target_organizations = ["foreign"]
   }
 
   expect_failures = [var.target_organizations]

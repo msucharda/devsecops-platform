@@ -22,8 +22,9 @@ Modul pro každou organizaci z `target_organizations` volá `PATCH /orgs/{org}` 
 
 - Modul nespravuje zakládání public repozitářů. EMU organizace public repozitáře nemají.
 - Modul používá provider `Mastercard/restapi`, ne `github_organization_settings` providera `integrations/github`. Ten vyžaduje `billing_email`, posílá všechna pole organizace a potřebuje provider pro každou organizaci.
-- Provider dostane installation token jobu z proměnné `REST_API_BEARER`. Runner ji nastaví z `GITHUB_TOKEN` a po běhu obnoví.
-- Omezení: modul zatím podporuje právě jednu organizaci v `target_organizations`. Installation token platí jen pro jednu organizaci a provider `restapi` přijímá jeden bearer token na běh. Terraform 1.16 nepodporuje `for_each` na provider bloku. Runner proto pro Terraform root s providerem `Mastercard/restapi` odmítne jiný počet organizací než jednu ještě před spuštěním Terraformu. Podpora více organizací (například samostatný běh a state pro každou organizaci) je otevřené rozhodnutí.
+- Manifest deklaruje `organizationScoped: true`. `target_organizations` musí obsahovat přesně všechny organizace instance: platformní, akcí a workloadů, odvozené přes `-PlatformOrganization`. Runner podmnožinu i nadmnožinu odmítne.
+- Provider přijímá jeden bearer token na proces. Společný runner proto pro každou organizaci spustí samostatný Terraform proces se singleton `target_organizations` a tokenem dané organizace v `REST_API_BEARER`, `GITHUB_TOKEN` a tokenových mapách. Původní environment po běhu obnoví.
+- Každá organizace má v kontejneru `enterprise-baseline` vlastní state `organizations/<login>/terraform.tfstate`. Login je lowercase. Runner nepoužije starý společný state ani ho nemigruje; upgrade mezi RC release není podporovaný. Výstupní artifact vznikne až po úspěchu všech organizací. Obsahuje úplný seznam `organizations` a veřejné výstupy v mapě `organization_outputs`.
 - Create, update i destroy jsou `PATCH` existující organizace. Přerušený běh proto další apply bezpečně zopakuje.
 - Postcondition po čtení `GET /orgs/{org}` ([dokumentace](https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/orgs#get-an-organization)) vyžaduje spravované hodnoty. Chybějící pole je chyba, ne shoda. Plan tak zachytí drift spravovaných polí.
 - Omezení: provider `Mastercard/restapi` 3.0.0 s `ignore_server_additions` drift spravovaných polí neopraví. `Read` ponechá v state konfigurovaná data, a plan proto nenaplánuje opravný `PATCH` ([Mastercard/terraform-provider-restapi#348](https://github.com/Mastercard/terraform-provider-restapi/issues/348)). Drift proto zastaví plan i apply chybou postcondition. Operátor obnoví spravované hodnoty v organizaci ručně. Automatická oprava driftu je otevřené rozhodnutí.
@@ -102,16 +103,23 @@ Modul v každé organizaci z `target_organizations` vytvoří organizační code
 
 - Configuration je organizační, ne `enterprise_enforced`. Installation token App enterprise configuration nevytvoří.
 - Apply nastaví configuration jako výchozí pro nové repozitáře (`default_for_new_repos: all`) a připojí ji ke všem repozitářům (`scope: all`). Potom čeká, dokud žádný repozitář nemá stav `attaching` nebo `updating`. Limit je 600 sekund; proměnná `CODE_SECURITY_ATTACHMENT_TIMEOUT` ho změní. Apply selže, když některý repozitář skončí v jiném stavu než `attached` nebo `enforced`, nebo když některý repozitář instalace configuration nemá. Další apply krok zopakuje.
-- Parametr `secret_scanning_bypass_reviewers` je povinný. Každá položka má `reviewer_type` (`TEAM` nebo `ROLE`) a číselné `reviewer_id` týmu nebo organizační role security týmu. `teams.security` v `instance.yaml` obsahuje jen e-maily, proto modul ID z této sekce neodvodí. Příklad:
+- Parametr `secret_scanning_bypass_reviewers` je povinná mapa podle loginu organizace. Každý klíč obsahuje vlastní neprázdný seznam reviewerů: `reviewer_type` (`TEAM` nebo `ROLE`) a číselné `reviewer_id` týmu nebo organizační role security týmu. IDs platí v dané organizaci; runner společný seznam nesmí kopírovat do ostatních organizací. Mapa musí obsahovat přesně stejné organizace jako `target_organizations`. Manifest tento parametr uvádí v `organizationParameters`; Terraform proces dostane jen seznam své organizace. `teams.security` v `instance.yaml` obsahuje jen e-maily, proto modul ID z této sekce neodvodí. Příklad:
 
   ```yaml
   modules:
     enterprise-baseline:
       parameters:
-        target_organizations: [demo]
+        target_organizations: [demo-a1b2c3-platform, demo-a1b2c3-actions, demo-a1b2c3-workloads]
         secret_scanning_bypass_reviewers:
-          - reviewer_type: TEAM
-            reviewer_id: 42
+          demo-a1b2c3-platform:
+            - reviewer_type: TEAM
+              reviewer_id: 42
+          demo-a1b2c3-actions:
+            - reviewer_type: TEAM
+              reviewer_id: 43
+          demo-a1b2c3-workloads:
+            - reviewer_type: TEAM
+              reviewer_id: 44
   ```
 
 ## Custom patterns
@@ -162,3 +170,4 @@ Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu
 - PR platformního týmu může spustit plan job automaticky, bez dalšího schválení security týmem. Forky, jiní autoři ani App-created PR credentials automaticky nedostanou.
 - Apply nadále schvaluje platformní tým a navíc security tým.
 - Před nasazením se musí na GHE.com ověřit potřebná API a oprávnění. Nepodporovaná operace není důvod přidat PAT.
+- Plan a apply Apps musí být ručně nainstalované přesně do všech organizací z manifestu a na všechny jejich repozitáře. Token issuer zkontroluje všechny instalace; neočekávaná organizace nebo chybný výběr repozitářů běh zastaví.

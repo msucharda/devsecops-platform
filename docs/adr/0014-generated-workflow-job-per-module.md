@@ -2,6 +2,8 @@
 
 CI zdrojového repozitáře vygeneruje z manifestů modulů workflow nasazení, ve kterém má každý modul vlastní job. Závislosti mezi joby (`needs`) odpovídají předpokladům a joby nevybraných modulů se přeskočí. Každý job spustí PowerShell 7 runner pro jeden modul ve vlastním environmentu. Výstupy modulu jdou do artifactu a závislý modul je dostane jako proměnné. Každý modul tak má vlastní environment se schválením a secrets a jeho identita čte jen svůj state.
 
+Doplněk ([#98](https://github.com/msucharda/devsecops-platform/issues/98), [#104](https://github.com/msucharda/devsecops-platform/issues/104)): organization-scoped modul zachová jeden job pro modul a fázi, nikoli matrix organizací. Runner uvnitř jobu spouští organizace v oddělených procesech a s oddělenými state podle ADR 0006. Společný prerequisite artifact vznikne až po úspěchu všech organizací. Drift výstup obsahuje výsledek každé organizace; neúplná sada nesmí znamenat shodu. Oddělení ruleset plan jobu a credentialu podle ADR 0017 zůstává beze změny. Rozhodl koordinátor v autonomním mandátu uživatele, 23. 10. 2026.
+
 ## Considered Options
 
 - Terragrunt. Zamítnuto: Další nástroj k vendorování a druhá syntaxe předpokladů vedle manifestu modulu.
