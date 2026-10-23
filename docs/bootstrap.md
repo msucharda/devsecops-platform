@@ -221,7 +221,7 @@ Release writer lze zapojit při prvním dokončení GitHub bootstrapu. Action wr
     -VendoringActionApp action-import
 ```
 
-Pro privátní zdroj přidej `-VendoringSourceApp source-import -VendoringSourceRepository owner/repo`. `-VendoringSourceApiUrl` může určit `https://api.github.com` nebo `https://api.<enterprise>.ghe.com`; výchozí hodnota odpovídá hostu instance. Bootstrap ověří source App na tomto API a zapíše chráněné `SOURCE_REPOSITORY` a `SOURCE_API_URL`. Nedostupný zdroj vyžaduje deklarovaný ruční import podle [vendoringu](vendoring.md), nikoli širší credential.
+Pro privátní zdroj přidej `-VendoringSourceApp source-import -VendoringSourceRepository owner/repo`. `-VendoringSourceApiUrl` musí odpovídat API hostu instance; bootstrap jiný host odmítne. Ověří source App v témže enterprise jmenném prostoru a zapíše chráněné `SOURCE_REPOSITORY` a `SOURCE_API_URL`. Veřejný import z github.com source App nepotřebuje. Privátní zdroj na jiném hostu vyžaduje deklarovaný ruční import podle [vendoringu](vendoring.md), nikoli širší credential.
 
 Po zapojení spusť `import-action.yml` a poté `import-release.yml`. Workflow ani environmenty ručně neupravuj. První import release přepíše upstream akce ve vendorovaných šablonách podle katalogu; povýšení živých workflow zůstává samostatný schválený PR podle #16.
 

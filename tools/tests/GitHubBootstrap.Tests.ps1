@@ -277,7 +277,15 @@ Describe 'GitHub bootstrap public interface' {
                     $reply = Get-GitHubApiFixture -Name repos/create-or-update-environment -Set @{
                         protection_rules = $rules; deployment_branch_policy = $data.deployment_branch_policy
                     }
-                    $reply.can_admins_bypass = $data.can_admins_bypass
+                    if ($path -like '*/environments/vendoring-*' -and $cloud.ContainsKey('environmentBypassVariant')) {
+                        switch ($cloud.environmentBypassVariant) {
+                            missing { $reply.Remove('can_admins_bypass') }
+                            enabled { $reply.can_admins_bypass = $true }
+                            null { $reply.can_admins_bypass = $null }
+                            string { $reply.can_admins_bypass = 'false' }
+                            number { $reply.can_admins_bypass = 0 }
+                        }
+                    }
                     $cloud.environments[$path] = $reply
                 }
                 elseif ($cloud.environments.ContainsKey($path)) { $reply = $cloud.environments[$path] }
@@ -434,6 +442,8 @@ Describe 'GitHub bootstrap public interface' {
             $path = "/repos/demo-a1b2c3-platform/instance/environments/$name"
             $cloud.environments.ContainsKey($path) | Should -BeTrue
             $cloud.environments[$path].can_admins_bypass | Should -BeFalse
+            @($cloud.writes | Where-Object { $_.path -ceq $path -and $_.method -ceq 'PUT' })[0].body.can_admins_bypass |
+                Should -BeFalse
             $cloud.branchRules["$path/deployment-branch-policies"].name | Should -Be @('main')
             $cloud.branchRules["$path/deployment-branch-policies"].type | Should -Be @('branch')
             $reviewers = @($cloud.environments[$path].protection_rules | Where-Object type -EQ required_reviewers)
@@ -444,6 +454,19 @@ Describe 'GitHub bootstrap public interface' {
         }
         @($cloud.resources.Values | Where-Object { $_.ContainsKey('properties') -and
             $_.properties.ContainsKey('subject') -and $_.properties.subject -like '*environment:vendoring-*' }).Count | Should -Be 0
+    }
+
+    It 'fails closed when GHE.com returns <Variant> admin bypass confirmation' -Tag 'Vendoring', 'EnvironmentProtection' -ForEach @(
+        @{ Variant = 'missing' }
+        @{ Variant = 'enabled' }
+        @{ Variant = 'null' }
+        @{ Variant = 'string' }
+        @{ Variant = 'number' }
+    ) {
+        # Missing is the documented OpenAPI shape; the other variants intentionally violate the observed boolean contract.
+        $cloud.environmentBypassVariant = $Variant
+        { & $bootstrap @arguments } | Should -Throw '*did not enforce environment*vendoring*protection*'
+        $cloud.secrets.Count | Should -Be 0
     }
 
     It 'creates the instance repository with the exact release and both organization teams' {
@@ -1155,6 +1178,8 @@ Describe 'GitHub bootstrap public interface' {
             @{ Case = 'release repository case'; Error = '*vendoring App contract*'; Change = { $instance.githubApps.'release-import'.resources.repositories.'demo-a1b2c3-platform' = @('Instance') } }
             @{ Case = 'wrong source repository'; Error = '*vendoring App contract*'; Change = { $arguments.VendoringSourceRepository = 'demo-a1b2c3-platform/other' } }
             @{ Case = 'missing source repository'; Error = '*source repository*'; Change = { $arguments.Remove('VendoringSourceRepository') } }
+            @{ Case = 'source on github.com'; Error = '*source API must belong to the instance*'; Change = { $arguments.VendoringSourceApiUrl = 'https://api.github.com' } }
+            @{ Case = 'source on another tenant'; Error = '*source API must belong to the instance*'; Change = { $arguments.VendoringSourceApiUrl = 'https://api.other.ghe.com' } }
             @{ Case = 'shared writer identity'; Error = '*share its identity*'; Change = { $instance.githubApps.'action-import'.appId = '161' } }
             @{ Case = 'shared authorization identity'; Error = '*share its identity*'; Change = { $instance.githubApps.'action-import'.appId = '101' } }
         ) {
@@ -1164,7 +1189,10 @@ Describe 'GitHub bootstrap public interface' {
             $cloud.secrets.Count | Should -Be 0
         }
 
-        It 'warns about each unbound environment and rejects its stale key' {
+        It 'warns about each unbound environment and rejects its stale <Credential>' -ForEach @(
+            @{ Credential = 'key'; IsVariable = $false }
+            @{ Credential = 'App ID variable'; IsVariable = $true }
+        ) {
             $arguments.Remove('VendoringActionApp')
             $arguments.Remove('VendoringReleaseApp')
             $arguments.Remove('VendoringSourceApp')
@@ -1173,10 +1201,12 @@ Describe 'GitHub bootstrap public interface' {
             $null = & $bootstrap @arguments -WarningVariable warnings -WarningAction SilentlyContinue
             foreach ($name in @('vendoring-source', 'vendoring-action-import', 'vendoring-release-import')) {
                 ($warnings -join "`n") | Should -Match $name
-                $path = "/repos/demo-a1b2c3-platform/instance/environments/$name/secrets/PLATFORM_APP_PRIVATE_KEY"
-                $cloud.secrets[$path] = @{ encrypted_value = 'stale' }
+                $path = "/repos/demo-a1b2c3-platform/instance/environments/$name"
+                $store = if ($IsVariable) { $cloud.variables } else { $cloud.secrets }
+                $path += $(if ($IsVariable) { '/variables/PLATFORM_APP_ID' } else { '/secrets/PLATFORM_APP_PRIVATE_KEY' })
+                $store[$path] = $(if ($IsVariable) { '160' } else { @{ encrypted_value = 'stale' } })
                 { & $bootstrap @arguments -WarningAction SilentlyContinue } | Should -Throw '*vendoring*without an App binding*'
-                $cloud.secrets.Remove($path)
+                $store.Remove($path)
             }
         }
 

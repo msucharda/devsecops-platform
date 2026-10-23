@@ -296,6 +296,15 @@ function Get-GitHubBootstrapReviewer {
     }
 }
 
+# security-check: bootstrap-environment-bypass
+function Test-GitHubBootstrapAdminBypass {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Environment)
+
+    return $Environment['can_admins_bypass'] -is [bool] -and -not $Environment['can_admins_bypass']
+}
+
 function Initialize-GitHubBootstrapEnvironment {
     [CmdletBinding()]
     param(
@@ -314,14 +323,14 @@ function Initialize-GitHubBootstrapEnvironment {
         deployment_branch_policy = @{ protected_branches = $false; custom_branch_policies = $true }
     }
     $actualReviewers = @(Get-GitHubBootstrapReviewer -Environment $current)
-    if (-not $current -or $current['can_admins_bypass'] -ne $false -or
+    if (-not $current -or -not (Test-GitHubBootstrapAdminBypass -Environment $current) -or
         -not (Test-GitHubBootstrapValue -Actual $current['deployment_branch_policy'] -Desired $body['deployment_branch_policy']) -or
         -not (Test-GitHubBootstrapValue -Actual $actualReviewers -Desired $reviewers) -or
         @($current['protection_rules'] | Where-Object { $_['type'] -cnotin @('required_reviewers', 'branch_policy') }).Count -gt 0) {
         $current = Invoke-GitHubBootstrapApi -Path $path -Method PUT -Body $body
         $confirmed = @(Get-GitHubBootstrapReviewer -Environment $current)
         if (-not (Test-GitHubBootstrapValue -Actual $confirmed -Desired $reviewers) -or
-            $current['can_admins_bypass'] -ne $false -or
+            -not (Test-GitHubBootstrapAdminBypass -Environment $current) -or
             -not (Test-GitHubBootstrapValue -Actual $current['deployment_branch_policy'] -Desired $body['deployment_branch_policy'])) {
             throw "GHE.com did not enforce environment '$Name' protection. Do not deploy modules."
         }
@@ -351,9 +360,11 @@ function Assert-GitHubBootstrapVendoringContract {
         [Parameter(Mandatory)][string] $Alias,
         [Parameter(Mandatory)][string] $Organization,
         [Parameter(Mandatory)][System.Collections.IDictionary] $Permissions,
+        [Parameter(Mandatory)][string] $ApiUrl,
         [string[]] $Repositories
     )
 
+    if ($ApiUrl -cne $api) { throw 'The vendoring source API must belong to the instance; cross-host App ownership is not supported.' }
     if (-not $instance['githubApps'].Contains($Alias)) { throw "Unknown vendoring App alias '$Alias'." }
     $app = $instance['githubApps'][$Alias]
     if (-not $Repositories) {
@@ -858,7 +869,8 @@ if (-not $ResourcesOnly) {
         Assert-GitHubBootstrapVendoringEnvironment -Name $binding['environment'] -Alias $binding['alias']
         if (-not $binding['alias']) { continue }
         Assert-GitHubBootstrapVendoringContract -Alias $binding['alias'] -Organization $binding['organization'] `
-            -Permissions $binding['permissions'] -Repositories $binding['repositories']
+            -Permissions $binding['permissions'] -Repositories $binding['repositories'] `
+            -ApiUrl $(if ($binding['environment'] -ceq 'vendoring-source') { $VendoringSourceApiUrl } else { $api })
         Assert-GitHubBootstrapVendoringIsolation -Alias $binding['alias'] -Bindings $appBindings
         $appBindings += @{ alias = $binding['alias']; environment = $binding['environment']
             phase = $(if ($binding['environment'] -ceq 'vendoring-source') { 'plan' } else { 'apply' }) }

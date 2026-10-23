@@ -7,7 +7,7 @@ BeforeAll {
 Describe 'Action import public entry point' {
     BeforeEach {
         $instancePath = Join-Path $TestDrive 'instance.yaml'
-        "instance:`n  name: demo`n" | Set-Content -LiteralPath $instancePath
+        "instance:`n  name: demo`nmodules:`n  actions-catalog:`n    parameters: {}`n" | Set-Content -LiteralPath $instancePath
     }
 
     It 'derives a catalog target from the complete normalized source identity' {
@@ -33,6 +33,61 @@ Describe 'Action import public entry point' {
         $output = Join-Path $TestDrive 'invalid-outputs'
         { & $resolve -SourceRepository $Repository -Tag $Tag -InstancePath $instancePath `
             -PlatformOrganization $Organization -GitHubOutputPath $output } | Should -Throw
+        Test-Path $output | Should -BeFalse
+    }
+
+    It 'rejects an unlisted upstream that collides with an approved catalog repository' {
+        @'
+instance:
+  name: demo
+modules:
+  actions-catalog:
+    parameters:
+      catalog: [a/b-c]
+'@ | Set-Content -LiteralPath $instancePath
+        $output = Join-Path $TestDrive 'collision-outputs'
+        { & $resolve -SourceRepository a-b/c -Tag v1 -InstancePath $instancePath `
+            -PlatformOrganization demo-a1b2c3-platform -GitHubOutputPath $output } | Should -Throw '*not in the actions-catalog*'
+        Test-Path $output | Should -BeFalse
+    }
+
+    It 'accepts the configured canonical upstream instead of assuming the default catalog' {
+        "instance:`n  name: demo`nmodules:`n  actions-catalog:`n    parameters:`n      catalog: [a/b-c]`n" |
+            Set-Content -LiteralPath $instancePath
+        (& $resolve -SourceRepository A/B-C -Tag v1 -InstancePath $instancePath `
+                -PlatformOrganization demo-a1b2c3-platform).TargetRepository | Should -BeExactly 'demo-a1b2c3-actions/a-b-c'
+    }
+
+    It 'accepts each Terraform default catalog entry through the public resolver' {
+        $variables = Get-Content (Join-Path $root 'modules/actions-catalog/variables.tf') -Raw
+        $default = [regex]::Match($variables, '(?s)variable "catalog".*?default\s*=\s*\[(.*?)\]').Groups[1].Value
+        $entries = @([regex]::Matches($default, '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+        $entries.Count | Should -BeGreaterThan 0
+        foreach ($entry in $entries) {
+            (& $resolve -SourceRepository $entry -Tag v1 -InstancePath $instancePath `
+                    -PlatformOrganization demo-a1b2c3-platform).SourceRepository | Should -BeExactly $entry
+        }
+    }
+
+    It 'rejects invalid catalog state <Case> before writing workflow outputs' -ForEach @(
+        @{ Case = 'missing modules'; Modules = '' ; Error = '*requires the actions-catalog module*' }
+        @{ Case = 'unselected module'; Modules = 'modules: {}'; Error = '*requires the actions-catalog module*' }
+        @{ Case = 'empty catalog'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: []"; Error = '*nonempty list*' }
+        @{ Case = 'scalar catalog'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: actions/checkout"; Error = '*nonempty list*' }
+        @{ Case = 'null catalog'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: null"; Error = '*nonempty list*' }
+        @{ Case = 'numeric entry'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: [123]"; Error = '*canonical lowercase*' }
+        @{ Case = 'nested list entry'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: [[actions/checkout]]"; Error = '*canonical lowercase*' }
+        @{ Case = 'noncanonical identity'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: [Actions/Checkout]"; Error = '*canonical lowercase*' }
+        @{ Case = 'invalid repo name'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: [actions/..]"; Error = '*canonical lowercase*' }
+        @{ Case = 'overlong target'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: [a/$('b' * 99)]"; Error = '*canonical lowercase*' }
+        @{ Case = 'target collision'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: [a/b-c, a-b/c]"; Error = '*same target repository*' }
+        @{ Case = 'duplicate entry'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: [actions/checkout, actions/checkout]"; Error = '*same target repository*' }
+        @{ Case = 'unlisted default entry'; Modules = "modules:`n  actions-catalog:`n    parameters:`n      catalog: [azure/login]"; Error = '*not in the actions-catalog*' }
+    ) {
+        "instance:`n  name: demo`n$Modules`n" | Set-Content -LiteralPath $instancePath
+        $output = Join-Path $TestDrive 'invalid-catalog-outputs'
+        { & $resolve -SourceRepository actions/checkout -Tag v1 -InstancePath $instancePath `
+                -PlatformOrganization demo-a1b2c3-platform -GitHubOutputPath $output } | Should -Throw $Error
         Test-Path $output | Should -BeFalse
     }
 
