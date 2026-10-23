@@ -124,12 +124,15 @@ BeforeAll {
             }
             'createInstallation' {
                 $id = $stub.NextId++
+                $selection = if ($request.repository_selection -ceq 'none') { 'selected' } else { $request.repository_selection }
                 $stub.Installations[$organization].Add(@{
-                        id = $id; client_id = $request.client_id; repository_selection = 'selected'
+                        id = $id; client_id = $request.client_id; repository_selection = $selection
                         repositories = [Collections.Generic.List[string]]::new()
                     })
                 $login = ($stub.Organizations | Where-Object { $_.login -eq $organization }).login
-                $created = Get-GitHubApiFixture -Name enterprise-apps/create-installation.account-simple-user -Set @{ id = $id; 'account.login' = $login }
+                $created = Get-GitHubApiFixture -Name enterprise-apps/create-installation.account-simple-user -Set @{
+                    id = $id; 'account.login' = $login; repository_selection = $selection
+                }
                 @{ Status = 201; Body = (ConvertTo-Json -InputObject $created -Depth 20 -Compress) }
             }
             'listInstallationRepositories' {
@@ -200,6 +203,21 @@ Describe 'Organizations module against the documented GitHub API' {
             $stub.Override['listOrganizations'] = { @{ Status = 403; Body = @{ message = 'Forbidden' } } }
 
             { Get-EnterpriseOrganizationLogin @target } | Should -Throw '*HTTP 403*installable_organizations*'
+        }
+
+        It 'supports the documented PUT that assigns an organization role to a team' {
+            Mock -ModuleName Organizations Invoke-WebRequest {
+                [pscustomobject]@{ StatusCode = 204; Content = ''; Headers = @{} }
+            }
+
+            $reply = Invoke-OrganizationsApi -ApiUrl $apiUrl -Method PUT `
+                -Path '/orgs/demo-actions/organization-roles/teams/security/1' -AcceptStatus @(204)
+
+            $reply.Status | Should -Be 204
+            $reply.Body | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Organizations Invoke-WebRequest -Exactly -Times 1 -ParameterFilter {
+                ([string] $Method).ToUpperInvariant() -ceq 'PUT' -and $Uri -ceq "$apiUrl/orgs/demo-actions/organization-roles/teams/security/1"
+            }
         }
 
         It 'refuses a pagination link outside the API origin' {
@@ -438,14 +456,71 @@ Describe 'Organizations module against the documented GitHub API' {
             $body.repository_selection | Should -BeExactly 'none'
         }
 
+        It 'installs an App on all repositories when the manifest requires all' {
+            $installation = Install-OrganizationApp @target @install -RepositorySelection all
+
+            $installation.repository_selection | Should -BeExactly 'all'
+            (Get-StubRequest createInstallation)[0].Body.repository_selection | Should -BeExactly 'all'
+        }
+
+        It 'rejects noncanonical selection <Selection> in <Command> before any API request' -ForEach @(
+            @{ Selection = 'ALL'; Command = 'Install-OrganizationApp' }
+            @{ Selection = 'None'; Command = 'Install-OrganizationApp' }
+            @{ Selection = 'ALL'; Command = 'Assert-OrganizationAppAdoptable' }
+            @{ Selection = 'None'; Command = 'Assert-OrganizationAppAdoptable' }
+        ) {
+            { & $Command @target @install -RepositorySelection $Selection } | Should -Throw '*validate argument on parameter*'
+            Should -Invoke -ModuleName Organizations Invoke-WebRequest -Times 0 -Exactly
+        }
+
         It 'does not reinstall an App that is installed with <Selection> access' -ForEach @(
             @{ Selection = 'selected' }
-            @{ Selection = 'none' }
         ) {
             Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection $Selection
 
             (Install-OrganizationApp @target @install).repository_selection | Should -BeExactly $Selection
             (Get-StubRequest createInstallation).Count | Should -Be 0
+        }
+
+        It 'refuses an existing installation with invalid <Case> selection for <Expected>' -Tag InstallationWireShape -ForEach @(
+            @{ Case = 'undocumented none'; Value = 'none'; Expected = 'none' }
+            @{ Case = 'selected array'; Value = @('selected'); Expected = 'none' }
+            @{ Case = 'all array'; Value = @('all'); Expected = 'all' }
+            @{ Case = 'null'; Value = $null; Expected = 'none' }
+            @{ Case = 'noncanonical selected'; Value = 'Selected'; Expected = 'none' }
+            @{ Case = 'noncanonical all'; Value = 'ALL'; Expected = 'all' }
+            @{ Case = 'unknown'; Value = 'unknown'; Expected = 'none' }
+        ) {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01'
+            # Intentionally invalid: installation responses document only scalar all/selected, not the request value none.
+            $stub.Installations['demo-a1b2c3-actions'][0].repository_selection = $Value
+            { Install-OrganizationApp @target @install -RepositorySelection $Expected } | Should -Throw '*unknown repository_selection*'
+
+            (Get-StubRequest createInstallation).Count | Should -Be 0
+        }
+
+        It 'requires all repositories rather than <Selection> when the manifest declares all' -ForEach @(
+            @{ Selection = 'selected' }
+        ) {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection $Selection
+
+            { Install-OrganizationApp @target @install -RepositorySelection all } | Should -Throw '*must have access to all repositories*'
+            (Get-StubRequest createInstallation).Count | Should -Be 0
+        }
+
+        It 'adopts an existing all-repositories installation without reinstalling it' {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection all
+
+            (Install-OrganizationApp @target @install -RepositorySelection all).repository_selection | Should -BeExactly all
+            (Get-StubRequest createInstallation).Count | Should -Be 0
+        }
+
+        It 'recovers an all-repositories installation after losing its creation response' {
+            $null = $stub.Drop.Add('createInstallation')
+
+            { Install-OrganizationApp @target @install -RepositorySelection all } | Should -Throw '*connection was closed*'
+            (Install-OrganizationApp @target @install -RepositorySelection all).repository_selection | Should -BeExactly all
+            (Get-StubRequest createInstallation).Count | Should -Be 1
         }
 
         It 'checks App adoption read-only: <Case>' -ForEach @(
@@ -514,12 +589,12 @@ Describe 'Organizations module against the documented GitHub API' {
             { Install-OrganizationApp @target @install } | Should -Throw '*HTTP 403*'
         }
 
-        It 'verifies the repositories of an installation with the undocumented none selection' {
-            # 'none' is not in the documented response enum; the module proves it by the repository list.
+        It 'rejects the undocumented none selection before querying repositories' {
+            # Intentionally invalid: none is a request value, not a documented response value.
             Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection 'none' -Repositories @('demo-a1b2c3-actions/app')
 
-            { Install-OrganizationApp @target @install } | Should -Throw '*access to 1 repositories*'
-            (Get-StubRequest listInstallationRepositories).Count | Should -Be 1
+            { Install-OrganizationApp @target @install } | Should -Throw '*unknown repository_selection*'
+            (Get-StubRequest listInstallationRepositories).Count | Should -Be 0
         }
         It 'matches the client ID case-sensitively' {
             Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'IV23LIEXAMPLE01'
@@ -648,6 +723,93 @@ Describe 'Organizations module against the documented GitHub API' {
         }
     }
 
+    Context 'Manifest installation scope' {
+        BeforeEach {
+            Add-StubOrganization -Login 'demo-a1b2c3-actions'
+            Add-StubOrganization -Login 'demo-a1b2c3-workloads'
+            $scope = @{
+                Iv23liExample01 = @{ organizations = @('demo-a1b2c3-actions'); repository_selection = 'none' }
+            }
+        }
+
+        It 'reports an installation in an unexpected organization before making any change' {
+            Add-StubInstallation -Organization 'demo-a1b2c3-workloads' -ClientId 'Iv23liExample01'
+
+            $violations = @(Get-OrganizationAppScopeViolation @target -Installation $scope)
+
+            $violations | Should -Be @("App 'Iv23liExample01' is installed in unexpected organization 'demo-a1b2c3-workloads'.")
+            (Get-StubRequest createInstallation).Count | Should -Be 0
+            (Get-StubRequest deleteInstallation).Count | Should -Be 0
+        }
+
+        It 'rejects wrong repository selection before making any change' {
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection all
+
+            { Get-OrganizationAppScopeViolation @target -Installation $scope } | Should -Throw '*without repository access*'
+            (Get-StubRequest createInstallation).Count | Should -Be 0
+            (Get-StubRequest deleteInstallation).Count | Should -Be 0
+        }
+
+        It 'accepts the declared <Selection> scope in the declared organization' -ForEach @(
+            @{ Selection = 'none'; Actual = 'selected' }
+            @{ Selection = 'all'; Actual = 'all' }
+        ) {
+            $scope.Iv23liExample01.repository_selection = $Selection
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection $Actual
+
+            @(Get-OrganizationAppScopeViolation @target -Installation $scope).Count | Should -Be 0
+        }
+
+        It 'compares target organizations without case sensitivity' {
+            $scope.Iv23liExample01.organizations = @('Demo-A1B2C3-Actions')
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01'
+
+            @(Get-OrganizationAppScopeViolation @target -Installation $scope).Count | Should -Be 0
+        }
+
+        It 'does not treat a missing planned installation as a scope violation' {
+            @(Get-OrganizationAppScopeViolation @target -Installation $scope).Count | Should -Be 0
+        }
+
+        It 'ignores an unrelated App even when its client ID differs only in case' {
+            Add-StubInstallation -Organization 'demo-a1b2c3-workloads' -ClientId 'IV23LIEXAMPLE01' -Selection all
+
+            @(Get-OrganizationAppScopeViolation @target -Installation $scope).Count | Should -Be 0
+        }
+
+        It 'checks every enterprise organization and installation page' {
+            $stub.PageSize = 1
+            Add-StubOrganization -Login 'other-org'
+            Add-StubInstallation -Organization 'other-org' -ClientId 'Iv23liUnmanaged01' -Selection all
+            Add-StubInstallation -Organization 'other-org' -ClientId 'Iv23liExample01'
+
+            @(Get-OrganizationAppScopeViolation @target -Installation $scope) |
+                Should -Be @("App 'Iv23liExample01' is installed in unexpected organization 'other-org'.")
+        }
+
+        It 'fails closed when installation scope cannot be read' {
+            $stub.Override['listInstallations'] = { @{ Status = 403; Body = @{ message = 'Forbidden' } } }
+
+            { Get-OrganizationAppScopeViolation @target -Installation $scope } | Should -Throw '*HTTP 403*'
+        }
+
+        It 'rejects a declaration with <Case> before reading the enterprise' -ForEach @(
+            @{ Case = 'an invalid client ID'; Value = @{ 'Iv23li/other' = @{ organizations = @('demo-a1b2c3-actions'); repository_selection = 'none' } }; Error = '*client ID*not valid*' }
+            @{ Case = 'an empty client ID'; Value = @{ '' = @{ organizations = @('demo-a1b2c3-actions'); repository_selection = 'none' } }; Error = '*client ID*not valid*' }
+            @{ Case = 'no contract'; Value = @{ Iv23liExample01 = $null }; Error = '*no installation contract*' }
+            @{ Case = 'no organizations'; Value = @{ Iv23liExample01 = @{ repository_selection = 'none' } }; Error = '*must declare its target organizations*' }
+            @{ Case = 'a scalar organization'; Value = @{ Iv23liExample01 = @{ organizations = 'demo-a1b2c3-actions'; repository_selection = 'none' } }; Error = '*must declare its target organizations*' }
+            @{ Case = 'an empty organization list'; Value = @{ Iv23liExample01 = @{ organizations = @(); repository_selection = 'none' } }; Error = '*must declare its target organizations*' }
+            @{ Case = 'an invalid organization'; Value = @{ Iv23liExample01 = @{ organizations = @('demo/other'); repository_selection = 'none' } }; Error = '*not a valid GitHub login*' }
+            @{ Case = 'no selection'; Value = @{ Iv23liExample01 = @{ organizations = @('demo-a1b2c3-actions') } }; Error = '*must declare repository_selection none or all*' }
+            @{ Case = 'a selected-repositories selection'; Value = @{ Iv23liExample01 = @{ organizations = @('demo-a1b2c3-actions'); repository_selection = 'selected' } }; Error = '*must declare repository_selection none or all*' }
+            @{ Case = 'a selection in another case'; Value = @{ Iv23liExample01 = @{ organizations = @('demo-a1b2c3-actions'); repository_selection = 'All' } }; Error = '*must declare repository_selection none or all*' }
+        ) {
+            { Get-OrganizationAppScopeViolation @target -Installation $Value } | Should -Throw $Error
+            (Get-StubRequest listOrganizations).Count | Should -Be 0
+        }
+    }
+
     Context 'Get-InstanceOrganizationState' {
         It 'reports an absent organization' {
             $state = Get-InstanceOrganizationState @target -Organization 'demo-a1b2c3-actions'
@@ -658,14 +820,14 @@ Describe 'Organizations module against the documented GitHub API' {
 
         It 'reports the installed Apps of an existing organization' {
             Add-StubOrganization -Login 'demo-a1b2c3-actions'
-            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection 'none'
+            Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liExample01' -Selection 'selected'
 
             $state = Get-InstanceOrganizationState @target -Organization 'demo-a1b2c3-actions'
 
             $state.exists | Should -BeTrue
             $state.login | Should -BeExactly 'demo-a1b2c3-actions'
             $state.installations[0].client_id | Should -BeExactly 'Iv23liExample01'
-            $state.installations[0].repository_selection | Should -BeExactly 'none'
+            $state.installations[0].repository_selection | Should -BeExactly 'selected'
         }
         It 'lists the repositories only for selected installations of managed Apps' {
             Add-StubOrganization -Login 'demo-a1b2c3-actions'

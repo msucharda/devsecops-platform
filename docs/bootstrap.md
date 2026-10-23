@@ -168,6 +168,10 @@ Platformní tým potom v **Enterprise settings → GitHub Apps** ručně registr
 | App importu akcí | Přesně `contents: write` a `pull_requests: write`, selected installation na katalogové repozitáře pouze v organizaci akcí. Samostatná identita pro `vendoring-action-import`. |
 | App privátního zdroje | Volitelná, přesně `contents: read` a `attestations: read`, selected installation na jediný deklarovaný zdroj. Samostatná identita pro `vendoring-source`. Veřejný import ji nepoužije. |
 
+Instalace navazujících modulů připrav podle [checklistu odvozeného z manifestů](../README.md#module-manifest-manifest-modulu). `resources.installationSelection: none` vyžaduje instalaci bez repozitářů; `all` vyžaduje všechny repozitáře cílové organizace. App s jinak pouze organizačními oprávněními musí pro `all` deklarovat také `metadata: read`. Týká se to příslušných fází `actions-catalog` a `enterprise-baseline`; oprávnění kopíruj z manifestu, nepřidávej je ostatním Apps. Token issuer odmítne jinou organizaci nebo jiný výběr repozitářů i při aktuálně prázdné organizaci.
+
+Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. Pak připrav konfiguraci druhé etapy, ručně nainstaluj její Apps, doplň bindings a znovu ověř bootstrap. Pro `organization-roles` navíc vytvoř a propoj security týmy podle [README modulu](../modules/organization-roles/README.md#nasazení-ve-dvou-etapách). Modul instalace, týmy ani SCIM linky nevytváří.
+
 Vlož metadata do `githubApps` a vazby do `credentials` v pracovní kopii konfigurace. Autorizační alias, například `authorization`, patří také do `githubApps`; skriptu ho předáš přes `-AuthorizationApp`. Privátní klíče a jejich lokální manifest **nesmějí** ležet v release ani ve zdrojovém repozitáři.
 
 Lokální `keys.json` obsahuje položku pro každý používaný alias. `createdAt` musí odpovídat skutečnému vytvoření klíče, nikoli dni spuštění bootstrapu:

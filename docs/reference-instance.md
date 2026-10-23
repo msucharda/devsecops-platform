@@ -1043,7 +1043,9 @@ if (-not $c1Result.AcceptancePassed) { throw 'C1 failed; retain result.json and 
 
 **Co ověřuješ:** Instalační token GitHub App přiřadí organizační roli security manager enterprise týmu, který SCIM vytvořil ze skupiny Entra. Člen týmu získá práva security manageru, ale ne roli owner.
 
-**Proč:** Modul `organizations` dává Security team (security tým) roli security manager ve všech organizacích instance. Enterprise tým ze skupiny Entra drží členství na jednom místě. Nestačí, že REST API přijme přiřazení: musíš potvrdit i dědění role na členovi týmu. Pokud přiřazení nebo dědění nepotvrdíš, modul použije tým organizace propojený se stejnou skupinou Entra ID.
+**Proč:** Požadavek #13 vyžaduje roli security manager pro Security team (security tým) ve všech organizacích instance. Enterprise tým ze skupiny Entra drží členství na jednom místě. Nestačí, že REST API přijme přiřazení: musíš potvrdit i dědění role na členovi týmu. Pokus určuje, zda lze použít enterprise tým, nebo je nutný tým organizace propojený se stejnou skupinou Entra ID.
+
+**Aktuální implementace (#105):** roli spravuje samostatný modul [organization-roles](../modules/organization-roles/README.md), nikoli `organizations`. Používá tým organizace; jeho vytvoření a SCIM link jsou ruční kroky. Následující C2 zachovává postup referenčního pokusu, nikoli provozní postup modulu.
 
 **Potřebuješ:** A4 (`$spId` a `$userRole`), A9 (`$probeOrg` a `$adminApp`), pomocné funkce z úvodu fáze C a aktivní role User Administrator a Application Administrator nebo Cloud Application Administrator. Výslovně aktivovaný Global Administrator je také dostačující. Pro Graph používej token z účtu v cílovém tenantu přes `$mgmtSub`, ne výchozí účet Azure CLI.
 

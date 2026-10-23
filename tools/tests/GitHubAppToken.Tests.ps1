@@ -279,6 +279,143 @@ Describe 'Enterprise App key and installation token isolation' {
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
+    Context 'Explicit manifest installation selection' -Tag AppSelection {
+        BeforeEach {
+            Import-Module powershell-yaml -RequiredVersion 0.4.12
+            $actualOrganizations = @('actions', 'workloads')
+            $actualPermissions = @{ organization_administration = 'read'; metadata = 'read' }
+            $repositorySelection = 'selected'
+            $fakeRepositoryNames = @()
+            $modulesPath = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures\modules') -Destination $modulesPath -Recurse
+            $manifestPath = Join-Path $modulesPath 'enterprise-baseline\module.yaml'
+            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+            $manifest.permissions.githubApp.plan.resources.installationSelection = 'none'
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+            $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures\instance.yaml') -Raw)
+            $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{ target_organizations = @('actions', 'workloads') } } }
+            $instance.githubApps = @{
+                reader = @{ appId = '101'; installationId = '201'; enterprise = 'example'; permissions = @{ organization_administration = 'read' }; resources = @{ organizations = @('actions', 'workloads'); repositories = @{} } }
+                writer = @{ appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
+                rulesets = @{ appId = '103'; installationId = '203'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
+            }
+            $instance.credentials = @{
+                'enterprise-baseline' = @{
+                    plan = @{ environment = 'enterprise-baseline-plan'; githubApp = 'reader' }
+                    apply = @{ environment = 'enterprise-baseline-apply'; githubApp = 'writer' }
+                    rulesetPlan = @{ environment = 'enterprise-baseline-ruleset-plan'; githubApp = 'rulesets' }
+                }
+            }
+            $path = Join-Path $TestDrive 'explicit-selection.yaml'
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+        }
+
+        It 'rejects all-repository installations for none even when no repositories exist' {
+            $repositorySelection = 'all'
+
+            { & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*repository*'
+
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'rejects an undocumented none value in the installation response' {
+            # Intentionally invalid: GET /app/installations documents only all and selected, not the manifest value none.
+            $repositorySelection = 'none'
+
+            { & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*Actual App repository scope*differs*'
+
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'issues explicit none tokens for selected installations without accessible repositories' {
+            & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
+
+            $line = Get-Content -LiteralPath $environmentPath | Where-Object { $_ -like 'PLATFORM_GITHUB_TOKENS=*' }
+            $tokens = $line.Substring('PLATFORM_GITHUB_TOKENS='.Length) | ConvertFrom-Json -AsHashtable
+            @($tokens.Keys | Sort-Object) | Should -Be @('actions', 'workloads')
+            Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'rejects an invalid installation selection: <Case>' -ForEach @(
+            @{ Case = 'single selected array'; Value = @('selected') }
+            @{ Case = 'case variant'; Value = 'Selected' }
+            @{ Case = 'null'; Value = $null }
+            @{ Case = 'empty'; Value = '' }
+            @{ Case = 'unknown'; Value = 'unexpected' }
+        ) {
+            # Intentionally invalid: the documented installation enum is a required scalar all/selected string.
+            $repositorySelection = $Value
+
+            { & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*Actual App repository scope*differs*'
+
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'rejects an unexpected organization through the ordinary module issuer' {
+            $actualOrganizations = @('unrelated', 'workloads')
+
+            { & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*installations differ*target organizations*'
+
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'rejects repository access for explicit none and revokes the verification token' {
+            $fakeRepositoryNames = @('instance')
+
+            { & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*Organization-only App*must not have repository access*'
+
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'DELETE' -and $Uri -eq 'https://api.example.test/installation/token'
+            }
+        }
+
+        It 'rejects selected installations when the manifest requires all' {
+            $manifest.permissions.githubApp.plan.resources.installationSelection = 'all'
+            $instance.githubApps.reader.resources.Remove('repositories')
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+
+            { & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null } |
+                Should -Throw '*Actual App repository scope*differs*'
+
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'issues explicit all tokens even when the organizations have no repositories yet' {
+            $manifest.permissions.githubApp.plan.resources.installationSelection = 'all'
+            $instance.githubApps.reader.resources.Remove('repositories')
+            $repositorySelection = 'all'
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+
+            & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
+
+            $line = Get-Content -LiteralPath $environmentPath | Where-Object { $_ -like 'PLATFORM_GITHUB_TOKENS=*' }
+            $tokens = $line.Substring('PLATFORM_GITHUB_TOKENS='.Length) | ConvertFrom-Json -AsHashtable
+            @($tokens.Keys | Sort-Object) | Should -Be @('actions', 'workloads')
+            Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+    }
+
     It 'rejects installations outside the declared organization scope' {
         $actualOrganizations = @('platform', 'unrelated')
 

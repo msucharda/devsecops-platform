@@ -119,6 +119,21 @@ function ConvertTo-JwtSegment {
     [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 }
 
+# security-check: token-app-repository-selection
+function Assert-AppRepositorySelection {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Installation,
+        [Parameter(Mandatory)][string[]] $Expected,
+        [Parameter(Mandatory)][string] $Organization
+    )
+
+    if ($Installation['repository_selection'] -isnot [string] -or
+        $Installation['repository_selection'] -cnotin $Expected) {
+        throw "Actual App repository scope for '$Organization' differs from the declared scope."
+    }
+}
+
 # security-check: token-app-permission
 function Assert-AppPermission {
     [CmdletBinding()]
@@ -306,8 +321,9 @@ try {
         $selected = $repositories -and $repositories.Contains($organization)
         $noRepositoryAccess = $repositoryResourcesDeclared -and $repositories.Count -eq 0
         $selection = if ($selected) { 'selected' } else { 'all' }
-        if (-not $enterpriseInstallation -and -not $Authorization -and -not $noRepositoryAccess -and $installation['repository_selection'] -cne $selection) {
-            throw "Actual App repository scope for '$organization' differs from the declared scope."
+        if (-not $enterpriseInstallation -and -not $Authorization) {
+            $allowedSelections = if ($noRepositoryAccess) { @('selected') } else { @($selection) }
+            Assert-AppRepositorySelection -Installation $installation -Expected $allowedSelections -Organization $organization
         }
         $tokenRequest = if ($enterpriseInstallation) { $null } else { @{ permissions = $expected['permissions'] } }
         # The drift report token keeps the installation repository scope so that /installation/repositories

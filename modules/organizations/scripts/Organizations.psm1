@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:ApiVersion = '2026-03-10'
 # The installation schema documents all and selected; the create operation also accepts none.
-$script:RepositorySelections = @('all', 'selected', 'none')
+$script:RepositorySelections = @('all', 'selected')
 $script:RunbookReference = 'modules/organizations/README.md'
 
 function Assert-OrganizationsApiUrl {
@@ -39,6 +39,43 @@ function Assert-OrganizationsId {
     if (($Value -isnot [int] -and $Value -isnot [long]) -or $Value -lt 1) { throw "$Description has no valid ID." }
 }
 
+# https://docs.github.com/en/enterprise-cloud@latest/rest/using-the-rest-api/using-pagination-in-the-rest-api
+# security-check: organizations-api-pagination
+function Get-OrganizationsNextPage {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][AllowEmptyCollection()][object[]] $Link,
+        [Parameter(Mandatory)][string] $Origin,
+        [Parameter(Mandatory)][string] $CurrentUri,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.HashSet[string]] $Visited
+    )
+
+    if ($null -eq $Link) { return $null }
+    if ($Link.Count -eq 0) { throw 'GitHub returned an unreadable pagination header.' }
+    $null = $Visited.Add(([uri] $CurrentUri).AbsoluteUri)
+    $next = $null
+    foreach ($header in $Link) {
+        if ($header -isnot [string]) { throw 'GitHub returned an unreadable pagination header.' }
+        foreach ($part in $header.Split(',')) {
+            if ($part -notmatch '^\s*<(?<url>[^>]+)>\s*;\s*rel="(?<relation>next|prev|first|last)"\s*$') {
+                throw 'GitHub returned an unreadable pagination link.'
+            }
+            if ($Matches['relation'] -ne 'next') { continue }
+            if ($null -ne $next) { throw 'GitHub returned multiple next-page links.' }
+            $next = $Matches['url']
+            if (-not $next.StartsWith("$Origin/", [StringComparison]::Ordinal)) {
+                throw "GitHub returned a pagination link outside '$Origin'."
+            }
+            $nextUri = [uri] $next
+            if ($nextUri.Fragment) {
+                throw 'GitHub returned an unreadable pagination target.'
+            }
+            if ($Visited.Contains($nextUri.AbsoluteUri)) { throw 'GitHub returned a cyclic pagination link.' }
+        }
+    }
+    return $next
+}
+
 function Invoke-OrganizationsApi {
     <#
     .SYNOPSIS
@@ -49,7 +86,7 @@ function Invoke-OrganizationsApi {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
-        [Parameter(Mandatory)][ValidateSet('GET', 'POST', 'DELETE')][string] $Method,
+        [Parameter(Mandatory)][ValidateSet('GET', 'POST', 'PUT', 'DELETE')][string] $Method,
         [Parameter(Mandatory)][string] $Path,
         [AllowNull()][object] $Body,
         [int[]] $AcceptStatus = @(200),
@@ -67,6 +104,7 @@ function Invoke-OrganizationsApi {
     $operation = "$Method $($Path.Split('?')[0])"
     $uri = "$origin$Path"
     $items = [Collections.Generic.List[object]]::new()
+    $visited = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     while ($uri) {
         $request = @{
             Uri = $uri; Method = $Method; Headers = $headers; SkipHttpErrorCheck = $true
@@ -84,18 +122,7 @@ function Invoke-OrganizationsApi {
         if (-not $AllPages) { return @{ Status = $status; Body = $parsed } }
         if ($parsed -isnot [array]) { throw "GitHub returned no JSON array for $operation." }
         foreach ($item in $parsed) { $items.Add($item) }
-        $uri = $null
-        foreach ($link in @($reply.Headers['Link'])) {
-            foreach ($part in ([string] $link).Split(',')) {
-                if ($part -match '^\s*<(?<url>[^>]+)>\s*;\s*rel="next"\s*$') {
-                    $next = $Matches['url']
-                    if (-not $next.StartsWith("$origin/", [StringComparison]::Ordinal)) {
-                        throw "GitHub returned a pagination link outside '$origin'."
-                    }
-                    $uri = $next
-                }
-            }
-        }
+        $uri = Get-OrganizationsNextPage -Link $reply.Headers['Link'] -Origin $origin -CurrentUri $uri -Visited $visited
     }
     return @{ Status = 200; Body = $items.ToArray() }
 }
@@ -346,23 +373,29 @@ function Get-OrganizationInstallationRepository {
     }
 }
 
-function Assert-OrganizationInstallationWithoutRepository {
+# security-check: organizations-installation-selection
+function Assert-OrganizationInstallationSelection {
     <#
     .SYNOPSIS
-    Fails unless the installation has no repository access. A 'selected' installation must list no repository.
+    Requires the manifest selection: all repositories, or an empty repository list for none.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
         [Parameter(Mandatory)][string] $Enterprise,
         [Parameter(Mandatory)][string] $Organization,
-        [Parameter(Mandatory)][System.Collections.IDictionary] $Installation
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Installation,
+        [ValidateSet('none', 'all', IgnoreCase = $false)][string] $RepositorySelection = 'none'
     )
 
     $clientId = $Installation['client_id']
-    # The documented response enum is all | selected; 'none' is accepted only as an undocumented value and proven
-    # by the same empty repository list as 'selected'.
-    if ($Installation['repository_selection'] -cnotin @('selected', 'none')) {
+    if ($RepositorySelection -ceq 'all') {
+        if ($Installation['repository_selection'] -cne 'all') {
+            throw "App '$clientId' in '$Organization' must have access to all repositories; repository_selection is '$($Installation['repository_selection'])'."
+        }
+        return
+    }
+    if ($Installation['repository_selection'] -cne 'selected') {
         throw "App '$clientId' is installed in '$Organization' with access to all repositories. The module installs it without repository access; reduce the access or uninstall the App and rerun the apply."
     }
     $repositories = @(Get-OrganizationInstallationRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization `
@@ -386,13 +419,15 @@ function Assert-OrganizationAppAdoptable {
         [Parameter(Mandatory)][string] $ApiUrl,
         [Parameter(Mandatory)][string] $Enterprise,
         [Parameter(Mandatory)][string] $Organization,
-        [Parameter(Mandatory)][AllowEmptyString()][string] $ClientId
+        [Parameter(Mandatory)][AllowEmptyString()][string] $ClientId,
+        [ValidateSet('none', 'all', IgnoreCase = $false)][string] $RepositorySelection = 'none'
     )
 
     if ($ClientId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9.]{0,63}\z') { throw "App client ID '$ClientId' is not valid." }
     $existing = Find-OrganizationAppInstallation -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -ClientId $ClientId
     if ($existing) {
-        Assert-OrganizationInstallationWithoutRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -Installation $existing
+        Assert-OrganizationInstallationSelection -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization `
+            -Installation $existing -RepositorySelection $RepositorySelection
     }
     return $existing
 }
@@ -400,23 +435,25 @@ function Assert-OrganizationAppAdoptable {
 function Install-OrganizationApp {
     <#
     .SYNOPSIS
-    Installs a GitHub App into the organization without repository access. Repeating the call is idempotent.
+    Installs a GitHub App with the manifest's repository selection. Repeating the call is idempotent.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
         [Parameter(Mandatory)][string] $Enterprise,
         [Parameter(Mandatory)][string] $Organization,
-        [Parameter(Mandatory)][AllowEmptyString()][string] $ClientId
+        [Parameter(Mandatory)][AllowEmptyString()][string] $ClientId,
+        [ValidateSet('none', 'all', IgnoreCase = $false)][string] $RepositorySelection = 'none'
     )
 
-    $existing = Assert-OrganizationAppAdoptable -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -ClientId $ClientId
+    $existing = Assert-OrganizationAppAdoptable -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization `
+        -ClientId $ClientId -RepositorySelection $RepositorySelection
     if ($existing) { return $existing }
 
     # Request body of POST .../installations; 'none' needs an App without repository permissions.
     $reply = Invoke-OrganizationsApi -ApiUrl $ApiUrl -Method POST -AcceptStatus @(200, 201) `
         -Path "/enterprises/$Enterprise/apps/organizations/$Organization/installations" `
-        -Body @{ client_id = $ClientId; repository_selection = 'none' }
+        -Body @{ client_id = $ClientId; repository_selection = $RepositorySelection }
     $installation = $reply.Body
     if ($installation -isnot [System.Collections.IDictionary]) { throw "GitHub returned no installation for App '$ClientId' in '$Organization'." }
     Assert-OrganizationsId -Value $installation['id'] -Description "The installation of App '$ClientId' in '$Organization'"
@@ -429,14 +466,17 @@ function Install-OrganizationApp {
         -not [string]::Equals($account['login'], $Organization, [StringComparison]::OrdinalIgnoreCase)) {
         throw "The installation of App '$ClientId' does not belong to organization '$Organization'."
     }
-    if ($installation['repository_selection'] -isnot [string] -or $installation['repository_selection'] -cnotin @('selected', 'none')) {
-        throw "The installation of App '$ClientId' in '$Organization' has repository_selection '$($installation['repository_selection'])' instead of no repository access."
+    $acceptedSelections = if ($RepositorySelection -ceq 'all') { @('all') } else { @('selected', 'none') }
+    if ($installation['repository_selection'] -isnot [string] -or $installation['repository_selection'] -cnotin $acceptedSelections) {
+        $expected = if ($RepositorySelection -ceq 'all') { 'all repositories' } else { 'no repository access' }
+        throw "The installation of App '$ClientId' in '$Organization' has repository_selection '$($installation['repository_selection'])' instead of $expected."
     }
     $listed = Find-OrganizationAppInstallation -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -ClientId $ClientId
     if (-not $listed -or $listed.id -ne $installation['id']) {
         throw "The installation of App '$ClientId' is not listed in '$Organization'."
     }
-    Assert-OrganizationInstallationWithoutRepository -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization -Installation $listed
+    Assert-OrganizationInstallationSelection -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $Organization `
+        -Installation $listed -RepositorySelection $RepositorySelection
     return $listed
 }
 
@@ -491,6 +531,56 @@ function Get-InstanceOrganizationState {
                 $item
             })
     return [ordered]@{ exists = $true; login = $existing; installations = $installations }
+}
+
+# security-check: organizations-installation-scope
+function Get-OrganizationAppScopeViolation {
+    <#
+    .SYNOPSIS
+    Reads all enterprise organizations and reports managed Apps installed outside their manifest scope.
+    An existing installation with the wrong repository selection fails the read.
+    Missing installations are planned creations, not scope violations.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][string] $Enterprise,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Installation
+    )
+
+    foreach ($clientId in $Installation.Keys) {
+        if ($clientId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9.]{0,63}\z') { throw "App client ID '$clientId' is not valid." }
+        $desired = $Installation[$clientId]
+        if ($desired -isnot [System.Collections.IDictionary]) { throw "App '$clientId' has no installation contract." }
+        if ($desired['organizations'] -isnot [array] -or $desired['organizations'].Count -eq 0) {
+            throw "App '$clientId' must declare its target organizations."
+        }
+        foreach ($organization in $desired['organizations']) {
+            Assert-OrganizationsName -Value $organization -Description "A target organization of App '$clientId'"
+        }
+        if ($desired['repository_selection'] -cnotin @('none', 'all')) {
+            throw "App '$clientId' must declare repository_selection none or all."
+        }
+    }
+    $violations = [Collections.Generic.List[string]]::new()
+    foreach ($organization in @(Get-EnterpriseOrganizationLogin -ApiUrl $ApiUrl -Enterprise $Enterprise)) {
+        foreach ($actual in @(Get-OrganizationAppInstallation -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $organization)) {
+            if (@($Installation.Keys) -cnotcontains $actual.client_id) { continue }
+            $desired = $Installation[$actual.client_id]
+            $matches = @($desired['organizations'] | Where-Object {
+                    [string]::Equals($_, $organization, [StringComparison]::OrdinalIgnoreCase)
+                })
+            if ($matches.Count -eq 0) {
+                $violations.Add("App '$($actual.client_id)' is installed in unexpected organization '$organization'.")
+            }
+            else {
+                Assert-OrganizationInstallationSelection -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $organization `
+                    -Installation $actual -RepositorySelection $desired['repository_selection']
+            }
+        }
+    }
+    return $violations.ToArray()
 }
 
 function Get-OrganizationStateViolation {
@@ -557,4 +647,4 @@ function ConvertTo-OrganizationStateResult {
 Export-ModuleMember -Function Invoke-OrganizationsApi, Invoke-OrganizationsGraphQL, Get-EnterpriseOrganizationLogin,
 Find-EnterpriseOrganization, Assert-EnterpriseOrganizationAdoptable, New-EnterpriseOrganization, Assert-EnterpriseOrganizationRemoved, Get-OrganizationAppInstallation,
 Find-OrganizationAppInstallation, Get-OrganizationInstallationRepository, Assert-OrganizationAppAdoptable, Install-OrganizationApp, Uninstall-OrganizationApp,
-Get-InstanceOrganizationState, Get-OrganizationStateViolation, ConvertTo-OrganizationStateResult
+Get-InstanceOrganizationState, Get-OrganizationAppScopeViolation, Get-OrganizationStateViolation, ConvertTo-OrganizationStateResult

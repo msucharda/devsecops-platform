@@ -4,6 +4,78 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'organizations-api-pagination'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*Assignment pagination*', '*incomplete assignment listing*') }
+            )
+        }
+        @{
+            Name = 'token-app-repository-selection'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubAppToken.Tests.ps1'; FullName = @('*Explicit manifest installation selection*', '*issues a read-only module token map with <Selection> repository selection*', '*issues an organization-only module token without repository access*') }
+            )
+        }
+        @{
+            Name = 'platform-app-manifest-scope'
+            Tests = @(
+                @{ Path = 'tools/tests/AppInstallationContract.Tests.ps1'; FullName = @('Manifest App installation selection*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-predefined-role'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*accepts the documented nullable-role*', '*array masquerading as the <Case> enum*', '*selected role with*', '*required role organization*', '*scalar permission*', '*unsupported role organization*', '*numeric organization owner*', '*role that belongs to another organization*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-team-identity'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*accepts the documented nullable-role*', '*array masquerading as the <Case> enum*', '*numeric organization owner*', '*numeric team slug*', '*rejects the security team with*', '*security team belonging to another organization*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-assignment'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*accepts the documented nullable-role*', '*array masquerading as an assignment*', '*numeric team slug*', '*non-object role assignment*', '*missing assignment*', '*documented assignment*', '*enterprise team as the organization team*', '*unreadable team role assignment*', '*duplicate assignments*', '*matches only the team*', '*unrelated*', '*optional assignment*', '*saved team ID*', '*replacement team appearing*', '*saved team after a rename*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-state'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*accepts the documented nullable-role*', '*unsupported roles wrapper*', '*unreadable role array item*', '*non-object full team*', '*missing or ambiguous security_manager*', '*unreadable roles instead of an array*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-team-state'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*reads the predefined role*', '*non-object full team*', '*documented team absence*', '*team lookup*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-bound-identity'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*assigns only the managed*', '*accepts a pre-existing assignment*', '*changed stored*', '*removes only the declared*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-assignment-result'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*assigns only the managed*', '*accepts a pre-existing assignment*', '*recovers a completed assignment*', '*PUT success response*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-removal-result'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*removes only the declared*', '*removes a pre-existing assignment*', '*recovers a completed removal*', '*DELETE success response*', '*DELETE 404*', '*preserves an unrelated*', '*saved team ID*', '*replacement team appearing*', '*changed stored role before removing*', '*saved team after a rename*', '*replacement created after*', '*team disappearance after DELETE*') }
+            )
+        }
+        @{
+            Name = 'organization-roles-input'
+            Tests = @(
+                @{ Path = 'tools/tests/OrganizationRolePrograms.Tests.ps1'; FullName = @('*returns a complete string map*', '*assigns the bound role*', '*validates the pre-existing identity*', '*rejects a non-object reader input*', '*rejects a single-element array*', '*rejects an invalid reader field*', '*rejects an invalid persisted ID*') }
+            )
+        }
+        @{
             Name = 'deployment-pr-branch'
             Tests = @(
                 @{ Path = 'tools/tests/PullRequestAuthorization.Tests.ps1'; FullName = @('*vendoring branch*', '*ordinary branch*', '*unreadable head branch*') }
@@ -49,6 +121,18 @@
             Name = 'module-organization-token'
             Tests = @(
                 @{ Path = 'tools/tests/OrganizationScope.Tests.ps1'; FullName = @('Organization token isolation*') }
+            )
+        }
+        @{
+            Name = 'organizations-installation-scope'
+            Tests = @(
+                @{ Path = 'tools/tests/Organizations.Tests.ps1'; FullName = @('*Manifest installation scope*') }
+            )
+        }
+        @{
+            Name = 'organizations-installation-selection'
+            Tests = @(
+                @{ Path = 'tools/tests/Organizations.Tests.ps1'; FullName = @('*App installations*installs the App without repository access*', '*App installations*installs an App on all repositories*', '*App installations*does not reinstall an App*', '*App installations*refuses an existing*', '*App installations*requires all repositories*') }
             )
         }
         @{
@@ -353,6 +437,31 @@
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
+        @{
+            Mutant = 'Test-SecurityManagerAssignment: operator ''-ceq'' -> -ieq in ''$entry[''type''] -ceq ''enterprise''''#1'
+            Reason = 'Equivalent mutant: the preceding scalar-string and case-sensitive enum guards permit only the exact values organization and enterprise.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/105'
+        }
+        @{
+            Mutant = 'Test-SecurityManagerAssignment: operator ''-cin'' -> -iin in ''$matched[0][''assignment''] -cin @(''direct'', ''mixed'')''#1'
+            Reason = 'Equivalent mutant: each matched assignment has already passed the scalar-string and case-sensitive direct/indirect/mixed enum guards.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/105'
+        }
+        @{
+            Mutant = 'Get-OrganizationAppScopeViolation: operator ''-cnotmatch'' -> -inotmatch in ''$clientId -cnotmatch ''^[A-Za-z0-9][A-Za-z0-9.]{0,63}\z''''#1'
+            Reason = 'Equivalent mutant: the client ID pattern explicitly includes both uppercase and lowercase ASCII letters, digits and dots. Case-insensitive matching accepts no additional value.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/105'
+        }
+        @{
+            Mutant = 'Assert-OrganizationInstallationSelection: operator ''-cne'' -> -ine in ''$Installation[''repository_selection''] -cne ''all''''#1'
+            Reason = 'Equivalent mutant: every caller supplies an installation returned by Get-OrganizationAppInstallation, which rejects any selection other than the exact lowercase values all and selected before this comparison.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/105'
+        }
+        @{
+            Mutant = 'Assert-OrganizationInstallationSelection: operator ''-cne'' -> -ine in ''$Installation[''repository_selection''] -cne ''selected''''#1'
+            Reason = 'Equivalent mutant: every caller supplies an installation returned by Get-OrganizationAppInstallation, which rejects any selection other than the exact lowercase values all and selected before this comparison.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/105'
+        }
         @{
             Mutant = 'Assert-VendoringPublishMain: operator ''-cne'' -> -ine in ''(Get-VendoringMainRef) -cne $mainSha''#1'
             Reason = 'Equivalent mutant: both the captured SHA and every subsequent SHA come from Get-VendoringMainRef, whose case-sensitive pattern requires exactly 40 lowercase hexadecimal characters. Case-insensitive comparison cannot accept a different value in that domain.'

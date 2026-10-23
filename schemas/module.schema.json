@@ -175,8 +175,15 @@
           "properties": {
             "enterprise": { "const": true },
             "organizations": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-            "repositories": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
-          }
+            "repositories": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+            "installationSelection": { "enum": ["none", "all"] }
+          },
+          "allOf": [
+            {
+              "if": { "required": ["installationSelection"] },
+              "then": { "required": ["organizations"], "not": { "required": ["repositories"] } }
+            }
+          ]
         },
         "purpose": { "const": "organization-rulesets-full-read" }
       }

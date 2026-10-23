@@ -309,6 +309,83 @@ jobs:
         if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh
         run: ./trusted/platform/tools/Remove-PlatformGitHubToken.ps1
+  module_organization_roles:
+    name: 'organization-roles'
+    runs-on: ubuntu-latest
+    needs: [authorize, select, module_organizations]
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-roles') && needs.module_organizations.result == 'success' }}
+    environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['organization-roles']) }}
+    outputs:
+      changes: ${{ steps.run.outputs.changes }}
+      organizations: ${{ steps.run.outputs.organizations }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: 'true'
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
+      PLATFORM_STATE_RESOURCE_GROUP: ${{ vars.PLATFORM_STATE_RESOURCE_GROUP }}
+    steps:
+      - name: Check out trusted authorization tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Check out the immutable candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.authorize.outputs.revision }}
+          path: candidate
+          persist-credentials: false
+      - name: Install runtime dependencies
+        shell: pwsh
+        run: ./trusted/platform/tools/Install-ToolDependencies.ps1
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - name: Sign in to Azure with the phase managed identity
+        uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Issue a phase-scoped enterprise App installation token
+        shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/New-PlatformGitHubToken.ps1 -Module 'organization-roles' -Phase plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules
+      - name: Download outputs of organizations
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: plan-outputs-organizations
+          path: ./artifacts/prerequisites
+      - name: Run module
+        id: run
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ env.GH_TOKEN }}
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'organization-roles' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -GitHubOutputPath $env:GITHUB_OUTPUT
+      - name: Upload public module outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: plan-outputs-organization-roles
+          path: ./artifacts/module-outputs/organization-roles.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Revoke the job installation tokens
+        if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
+        shell: pwsh
+        run: ./trusted/platform/tools/Remove-PlatformGitHubToken.ps1
   module_organization_rulesets:
     name: 'organization-rulesets'
     runs-on: ubuntu-latest
@@ -543,7 +620,7 @@ jobs:
         run: ./trusted/platform/tools/Remove-PlatformGitHubToken.ps1
   report_drift:
     name: Open or update the drift issue
-    needs: [authorize, validate, select, module_actions_catalog, module_emu_identity, module_enterprise_baseline, module_organization_rulesets, ruleset_plan_organization_rulesets, module_organizations]
+    needs: [authorize, validate, select, module_actions_catalog, module_emu_identity, module_enterprise_baseline, module_organization_roles, module_organization_rulesets, ruleset_plan_organization_rulesets, module_organizations]
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: drift-report

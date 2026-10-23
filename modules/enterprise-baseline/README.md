@@ -167,6 +167,7 @@ Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu
 ## Identita
 
 - Běžný plan používá installation token s `Organization Administration: read`; apply používá `write` pro organizace instance. Stejná oprávnění dokumentace uvádí pro čtení a změny code security configurations, custom patterns, pattern configurations a politiky GitHub Actions organizace.
+- Při registraci obou Apps zahrň i `metadata: read`. Manifest deklaruje `installationSelection: all`; ruční instalace musí zahrnout všechny repozitáře cílových organizací, ne `No repositories`. Plan jiný výběr odmítne.
 - PR platformního týmu může spustit plan job automaticky, bez dalšího schválení security týmem. Forky, jiní autoři ani App-created PR credentials automaticky nedostanou.
 - Apply nadále schvaluje platformní tým a navíc security tým.
 - Před nasazením se musí na GHE.com ověřit potřebná API a oprávnění. Nepodporovaná operace není důvod přidat PAT.

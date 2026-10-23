@@ -70,6 +70,7 @@
         "fineGrainedPatApprovalRequired": { "$ref": "#/definitions/confirmation" },
         "patMaxLifetime90Days": { "$ref": "#/definitions/confirmation" },
         "githubAppAvailabilityVerified": { "$ref": "#/definitions/confirmation" },
+        "organizationSecurityTeamsLinked": { "$ref": "#/definitions/confirmation" },
         "liveWorkflowsPromoted": { "$ref": "#/definitions/confirmation" }
       }
     },
