@@ -103,9 +103,14 @@ CI workflow `Source CI` spouští dva joby navíc k Pester testům. Oba běží 
 
 Lokální validace musí běžet ve stejném režimu jako CI.
 
-- Kroky CI spouštěj příkazy z `.github/workflows/ci.yml` beze změny parametrů.
-- Pester musí běžet pod `Set-StrictMode -Version Latest` a ve verzi z `tools/requirements.psd1`. Bez StrictMode test projde i při čtení nedefinované proměnné a v CI pak selže.
-- Cílený běh jednoho testovacího souboru nenahrazuje úplný běh před pushem.
+- Před každým pushem spusť `./tools/Invoke-LocalCi.ps1` (výchozí režim `-Changed`). Platí to i pro změny jen v dokumentaci. Push je povolený jen po návratovém kódu 0.
+  - `-Changed` spustí levné kroky CI celé. Pester, harness přerušení, mutační testy a Terraform omezí na soubory, které souvisejí se změnou proti `origin/main`.
+  - `-Plan` vypíše výběr kroků, testovacích souborů a Terraform roots bez spuštění.
+  - Návratový kód 2 znamená chybějící nástroj, špatnou verzi modulu nebo chybný parametr. Skript vypíše instrukci k opravě.
+- Plnou sadu spouští CI. `-Full` spusť lokálně jen tehdy, když CI není dostupné, když o to požádá uživatel nebo zadavatel úkolu, nebo když `-Changed` hlásí eskalaci.
+- Pester spouštěj jen přes `tools/Invoke-Tests.ps1` (cílený běh přes `-Path`). Skript nastaví `Set-StrictMode -Version Latest` a verzi Pester z `tools/requirements.psd1`. Bez StrictMode test projde i při čtení nedefinované proměnné a v CI pak selže.
+- Kroky CI, které `Invoke-LocalCi.ps1` nepokrývá, spouštěj příkazy z `.github/workflows/ci.yml` beze změny parametrů.
+- Na CI čekej přes `./tools/Wait-PullRequestChecks.ps1 -Pr <číslo>`. Skript se vrátí nejpozději po `-MaxSeconds` (výchozí hodnota 230 s) s řádkem stavu checks a Copilot review. Návratové kódy: 0 prošlo, 1 selhalo, 2 stále běží, 3 chyba.
 
 ### Security checkpoint během implementace
 

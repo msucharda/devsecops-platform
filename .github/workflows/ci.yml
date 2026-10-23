@@ -2,7 +2,15 @@ name: Source CI
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
+
+# One group per pull request ref, so a new push cancels the older run of that pull request. Every other run
+# gets its own group: a shared group would replace a pending main or tag run even without cancel-in-progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
