@@ -78,11 +78,14 @@ Describe 'Deployment workflow generation' {
 
         $manifest = (Get-PlatformModuleGraph -ModulesPath $released)['enterprise-baseline']
 
-        $manifest.permissions.githubApp.plan.permissions.Keys | Should -Be @('organization_administration')
         $manifest.permissions.githubApp.plan.permissions.organization_administration | Should -Be 'read'
         $manifest.permissions.githubApp.apply.permissions.organization_administration | Should -Be 'write'
         $manifest.permissions.githubApp.ContainsKey('rulesetPlan') | Should -BeFalse
         foreach ($phase in @('plan', 'apply')) {
+            @($manifest.permissions.githubApp[$phase].permissions.Keys | Sort-Object) |
+                Should -Be @('metadata', 'organization_administration')
+            $manifest.permissions.githubApp[$phase].permissions.metadata | Should -BeExactly 'read'
+            $manifest.permissions.githubApp[$phase].resources.installationSelection | Should -BeExactly 'all'
             $manifest.permissions.githubApp[$phase].resources.organizations | Should -Be 'target_organizations'
         }
         @($manifest.permissions.adminPat) | Should -BeNullOrEmpty
