@@ -12,8 +12,8 @@
   },
   "required": {
     "": ["id", "node_id", "name", "url", "html_url", "created_at", "updated_at"],
-    "protection_rules[]": ["id", "node_id", "type"],
-    "protection_rules[].reviewers[].reviewer": ["id", "node_id", "url", "members_url", "name", "description", "permission", "html_url", "repositories_url", "slug", "parent", "type"]
+    "protection_rules.[]": ["id", "node_id", "type"],
+    "protection_rules.[].reviewers.[].reviewer": ["id", "node_id", "url", "members_url", "name", "description", "permission", "html_url", "repositories_url", "slug", "parent", "type"]
   },
   "body": {
     "id": 161088068,
