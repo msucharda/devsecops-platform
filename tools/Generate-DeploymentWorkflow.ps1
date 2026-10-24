@@ -62,7 +62,7 @@ function Add-DeploymentJob {
     $prefix = if ($Phase -eq 'apply') { 'apply_' } elseif ($Phase -eq 'rulesetPlan') { 'ruleset_plan_' } else { 'module_' }
     $prerequisitePrefix = if ($Phase -eq 'apply') { 'apply_' } else { 'module_' }
     $needs = @('authorize', 'select')
-    if ($Phase -eq 'apply') { $needs += 'approve_apply' }
+    if ($Phase -eq 'apply') { $needs += @('approve_apply', "module_$suffix") }
     $needs += @($Manifest['prerequisites'] | ForEach-Object { $prerequisitePrefix + $_.Replace('-', '_') })
     $prerequisiteRulesetJobs = @()
     if ($Phase -ne 'apply') {
@@ -73,7 +73,7 @@ function Add-DeploymentJob {
     }
     if ($Phase -eq 'rulesetPlan') { $needs += "module_$suffix" }
     $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), '$name')"
-    if ($Phase -eq 'apply') { $condition += " && needs.approve_apply.result == 'success'" }
+    if ($Phase -eq 'apply') { $condition += " && needs.approve_apply.result == 'success' && needs.module_$suffix.result == 'success'" }
     foreach ($prerequisite in $Manifest['prerequisites']) {
         $condition += " && needs.$prerequisitePrefix$($prerequisite.Replace('-', '_')).result == 'success'"
     }
@@ -336,7 +336,7 @@ Add-WorkflowBlock @'
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
+    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:

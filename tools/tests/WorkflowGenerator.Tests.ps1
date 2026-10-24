@@ -156,6 +156,46 @@ Describe 'Deployment workflow generation' {
         $workflow.jobs.apply_application.needs | Should -Contain 'apply_foundation'
     }
 
+    It 'offers apply approval for an instance selecting only emu-identity and organizations' {
+        Import-Module (Join-Path $toolsPath 'PlatformTools.psm1') -Force
+        $released = Join-Path (Split-Path $toolsPath -Parent) 'modules'
+        $graph = Get-PlatformModuleGraph -ModulesPath $released
+        $instance = @{ modules = @{ 'emu-identity' = @{}; organizations = @{} } }
+        $selected = Get-PlatformModuleSelection -Instance $instance -Modules $graph
+        $selected | Should -Be @('emu-identity', 'organizations')
+        $output = Join-Path $TestDrive 'subset-deploy.yml'
+
+        & $generator -ModulesPath $released -OutputPath $output
+
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        $workflow.jobs.plan_complete.needs | Should -Contain 'module_enterprise_baseline'
+        $workflow.jobs.module_enterprise_baseline.if | Should -Match "contains\(fromJSON\(needs.select.outputs.modules\), 'enterprise-baseline'\)"
+        $workflow.jobs.approve_apply.needs | Should -Be @('authorize', 'select', 'plan_complete')
+        $workflow.jobs.approve_apply.if | Should -Be '${{ !cancelled() && needs.authorize.result == ''success'' && needs.select.result == ''success'' && needs.plan_complete.result == ''success'' && github.ref == ''refs/heads/main'' && github.event_name != ''pull_request_target'' && needs.authorize.outputs.allowed == ''true'' && needs.select.outputs.modules != ''[]'' }}'
+    }
+
+    It 'requires successful approval and the own plan for every apply job in <Graph>' -ForEach @(
+        @{ Graph = 'released modules'; RelativePath = '../modules' }
+        @{ Graph = 'fixture modules'; RelativePath = 'tests/fixtures/modules' }
+    ) {
+        $output = Join-Path $TestDrive 'apply-plans.yml'
+        & $generator -ModulesPath (Join-Path $toolsPath $RelativePath) -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        $applyJobs = @($workflow.jobs.Keys | Where-Object { $_ -like 'apply_*' })
+        $applyJobs.Count | Should -BeGreaterThan 0
+
+        foreach ($id in $applyJobs) {
+            $job = $workflow.jobs[$id]
+            $plan = $id -replace '^apply_', 'module_'
+            $job.needs | Should -Contain 'approve_apply'
+            $job.needs | Should -Contain $plan
+            $job.if | Should -Match '^\$\{\{ !cancelled\(\) && '
+            $job.if | Should -Match ([regex]::Escape(" && needs.approve_apply.result == 'success'"))
+            $job.if | Should -Match ([regex]::Escape(" && needs.$plan.result == 'success'"))
+            $job.if | Should -Not -Match '\|\|'
+        }
+    }
+
     It 'ships an instance example accepted by its release schema and assigns the platform team as repository owner' {
         $template = Join-Path (Split-Path $toolsPath -Parent) 'templates/instance'
         { & (Join-Path $toolsPath 'Test-InstanceConfiguration.ps1') -InstancePath (Join-Path $template 'instance.yaml') } |

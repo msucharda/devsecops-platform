@@ -642,7 +642,7 @@ jobs:
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
+    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:
@@ -652,8 +652,8 @@ jobs:
   apply_actions_catalog:
     name: 'actions-catalog (apply)'
     runs-on: ubuntu-latest
-    needs: [authorize, select, approve_apply, apply_organization_rulesets, apply_organizations]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'actions-catalog') && needs.approve_apply.result == 'success' && needs.apply_organization_rulesets.result == 'success' && needs.apply_organizations.result == 'success' }}
+    needs: [authorize, select, approve_apply, module_actions_catalog, apply_organization_rulesets, apply_organizations]
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'actions-catalog') && needs.approve_apply.result == 'success' && needs.module_actions_catalog.result == 'success' && needs.apply_organization_rulesets.result == 'success' && needs.apply_organizations.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['actions-catalog'] }}
     permissions:
       contents: read
@@ -730,8 +730,8 @@ jobs:
   apply_emu_identity:
     name: 'emu-identity (apply)'
     runs-on: ubuntu-latest
-    needs: [authorize, select, approve_apply]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'emu-identity') && needs.approve_apply.result == 'success' }}
+    needs: [authorize, select, approve_apply, module_emu_identity]
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'emu-identity') && needs.approve_apply.result == 'success' && needs.module_emu_identity.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['emu-identity'] }}
     permissions:
       contents: read
@@ -798,8 +798,8 @@ jobs:
   apply_enterprise_baseline:
     name: 'enterprise-baseline (apply)'
     runs-on: ubuntu-latest
-    needs: [authorize, select, approve_apply, apply_actions_catalog, apply_organizations]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.approve_apply.result == 'success' && needs.apply_actions_catalog.result == 'success' && needs.apply_organizations.result == 'success' }}
+    needs: [authorize, select, approve_apply, module_enterprise_baseline, apply_actions_catalog, apply_organizations]
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_actions_catalog.result == 'success' && needs.apply_organizations.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
     permissions:
       contents: read
@@ -876,8 +876,8 @@ jobs:
   apply_organization_roles:
     name: 'organization-roles (apply)'
     runs-on: ubuntu-latest
-    needs: [authorize, select, approve_apply, apply_organizations]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-roles') && needs.approve_apply.result == 'success' && needs.apply_organizations.result == 'success' }}
+    needs: [authorize, select, approve_apply, module_organization_roles, apply_organizations]
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-roles') && needs.approve_apply.result == 'success' && needs.module_organization_roles.result == 'success' && needs.apply_organizations.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organization-roles'] }}
     permissions:
       contents: read
@@ -949,8 +949,8 @@ jobs:
   apply_organization_rulesets:
     name: 'organization-rulesets (apply)'
     runs-on: ubuntu-latest
-    needs: [authorize, select, approve_apply, apply_organizations]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-rulesets') && needs.approve_apply.result == 'success' && needs.apply_organizations.result == 'success' }}
+    needs: [authorize, select, approve_apply, module_organization_rulesets, apply_organizations]
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-rulesets') && needs.approve_apply.result == 'success' && needs.module_organization_rulesets.result == 'success' && needs.apply_organizations.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organization-rulesets'] }}
     permissions:
       contents: read
@@ -1027,8 +1027,8 @@ jobs:
   apply_organizations:
     name: 'organizations (apply)'
     runs-on: ubuntu-latest
-    needs: [authorize, select, approve_apply]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organizations') && needs.approve_apply.result == 'success' }}
+    needs: [authorize, select, approve_apply, module_organizations]
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organizations') && needs.approve_apply.result == 'success' && needs.module_organizations.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organizations'] }}
     permissions:
       contents: read
