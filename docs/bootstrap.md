@@ -258,6 +258,8 @@ Podle [GitHub kontraktu immutable subject claims](https://docs.github.com/en/act
 
 `approve-apply` vyžaduje platformní tým. Apply modulu `enterprise-baseline` navíc vyžaduje security tým. GitHub v jednom environmentu vyžaduje schválení pouze jednoho z uvedených reviewerů. Teardown proto používá dva navazující gate environmenty: `approve-teardown-platform` vyžaduje platformní tým a `teardown` security tým. Oba nemají secrets, variables ani federated credentials. Workflow `teardown` spustí druhý gate až po úspěchu prvního. Joby destroy čerpají credentials v apply environmentech modulů, mimo oba gate environmenty.
 
+Brána `approve_apply` vyžaduje úspěšné joby `authorize`, `select` a `plan_complete`, povolenou autorizaci a neprázdný výběr modulů na `main` mimo PR. Přeskočené joby nevybraných modulů schválení neblokují. Zrušený běh schválení nenabídne. Každý apply job navíc vyžaduje úspěšnou společnou bránu, vlastní plan a apply svých předpokladů.
+
 ### Opakování, evidence a rotace
 
 Bootstrap zachová `bootstrap-resources.json` mimo source release i checkout spouštěného skriptu. Inventory eviduje identifikátor nasazení, identifikátory potvrzených prostředků, deklarované a ověřené Apps, instalace, veřejné fingerprinty, vlastníka, termíny rotace a povinnost odstranění. Deklarace Apps uloží ještě před cloudovými změnami a ověřením klíčů; zachová i dřívější deklarace a App IDs při změně aliasu. Chyba ověření proto neztratí evidenci ruční registrace. Neobsahuje tokeny ani privátní klíče. Soubor musíš zachovat i při přerušení a předat skriptu `tools/Remove-Bootstrap.ps1`. Skript do něj zapisuje stav odstranění. Ručně registrované Apps jsou prostředky bootstrapu, nikoli zachovávané enterprise předpoklady.
