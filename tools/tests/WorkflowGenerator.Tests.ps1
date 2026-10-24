@@ -22,6 +22,90 @@ BeforeAll {
         ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
         return $modules
     }
+
+    function Get-WorkflowConditionValue {
+        param([hashtable] $Context, [string] $Path)
+
+        $value = $Context
+        foreach ($part in $Path.Split('.')) {
+            if ($value -isnot [System.Collections.IDictionary] -or -not $value.Contains($part)) { return '' }
+            $value = $value[$part]
+        }
+        return $value
+    }
+
+    # Covers the conjunction grammar emitted here, not the GitHub Actions scheduler.
+    function Get-WorkflowConditionResult {
+        param([hashtable] $Workflow, [string] $Job, [hashtable] $Context)
+
+        $expression = $Workflow.jobs[$Job].if
+        if ($expression -notmatch '^\$\{\{ (.+) \}\}$') { throw "Unsupported job condition: $expression" }
+        $condition = $Matches[1]
+        if ($condition -notmatch 'cancelled\(\)') {
+            $pending = [System.Collections.Generic.Queue[string]]::new()
+            foreach ($id in $Workflow.jobs[$Job].needs) { $pending.Enqueue($id) }
+            while ($pending.Count -gt 0) {
+                $id = $pending.Dequeue()
+                if ((Get-WorkflowConditionValue $Context "needs.$id.result") -ne 'success') {
+                    return @{ Allowed = $false; RejectedBy = 'success()' }
+                }
+                foreach ($parent in @($Workflow.jobs[$id]['needs'])) {
+                    if ($parent) { $pending.Enqueue($parent) }
+                }
+            }
+        }
+        foreach ($clause in ($condition -split ' && ')) {
+            $allowed = switch -Regex ($clause) {
+                '^!cancelled\(\)$' { -not $Context.cancelled; break }
+                "^(?<path>(?:needs|github)\.[\w.-]+) (?<operator>==|!=) '(?<literal>[^']*)'$" {
+                    $value = Get-WorkflowConditionValue $Context $Matches.path
+                    if ($Matches.operator -eq '==') { $value -eq $Matches.literal }
+                    else { $value -ne $Matches.literal }
+                    break
+                }
+                "^contains\(fromJSON\((?<path>needs\.[\w.-]+)\), '(?<literal>[^']*)'\)$" {
+                    $values = ConvertFrom-Json (Get-WorkflowConditionValue $Context $Matches.path)
+                    $values -contains $Matches.literal
+                    break
+                }
+                default { throw "Unsupported job condition clause: $clause" }
+            }
+            if (-not $allowed) { return @{ Allowed = $false; RejectedBy = $clause } }
+        }
+        return @{ Allowed = $true; RejectedBy = '' }
+    }
+
+    function Get-SubsetWorkflowContext {
+        param([hashtable] $Workflow)
+
+        $needs = @{}
+        foreach ($id in $Workflow.jobs.Keys) {
+            $result = if ($id -match '^(module_|ruleset_plan_)' -and $id -notin @('module_emu_identity', 'module_organizations')) {
+                'skipped'
+            }
+            else { 'success' }
+            $needs[$id] = @{ result = $result; outputs = @{} }
+        }
+        $needs.authorize.outputs.allowed = 'true'
+        $needs.select.outputs.modules = '["emu-identity","organizations"]'
+        return @{
+            cancelled = $false
+            github = @{ ref = 'refs/heads/main'; event_name = 'push' }
+            needs = $needs
+        }
+    }
+
+    function Set-WorkflowConditionValue {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([hashtable] $Context, [string] $Path, [AllowNull()][object] $Value)
+
+        if (-not $PSCmdlet.ShouldProcess($Path, 'Change test condition context')) { return }
+        $parts = $Path.Split('.')
+        $parent = $Context
+        for ($index = 0; $index -lt $parts.Count - 1; $index++) { $parent = $parent[$parts[$index]] }
+        if ($Value -is [string] -and $Value -ceq '__missing__') { $parent.Remove($parts[-1]) }
+        else { $parent[$parts[-1]] = $Value }
+    }
 }
 
 Describe 'Deployment workflow generation' {
@@ -193,6 +277,81 @@ Describe 'Deployment workflow generation' {
             $job.if | Should -Match ([regex]::Escape(" && needs.approve_apply.result == 'success'"))
             $job.if | Should -Match ([regex]::Escape(" && needs.$plan.result == 'success'"))
             $job.if | Should -Not -Match '\|\|'
+        }
+    }
+
+    Context 'Subset job condition decisions' {
+        BeforeAll {
+            $output = Join-Path $TestDrive 'subset-conditions.yml'
+            & $generator -OutputPath $output
+            $subsetWorkflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        }
+
+        It 'allows <Job> on <EventName> despite skipped unselected module ancestors' -ForEach @(
+            foreach ($job in @('approve_apply', 'apply_emu_identity', 'apply_organizations')) {
+                foreach ($eventName in @('push', 'workflow_dispatch')) {
+                    @{ Job = $job; EventName = $eventName }
+                }
+            }
+        ) {
+            $context = Get-SubsetWorkflowContext $subsetWorkflow
+            $context.github.event_name = $EventName
+            $context.needs.module_enterprise_baseline.result | Should -Be 'skipped'
+
+            $result = Get-WorkflowConditionResult $subsetWorkflow $Job $context
+
+            $result.Allowed | Should -BeTrue
+            $result.RejectedBy | Should -Be ''
+        }
+
+        # Unknown, empty and missing results deliberately model invalid runtime contexts.
+        It 'blocks approval for <Case>' -ForEach @(
+            @{ Case = 'workflow cancellation'; Path = 'cancelled'; Value = $true; RejectedBy = '!cancelled()' }
+            foreach ($id in @('authorize', 'select', 'plan_complete')) {
+                foreach ($status in @('failure', 'cancelled', 'skipped', '', 'unknown', '__missing__', $null)) {
+                    @{ Case = "$id result [$status]"; Path = "needs.$id.result"; Value = $status; RejectedBy = "needs.$id.result == 'success'" }
+                }
+            }
+            @{ Case = 'another ref'; Path = 'github.ref'; Value = 'refs/heads/feature'; RejectedBy = "github.ref == 'refs/heads/main'" }
+            @{ Case = 'a missing ref'; Path = 'github.ref'; Value = '__missing__'; RejectedBy = "github.ref == 'refs/heads/main'" }
+            @{ Case = 'a PR'; Path = 'github.event_name'; Value = 'pull_request_target'; RejectedBy = "github.event_name != 'pull_request_target'" }
+            foreach ($allowed in @('false', '', '__missing__', $null)) {
+                @{ Case = "authorization [$allowed]"; Path = 'needs.authorize.outputs.allowed'; Value = $allowed; RejectedBy = "needs.authorize.outputs.allowed == 'true'" }
+            }
+            @{ Case = 'an empty module selection'; Path = 'needs.select.outputs.modules'; Value = '[]'; RejectedBy = "needs.select.outputs.modules != '[]'" }
+        ) {
+            $context = Get-SubsetWorkflowContext $subsetWorkflow
+            Set-WorkflowConditionValue $context $Path $Value
+
+            $result = Get-WorkflowConditionResult $subsetWorkflow 'approve_apply' $context
+
+            $result.Allowed | Should -BeFalse
+            $result.RejectedBy | Should -Be $RejectedBy
+        }
+
+        It 'blocks <Job> for <Case>' -ForEach @(
+            foreach ($suffix in @('emu_identity', 'organizations')) {
+                $job = "apply_$suffix"
+                @{ Job = $job; Case = 'workflow cancellation'; Path = 'cancelled'; Value = $true; RejectedBy = '!cancelled()' }
+                foreach ($id in @('select', 'approve_apply', "module_$suffix")) {
+                    foreach ($status in @('failure', 'cancelled', 'skipped', '', 'unknown', '__missing__', $null)) {
+                        @{ Job = $job; Case = "$id result [$status]"; Path = "needs.$id.result"; Value = $status; RejectedBy = "needs.$id.result == 'success'" }
+                    }
+                }
+                foreach ($allowed in @('false', '', '__missing__', $null)) {
+                    @{ Job = $job; Case = "authorization [$allowed]"; Path = 'needs.authorize.outputs.allowed'; Value = $allowed; RejectedBy = "needs.authorize.outputs.allowed == 'true'" }
+                }
+                $name = $suffix.Replace('_', '-')
+                @{ Job = $job; Case = 'an unselected module'; Path = 'needs.select.outputs.modules'; Value = '[]'; RejectedBy = "contains(fromJSON(needs.select.outputs.modules), '$name')" }
+            }
+        ) {
+            $context = Get-SubsetWorkflowContext $subsetWorkflow
+            Set-WorkflowConditionValue $context $Path $Value
+
+            $result = Get-WorkflowConditionResult $subsetWorkflow $Job $context
+
+            $result.Allowed | Should -BeFalse
+            $result.RejectedBy | Should -Be $RejectedBy
         }
     }
 
