@@ -157,13 +157,134 @@ run "rejects_colliding_organization_names" {
   expect_failures = [var.instance]
 }
 
-run "rejects_an_owner_without_emu_shortcode" {
+run "accepts_owners_with_optional_emu_shortcode" {
   command = plan
 
   variables {
-    admin_logins = ["alice"]
+    admin_logins = [
+      "msucharda", "alice_demo", "gh-reviewer", "mpolivka", "A", "Alice-Smith_demo",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_demo",
+    ]
   }
+}
 
+run "rejects_an_owner_with_an_invalid_character" {
+  command = plan
+  variables {
+    admin_logins = ["alice.smith"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_a_leading_hyphen" {
+  command = plan
+  variables {
+    admin_logins = ["-alice"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_a_trailing_hyphen" {
+  command = plan
+  variables {
+    admin_logins = ["alice-"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_a_trailing_hyphen_before_shortcode" {
+  command = plan
+  variables {
+    admin_logins = ["alice-_demo"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_consecutive_hyphens" {
+  command = plan
+  variables {
+    admin_logins = ["alice--smith"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_consecutive_hyphens_before_shortcode" {
+  command = plan
+  variables {
+    admin_logins = ["alice--smith_demo"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_a_leading_underscore" {
+  command = plan
+  variables {
+    admin_logins = ["_demo"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_multiple_underscores" {
+  command = plan
+  variables {
+    admin_logins = ["alice_team_demo"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_an_empty_shortcode" {
+  command = plan
+  variables {
+    admin_logins = ["alice_"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_an_invalid_shortcode" {
+  command = plan
+  variables {
+    admin_logins = ["alice_de-mo"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_whitespace" {
+  command = plan
+  variables {
+    admin_logins = ["alice smith"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_with_a_trailing_newline" {
+  command = plan
+  variables {
+    admin_logins = ["alice_demo\n"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_empty_owner_login" {
+  command = plan
+  variables {
+    admin_logins = [""]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_longer_than_39_characters" {
+  command = plan
+  variables {
+    admin_logins = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+  }
+  expect_failures = [var.admin_logins]
+}
+
+run "rejects_an_owner_longer_than_39_characters_with_shortcode" {
+  command = plan
+  variables {
+    admin_logins = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_demo"]
+  }
   expect_failures = [var.admin_logins]
 }
 
