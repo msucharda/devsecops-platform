@@ -163,25 +163,25 @@ Describe 'Organizations module parameters' {
     }
 
     It 'rejects organizations parameter <Field> = <Case>' -ForEach @(
-        @{ Field = 'admin_logins'; Case = 'empty list'; Value = @() }
-        @{ Field = 'admin_logins'; Case = 'duplicate'; Value = @('alice_demo', 'alice_demo') }
-        @{ Field = 'admin_logins'; Case = 'empty login'; Value = @('') }
-        @{ Field = 'admin_logins'; Case = 'null login'; Value = @($null) }
-        @{ Field = 'admin_logins'; Case = 'leading hyphen'; Value = @('-alice') }
-        @{ Field = 'admin_logins'; Case = 'trailing hyphen without shortcode'; Value = @('alice-') }
-        @{ Field = 'admin_logins'; Case = 'trailing hyphen'; Value = @('alice-_demo') }
-        @{ Field = 'admin_logins'; Case = 'consecutive hyphens'; Value = @('alice--smith') }
-        @{ Field = 'admin_logins'; Case = 'consecutive hyphens with shortcode'; Value = @('alice--smith_demo') }
-        @{ Field = 'admin_logins'; Case = 'invalid character'; Value = @('alice.smith') }
-        @{ Field = 'admin_logins'; Case = 'leading underscore'; Value = @('_demo') }
-        @{ Field = 'admin_logins'; Case = 'multiple underscores'; Value = @('alice_team_demo') }
-        @{ Field = 'admin_logins'; Case = 'empty shortcode'; Value = @('alice_') }
-        @{ Field = 'admin_logins'; Case = 'invalid shortcode'; Value = @('alice_de-mo') }
-        @{ Field = 'admin_logins'; Case = 'whitespace'; Value = @('alice smith') }
-        @{ Field = 'admin_logins'; Case = 'trailing newline'; Value = @("alice_demo`n") }
-        @{ Field = 'admin_logins'; Case = 'too long without shortcode'; Value = @('a' * 40) }
-        @{ Field = 'admin_logins'; Case = 'too long'; Value = @(('a' * 35) + '_demo') }
-        @{ Field = 'admin_logins'; Case = 'string instead of list'; Value = 'alice_demo' }
+        @{ Field = 'admin_logins'; Case = 'empty list'; Value = @(); Rule = 'at least' }
+        @{ Field = 'admin_logins'; Case = 'duplicate'; Value = @('alice_demo', 'alice_demo'); Rule = 'duplicates' }
+        @{ Field = 'admin_logins'; Case = 'empty login'; Value = @(''); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'null login'; Value = @($null); Rule = 'string' }
+        @{ Field = 'admin_logins'; Case = 'leading hyphen'; Value = @('-alice'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'trailing hyphen without shortcode'; Value = @('alice-'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'trailing hyphen'; Value = @('alice-_demo'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'consecutive hyphens'; Value = @('alice--smith'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'consecutive hyphens with shortcode'; Value = @('alice--smith_demo'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'invalid character'; Value = @('alice.smith'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'leading underscore'; Value = @('_demo'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'multiple underscores'; Value = @('alice_team_demo'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'empty shortcode'; Value = @('alice_'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'invalid shortcode'; Value = @('alice_de-mo'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'whitespace'; Value = @('alice smith'); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'trailing newline'; Value = @("alice_demo`n"); Rule = 'regular expression' }
+        @{ Field = 'admin_logins'; Case = 'too long without shortcode'; Value = @('a' * 40); Rule = '39' }
+        @{ Field = 'admin_logins'; Case = 'too long'; Value = @(('a' * 35) + '_demo'); Rule = '39' }
+        @{ Field = 'admin_logins'; Case = 'string instead of list'; Value = 'alice_demo'; Rule = 'array' }
         @{ Field = 'billing_email'; Case = 'no domain'; Value = 'billing@example' }
         @{ Field = 'billing_email'; Case = 'empty'; Value = '' }
         @{ Field = 'app_client_ids'; Case = 'blank'; Value = @('') }
@@ -193,7 +193,13 @@ Describe 'Organizations module parameters' {
         $parameters[$Field] = $Value
         $path = Write-OrganizationsInstance -Parameters $parameters
 
-        { & $validator -InstancePath $path -ModulesPath $modulesPath } | Should -Throw '*$.modules.organizations.parameters*'
+        $failure = { & $validator -InstancePath $path -ModulesPath $modulesPath } |
+            Should -Throw '*$.modules.organizations.parameters*' -PassThru
+        if ($Field -eq 'admin_logins') {
+            $location = '$.modules.organizations.parameters.admin_logins'
+            if ($Case -notin @('empty list', 'duplicate', 'string instead of list')) { $location += '.0' }
+            $failure.Exception.Message | Should -Match "$([regex]::Escape($Rule))[^;]*at '$([regex]::Escape($location))'"
+        }
     }
 }
 
