@@ -23,12 +23,15 @@ GHE.com název smazané organizace neuvolní ([ADR 0008](../../docs/adr/0008-dep
 
 | Parametr | Povinný | Význam |
 |---|---|---|
-| `admin_logins` | ano | Neprázdný seznam EMU loginů ownerů nové organizace (`alice_demo`). Jedinečné bez ohledu na velikost písmen. |
+| `admin_logins` | ano | Neprázdný seznam EMU loginů ownerů nové organizace (`msucharda` nebo `alice_demo`). Shortcode je volitelný. Loginy musí být jedinečné bez ohledu na velikost písmen. |
 | `billing_email` | ano | Billing email nové organizace. |
 | `app_client_ids` | ne | Client ID enterprise-owned Apps, které modul nainstaluje do obou organizací. Výchozí hodnota je prázdný seznam. |
 
 - `admin_logins` a `billing_email` platí jen při tvorbě organizace. Jejich pozdější změna nic nezmění; modul ownery ani billing existující organizace nespravuje.
 - Instance schéma validuje parametry před spuštěním Terraformu. Terraform validace opakuje.
+- Login smí obsahovat ASCII písmena a číslice oddělené jednotlivými spojovníky. Nesmí začínat ani končit spojovníkem. Volitelný suffix tvoří podtržítko a alfanumerický shortcode. Celý login smí mít nejvýš 39 znaků.
+- Zadávej skutečný login účtu, nikoli login odvozený z UPN. GitHub.com shortcode zobrazuje; GHE.com ho u provisionovaných uživatelů skrývá. Syntaktický limit konfigurace 39 znaků neověřuje provisioning limit GHE.com, který je podle [pravidel GitHubu](https://docs.github.com/en/enterprise-cloud@latest/admin/managing-iam/iam-configuration-reference/username-considerations-for-external-authentication) 30 znaků kvůli skrytému suffixu.
+- Průvodce nadále odmítá přihlášený setup user účet `*_admin`. Změna syntaxe `admin_logins` toto omezení nemění.
 
 ## Životní cyklus
 

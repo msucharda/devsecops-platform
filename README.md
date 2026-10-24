@@ -60,7 +60,7 @@ Příklad vazeb pro modul `organizations` s enterprise installation:
 modules:
   organizations:
     parameters:
-      admin_logins: [alice_demo]
+      admin_logins: [msucharda]
       billing_email: billing@example.test
 githubApps:
   organizations-reader:

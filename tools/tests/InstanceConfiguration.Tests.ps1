@@ -127,6 +127,26 @@ Describe 'Organizations module parameters' {
         $validated.modules.organizations.parameters.app_client_ids | Should -Be @('Iv23liExample01', 'Iv1.0123456789abcdef')
     }
 
+    It 'accepts an owner login <Login> with an optional EMU shortcode' -ForEach @(
+        @{ Login = 'msucharda' }
+        @{ Login = 'alice_demo' }
+        @{ Login = 'alice' }
+        @{ Login = 'gh-reviewer' }
+        @{ Login = 'mpolivka' }
+        @{ Login = 'A' }
+        @{ Login = 'Alice-Smith_demo' }
+        @{ Login = 'a' * 39 }
+        @{ Login = ('a' * 34) + '_demo' }
+    ) {
+        $parameters = Get-DefaultOrganizationParameter
+        $parameters.admin_logins = @($Login)
+        $path = Write-OrganizationsInstance -Parameters $parameters
+
+        $validated = & $validator -InstancePath $path -ModulesPath $modulesPath | ConvertFrom-Json
+
+        $validated.modules.organizations.parameters.admin_logins | Should -Be @($Login)
+    }
+
     It 'requires the organizations parameters <Missing>' -ForEach @(
         @{ Missing = 'parameters' }
         @{ Missing = 'admin_logins' }
@@ -145,9 +165,21 @@ Describe 'Organizations module parameters' {
     It 'rejects organizations parameter <Field> = <Case>' -ForEach @(
         @{ Field = 'admin_logins'; Case = 'empty list'; Value = @() }
         @{ Field = 'admin_logins'; Case = 'duplicate'; Value = @('alice_demo', 'alice_demo') }
-        @{ Field = 'admin_logins'; Case = 'no EMU shortcode'; Value = @('alice') }
         @{ Field = 'admin_logins'; Case = 'empty login'; Value = @('') }
+        @{ Field = 'admin_logins'; Case = 'null login'; Value = @($null) }
+        @{ Field = 'admin_logins'; Case = 'leading hyphen'; Value = @('-alice') }
+        @{ Field = 'admin_logins'; Case = 'trailing hyphen without shortcode'; Value = @('alice-') }
         @{ Field = 'admin_logins'; Case = 'trailing hyphen'; Value = @('alice-_demo') }
+        @{ Field = 'admin_logins'; Case = 'consecutive hyphens'; Value = @('alice--smith') }
+        @{ Field = 'admin_logins'; Case = 'consecutive hyphens with shortcode'; Value = @('alice--smith_demo') }
+        @{ Field = 'admin_logins'; Case = 'invalid character'; Value = @('alice.smith') }
+        @{ Field = 'admin_logins'; Case = 'leading underscore'; Value = @('_demo') }
+        @{ Field = 'admin_logins'; Case = 'multiple underscores'; Value = @('alice_team_demo') }
+        @{ Field = 'admin_logins'; Case = 'empty shortcode'; Value = @('alice_') }
+        @{ Field = 'admin_logins'; Case = 'invalid shortcode'; Value = @('alice_de-mo') }
+        @{ Field = 'admin_logins'; Case = 'whitespace'; Value = @('alice smith') }
+        @{ Field = 'admin_logins'; Case = 'trailing newline'; Value = @("alice_demo`n") }
+        @{ Field = 'admin_logins'; Case = 'too long without shortcode'; Value = @('a' * 40) }
         @{ Field = 'admin_logins'; Case = 'too long'; Value = @(('a' * 35) + '_demo') }
         @{ Field = 'admin_logins'; Case = 'string instead of list'; Value = 'alice_demo' }
         @{ Field = 'billing_email'; Case = 'no domain'; Value = 'billing@example' }

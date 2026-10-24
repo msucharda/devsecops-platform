@@ -69,9 +69,9 @@ variable "admin_logins" {
   validation {
     condition = alltrue([
       for login in var.admin_logins :
-      length(login) <= 39 && can(regex("^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?_[A-Za-z0-9]+$", login))
+      length(login) <= 39 && can(regex("^[A-Za-z0-9]+(-[A-Za-z0-9]+)*(_[A-Za-z0-9]+)?$", login))
     ])
-    error_message = "Each owner must be an EMU login with the enterprise shortcode suffix, such as alice_demo."
+    error_message = "Each owner login must contain alphanumeric characters separated by single hyphens, optionally followed by an underscore and an alphanumeric enterprise shortcode, and must not exceed 39 characters (for example msucharda or alice_demo)."
   }
 }
 
