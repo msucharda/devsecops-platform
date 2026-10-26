@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module powershell-yaml -RequiredVersion 0.4.12
+    Import-Module (Join-Path $PSScriptRoot 'MicrosoftApiFixture.psm1') -Force
     $bootstrap = Join-Path (Split-Path $PSScriptRoot -Parent) 'Invoke-Bootstrap.ps1'
     $fixtures = Join-Path $PSScriptRoot 'fixtures/modules'
     $example = Join-Path $PSScriptRoot 'fixtures/instance.yaml'
@@ -41,6 +42,7 @@ Describe 'Local Azure bootstrap' {
             directOwner = $true
             graphAssignments = @{}
             registrationDelay = 0
+            graphGrantInterruption = ''
             failurePattern = ''
             oidc = 'oidc'
             scimActive = $true
@@ -154,6 +156,12 @@ Describe 'Local Azure bootstrap' {
                     value = @(@{ id = 'graph-sp'; appRoles = @(
                         @{ id = 'group-create'; value = 'Group.Create'; isEnabled = $true; allowedMemberTypes = @('Application') }
                         @{ id = 'group-read'; value = 'Group.Read.All'; isEnabled = $true; allowedMemberTypes = @('Application') }
+                        (Get-MicrosoftApiFixture -Name 'graph/serviceprincipal-get' -Set @{
+                            'appRoles.0.id' = '98830695-27a2-44f7-8c18-0c3ebc9698f6'
+                            'appRoles.0.value' = 'GroupMember.Read.All'
+                            'appRoles.0.displayName' = 'Read all group memberships'
+                            'appRoles.0.description' = 'Allows the app to read memberships and basic group properties for all groups without a signed-in user.'
+                        }).appRoles[0]
                         @{ id = 'user-read'; value = 'User.Read.All'; isEnabled = $true; allowedMemberTypes = @('Application') }
                     ) })
                 }
@@ -204,11 +212,20 @@ Describe 'Local Azure bootstrap' {
                 }
                 if ($Method -eq 'POST') {
                     $data = ConvertFrom-Json -InputObject $Body -AsHashtable
+                    $interrupt = $data.appRoleId -eq '98830695-27a2-44f7-8c18-0c3ebc9698f6' -and $cloud.graphGrantInterruption
+                    if ($interrupt -and $cloud.graphGrantInterruption -eq 'BeforeApply') {
+                        $cloud.graphGrantInterruption = ''
+                        throw 'Injected Graph grant interruption before apply.'
+                    }
                     $cloud.graphAssignments[$principal] = if ($cloud.graphAssignments.ContainsKey($principal)) {
                         @($cloud.graphAssignments[$principal]) + @($data)
                     }
                     else { @($data) }
                     $cloud.writes.Add(@{ uri = $Uri.AbsoluteUri; data = $data })
+                    if ($interrupt) {
+                        $cloud.graphGrantInterruption = ''
+                        throw 'Injected Graph grant interruption after apply with lost response.'
+                    }
                     return Get-TestResponse -Data $data
                 }
             }
@@ -578,7 +595,39 @@ Describe 'Local Azure bootstrap' {
         }
     }
 
-    It 'provisions the released emu-identity manifest with read-only plan access and no tenant-wide assignment write' {
+    It 'resumes the released emu-identity Graph grant after <Mode>' -Tag EmuIdentityPermissions -ForEach @(
+        @{ Mode = 'BeforeApply' }
+        @{ Mode = 'LoseResponse' }
+    ) {
+        $source = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/emu-identity/module.yaml'
+        $null = New-Item -ItemType Directory -Path (Join-Path $modulesPath 'emu-identity')
+        Copy-Item -LiteralPath $source -Destination (Join-Path $modulesPath 'emu-identity/module.yaml')
+        $instance.modules = @{ 'emu-identity' = @{} }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $cloud.graphGrantInterruption = $Mode
+
+        { & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath } |
+            Should -Throw '*Injected Graph grant interruption*'
+        $cloud.graphGrantInterruption | Should -BeNullOrEmpty
+
+        $result = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $module = $result.Modules[0]
+        @($cloud.graphAssignments[$module.Apply.PrincipalId].appRoleId | Sort-Object) |
+            Should -Be @('98830695-27a2-44f7-8c18-0c3ebc9698f6', 'group-create', 'user-read')
+        @($cloud.graphAssignments[$module.Plan.PrincipalId].appRoleId | Sort-Object) |
+            Should -Be @('group-read', 'user-read')
+        @($cloud.writes | Where-Object {
+            $_.data.Contains('appRoleId') -and
+            $_.data.appRoleId -eq '98830695-27a2-44f7-8c18-0c3ebc9698f6'
+        }).Count | Should -Be 1
+
+        $cloud.writes.Clear()
+        $repeat = & $bootstrap -InstancePath $instancePath -ModulesPath $modulesPath
+        $repeat.HasChanges | Should -BeFalse
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'provisions the released emu-identity manifest with read-only plan access and no tenant-wide assignment write' -Tag EmuIdentityPermissions {
         $source = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/emu-identity/module.yaml'
         $null = New-Item -ItemType Directory -Path (Join-Path $modulesPath 'emu-identity')
         Copy-Item -LiteralPath $source -Destination (Join-Path $modulesPath 'emu-identity/module.yaml')
@@ -592,7 +641,7 @@ Describe 'Local Azure bootstrap' {
         $planGrants = @($cloud.writes | Where-Object { $_.data.Contains('principalId') -and $_.data.principalId -eq $module.Plan.PrincipalId -and $_.data.Contains('appRoleId') })
         @($planGrants.data.appRoleId | Sort-Object) | Should -Be @('group-read', 'user-read')
         $applyGrants = @($cloud.writes | Where-Object { $_.data.Contains('principalId') -and $_.data.principalId -eq $module.Apply.PrincipalId -and $_.data.Contains('appRoleId') })
-        @($applyGrants.data.appRoleId | Sort-Object) | Should -Be @('group-create', 'user-read')
+        @($applyGrants.data.appRoleId | Sort-Object) | Should -Be @('98830695-27a2-44f7-8c18-0c3ebc9698f6', 'group-create', 'user-read')
         $definitions = @($cloud.directoryRoleDefinitions | Sort-Object displayName)
         @($definitions.displayName) | Should -Be @('platform-demo-emu-identity-apply', 'platform-demo-emu-identity-plan')
         @($definitions[1].rolePermissions[0].allowedResourceActions | Where-Object { $_ -notlike '*/read' }) | Should -BeNullOrEmpty

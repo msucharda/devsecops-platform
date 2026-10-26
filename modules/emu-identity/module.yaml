@@ -34,6 +34,7 @@ permissions:
   azure: []
   microsoftGraph:
     - Group.Create
+    - GroupMember.Read.All
     - User.Read.All
     - permission: Group.Read.All
       phase: plan

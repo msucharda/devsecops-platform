@@ -290,6 +290,8 @@ Manifest deklaruje vlastní role Entra v poli `entraDirectoryRoles`, nejvýše j
 
 Modul `emu-identity` používá pro apply akce `appRoleAssignedTo/update`, `appRoleAssignedTo/read` a `standard/read` podle [ADR 0015](adr/0015-least-privilege-identity-per-module.md). Plan dostane jen obě read akce. Vytvoření vlastní role a jejího přiřazení vyžaduje u bootstrap uživatele roli Privileged Role Administrator nebo Global Administrator a licenci Entra ID P1.
 
+Apply identita `emu-identity` dostane Graph application permissions `Group.Create`, `GroupMember.Read.All` a `User.Read.All`. `GroupMember.Read.All` je podle rozhodnutí D-119-1 nejmenší společné oprávnění pro čtení `owners`, `members` a `memberOf`, které provider azuread 3.10.0 provádí přes Graph beta. Čte členství a základní vlastnosti všech skupin tenantu, nejen skupin instance; nedává zápis do cizích skupin. Plan si zachovává `Group.Read.All` a `User.Read.All`; apply nedostává `Group.Read.All`, `Group.ReadWrite.All` ani `AppRoleAssignment.ReadWrite.All`. Zdroje a návrh obnovy existujících skupin po 403 jsou v [README modulu](../modules/emu-identity/README.md#proč-apply-potřebuje-čtení-skupin).
+
 Bootstrap odmítne také read-only roli, jejíž `dataActions` umožňují čtení blobů na scope zahrnujícím state backend. Širší čtení by zpřístupnilo state ostatních modulů i bez oprávnění k zápisu. Při vyhodnocení wildcard oprávnění respektuje `notDataActions` v každém permission setu. Read-only role bez přístupu ke state a datová oprávnění na scope mimo bootstrap zůstávají povolené.
 
 ## Opakování, chyby a odstranění
