@@ -43,6 +43,7 @@ function Invoke-LocalCiGitText {
     $start.UseShellExecute = $false
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false, $true)
     foreach ($item in @('-C', $RepositoryRoot) + $Argument) { $start.ArgumentList.Add($item) }
     $process = [Diagnostics.Process]::Start($start)
     try {
@@ -53,6 +54,30 @@ function Invoke-LocalCiGitText {
         return $stdout.GetAwaiter().GetResult()
     }
     finally { $process.Dispose() }
+}
+
+function Get-LocalCiChangedFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [Parameter(Mandatory)][string] $MergeBase,
+        [string] $Head
+    )
+    $diff = @('diff', '--name-only', '--no-renames', '-z')
+    $range = @($MergeBase)
+    if ($Head) { $range += $Head }
+    $changed = (Invoke-LocalCiGitText $RepositoryRoot ($diff + $range)).Split(
+        [char]0, [StringSplitOptions]::RemoveEmptyEntries)
+    $added = (Invoke-LocalCiGitText $RepositoryRoot ($diff + '--diff-filter=A' + $range)).Split(
+        [char]0, [StringSplitOptions]::RemoveEmptyEntries)
+    $untracked = (Invoke-LocalCiGitText $RepositoryRoot @('ls-files', '--others', '--exclude-standard', '-z')).Split(
+        [char]0, [StringSplitOptions]::RemoveEmptyEntries)
+    $unique = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($path in @($changed) + @($untracked)) { $null = $unique.Add($path) }
+    return @{
+        Changed = [string[]] @($unique | Sort-Object -CaseSensitive)
+        Added = [string[]] @(@($added) + @($untracked))
+    }
 }
 
 # security-check: local-ci-index-visibility
@@ -284,5 +309,5 @@ function Initialize-LocalCiPrivateTempDirectory {
     Assert-LocalCiTempAccess -Access $access -UserSid $user.Value
 }
 
-Export-ModuleMember -Function Get-LocalCiProfile, Get-LocalCiContentState, Clear-LocalCiGateResult, Save-LocalCiGateResult,
+Export-ModuleMember -Function Get-LocalCiProfile, Get-LocalCiChangedFile, Get-LocalCiContentState, Clear-LocalCiGateResult, Save-LocalCiGateResult,
     Test-LocalCiGateResult, Assert-LocalCiTempPath, Test-LocalCiRuntime, Assert-LocalCiTempAccess, Initialize-LocalCiPrivateTempDirectory

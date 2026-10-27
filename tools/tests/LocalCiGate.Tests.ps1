@@ -75,7 +75,7 @@ Describe 'Local CI content-bound result' {
         git -C $repo config user.name 'Local CI tests'
         Set-Content (Join-Path $repo 'source.ps1') "'initial'" -NoNewline
         git -C $repo add .
-        git -C $repo commit --quiet -m initial
+        git -C $repo -c commit.gpgsign=false commit --quiet -m initial
         git -C $repo branch baseline
     }
 
@@ -207,6 +207,57 @@ Describe 'Local CI content-bound result' {
             Should -Throw '*Commit*before*gate*'
     }
 
+    It 'preserves literal changed, added and untracked paths even when Git quotes names by default' {
+        git -C $repo config core.quotepath true
+        $changed = "changed-$([char]0xE9) file.ps1"
+        $added = "added-$([char]0xE9) file.ps1"
+        $untracked = "untracked-$([char]0xE9) file.ps1"
+        Set-Content -LiteralPath (Join-Path $repo $changed) "'before'"
+        git -C $repo add .
+        git -C $repo -c commit.gpgsign=false commit --quiet -m 'Track a non-ASCII path'
+        git -C $repo branch path-baseline
+        Set-Content -LiteralPath (Join-Path $repo $changed) "'after'"
+        Set-Content -LiteralPath (Join-Path $repo $added) "'added'"
+        git -C $repo add .
+        git -C $repo -c commit.gpgsign=false commit --quiet -m 'Change non-ASCII paths'
+        Set-Content -LiteralPath (Join-Path $repo $untracked) "'untracked'"
+
+        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase path-baseline -Head HEAD
+
+        $paths.Changed.Count | Should -Be 3
+        $paths.Changed | Should -Contain $changed
+        $paths.Changed | Should -Contain $added
+        $paths.Changed | Should -Contain $untracked
+        $paths.Added.Count | Should -Be 2
+        $paths.Added | Should -Contain $added
+        $paths.Added | Should -Contain $untracked
+        (Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase path-baseline).Changed | Should -Contain $changed
+    }
+
+    It 'preserves distinct Unicode-normalization paths without culture-based deduplication' {
+        $composed = "$([char]0xE9).ps1"
+        $decomposed = "e$([char]0x301).ps1"
+        Set-Content -LiteralPath (Join-Path $repo $composed) "'composed'"
+        Set-Content -LiteralPath (Join-Path $repo $decomposed) "'decomposed'"
+
+        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase baseline
+
+        $paths.Changed.Count | Should -Be 2
+        $paths.Added.Count | Should -Be 2
+        $paths.Changed | Should -Contain $composed
+        $paths.Changed | Should -Contain $decomposed
+    }
+
+    It 'preserves an embedded newline in a Unix filename' -Skip:$IsWindows {
+        $name = "line`nbreak.ps1"
+        Set-Content -LiteralPath (Join-Path $repo $name) "'source'"
+
+        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase baseline
+
+        $paths.Changed | Should -BeExactly @($name)
+        $paths.Added | Should -BeExactly @($name)
+    }
+
     It 'rejects hidden index flags <Flag> even when Git status reports a clean worktree' -ForEach @(
         @{ Flag = '--assume-unchanged' }, @{ Flag = '--skip-worktree' }
     ) {
@@ -278,9 +329,10 @@ Describe 'Local CI external-program preflight' {
 
 Describe 'Local CI process guards' {
     It 'rejects <Case> without publishing a result' -ForEach @(
-        @{ Case = 'a HEAD change while loading workflow settings'; Command = 'Get-CiWorkflowSetting'; MissingGo = $false; ExpectedError = 'Source changed during test selection \(Head\)' }
-        @{ Case = 'a HEAD change during test selection'; Command = 'Get-LocalCiProfile'; MissingGo = $false; ExpectedError = 'Source changed during test selection \(Head\)' }
-        @{ Case = 'missing Go with preflight exit code 2'; Command = 'Test-LocalCiRuntime'; MissingGo = $true; ExpectedError = 'Go is missing' }
+        @{ Case = 'a HEAD change while loading workflow settings'; Command = 'Get-CiWorkflowSetting'; MissingGo = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
+        @{ Case = 'a HEAD change during test selection'; Command = 'Get-LocalCiProfile'; MissingGo = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
+        @{ Case = 'missing Go with preflight exit code 2'; Command = 'Test-LocalCiRuntime'; MissingGo = $true; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Go is missing' }
+        @{ Case = 'a parser error in a non-ASCII filename'; Command = ''; MissingGo = $false; InvalidFile = $true; ExpectedExit = 1; ExpectedError = 'syntax errors' }
     ) {
         $fixture = Join-Path $TestDrive ("guard-$([guid]::NewGuid().ToString('N').Substring(0, 8))")
         $null = New-Item -ItemType Directory -Path $fixture
@@ -291,6 +343,13 @@ Describe 'Local CI process guards' {
             $null = New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent)
             Copy-Item -LiteralPath $source -Destination $destination
         }
+        if ($InvalidFile) {
+            # Keep this parser regression from recursively running its own fixture suite.
+            $names = @(Get-ChildItem (Join-Path $fixture 'tools/tests') -Filter '*.Tests.ps1' |
+                ForEach-Object { "'$($_.Name)'" })
+            Set-Content -LiteralPath (Join-Path $fixture 'tools/test-profiles.psd1') (
+                "@{ Unit=@(); Contract=@(); Integration=@($($names -join ',')); Interruption=@() }")
+        }
         git -C $fixture init --quiet
         git -C $fixture config user.email 'tests@example.invalid'
         git -C $fixture config user.name 'Local CI selection tests'
@@ -298,6 +357,12 @@ Describe 'Local CI process guards' {
         git -C $fixture add .
         git -C $fixture commit --quiet -m initial
         git -C $fixture branch baseline
+        if ($InvalidFile) {
+            git -C $fixture config core.quotepath true
+            Set-Content -LiteralPath (Join-Path $fixture "tools/$([char]0xE9).ps1") 'function {'
+            git -C $fixture add .
+            git -C $fixture commit --quiet -m 'Include an invalid non-ASCII source file'
+        }
         $wrapper = Join-Path $TestDrive 'selection-race.ps1'
         $escaped = $fixture.Replace("'", "''")
         $action = if ($MissingGo) {
@@ -319,18 +384,21 @@ Describe 'Local CI process guards' {
     git -C '$escaped' commit --quiet -m 'Change HEAD during selection'
 "@
         }
-        @"
-`$ErrorActionPreference = 'Stop'
-Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
+        $breakpoint = if ($InvalidFile) { '' } else { @"
 Set-PSBreakpoint -Command '$Command' -Action {
 $action
     Get-PSBreakpoint | Remove-PSBreakpoint
 } | Out-Null
+"@ }
+        @"
+`$ErrorActionPreference = 'Stop'
+Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
+$breakpoint
 & '$escaped/tools/Invoke-LocalCi.ps1' -WorkerProcess -Base baseline -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
 exit `$LASTEXITCODE
 "@ | Set-Content $wrapper
         $output = & ([Environment]::ProcessPath) -NoProfile -File $wrapper 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be 2 -Because $output
+        $LASTEXITCODE | Should -Be $ExpectedExit -Because $output
         $output | Should -Match $ExpectedError
         $receipt = (git -C $fixture rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
         Test-Path -LiteralPath $receipt | Should -BeFalse

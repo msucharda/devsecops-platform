@@ -123,16 +123,12 @@ $behind = Invoke-Git @('rev-list', '--count', "$($startState.Head)..$($startStat
 if ($behind.ExitCode -eq 0 -and [int] $behind.Output[0] -gt 0) {
     Write-Console "WARN HEAD is $($behind.Output[0]) commit(s) behind $Base. The CI pull_request run tests the merge result; rebase to test the same code."
 }
-$diffArguments = @('diff', '--name-only', '--no-renames', $mb)
-if (-not $Plan) { $diffArguments += $startState.Head }
-$diff = Invoke-Git $diffArguments
-$untracked = Invoke-Git @('ls-files', '--others', '--exclude-standard')
-$addedArguments = @('diff', '--name-only', '--no-renames', '--diff-filter=A', $mb)
-if (-not $Plan) { $addedArguments += $startState.Head }
-$added = Invoke-Git $addedArguments
-if ($diff.ExitCode -ne 0 -or $untracked.ExitCode -ne 0 -or $added.ExitCode -ne 0) { Exit-Usage 'git could not list the changed files.' }
-$changedFiles = @(@($diff.Output) + @($untracked.Output) | Where-Object { $_ } | Sort-Object -Unique -CaseSensitive)
-$newFiles = @(@($added.Output) + @($untracked.Output) | Where-Object { $_ })
+$fileArguments = @{ RepositoryRoot = $repo; MergeBase = $mb }
+if (-not $Plan) { $fileArguments.Head = $startState.Head }
+try { $files = Get-LocalCiChangedFile @fileArguments }
+catch { Exit-Usage "git could not list the changed files: $($_.Exception.Message)" }
+$changedFiles = $files.Changed
+$newFiles = $files.Added
 
 if ($mode -eq 'Full') {
     $selection = [pscustomobject]@{
@@ -406,7 +402,9 @@ try {
     Invoke-Step -Name 'Discover Terraform roots' -Body {
         Invoke-PwshScript -Script "./tools/Get-TerraformRoots.ps1 -GitHubOutputPath $(ConvertTo-PwshList (Join-Path $temp 'github-output.txt'))"
     }
-    if ($selection.TerraformRoot.Count -eq 0) { Skip-Step -Name 'Terraform' -Reason 'no root selected' }
+    if ($selection.TerraformRoot.Count -eq 0) {
+        Skip-Step -Name 'Terraform' -Reason $(if ($Full) { 'no root selected' } else { 'remote-only in the Local profile' })
+    }
     foreach ($root in $selection.TerraformRoot) {
         $commands = Get-LocalCiTerraformStepCommand -Root $root
         foreach ($name in $commands.Keys) {
@@ -438,7 +436,9 @@ try {
         else { "./tools/Invoke-Tests.ps1 -Tag Interruption -Path $(ConvertTo-PwshList $selection.InterruptionPath)" }
         Invoke-Step -Name 'Interrupt every state-changing step' -Pester -Body { Invoke-PwshScript -Script $interruptionScript }
     }
-    else { Skip-Step -Name 'Interrupt every state-changing step' -Reason 'no test file mapped' }
+    else {
+        Skip-Step -Name 'Interrupt every state-changing step' -Reason $(if ($Full) { 'no test file mapped' } else { 'remote-only in the Local profile' })
+    }
 
     # 11. Mutation tests
     if ($runMutation) {
@@ -446,7 +446,9 @@ try {
         if (-not $selection.AllMutation) { $mutationScript += " -Check $(ConvertTo-PwshList $selection.MutationCheck)" }
         Invoke-Step -Name 'Weaken every marked security check' -Body { Invoke-PwshScript -Script $mutationScript }
     }
-    else { Skip-Step -Name 'Weaken every marked security check' -Reason 'no marked check changed' }
+    else {
+        Skip-Step -Name 'Weaken every marked security check' -Reason $(if ($Full) { 'no marked check changed' } else { 'remote-only in the Local profile' })
+    }
 }
 finally {
     foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name]) }
