@@ -66,7 +66,15 @@ Pravidla se týkají každé operace, která mění stav: volání externího AP
 
 ### Mechanické kontroly v CI
 
-CI workflow `Source CI` spouští dva joby navíc k Pester testům. Oba běží offline proti stubům a mají oprávnění jen `contents: read`.
+CI workflow `Source CI` běží s oprávněním `contents: read`. Pester, harness přerušení a mutační testy běží offline proti stubům.
+
+#### Pester a závislosti jobů
+
+- Job `Pester (<index>/4)` rozděluje soubory testů přes `tools/Invoke-Tests.ps1 -CI -Shard <index>/4`. Každý soubor připadne právě jednomu shardu. Tagy a explicitní `-Path` fungují stejně jako bez shardování.
+- Odhady v `tools/pester-durations.psd1` vyvažují délku běhu. Nové soubory se zařadí automaticky s odhadem 1 s; po změně délky testů aktualizuj odhady podle časů souborů v XML artefaktech `pester-results-<index>`.
+- Stabilní check `Platform tools` agreguje výsledky `Platform static checks`, všech shardů Pesteru a jobu `Discover Terraform roots`. Selhání, přeskočení nebo zrušení závislosti znamená selhání agregátu. Názvy `Source CI` a `Platform tools` zachovávají kompatibilitu merge gate a případných required checks.
+- Joby `Terraform (<root>)` čekají jen na `Discover Terraform roots`, nikoli na Pester. Harness přerušení a mutační testy mají vlastní joby popsané níže.
+- Lokální běh bez `-Shard` zachovává celou vybranou sadu. Pro reprodukci jednoho shardu použij například `./tools/Invoke-Tests.ps1 -CI -Shard 0/4`.
 
 #### Harness přerušení
 

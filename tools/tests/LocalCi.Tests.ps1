@@ -42,7 +42,7 @@ Describe 'Local CI reads ci.yml' {
     }
 
     It 'takes the actionlint version and arguments from the CI step' {
-        $run = (@($workflow.jobs.platform.steps | Where-Object { $_['name'] -eq 'Validate deployment workflow syntax' }))[0].run.Trim()
+        $run = (@($workflow.jobs['platform-checks'].steps | Where-Object { $_['name'] -eq 'Validate deployment workflow syntax' }))[0].run.Trim()
         $run | Should -BeExactly "go run github.com/rhysd/actionlint/cmd/actionlint@v$($setting.ActionlintVersion) $($setting.ActionlintArguments -join ' ')"
         $setting.ActionlintArguments | Should -Contain '.github/workflows/ci.yml'
         $setting.InstanceWorkflowFiles | Should -Contain 'templates/instance/.github/workflows/import-release.yml'

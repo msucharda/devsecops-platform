@@ -18,10 +18,37 @@ permissions:
 jobs:
   platform:
     name: Platform tools
+    needs: [platform-checks, pester, terraform-roots]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all platform checks
+        shell: pwsh
+        env:
+          PLATFORM_RESULT: ${{ needs.platform-checks.result }}
+          PESTER_RESULT: ${{ needs.pester.result }}
+          ROOTS_RESULT: ${{ needs.terraform-roots.result }}
+        run: |
+          if ($env:PLATFORM_RESULT -cne 'success' -or $env:PESTER_RESULT -cne 'success' -or $env:ROOTS_RESULT -cne 'success') {
+            throw "Platform checks did not pass: static=$env:PLATFORM_RESULT; Pester=$env:PESTER_RESULT; roots=$env:ROOTS_RESULT"
+          }
+
+  terraform-roots:
+    name: Discover Terraform roots
     runs-on: ubuntu-latest
     outputs:
       roots: ${{ steps.terraform-roots.outputs.roots }}
       has-roots: ${{ steps.terraform-roots.outputs.has-roots }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Discover Terraform roots
+        id: terraform-roots
+        shell: pwsh
+        run: ./tools/Get-TerraformRoots.ps1 -GitHubOutputPath $env:GITHUB_OUTPUT
+
+  platform-checks:
+    name: Platform static checks
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install tool dependencies
@@ -36,11 +63,6 @@ jobs:
           ./tools/Test-ModuleManifests.ps1 -Verbose
           ./tools/Test-ModuleManifests.ps1 -ModulesPath ./tools/tests/fixtures/modules -Verbose
           ./tools/Test-ModuleManifests.ps1 -ModulesPath ./tools/acceptance/github/modules -Verbose
-      - name: Install Terraform for offline runner tests
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
-        with:
-          terraform_version: 1.16.5
-          terraform_wrapper: false
       - name: Validate instance examples
         shell: pwsh
         run: |
@@ -48,9 +70,6 @@ jobs:
           ./tools/Test-InstanceConfiguration.ps1 -InstancePath ./tools/tests/fixtures/instance.yaml -ModulesPath ./tools/tests/fixtures/modules
           ./tools/Test-InstanceConfiguration.ps1 -InstancePath ./tools/tests/fixtures/runner-instance.yaml -ModulesPath ./tools/tests/fixtures/runner-modules
           ./tools/Test-ModuleManifests.ps1 -ModulesPath ./tools/tests/fixtures/runner-modules
-      - name: Run Pester
-        shell: pwsh
-        run: ./tools/Invoke-Tests.ps1 -CI
       - name: Check generated workflows
         shell: pwsh
         run: |
@@ -70,16 +89,35 @@ jobs:
           git init -q "$project"
           cd "$project"
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/import-release.yml .github/workflows/import-action.yml
-      - name: Discover Terraform roots
-        id: terraform-roots
+
+  pester:
+    name: Pester (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      PESTER_SHARD: ${{ matrix.shard }}/4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install tool dependencies
         shell: pwsh
-        run: ./tools/Get-TerraformRoots.ps1 -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./tools/Install-ToolDependencies.ps1 -Development
+      - name: Install Terraform for offline runner tests
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - name: Run Pester
+        shell: pwsh
+        run: ./tools/Invoke-Tests.ps1 -CI -Shard $env:PESTER_SHARD
       - name: Upload test results
-        if: ${{ !cancelled() && hashFiles('artifacts/pester.xml') != '' }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pester-results
-          path: artifacts/pester.xml
+          name: pester-results-${{ matrix.shard }}
+          path: artifacts/pester-${{ matrix.shard }}-of-4.xml
           if-no-files-found: error
 
   interruption:
@@ -123,13 +161,13 @@ jobs:
 
   terraform:
     name: Terraform (${{ matrix.root }})
-    needs: platform
-    if: ${{ needs.platform.outputs.has-roots == 'true' }}
+    needs: terraform-roots
+    if: ${{ needs.terraform-roots.outputs.has-roots == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        root: ${{ fromJSON(needs.platform.outputs.roots) }}
+        root: ${{ fromJSON(needs.terraform-roots.outputs.roots) }}
     env:
       TF_ROOT: ${{ matrix.root }}
       TF_IN_AUTOMATION: 'true'
