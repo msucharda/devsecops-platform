@@ -66,6 +66,6 @@ if ($CI) {
 $result = Invoke-Pester -Configuration $configuration
 # Pester counts tests excluded by the tag filter as not run; only selected tests must run.
 $notRun = @($result.Tests | Where-Object { $_.ShouldRun -and $_.Result -eq 'NotRun' }).Count
-if ($result.PassedCount -eq 0 -or $result.FailedCount -gt 0 -or $notRun -gt 0) {
-    throw "Pester failed: $($result.FailedCount) failed, $notRun not run, $($result.PassedCount) passed of $($result.TotalCount) total tests."
+if ($result.Result -cne 'Passed' -or $result.PassedCount -eq 0 -or $result.FailedCount -gt 0 -or $notRun -gt 0) {
+    throw "Pester failed: $($result.FailedCount) failed, $notRun not run, $($result.PassedCount) passed of $($result.TotalCount) total tests; result=$($result.Result), $($result.FailedContainersCount) failed containers, $($result.FailedBlocksCount) failed blocks."
 }

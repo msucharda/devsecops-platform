@@ -14,7 +14,7 @@ Describe 'File $index' {
 "@
     }
 
-    function Invoke-FixtureTests {
+    function Invoke-FixtureTest {
         param([string[]] $ArgumentList = @())
         $output = @(& ([Environment]::ProcessPath) -NoProfile -NonInteractive -File (Join-Path $fixture 'tools/Invoke-Tests.ps1') -CI @ArgumentList 2>&1)
         $code = $LASTEXITCODE
@@ -30,11 +30,11 @@ Describe 'File $index' {
 
 Describe 'Pester runner file sharding' {
     It 'runs every selected test exactly once across all shards, including nested and new files' {
-        $baseline = @(Invoke-FixtureTests)
+        $baseline = @(Invoke-FixtureTest)
         $baseline.Count | Should -Be 8
         $costs = @(20, 11, 7, 5, 1, 1, 1, 1)
         $sharded = @(foreach ($index in 0..3) {
-            $names = @(Invoke-FixtureTests -ArgumentList @('-Shard', "$index/4"))
+            $names = @(Invoke-FixtureTest -ArgumentList @('-Shard', "$index/4"))
             $names.Count | Should -BeGreaterThan 0
             $seconds = ($names | ForEach-Object {
                 $_ | Should -Match 'case (\d+)$'
@@ -64,5 +64,18 @@ Describe 'Pester runner file sharding' {
         $output = @(& ([Environment]::ProcessPath) -NoProfile -NonInteractive -File (Join-Path $fixture 'tools/Invoke-Tests.ps1') -Shard $Shard 2>&1)
         $LASTEXITCODE | Should -Not -Be 0
         ($output -join "`n") | Should -Match 'Shard|nonempty shards'
+    }
+
+    It 'fails a shard on <Case> even when other tests pass' -Tag RunnerFailure -ForEach @(
+        @{ Case = 'discovery failure'; Body = "throw 'Discovery failure'" }
+        @{ Case = 'AfterAll failure'; Body = "Describe 'Broken cleanup' { It 'passes' { 1 | Should -Be 1 }; AfterAll { throw 'Cleanup failure' } }" }
+    ) {
+        $directory = Join-Path $fixture 'failure-modes'
+        $null = New-Item -ItemType Directory -Force -Path $directory
+        Set-Content -LiteralPath (Join-Path $directory 'Passing.Tests.ps1') -Value "Describe 'Passing' { It 'passes' { 1 | Should -Be 1 } }"
+        Set-Content -LiteralPath (Join-Path $directory 'Broken.Tests.ps1') -Value $Body
+        $output = @(& ([Environment]::ProcessPath) -NoProfile -NonInteractive -File (Join-Path $fixture 'tools/Invoke-Tests.ps1') -CI -Path $directory -Shard '0/1' 2>&1)
+        $LASTEXITCODE | Should -Not -Be 0
+        ($output -join "`n") | Should -Match 'Pester failed:'
     }
 }
