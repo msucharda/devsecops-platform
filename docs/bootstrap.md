@@ -172,7 +172,7 @@ Platformní tým potom v **Enterprise settings → GitHub Apps** ručně registr
 
 Instalace navazujících modulů připrav podle [checklistu odvozeného z manifestů](../README.md#module-manifest-manifest-modulu). `resources.installationSelection: none` vyžaduje instalaci bez repozitářů; `all` vyžaduje všechny repozitáře cílové organizace. App s jinak pouze organizačními oprávněními musí pro `all` deklarovat také `metadata: read`. Týká se to příslušných fází `actions-catalog` a `enterprise-baseline`; oprávnění kopíruj z manifestu, nepřidávej je ostatním Apps. Token issuer odmítne jinou organizaci nebo jiný výběr repozitářů i při aktuálně prázdné organizaci.
 
-Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. Pak připrav konfiguraci druhé etapy, ručně nainstaluj její Apps, doplň bindings a znovu ověř bootstrap. Pro `organization-roles` navíc vytvoř a propoj security týmy podle [README modulu](../modules/organization-roles/README.md#nasazení-ve-dvou-etapách). Modul instalace, týmy ani SCIM linky nevytváří.
+Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. Pak připrav konfiguraci druhé etapy, ručně nainstaluj její Apps, doplň bindings a znovu ověř bootstrap. Změnu `githubApps` nebo `credentials` existující instance předlož přes PR podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Pro `organization-roles` navíc vytvoř a propoj security týmy podle [README modulu](../modules/organization-roles/README.md#nasazení-ve-dvou-etapách). Modul instalace, týmy ani SCIM linky nevytváří.
 
 Vlož metadata do `githubApps` a vazby do `credentials` v pracovní kopii konfigurace. Autorizační alias, například `authorization`, patří také do `githubApps`; skriptu ho předáš přes `-AuthorizationApp`. Privátní klíče a jejich lokální manifest **nesmějí** ležet v release ani ve zdrojovém repozitáři.
 
@@ -207,6 +207,21 @@ Po ověření všech Apps skript vytvoří jeden commit se šablonou, konečnou 
 
 Teprve po dokončení skript zapne Actions a vrátí `CredentialsConfigured: true`. `Organization`, `Repository`, `ReleaseVersion`, `InventoryPath` a `HasChanges` neobsahují credentials. První plan spusť ručně z chráněné `main`; zapnutí Actions zpětně nespustí push workflow inicializačního commitu.
 
+### PR se změnou githubApps nebo credentials
+
+Změny sekcí `githubApps` a `credentials` v `instance.yaml` existující instance musí projít PR a požadovaným review. Cloudový plan nesmí použít změněná App metadata ani credential vazby před merge. Guard v `tools/Select-InstanceModules.ps1` proto porovná obě sekce kandidáta s důvěryhodnou konfigurací z base commitu `main`. I autorizovaný PR platformního autora s platnou konfigurací při změně těchto sekcí záměrně skončí dvěma červenými checky:
+
+| Check | Text, podle kterého reviewer pozná záměrné selhání |
+|---|---|
+| `Select instance modules with trusted tools` | `PR changes protected githubApps bindings. Cloud plan must run from main after review and merge.` nebo `PR changes protected credentials bindings. Cloud plan must run from main after review and merge.` |
+| `Report complete or explicitly unperformed cloud plan` | `Cloud plan NOT PERFORMED: configuration validation or trusted module selection failed.` |
+
+Reviewer musí zároveň ověřit, že check `Validate configuration against the vendored release` prošel a diff skutečně mění `githubApps` nebo `credentials`. Samotný text `Cloud plan NOT PERFORMED` nedokazuje záměrné selhání guardu: stejný souhrn hlásí i chybu validace nebo jinou chybu výběru modulů. Jiné chyby vyřeš před merge; neoznačuj je za očekávaný výsledek tohoto postupu.
+
+Ruleset `platform-instance-main`, který vytváří `tools/Invoke-GitHubBootstrap.ps1`, neobsahuje pravidlo `required_status_checks`. Tyto dva červené checky tedy samy o sobě podle tohoto rulesetu merge neblokují. Nadále platí platformní CODEOWNER review, security review změny `instance.yaml` a ostatní pravidla review. Před merge ověř i další aktivní pravidla repozitáře a zděděné rulesety; bootstrapový ruleset nedokazuje, že merge dovolí celá instance. Tento postup neopravňuje k bypassu ani k vypnutí ochran.
+
+Po review a merge proběhne nový cloudový plan z chráněné `main` před schválením apply. PR validace tento plan nenahrazuje. Pokud změna vyžaduje zapojení nových Apps nebo environmentů opakovaným bootstrapem, dokonči příslušný postup níže s konfigurací shodnou s `main`; neúspěšný plan z `main` nesmíš považovat za očekávané selhání PR guardu.
+
 ### Zapojení vendoringu po nasazení katalogu
 
 Bootstrap vždy vytvoří `vendoring-source`, `vendoring-action-import` a `vendoring-release-import`. Všechny omezí na `main`; oba writer environmenty navíc vyžadují platformní tým a zakazují administrátorský bypass. Žádný z nich nemá Azure identitu ani federated credential. Bootstrap odmítne neznámý secret nebo variable v těchto environmentech. Klíč bez App vazby také odmítne.
@@ -216,7 +231,7 @@ Parametry `-VendoringReleaseApp`, `-VendoringActionApp` a `-VendoringSourceApp` 
 Release writer lze zapojit při prvním dokončení GitHub bootstrapu. Action writer zapoj až po apply modulů `organizations` a `actions-catalog`, kdy existuje organizace akcí i cílové repozitáře. Každá App musí mít jinou identitu než autorizační App, moduly, drift reporter i ostatní vendoring Apps. Klíče přidej do stejného externího manifestu `keys.json`; platí stejná rotace do 90 dní.
 
 1. Zaregistruj a nainstaluj App s oprávněními a selected scope z tabulky. Veřejný import nepotřebuje source App.
-2. Pokud už instance existuje, doplň App metadata do `instance.yaml` přes PR a review security týmem. Po merge použij lokální kopii konfigurace shodnou s chráněnou `main`; bootstrap konfiguraci nepřepíše.
+2. Pokud už instance existuje, doplň App metadata do `instance.yaml` přes PR a review security týmem. Dva záměrně červené checky rozpoznej podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials); cloudový plan proběhne až z `main` po merge. Po merge použij lokální kopii konfigurace shodnou s chráněnou `main`; bootstrap konfiguraci nepřepíše.
 3. Zopakuj bootstrap ze stejného schváleného release se stejným inventory, výstupem Azure bootstrapu a všemi již používanými App parametry:
 
 ```powershell
@@ -241,7 +256,7 @@ Bootstrap vytvoří environment `drift-report` bez reviewerů, jen z `main`. Iss
 |---|---|
 | App reportu driftu | Právě `issues: write`, jen repozitář `instance` organizace platformy. Samostatná identita; nesmí ji sdílet autorizace ani žádná fáze modulu. |
 
-Alias App patří do `githubApps` a klíč do `keys.json`. Bootstrapu ho předáš přes `-DriftReportApp`:
+Alias App patří do `githubApps` a klíč do `keys.json`. U existující instance doplň alias přes PR a požadované review podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials): dva checky záměrně skončí červeně a cloudový plan proběhne až z `main` po merge. Bootstrapu pak předej konfiguraci shodnou s `main` a alias přes `-DriftReportApp`:
 
 ```powershell
 .\tools\Invoke-GitHubBootstrap.ps1 @arguments `
