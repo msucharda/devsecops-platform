@@ -46,6 +46,8 @@ Release platformy určuje upstream piny šablon. Katalog instance určuje SHA sc
 
 Přepis `uses:` nesmí změnit chování workflow (pravidlo O11). Před importem release musí platformní tým pro každý jeho pin ověřit, že katalogová kopie pochází z tagu se stejným upstream commit SHA. Samotná shoda názvu akce nestačí. Import release používá právě aktuální katalog; nevybírá verzi podle upstream ref v `uses:`.
 
+U pinů s komentářem `# v<verze>` příprava navíc vyžaduje přesnou shodu tohoto tagu s `tag` katalogu. Jiný, chybějící nebo nečitelný katalogový tag zastaví import před vytvořením výstupu. Tato lokální kontrola nečte receipt kopie a neprokazuje shodu upstream commitů při stejném názvu tagu. Starší reference bez komentáře verze zachovávají původní přepis. Automatické ověření úplné provenance řeší [#136](https://github.com/msucharda/devsecops-platform/issues/136); do té doby zůstává ruční kontrola O11 povinná.
+
 1. Autor platformy zvýší piny, ověří změny runtime, vstupů a výstupů a vydá release s tabulkou upstream → tag → SHA. Platformní tým zkontroluje tuto tabulku a diff šablon.
 2. **Ještě před importem nového release** spustí platformní tým stávající `import-action.yml` pro každou změněnou akci s přesným upstream repozitářem a novým tagem z tabulky. Tag musí ukazovat na SHA pinu. Cílem zůstává stejný repozitář `{owner}-{repo}`; nový tag vytváří jinou importní větev a nový PR.
 3. Security tým zkontroluje diff, licenci a `.vendoring.json`: `source`, `tag` a upstream `commit` musí odpovídat schválené verzi. Po schválení platformní tým sloučí PR do `main` vendorované kopie a přes API zjistí skutečné SHA tohoto commitu. Upstream SHA nesmí zapsat místo SHA kopie.
