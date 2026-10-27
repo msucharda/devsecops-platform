@@ -64,7 +64,7 @@ AfterAll {
     $job | Remove-Job -Force
 }
 
-Describe 'Ruleset Terraform root against the API stub (write extension unverified)' -Tag Terraform {
+Describe 'Ruleset Terraform root against the documented and observed API' -Tag Terraform {
     BeforeEach {
         $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $root = Join-Path $parent 'rulesets'
@@ -129,7 +129,7 @@ data "external" "ruleset_plan_state" {
                 if ($contract.ruleParameters.Contains($rule['type'])) {
                     $parameters = $contract.ruleParameters[$rule['type']]
                     foreach ($field in $parameters.required) { $rule['parameters'].Contains($field) | Should -BeTrue }
-                    $allowed = @($parameters.properties) + @($parameters['unverifiedRequestProperties'])
+                    $allowed = @($parameters.properties) + @($parameters['observedRequestProperties'])
                     foreach ($field in $rule['parameters'].Keys) { $allowed | Should -Contain $field }
                 }
                 else { $rule['type'] | Should -BeIn @('deletion', 'non_fast_forward') }

@@ -7,7 +7,7 @@
     "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
     "status": 201,
     "schema": "#/components/schemas/repository-ruleset",
-    "note": "Documented org-ruleset response example. PUT returns the same repository-ruleset schema. requestProperties and ruleParameters.required/properties are taken from the POST and PUT request schemas at the pinned revision. unverifiedRequestProperties is NOT documented or observed in a successful write: it records the intended request extension required by https://github.com/msucharda/devsecops-platform/issues/122. Only the GET response field was observed, as annotated in repos/get-org-ruleset. The coordinator explicitly accepted this unverified write limitation on 2026-10-27. The API stub models acceptance but cannot prove it. The planned creation-path criterion requires a successful POST containing this field followed by GET returning true. Existing rulesets use PUT; acceptance of the field in PUT remains independently unverified and is not proved by the POST criterion."
+    "note": "Documented org-ruleset response example. PUT returns the same repository-ruleset schema. requestProperties and ruleParameters.required/properties are taken from the POST and PUT request schemas at the pinned revision. observedRequestProperties is NOT documented in that schema. The coordinator verified the extra field in successful POST and PUT requests on GHE.com with API 2026-03-10 on 2026-10-27, using the API and deploy run 356209032: one existing ruleset updated in place with this field as the sole body change, two rulesets created, all apply postconditions passed. Subsequent GET in all three organizations returned true for this field, empty bypass_actors and active enforcement. This primary observation supports the request extension required by https://github.com/msucharda/devsecops-platform/issues/122; it does not amend the published schema."
   },
   "required": {
     "": ["id", "name", "source", "enforcement"]
@@ -17,7 +17,7 @@
     "pull_request": {
       "required": ["dismiss_stale_reviews_on_push", "require_code_owner_review", "require_last_push_approval", "required_approving_review_count", "required_review_thread_resolution"],
       "properties": ["allowed_merge_methods", "dismiss_stale_reviews_on_push", "dismissal_restriction", "require_code_owner_review", "require_last_push_approval", "required_approving_review_count", "required_review_thread_resolution", "required_reviewers"],
-      "unverifiedRequestProperties": ["require_extra_approval_for_unattributed_changes"]
+      "observedRequestProperties": ["require_extra_approval_for_unattributed_changes"]
     },
     "code_scanning": {
       "required": ["code_scanning_tools"],

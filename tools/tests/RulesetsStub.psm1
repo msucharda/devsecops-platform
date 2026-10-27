@@ -1,7 +1,7 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1')
 
-# The GET fixture proves the response default, not acceptance of the field in POST/PUT requests.
+# The GET fixture supplies the response default; the create fixture records separate POST/PUT evidence.
 function Complete-RulesetResponse {
     param([hashtable] $Item)
 

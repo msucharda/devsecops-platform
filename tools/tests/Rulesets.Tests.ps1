@@ -9,15 +9,18 @@ Describe 'Observed organization ruleset response defaults' {
         Import-Module (Join-Path $PSScriptRoot 'RulesetsStub.psm1') -Force
     }
 
-    It 'keeps the unverified write extension separate from the documented request contract' {
+    It 'keeps the observed write extension separate from the documented request contract' {
         $contract = Get-GitHubApiFixtureContract -Name repos/create-org-ruleset
         $parameters = $contract.ruleParameters.pull_request
 
         $parameters.required | Should -Not -Contain 'require_extra_approval_for_unattributed_changes'
         $parameters.properties | Should -Not -Contain 'require_extra_approval_for_unattributed_changes'
-        $parameters.unverifiedRequestProperties | Should -Contain 'require_extra_approval_for_unattributed_changes'
+        $parameters.observedRequestProperties | Should -Contain 'require_extra_approval_for_unattributed_changes'
         $parameters.Contains('observedProperties') | Should -BeFalse
-        $contract.source.note | Should -Match 'not documented or observed in a successful write'
+        $parameters.Contains('unverifiedRequestProperties') | Should -BeFalse
+        $contract.source.note | Should -Match 'NOT documented in that schema'
+        $contract.source.note | Should -Match 'successful POST and PUT requests'
+        $contract.source.note | Should -Match '356209032'
     }
 
     It 'adds the observed default to the <Method> response without rewriting the request' -ForEach @(
