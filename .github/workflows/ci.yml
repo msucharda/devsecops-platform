@@ -111,6 +111,9 @@ jobs:
         with:
           terraform_version: 1.16.5
           terraform_wrapper: false
+      - name: Verify Terraform checksum
+        shell: pwsh
+        run: ./tools/Test-ToolBinary.ps1 -Name Terraform
       - name: Run Pester
         shell: pwsh
         run: ./tools/Invoke-Tests.ps1 -CI -Shard $env:PESTER_SHARD
@@ -217,9 +220,12 @@ jobs:
         with:
           terraform_version: 1.16.5
           terraform_wrapper: false
-      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
-        with:
-          tflint_version: v0.60.0
+      - name: Verify Terraform checksum
+        shell: pwsh
+        run: ./tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Install verified TFLint
+        shell: pwsh
+        run: ./tools/Install-CiBinary.ps1 -Name TFLint
       - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
           version: v0.72.0

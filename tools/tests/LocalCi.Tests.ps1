@@ -68,7 +68,7 @@ Describe 'Local CI reads ci.yml' {
     It 'refuses a ci.yml whose <Label>' -ForEach @(
         @{ Label = 'pwsh step is missing'; Find = 'name: Check PowerShell'; Replace = 'name: Check scripts' }
         @{ Label = 'actionlint command changed form'; Find = '-shellcheck= -pyflakes= .github/workflows/ci.yml'; Replace = '-shellcheck= -pyflakes= .github/workflows/ci.yml && echo done |' }
-        @{ Label = 'TFLint pin is missing'; Find = 'tflint_version:'; Replace = 'tflint_release:' }
+        @{ Label = 'TFLint installer changed'; Find = './tools/Install-CiBinary.ps1 -Name TFLint'; Replace = './tools/Install-CiBinary.ps1 -Name Other' }
         @{ Label = 'Trivy command changed'; Find = '--severity HIGH,CRITICAL'; Replace = '--severity MEDIUM,HIGH,CRITICAL' }
         @{ Label = 'TFLint step runs another command'; Find = 'tflint --chdir="$TF_ROOT"' + "`n"; Replace = 'tflint --chdir="$TF_ROOT"' + "`n" + '          tflint --chdir="$TF_ROOT" --format json' + "`n" }
     ) {

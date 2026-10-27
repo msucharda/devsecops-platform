@@ -1,6 +1,7 @@
 #Requires -Version 7.4
 Set-StrictMode -Version Latest
-Import-Module powershell-yaml -RequiredVersion 0.4.12
+Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+Import-Module (Get-ToolDependencyPath -Name powershell-yaml)
 
 # security-check: github-app-owner
 function Test-PlatformGitHubAppOwner {

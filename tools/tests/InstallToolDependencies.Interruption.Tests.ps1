@@ -8,15 +8,21 @@ Describe 'Tool dependency installation recovery' -Tag Interruption {
         $null = New-Item -ItemType Directory -Path $statePath
     }
 
-    It 'resumes after abrupt interruption after <InterruptAfter> without reinstalling completed work' -ForEach @(
-        @{ InterruptAfter = 'Registered' }
-        @{ InterruptAfter = 'Installed' }
+    It 'resumes after <Mode> interruption after <Boundary>' -ForEach @(
+        @{ Mode = 'Abrupt'; Boundary = 'Downloaded' }
+        @{ Mode = 'Abrupt'; Boundary = 'Saved' }
+        @{ Mode = 'Abrupt'; Boundary = 'PackagePublished' }
+        @{ Mode = 'Abrupt'; Boundary = 'Installed' }
+        @{ Mode = 'Error'; Boundary = 'Downloaded' }
+        @{ Mode = 'Error'; Boundary = 'Saved' }
+        @{ Mode = 'Error'; Boundary = 'PackagePublished' }
+        @{ Mode = 'Error'; Boundary = 'Installed' }
     ) {
-        (Invoke-InstallerStub -StatePath $statePath -WorkingPath $TestDrive -InterruptAfter $InterruptAfter).ExitCode | Should -Be 17
-        (Invoke-InstallerStub -StatePath $statePath -WorkingPath $TestDrive).ExitCode | Should -Be 0
-
-        Get-Content (Join-Path $statePath 'installed') | Should -BeExactly '0.4.12'
-        @(Get-Content (Join-Path $statePath 'attempts') | Where-Object { $_ -eq 'register' }).Count | Should -Be 1
-        @(Get-Content (Join-Path $statePath 'attempts') | Where-Object { $_ -eq 'install' }).Count | Should -Be 1
+        $first = Invoke-InstallerStub -StatePath $statePath -WorkingPath $TestDrive -InterruptAfter $Boundary -InterruptMode $Mode
+        $first.ExitCode | Should -Be $(if ($Mode -eq 'Abrupt') { 17 } else { 1 })
+        $second = Invoke-InstallerStub -StatePath $statePath -WorkingPath $TestDrive
+        $second.ExitCode | Should -Be 0 -Because $second.Error
+        Test-Path (Join-Path $statePath 'tools/.dependencies/Pester/5.7.1/Pester.psd1') | Should -BeTrue
+        @(Get-Content (Join-Path $statePath 'attempts') | Where-Object { $_ -eq 'installed' }).Count | Should -Be 1
     }
 }

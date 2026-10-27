@@ -11,7 +11,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module powershell-yaml -RequiredVersion 0.4.12
+Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+Import-Module (Get-ToolDependencyPath -Name powershell-yaml)
 
 # security-check: vendoring-release-tag
 function Assert-VendoringReleaseTag {

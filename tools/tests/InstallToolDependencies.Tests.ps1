@@ -1,162 +1,175 @@
 BeforeAll {
-    $installer = Join-Path $PSScriptRoot '../Install-ToolDependencies.ps1'
+    $script:sourceTools = Split-Path $PSScriptRoot -Parent
     function Get-PSRepository {
-        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Offline stub prevents PowerShellGet discovery and network access.')]
-        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Stub signature must match the mocked public command.')]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Offline package transport stub.')]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Matches the public PowerShellGet command.')]
         [CmdletBinding()]
         param([string] $Name)
-        throw 'Unexpected repository lookup outside the offline stub.'
+        throw 'Unexpected network access.'
     }
-    function Register-PSRepository {
-        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Offline stub prevents PowerShellGet dynamic parameter execution.')]
-        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Stub signature must match the mocked public command.')]
+    function Save-Module {
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Offline package transport stub.')]
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Matches the public PowerShellGet command.')]
         [CmdletBinding()]
-        param([switch] $Default)
-        throw 'Unexpected repository registration outside the offline stub.'
+        param([string] $Name, [string] $RequiredVersion, [string] $Repository, [string] $Path, [switch] $Force)
+        throw 'Unexpected network access.'
     }
-    function Install-Module {
-        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Offline stub prevents PowerShellGet discovery and network access.')]
-        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Stub signature must match the mocked public command.')]
-        [CmdletBinding()]
-        param([string] $Name, [string] $RequiredVersion, [string] $Repository, [string] $Scope, [switch] $Force, [switch] $AllowClobber)
-        throw 'Unexpected module installation outside the offline stub.'
+
+    Describe 'Tool dependency installer process errors' {
+        BeforeAll {
+            Import-Module (Join-Path $PSScriptRoot 'InstallToolDependenciesStub.psm1') -Force
+        }
+
+        It 'fails closed on a nonterminating <Failure> error' -ForEach @(
+            @{ Failure = 'Download' }, @{ Failure = 'Save' }
+        ) {
+            $state = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $state
+            $result = Invoke-InstallerStub -StatePath $state -WorkingPath $TestDrive -Failure $Failure
+            $result.ExitCode | Should -Be 1
+            $result.Error | Should -Match "Nonterminating $($Failure.ToLowerInvariant()) failure"
+            Test-Path (Join-Path $state 'tools/.dependencies/Pester/5.7.1') | Should -BeFalse
+        }
+    }
+
+    function New-InstallerFixture {
+        param([string] $Root)
+        $null = New-Item -ItemType Directory -Path $Root -Force
+        Copy-Item (Join-Path $script:sourceTools 'Install-ToolDependencies.ps1'), (Join-Path $script:sourceTools 'ToolDependencies.psm1') $Root
+        $payload = Join-Path $Root 'payload'
+        $null = New-Item -ItemType Directory -Path $payload
+        Set-Content (Join-Path $payload 'Pester.psd1') "@{ ModuleVersion = '5.7.1'; RootModule = 'Pester.psm1' }"
+        Set-Content (Join-Path $payload 'Pester.psm1') "throw 'The installer must never import downloaded modules.'"
+        # NuGet packages are ZIP archives; transport metadata is not installed module content.
+        # https://learn.microsoft.com/nuget/reference/nuspec
+        $archiveContent = Join-Path $Root 'archive-content'
+        Copy-Item $payload $archiveContent -Recurse
+        $null = New-Item -ItemType Directory -Path (Join-Path $archiveContent '_rels'), (Join-Path $archiveContent 'package')
+        Set-Content (Join-Path $archiveContent '_rels/.rels') '<Relationships/>'
+        Set-Content (Join-Path $archiveContent 'package/metadata') 'metadata'
+        Set-Content -LiteralPath (Join-Path $archiveContent '[Content_Types].xml') -Value '<Types/>'
+        Set-Content (Join-Path $archiveContent 'Pester.nuspec') '<package/>'
+        $package = Join-Path $Root 'fixture.nupkg'
+        [IO.Compression.ZipFile]::CreateFromDirectory($archiveContent, $package)
+        $hash = (Get-FileHash $package).Hash.ToLowerInvariant()
+        Set-Content (Join-Path $Root 'requirements.psd1') "@{ Runtime = @{}; Development = @{ Pester = '5.7.1' }; Sha256 = @{ Pester = '$hash' } }"
+        return @{ Root = $Root; Payload = $payload; Package = $package; Hash = $hash; Installer = Join-Path $Root 'Install-ToolDependencies.ps1' }
     }
 }
 
 Describe 'Tool dependency installation' {
     BeforeEach {
-        $installState = @{ Attempts = 0 }
-        Mock Get-Module { } -ParameterFilter { $ListAvailable -and $Name -eq 'powershell-yaml' }
-        Mock Get-PSRepository { [pscustomobject]@{ Name = 'PSGallery' } }
-        Mock Register-PSRepository { }
+        $fixture = New-InstallerFixture -Root (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')))
+        Mock Invoke-WebRequest { Copy-Item -LiteralPath $fixture.Package -Destination $OutFile }
+        Mock Save-Module {
+            $destination = Join-Path $Path "$Name/$RequiredVersion"
+            $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
+            Copy-Item -LiteralPath $fixture.Payload -Destination $destination -Recurse
+        }
         Mock Start-Sleep { }
-        Mock Install-Module {
-            $installState.Attempts++
-            if ($installState.Attempts -lt 3) { throw 'Transient download failure' }
+        Mock Get-PSRepository { [pscustomobject]@{ Name = 'PSGallery' } }
+    }
+
+    It 'publishes a verified development module without importing it' {
+        & $fixture.Installer -Development
+        Test-Path (Join-Path $fixture.Root '.dependencies/Pester/5.7.1/Pester.psd1') | Should -BeTrue
+        Should -Invoke Save-Module -Times 1 -Exactly -ParameterFilter {
+            $Name -eq 'Pester' -and $RequiredVersion -eq '5.7.1' -and $Repository -eq 'PSGallery' -and $ErrorAction -eq 'Stop'
         }
     }
 
-    It 'retries transient downloads using the hotfix defaults and linear delays' {
-        & $installer
+    It 'rejects a package with a different SHA256 before Save-Module' {
+        Mock Invoke-WebRequest { Set-Content -LiteralPath $OutFile 'changed package' }
+        { & $fixture.Installer -Development } | Should -Throw '*SHA256 mismatch for Pester*'
+        Should -Invoke Save-Module -Times 0
+        Test-Path (Join-Path $fixture.Root '.dependencies/Pester/5.7.1') | Should -BeFalse
+    }
 
-        Should -Invoke Install-Module -Times 3 -Exactly -ParameterFilter {
-            $Name -eq 'powershell-yaml' -and $RequiredVersion -eq '0.4.12' -and
-            $Repository -eq 'PSGallery' -and $Scope -eq 'CurrentUser' -and $Force -and $AllowClobber -and $ErrorAction -eq 'Stop'
+    It 'rejects an invalid SHA256 pin <Pin>' -ForEach @(
+        @{ Pin = '' }, @{ Pin = 'abcd' }, @{ Pin = 'z' * 64 }
+    ) {
+        Set-Content (Join-Path $fixture.Root 'requirements.psd1') "@{ Runtime=@{}; Development=@{ Pester='5.7.1' }; Sha256=@{ Pester='$Pin' } }"
+        { & $fixture.Installer -Development } | Should -Throw '*Invalid SHA256 pin for Pester*'
+        Should -Invoke Save-Module -Times 0
+    }
+
+    It 'rejects Save-Module content that differs from the verified archive' {
+        Mock Save-Module {
+            $destination = Join-Path $Path "$Name/$RequiredVersion"
+            $null = New-Item -ItemType Directory -Path $destination -Force
+            Copy-Item (Join-Path $fixture.Payload '*') $destination
+            Set-Content (Join-Path $destination 'Pester.psm1') 'changed module'
         }
+        { & $fixture.Installer -Development } | Should -Throw '*SHA256 mismatch for Pester.psm1*'
+        Test-Path (Join-Path $fixture.Root '.dependencies/Pester/5.7.1') | Should -BeFalse
+    }
+
+    It 'rejects a missing payload file' {
+        Mock Save-Module { $null = New-Item -ItemType Directory -Path (Join-Path $Path "$Name/$RequiredVersion") -Force }
+        { & $fixture.Installer -Development } | Should -Throw '*Module payload is missing*'
+    }
+
+    It 'rejects an extra payload file even when all expected files match' {
+        Mock Save-Module {
+            $destination = Join-Path $Path "$Name/$RequiredVersion"
+            $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
+            Copy-Item $fixture.Payload $destination -Recurse
+            Set-Content (Join-Path $destination 'unexpected.psm1') 'untrusted'
+        }
+        { & $fixture.Installer -Development } | Should -Throw '*unexpected files*'
+    }
+
+    It 'revalidates cached module content without contacting PSGallery' {
+        & $fixture.Installer -Development
+        & $fixture.Installer -Development
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+        Should -Invoke Save-Module -Times 1 -Exactly
+        Set-Content (Join-Path $fixture.Root '.dependencies/Pester/5.7.1/Pester.psm1') 'tampered'
+        { & $fixture.Installer -Development } | Should -Throw '*SHA256 mismatch*'
+    }
+
+    It 'retries transient downloads with the existing linear delays' {
+        $state = @{ Attempts = 0 }
+        Mock Invoke-WebRequest {
+            $state.Attempts++
+            if ($state.Attempts -lt 3) { throw 'Transient download failure' }
+            Copy-Item $fixture.Package $OutFile
+        }
+        & $fixture.Installer -Development
         Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 15 }
         Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 30 }
-        Should -Invoke Register-PSRepository -Times 0
     }
 
-    It 'restores PSGallery before each attempt when registration is missing' {
-        Mock Get-PSRepository { } -ParameterFilter { $Name -eq 'PSGallery' -and $ErrorAction -eq 'SilentlyContinue' }
-
-        & $installer -MaxAttempts 3 -RetryDelaySeconds 0
-
-        Should -Invoke Register-PSRepository -Times 3 -Exactly -ParameterFilter { $Default -and $ErrorAction -eq 'Stop' }
-        Should -Invoke Install-Module -Times 3 -Exactly
+    It 'stops after the configured download attempt limit' {
+        Mock Invoke-WebRequest { throw 'Persistent download failure' }
+        { & $fixture.Installer -Development -MaxAttempts 2 -RetryDelaySeconds 0 } | Should -Throw '*Persistent download failure*'
+        Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+        Should -Invoke Save-Module -Times 0
     }
 
-    It 'retries a failed repository registration before installing' {
-        $registrationState = @{ Attempts = 0 }
-        Mock Get-PSRepository { }
-        Mock Register-PSRepository {
-            $registrationState.Attempts++
-            if ($registrationState.Attempts -eq 1) { throw 'Registration failed' }
+    It 'retries Save-Module without treating integrity mismatches as transient errors' {
+        $state = @{ Attempts = 0 }
+        Mock Save-Module {
+            $state.Attempts++
+            if ($state.Attempts -lt 2) { throw 'Transient Save-Module failure' }
+            $destination = Join-Path $Path "$Name/$RequiredVersion"
+            $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
+            Copy-Item $fixture.Payload $destination -Recurse
         }
-        Mock Install-Module { }
-
-        & $installer -MaxAttempts 2 -RetryDelaySeconds 2
-
-        Should -Invoke Register-PSRepository -Times 2 -Exactly
-        Should -Invoke Install-Module -Times 1 -Exactly
-        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 2 }
+        & $fixture.Installer -Development -RetryDelaySeconds 0
+        Should -Invoke Save-Module -Times 2 -Exactly
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly
     }
 
-    It 'stops after the configured attempt limit without a final delay' {
-        Mock Install-Module { throw 'Persistent download failure' }
-
-        { & $installer -MaxAttempts 2 -RetryDelaySeconds 3 } | Should -Throw '*Persistent download failure*'
-
-        Should -Invoke Install-Module -Times 2 -Exactly
-        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 3 }
+    It 'does not access PSGallery for runtime dependencies' {
+        & (Join-Path $sourceTools 'Install-ToolDependencies.ps1')
+        Should -Invoke Invoke-WebRequest -Times 0
+        Should -Invoke Save-Module -Times 0
     }
 
-    It 'exhausts exactly four attempts and three linear delays by default' {
-        Mock Install-Module { throw 'Persistent download failure' }
-
-        { & $installer } | Should -Throw '*Persistent download failure*'
-
-        Should -Invoke Install-Module -Times 4 -Exactly
-        Should -Invoke Start-Sleep -Times 3 -Exactly
-        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 15 }
-        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 30 }
-        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 45 }
-    }
-
-    It 'does not contact PSGallery when the exact version is already installed' {
-        Mock Get-Module { [pscustomobject]@{ Version = [version] '0.4.12' } } -ParameterFilter { $ListAvailable -and $Name -eq 'powershell-yaml' }
-
-        & $installer
-
-        Should -Invoke Install-Module -Times 0
-        Should -Invoke Get-PSRepository -Times 0
-        Should -Invoke Register-PSRepository -Times 0
-        Should -Invoke Start-Sleep -Times 0
-    }
-
-    It 'installs the required version even when another version is available' {
-        Mock Get-Module { [pscustomobject]@{ Version = [version] '0.4.11' } } -ParameterFilter { $ListAvailable -and $Name -eq 'powershell-yaml' }
-        Mock Install-Module { }
-
-        & $installer
-
-        Should -Invoke Install-Module -Times 1 -Exactly -ParameterFilter { $Name -eq 'powershell-yaml' -and $RequiredVersion -eq '0.4.12' }
-    }
-
-    It 'installs the pinned runtime and development versions' {
-        Mock Get-Module { } -ParameterFilter { $ListAvailable -and $Name -in @('powershell-yaml', 'Pester', 'PSScriptAnalyzer') }
-        Mock Install-Module { }
-
-        & $installer -Development
-
-        Should -Invoke Install-Module -Times 3 -Exactly
-        Should -Invoke Install-Module -Times 1 -Exactly -ParameterFilter { $Name -eq 'Pester' -and $RequiredVersion -eq '5.7.1' }
-        Should -Invoke Install-Module -Times 1 -Exactly -ParameterFilter { $Name -eq 'PSScriptAnalyzer' -and $RequiredVersion -eq '1.24.0' }
-        Should -Invoke Install-Module -Times 1 -Exactly -ParameterFilter { $Name -eq 'powershell-yaml' -and $RequiredVersion -eq '0.4.12' }
-    }
-
-    It 'rejects invalid retry parameters before contacting PSGallery' -ForEach @(
-        @{ Arguments = @{ MaxAttempts = 0 } }
-        @{ Arguments = @{ RetryDelaySeconds = -1 } }
+    It 'rejects invalid retry parameters' -ForEach @(
+        @{ Arguments = @{ MaxAttempts = 0 } }, @{ Arguments = @{ RetryDelaySeconds = -1 } }
     ) {
-        { & $installer @Arguments } | Should -Throw '*Cannot validate argument*'
-
-        Should -Invoke Install-Module -Times 0
-        Should -Invoke Register-PSRepository -Times 0
+        { & $fixture.Installer @Arguments } | Should -Throw '*Cannot validate argument*'
     }
-}
-
-Describe 'Tool dependency installation process errors and recovery' {
-    BeforeAll {
-        Import-Module (Join-Path $PSScriptRoot 'InstallToolDependenciesStub.psm1') -Force
-    }
-
-    BeforeEach {
-        $statePath = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
-        $null = New-Item -ItemType Directory -Path $statePath
-    }
-
-    It 'exits nonzero after nonterminating module-function <Failure> errors' -ForEach @(
-        @{ Failure = 'Install'; Message = 'Nonterminating installation failure'; Operation = 'install' }
-        @{ Failure = 'Register'; Message = 'Nonterminating registration failure'; Operation = 'register' }
-    ) {
-        $result = Invoke-InstallerStub -StatePath $statePath -WorkingPath $TestDrive -Failure $Failure
-
-        $result.ExitCode | Should -Be 1
-        $result.Error | Should -Match $Message
-        @(Get-Content (Join-Path $statePath 'attempts') | Where-Object { $_ -eq $Operation }).Count | Should -Be 2
-        Test-Path (Join-Path $statePath 'installed') | Should -BeFalse
-    }
-
 }

@@ -4,18 +4,22 @@ param([string[]] $Path)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
-Import-Module PSScriptAnalyzer -RequiredVersion $requirements.Development.PSScriptAnalyzer
+Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+Import-Module (Get-ToolDependencyPath -Name PSScriptAnalyzer)
 $files = if ($Path) {
     foreach ($item in $Path) {
-        Get-Item -LiteralPath $item -ErrorAction Stop |
-            Where-Object { -not $_.PSIsContainer -and $_.Extension -in @('.ps1', '.psm1', '.psd1') }
+        Get-Item -LiteralPath $item -ErrorAction Stop
     }
 }
 else {
-    Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File |
-        Where-Object { $_.Extension -in @('.ps1', '.psm1', '.psd1') }
+    Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File
 }
+$files = $files |
+    Where-Object {
+        -not $_.PSIsContainer -and $_.Extension -in @('.ps1', '.psm1', '.psd1') -and
+        $_.FullName -notlike "$(Join-Path $PSScriptRoot 'vendor')$([IO.Path]::DirectorySeparatorChar)*" -and
+        $_.FullName -notlike "$(Join-Path $PSScriptRoot '.dependencies')$([IO.Path]::DirectorySeparatorChar)*"
+    }
 foreach ($file in $files) {
     $parseErrors = $null
     $null = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref] $null, [ref] $parseErrors)

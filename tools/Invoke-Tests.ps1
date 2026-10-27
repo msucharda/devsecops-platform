@@ -13,8 +13,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
-Import-Module Pester -RequiredVersion $requirements.Development.Pester
+Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+Import-Module (Get-ToolDependencyPath -Name Pester)
+$env:PSModulePath = "$(Join-Path $PSScriptRoot 'vendor')$([IO.Path]::PathSeparator)$env:PSModulePath"
 $configuration = New-PesterConfiguration
 $configuration.Run.Path = if ($Path) {
     @(foreach ($item in $Path) { (Resolve-Path -LiteralPath $item -ErrorAction Stop).ProviderPath })

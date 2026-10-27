@@ -51,6 +51,18 @@
             )
         }
         @{
+            Name = 'tool-package-sha256'
+            Tests = @(
+                @{ Path = 'tools/tests/InstallToolDependencies.Tests.ps1'; FullName = @('*Tool dependency installation*') }
+            )
+        }
+        @{
+            Name = 'tool-module-payload'
+            Tests = @(
+                @{ Path = 'tools/tests/InstallToolDependencies.Tests.ps1'; FullName = @('*Tool dependency installation*') }
+            )
+        }
+        @{
             Name = 'organizations-api-pagination'
             Tests = @(
                 @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*Assignment pagination*', '*incomplete assignment listing*') }
