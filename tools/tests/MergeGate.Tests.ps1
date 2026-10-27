@@ -134,6 +134,225 @@ Describe 'Merge gate replay of real pull requests' {
         $result.details.checks.missing | Should -Be @('copilot-pull-request-reviewer')
     }
 
+    It 'G4 rejects a required context reported by another integration' {
+        $stub = Initialize-MergeGateStub -Scenario pr-52
+        $check = @($stub.CheckRuns.check_runs | Where-Object { $_.name -ceq 'copilot-pull-request-reviewer' })[0]
+        $check.app.id = 99999
+        $result = Invoke-ScenarioGate -Stub $stub -Parameters @{ Now = '2026-10-20T21:00:00Z' }
+
+        Get-ReasonCode $result | Should -Be @('fail:required-check-missing')
+        $result.details.checks.missing | Should -Be @('copilot-pull-request-reviewer')
+    }
+
+    It 'G4 integration <Case>' -ForEach @(
+        @{ Case = 'matches the required app'; Mode = 'matching'; Expected = @('fail:blocked-by-rules') }
+        @{ Case = 'does not constrain a context without integration_id'; Mode = 'unbound'; Expected = @('fail:blocked-by-rules') }
+        @{ Case = 'does not accept a differently named check'; Mode = 'name'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'does not accept a differently cased check name'; Mode = 'case'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'does not accept a null app'; Mode = 'null-app'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'does not accept a missing app'; Mode = 'missing-app'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'does not accept a missing app id'; Mode = 'missing-id'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'does not accept a null app id'; Mode = 'null-id'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'does not accept a string app id'; Mode = 'string-id'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'does not accept an empty app id'; Mode = 'empty-id'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'does not accept a null integration id'; Mode = 'null-integration'; Expected = @('fail:evaluation-error') }
+        @{ Case = 'does not accept a string integration id'; Mode = 'string-integration'; Expected = @('fail:evaluation-error') }
+        @{ Case = 'retains constraints from two rules with the same context'; Mode = 'two-rules'; Expected = @('fail:required-check-missing') }
+        @{ Case = 'accepts the matching app among two apps'; Mode = 'two-apps'; Expected = @('fail:blocked-by-rules') }
+    ) {
+        $stub = Initialize-MergeGateStub -Scenario pr-52
+        $check = @($stub.CheckRuns.check_runs | Where-Object { $_.name -ceq 'copilot-pull-request-reviewer' })[0]
+        $required = $stub.Rules[1].parameters.required_status_checks[0]
+        switch ($Mode) {
+            'unbound' { $required.Remove('integration_id'); $check.app.id = 99999 }
+            'name' { $check.name = 'another-check' }
+            'case' { $check.name = 'Copilot-Pull-Request-Reviewer' }
+            'null-app' { $check.app = $null }
+            # Intentionally invalid API inputs: check-run app.id and integration_id are integers when present.
+            'missing-app' { $check.Remove('app') }
+            'missing-id' { $check.app.Remove('id') }
+            'null-id' { $check.app.id = $null }
+            'string-id' { $check.app.id = '15368' }
+            'empty-id' { $check.app.id = '' }
+            'null-integration' { $required.integration_id = $null }
+            'string-integration' { $required.integration_id = '15368' }
+            'two-rules' {
+                $second = Get-GitHubApiFixture -Name 'repos/get-branch-rules.merge-gate-required-check' -Set @{ '1.parameters.required_status_checks.0.integration_id' = 99999 }
+                $stub.Rules += $second[1]
+            }
+            'two-apps' {
+                $other = Get-GitHubApiFixture -Name 'checks/list-for-ref.merge-gate-pr-52'
+                $otherCheck = @($other.check_runs | Where-Object { $_.name -ceq 'copilot-pull-request-reviewer' })[0]
+                $otherCheck.app.id = 99999
+                $stub.CheckRuns.check_runs += $otherCheck
+                $stub.CheckRuns.total_count++
+            }
+        }
+        $result = Invoke-ScenarioGate -Stub $stub -Parameters @{ Now = '2026-10-20T21:00:00Z' }
+
+        Get-ReasonCode $result | Should -Be $Expected
+        if ($Mode -in @('null-integration', 'string-integration')) {
+            $result.reasons[0].message | Should -Match 'invalid integration_id'
+        }
+    }
+
+    It 'G9 author rejects a marker after an edit by another login' {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $history = $stub.DecisionAuthors.data.repository.pullRequest
+        $stub.PullRequest.body = $history.body
+        $history.userContentEdits.nodes[0].editor.login = 'another-user'
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-WarningCode $result | Should -Contain 'decisions-unconfirmed'
+        $result.details.body.decisionsAccepted | Should -BeNullOrEmpty
+    }
+
+    It 'G9 author confirms complete same-login history for Actor <Kind>' -ForEach @(
+        @{ Kind = 'User'; Login = 'msucharda' }
+        @{ Kind = 'Bot'; Login = 'example[bot]' }
+        @{ Kind = 'Organization'; Login = 'example-org' }
+        @{ Kind = 'Mannequin'; Login = 'example-mannequin' }
+        @{ Kind = 'EnterpriseUserAccount'; Login = 'example-user' }
+    ) {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $stub.DecisionAuthors = Get-GitHubApiFixture -Name 'graphql/pull-request-decision-authors' -Set @{
+            'data.repository.pullRequest.author.__typename' = $Kind
+            'data.repository.pullRequest.author.login' = $Login
+            'data.repository.pullRequest.userContentEdits.nodes.0.editor.__typename' = $Kind
+            'data.repository.pullRequest.userContentEdits.nodes.0.editor.login' = $Login
+        }
+        $history = $stub.DecisionAuthors.data.repository.pullRequest
+        $history.body = $history.body.Replace('msucharda', $Login)
+        $stub.PullRequest.body = $history.body
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        $result.verdict | Should -Be 'pass'
+        Get-WarningCode $result | Should -Not -Contain 'decisions-unconfirmed'
+        $result.details.body.decisionsAccepted.login | Should -BeExactly $Login
+        $result.details.body.decisionsAccepted.date | Should -Be '2026-10-22'
+    }
+
+    It 'G9 author confirms <Case>' -ForEach @(
+        @{ Case = 'an unedited body from its author'; Mode = 'unedited' }
+        @{ Case = 'case-insensitive GitHub logins'; Mode = 'case' }
+        @{ Case = 'multiple edits from the same login'; Mode = 'two-edits' }
+    ) {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $history = $stub.DecisionAuthors.data.repository.pullRequest
+        $stub.PullRequest.body = $history.body
+        switch ($Mode) {
+            'unedited' { $history.userContentEdits.nodes = @(); $history.userContentEdits.totalCount = 0 }
+            'case' { $history.author.login = 'MSucharda'; $history.userContentEdits.nodes[0].editor.login = 'MSUCHARDA' }
+            'two-edits' { $history.userContentEdits.nodes += $history.userContentEdits.nodes[0].Clone(); $history.userContentEdits.totalCount = 2 }
+        }
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-WarningCode $result | Should -Not -Contain 'decisions-unconfirmed'
+        $result.details.body.decisionsAccepted.login | Should -Be 'msucharda'
+    }
+
+    It 'G9 author leaves acceptance unconfirmed for <Case>' -ForEach @(
+        @{ Case = 'another PR author'; Mode = 'author'; Message = 'pull request author' }
+        @{ Case = 'a null PR author'; Mode = 'null-author'; Message = 'pull request author' }
+        @{ Case = 'an empty author login'; Mode = 'empty-author'; Message = 'pull request author' }
+        @{ Case = 'a null editor'; Mode = 'null-editor'; Message = 'edit author' }
+        @{ Case = 'an empty editor login'; Mode = 'empty-editor'; Message = 'edit author' }
+        @{ Case = 'an extra editor with another login'; Mode = 'extra-editor'; Message = 'edit author' }
+        @{ Case = 'a redacted edit'; Mode = 'redacted'; Message = 'redacted' }
+        @{ Case = 'a null history'; Mode = 'null-history'; Message = "no list at 'nodes'" }
+        @{ Case = 'null edit nodes'; Mode = 'null-nodes'; Message = "no list at 'nodes'" }
+        @{ Case = 'a null edit node'; Mode = 'null-node'; Message = 'unreadable edit' }
+        @{ Case = 'an unread page'; Mode = 'next-page'; Message = 'incomplete or unreadable' }
+        @{ Case = 'a count mismatch'; Mode = 'count'; Message = 'count does not match' }
+        @{ Case = 'a changed head'; Mode = 'head'; Message = 'evaluated head' }
+        @{ Case = 'a differently cased head'; Mode = 'head-case'; Message = 'evaluated head' }
+        @{ Case = 'a changed body'; Mode = 'body'; Message = 'body changed' }
+        @{ Case = 'a differently cased body'; Mode = 'body-case'; Message = 'body changed' }
+        @{ Case = 'a null pull request'; Mode = 'null-pr'; Message = 'evaluated head' }
+        @{ Case = 'multiple markers'; Mode = 'markers'; Message = 'exactly one' }
+        # Intentionally invalid API inputs below: omitted selected fields, wrong scalar types and invalid JSON.
+        @{ Case = 'a missing author login'; Mode = 'missing-author'; Message = 'pull request author' }
+        @{ Case = 'a missing editor login'; Mode = 'missing-editor'; Message = 'edit author' }
+        @{ Case = 'an array author login'; Mode = 'array-author'; Message = 'pull request author' }
+        @{ Case = 'an array editor login'; Mode = 'array-editor'; Message = 'edit author' }
+        @{ Case = 'a missing redaction field'; Mode = 'missing-redaction'; Message = 'unreadable edit' }
+        @{ Case = 'an absent page flag'; Mode = 'missing-page'; Message = 'incomplete or unreadable' }
+        @{ Case = 'a string page flag'; Mode = 'string-page'; Message = 'incomplete or unreadable' }
+        @{ Case = 'a null count'; Mode = 'null-count'; Message = 'count does not match' }
+        @{ Case = 'a string count'; Mode = 'string-count'; Message = 'count does not match' }
+        @{ Case = 'an array head'; Mode = 'array-head'; Message = 'evaluated head' }
+        @{ Case = 'an array body'; Mode = 'array-body'; Message = 'body changed' }
+        @{ Case = 'an API failure'; Mode = 'api'; Message = 'history unavailable' }
+        @{ Case = 'invalid JSON'; Mode = 'json'; Message = 'not JSON' }
+    ) {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $history = $stub.DecisionAuthors.data.repository.pullRequest
+        $stub.PullRequest.body = $history.body
+        switch ($Mode) {
+            'author' { $history.author.login = 'another-user' }
+            'null-author' { $history.author = $null }
+            'empty-author' { $history.author.login = '' }
+            'null-editor' { $history.userContentEdits.nodes[0].editor = $null }
+            'empty-editor' { $history.userContentEdits.nodes[0].editor.login = '' }
+            'extra-editor' {
+                $extra = Get-GitHubApiFixture -Name 'graphql/pull-request-decision-authors' -Set @{ 'data.repository.pullRequest.userContentEdits.nodes.0.editor.login' = 'another-user' }
+                $history.userContentEdits.nodes += $extra.data.repository.pullRequest.userContentEdits.nodes[0]
+                $history.userContentEdits.totalCount = 2
+            }
+            'redacted' { $history.userContentEdits.nodes[0].deletedAt = '2026-10-22T11:00:00Z' }
+            'null-history' { $history.userContentEdits = $null }
+            'null-nodes' { $history.userContentEdits.nodes = $null }
+            'null-node' { $history.userContentEdits.nodes = @($null) }
+            'next-page' { $history.userContentEdits.pageInfo.hasNextPage = $true }
+            'count' { $history.userContentEdits.totalCount = 2 }
+            'head' { $history.headRefOid = Get-OtherSha }
+            'head-case' { $history.headRefOid = $history.headRefOid.ToUpperInvariant() }
+            'body' { $history.body += "`nChanged after confirmation." }
+            'body-case' { $history.body = $history.body.Replace('D1', 'd1') }
+            'null-pr' { $stub.DecisionAuthors.data.repository.pullRequest = $null }
+            'markers' { $history.body += "`n<!-- merge-gate: decisions-accepted another-user 2026-10-22 -->"; $stub.PullRequest.body = $history.body }
+            'missing-author' { $history.author.Remove('login') }
+            'missing-editor' { $history.userContentEdits.nodes[0].editor.Remove('login') }
+            'array-author' { $history.author.login = @($history.author.login) }
+            'array-editor' { $history.userContentEdits.nodes[0].editor.login = @($history.userContentEdits.nodes[0].editor.login) }
+            'missing-redaction' { $history.userContentEdits.nodes[0].Remove('deletedAt') }
+            'missing-page' { $history.userContentEdits.pageInfo.Remove('hasNextPage') }
+            'string-page' { $history.userContentEdits.pageInfo.hasNextPage = 'false' }
+            'null-count' { $history.userContentEdits.totalCount = $null }
+            'string-count' { $history.userContentEdits.totalCount = '1' }
+            'array-head' { $history.headRefOid = @($history.headRefOid) }
+            'array-body' { $history.body = @($history.body) }
+            'api' { $stub.Failures['graphql decisionAuthors'] = 'history unavailable' }
+            'json' { $stub.Responses['graphql decisionAuthors'] = '{ invalid' }
+        }
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        $result.verdict | Should -Be 'pass'
+        Get-WarningCode $result | Should -Contain 'decisions-unconfirmed'
+        $result.details.body.decisionsAccepted | Should -BeNullOrEmpty
+        @($result.warnings | Where-Object code -EQ 'decisions-unconfirmed')[0].evidence.error | Should -Match $Message
+    }
+
+    It 'G4 integration binds a context to an app, not a commit status' {
+        $stub = Initialize-MergeGateStub -Scenario pr-52
+        $stub.CheckRuns.check_runs = @($stub.CheckRuns.check_runs | Where-Object { $_.name -cne 'copilot-pull-request-reviewer' })
+        $stub.CheckRuns.total_count = $stub.CheckRuns.check_runs.Count
+        # One-off simple-commit-status example: required fields from the pinned OpenAPI used by the status fixture.
+        $stub.Status.statuses = @(@{
+            description = 'Build passed'; id = 1; node_id = 'SC_kwDOExample'; state = 'success'
+            context = 'copilot-pull-request-reviewer'; target_url = $null; avatar_url = $null
+            url = 'https://api.github.com/repos/example/repo/statuses/1'
+            created_at = '2026-10-20T20:20:00Z'; updated_at = '2026-10-20T20:20:00Z'
+        })
+        $stub.Status.total_count = 1
+        $result = Invoke-ScenarioGate -Stub $stub -Parameters @{ Now = '2026-10-20T21:00:00Z' }
+        Get-ReasonCode $result | Should -Be @('fail:required-check-missing')
+
+        $stub.Rules[1].parameters.required_status_checks[0].Remove('integration_id')
+        $unbound = Invoke-ScenarioGate -Stub $stub -Parameters @{ Now = '2026-10-20T21:00:00Z' }
+        Get-ReasonCode $unbound | Should -Be @('fail:blocked-by-rules')
+    }
+
     It 'keeps #60 pending while Copilot reviews the head after the review of an older commit' {
         $stub = Initialize-MergeGateStub -Scenario pr-60
         $result = Invoke-ScenarioGate -Stub $stub
@@ -554,7 +773,7 @@ Describe 'Merge gate check functions' {
             @{ Case = 'required context reported by a status'; Runs = @(@{ name = 'Source CI'; event = 'pull_request'; status = 'completed'; conclusion = 'success' }); Checks = @(); Statuses = @(@{ context = 'ci/legacy'; state = 'success' }); Required = @('ci/legacy'); Pushed = '2026-10-22T09:00:00Z'; Expected = @() }
             @{ Case = 'required context with another case'; Runs = @(@{ name = 'Source CI'; event = 'pull_request'; status = 'completed'; conclusion = 'success' }); Checks = @(@{ name = 'platform tools'; status = 'completed'; conclusion = 'success' }); Statuses = @(@{ context = 'Ci/Legacy'; state = 'success' }); Required = @('Platform tools', 'ci/legacy'); Pushed = '2026-10-22T09:00:00Z'; Expected = @('fail:required-check-missing:Platform tools', 'fail:required-check-missing:ci/legacy') }
         ) {
-            $parameters = @{ WorkflowRuns = $Runs; CheckRuns = $Checks; Statuses = $Statuses; RequiredContexts = $Required; PushedAt = $Pushed; Now = $now }
+            $parameters = @{ WorkflowRuns = $Runs; CheckRuns = $Checks; Statuses = $Statuses; RequiredChecks = @($Required | ForEach-Object { @{ context = $_ } }); PushedAt = $Pushed; Now = $now }
             InModuleScope MergeGate -Parameters @{ Parameters = $parameters; Expected = $Expected } {
                 @(Get-MergeGateCheckFinding @Parameters -ExpectedWorkflows @('Source CI') -GraceMinutes 15) | Should -Be $Expected
             }
@@ -701,7 +920,7 @@ Describe 'Merge gate check functions' {
         @{ Case = 'a body without decisions'; Body = "## Zm`u{011B}ny`n- a"; Expected = $false }
         @{ Case = 'unaccepted user decisions'; Body = "## Rozhodnut`u{00ED} u`u{017E}ivatele`n- D1"; Expected = $true }
         @{ Case = 'unaccepted decisions for the user'; Body = "## Rozhodnut`u{00ED} pro u`u{017E}ivatele`n- D1"; Expected = $true }
-        @{ Case = 'accepted user decisions'; Body = "## Rozhodnut`u{00ED} u`u{017E}ivatele`n- D1`n<!-- merge-gate: decisions-accepted msucharda 2026-10-22 -->"; Expected = $false }
+        @{ Case = 'unverified acceptance marker'; Body = "## Rozhodnut`u{00ED} u`u{017E}ivatele`n- D1`n<!-- merge-gate: decisions-accepted msucharda 2026-10-22 -->"; Expected = $true }
         @{ Case = 'an upper-case acceptance marker'; Body = "## Rozhodnut`u{00ED} u`u{017E}ivatele`n- D1`n<!-- MERGE-GATE: DECISIONS-ACCEPTED msucharda 2026-10-22 -->"; Expected = $true }
         @{ Case = 'an acceptance marker without date'; Body = "## Rozhodnut`u{00ED} u`u{017E}ivatele`n- D1`n<!-- merge-gate: decisions-accepted msucharda -->"; Expected = $true }
     ) {

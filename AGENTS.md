@@ -165,10 +165,11 @@ Merge gate rozhoduje, zda PR splňuje podmínky pro merge. Nerozhoduje, zda agen
 - Koordinátor spouští verzi z `origin/main` (`git show origin/main:tools/agents/...`), aby větev nemohla oslabit vlastní gate.
 - Agent nesmí použít `gh pr merge --admin`, `--auto` ani `gh pr ready` a merge v jednom kroku. Verdikt `blocked-by-rules` znamená chybu v rulesetu, ne důvod k obejití pravidel.
 - Změnu oprávnění tokenu, privilegovaných triggerů (`pull_request_target`, `workflow_run`), secrets nebo self-hosted runnerů v `.github/workflows/**` nebo `.github/actions/**` musí potvrdit člověk pro konkrétní head SHA. Koordinátor potvrzení předá přes `-AcknowledgeWorkflowChanges <head SHA>`.
+- G4 páruje required status check podle `context` a případného `integration_id`. S `integration_id` ho splní jen check run se stejným `app.id`; commit status nestačí. Bez `integration_id` stačí shodné jméno.
 - Konvence těla PR:
   - Tělo PR musí vždy obsahovat sekci `## Otevřené otázky`. Bez otázek obsahuje text „Žádné“. Neprázdná sekce zastaví merge (`open-questions`).
   - Sekce `## Otevřená živá kritéria` není otevřená otázka a gate ji nečte.
-  - Sekce `## Rozhodnutí uživatele` (nebo `## Rozhodnutí pro uživatele`) bez markeru přijetí vede k varování `decisions-unconfirmed`. Po přijetí rozhodnutí uživatelem koordinátor nebo session přidá do těla marker `<!-- merge-gate: decisions-accepted <login> <YYYY-MM-DD> -->`.
+  - Sekce `## Rozhodnutí uživatele` (nebo `## Rozhodnutí pro uživatele`) bez ověřeného markeru přijetí vede k varování `decisions-unconfirmed`. Marker má tvar `<!-- merge-gate: decisions-accepted <login> <YYYY-MM-DD> -->`. G9 ověří login autora PR a všech editorů úplné neredigované historie těla proti loginu markeru. Nečitelná nebo nedočtená historie a jiný editor ponechají varování. Platí to i pro koordinátora; samostatný mandát nenahrazuje důkaz. Tento konzervativní důkaz odmítne i marker vložený uvedeným loginem po editaci jiného účtu.
 
 ## Jazyk
 

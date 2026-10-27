@@ -10,6 +10,7 @@ with --squash --match-head-commit and verifies the merge afterwards. It never us
 
 API contract (X-GitHub-Api-Version 2026-03-10; GraphQL schema github/docs src/graphql/data/ghec/schema.docs.graphql):
 - query repository.pullRequest: https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/objects#pullrequest
+- query repository.pullRequest.userContentEdits: https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/objects#usercontentedit
 - GET /repos/{owner}/{repo}/actions/runs: https://docs.github.com/en/enterprise-cloud@latest/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
 - GET /repos/{owner}/{repo}/commits/{ref}/check-runs: https://docs.github.com/en/enterprise-cloud@latest/rest/checks/runs#list-check-runs-for-a-git-reference
 - GET /repos/{owner}/{repo}/commits/{ref}/status: https://docs.github.com/en/enterprise-cloud@latest/rest/commits/statuses#get-the-combined-status-for-a-specific-reference
@@ -68,6 +69,20 @@ $script:MergeStateQuery = @'
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) { state merged mergedAt mergedBy { login } mergeCommit { oid } headRefOid baseRefName }
+  }
+}
+'@
+
+$script:DecisionAuthorsQuery = @'
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid body author { __typename login }
+      userContentEdits(first: 100) {
+        totalCount pageInfo { hasNextPage }
+        nodes { deletedAt editor { __typename login } }
+      }
+    }
   }
 }
 '@
@@ -455,7 +470,7 @@ function Get-MergeGateCheckFinding {
         [AllowEmptyCollection()][object[]] $WorkflowRuns = @(),
         [AllowEmptyCollection()][object[]] $CheckRuns = @(),
         [AllowEmptyCollection()][object[]] $Statuses = @(),
-        [AllowEmptyCollection()][string[]] $RequiredContexts = @(),
+        [AllowEmptyCollection()][object[]] $RequiredChecks = @(),
         [AllowEmptyCollection()][string[]] $ExpectedWorkflows = @(),
         [AllowNull()] $PushedAt,
         [Parameter(Mandatory)][DateTimeOffset] $Now,
@@ -487,14 +502,41 @@ function Get-MergeGateCheckFinding {
         $present = @($WorkflowRuns | Where-Object { $_['name'] -ceq $workflow -and $_['event'] -ceq 'pull_request' })
         if ($present.Count -eq 0) { $missing.Add($workflow) }
     }
-    foreach ($context in $RequiredContexts) {
-        $reported = @(@($CheckRuns | Where-Object { $_['name'] -ceq $context }) + @($Statuses | Where-Object { $_['context'] -ceq $context }))
-        if ($reported.Count -eq 0) { $missing.Add($context) }
+    foreach ($check in $RequiredChecks) {
+        if (-not (Test-MergeGateRequiredCheck -Check $check -CheckRuns $CheckRuns -Statuses $Statuses)) { $missing.Add($check['context']) }
     }
     foreach ($name in $missing) {
         if ($withinGrace) { "pending:required-check-missing:$name" }
         else { "fail:required-check-missing:$name" }
     }
+}
+
+# security-check: merge-gate-required-integration
+function Test-MergeGateRequiredCheck {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Check,
+        [AllowEmptyCollection()][object[]] $CheckRuns = @(),
+        [AllowEmptyCollection()][object[]] $Statuses = @()
+    )
+
+    $integration = $Check['integration_id']
+    if ($Check.Contains('integration_id') -and $integration -isnot [int] -and $integration -isnot [long]) {
+        throw 'A required status check has an invalid integration_id; expected an integer or an absent field.'
+    }
+    foreach ($run in $CheckRuns) {
+        if ($run['name'] -cne $Check['context']) { continue }
+        if ($null -eq $integration) { return $true }
+        $appId = Get-MergeGateValue -Node $run -Path 'app.id'
+        if (($appId -is [int] -or $appId -is [long]) -and $appId -eq $integration) { return $true }
+    }
+    if ($null -eq $integration) {
+        foreach ($status in $Statuses) {
+            if ($status['context'] -ceq $Check['context']) { return $true }
+        }
+    }
+    return $false
 }
 
 # security-check: merge-gate-review-threads
@@ -691,12 +733,52 @@ function Get-MergeGateBodyFinding {
 }
 
 function Test-MergeGateDecisionsUnconfirmed {
-    # A decisions section for the user without the decisions-accepted marker; the gate warns, the coordinator asks the user.
+    # Unverified acceptance remains a warning, not a blocking finding.
     [CmdletBinding()]
     [OutputType([bool])]
-    param([AllowEmptyString()][string] $Body)
+    param([AllowEmptyString()][string] $Body, [bool] $Verified = $false)
 
-    return $Body -match $script:DecisionsHeading -and $Body -cnotmatch $script:DecisionsAcceptedMarker
+    return $Body -match $script:DecisionsHeading -and -not $Verified
+}
+
+# security-check: merge-gate-decision-authors
+function Assert-MergeGateDecisionAuthor {
+    <#
+    .SYNOPSIS
+    Proves marker provenance only when the PR author and every editor have the marker login.
+    UserContentEdit.diff has no documented representation, so it is not used as a body snapshot or patch.
+    #>
+    [CmdletBinding()]
+    [OutputType([System.Collections.Specialized.OrderedDictionary])]
+    param(
+        [AllowNull()] $PullRequest,
+        [Parameter(Mandatory)][string] $HeadSha,
+        [AllowEmptyString()][string] $Body
+    )
+
+    $markers = [regex]::Matches($Body, $script:DecisionsAcceptedMarker)
+    if ($markers.Count -ne 1) { throw 'Decision acceptance requires exactly one decisions-accepted marker.' }
+    $snapshotHead = Get-MergeGateValue -Node $PullRequest -Path 'headRefOid'
+    if ($snapshotHead -isnot [string] -or $snapshotHead -cne $HeadSha) { throw 'The decision history does not belong to the evaluated head.' }
+    $snapshotBody = Get-MergeGateValue -Node $PullRequest -Path 'body'
+    if ($snapshotBody -isnot [string] -or $snapshotBody -cne $Body) { throw 'The pull request body changed while reading decision history.' }
+    $login = $markers[0].Groups['login'].Value
+    $author = Get-MergeGateValue -Node $PullRequest -Path 'author.login'
+    if ($author -isnot [string] -or $author -ine $login) { throw 'The pull request author does not match the decision marker login.' }
+    $history = Get-MergeGateValue -Node $PullRequest -Path 'userContentEdits'
+    $nodes = Get-MergeGateList -Node $history -Path 'nodes'
+    $hasNext = Get-MergeGateValue -Node $history -Path 'pageInfo.hasNextPage'
+    if ($hasNext -isnot [bool] -or $hasNext) { throw 'The decision edit history is incomplete or unreadable.' }
+    $total = Get-MergeGateValue -Node $history -Path 'totalCount'
+    if (($total -isnot [int] -and $total -isnot [long]) -or $total -ne $nodes.Count) { throw 'The decision edit history count does not match the returned edits.' }
+    foreach ($edit in $nodes) {
+        if ($edit -isnot [System.Collections.IDictionary] -or -not $edit.Contains('deletedAt') -or $null -ne $edit['deletedAt']) {
+            throw 'The decision edit history contains a redacted or unreadable edit.'
+        }
+        $editor = Get-MergeGateValue -Node $edit -Path 'editor.login'
+        if ($editor -isnot [string] -or $editor -ine $login) { throw 'A decision edit author does not match the decision marker login.' }
+    }
+    return [ordered]@{ login = $login; date = $markers[0].Groups['date'].Value }
 }
 
 # security-check: merge-gate-workflow-path
@@ -782,6 +864,7 @@ function Get-MergeGateRuleSummary {
     param([AllowEmptyCollection()][object[]] $Rules = @())
 
     $contexts = [System.Collections.Generic.List[string]]::new()
+    $checks = [System.Collections.Generic.List[object]]::new()
     $strict = $false
     $reviewOnPush = $null
     $threadResolution = $null
@@ -794,6 +877,7 @@ function Get-MergeGateRuleSummary {
                     $context = Get-MergeGateValue -Node $check -Path 'context'
                     if ($context -isnot [string] -or $context -eq '') { throw 'A required status check has no context.' }
                     if (-not $contexts.Contains($context)) { $contexts.Add($context) }
+                    $checks.Add($check)
                 }
                 $policy = Get-MergeGateValue -Node $rule -Path 'parameters.strict_required_status_checks_policy'
                 if ($policy -isnot [bool]) { throw 'A required status checks rule has no strict_required_status_checks_policy.' }
@@ -804,7 +888,7 @@ function Get-MergeGateRuleSummary {
             'merge_queue' { $mergeQueue = $true }
         }
     }
-    return @{ RequiredContexts = $contexts.ToArray(); Strict = $strict; CopilotReviewOnPush = $reviewOnPush; ThreadResolutionRequired = $threadResolution; MergeQueue = $mergeQueue }
+    return @{ RequiredContexts = $contexts.ToArray(); RequiredChecks = $checks.ToArray(); Strict = $strict; CopilotReviewOnPush = $reviewOnPush; ThreadResolutionRequired = $threadResolution; MergeQueue = $mergeQueue }
 }
 
 # security-check: merge-gate-verdict
@@ -1040,7 +1124,7 @@ function Complete-MergeGateEvaluation {
         Where-Object { $null -ne $_ } | ForEach-Object { ConvertTo-MergeGateTime -Value $_ } | Sort-Object)
     $pushedAt = if ($pushedTimes.Count -gt 0) { $pushedTimes[-1] } else { $null }
     $checkFinding = @(Get-MergeGateCheckFinding -WorkflowRuns $workflowRuns -CheckRuns $checkRuns -Statuses $statuses `
-            -RequiredContexts $ruleSummary.RequiredContexts -ExpectedWorkflows $ExpectedWorkflows -PushedAt $pushedAt -Now $Now -GraceMinutes $MissingCheckGraceMinutes)
+            -RequiredChecks $ruleSummary.RequiredChecks -ExpectedWorkflows $ExpectedWorkflows -PushedAt $pushedAt -Now $Now -GraceMinutes $MissingCheckGraceMinutes)
     foreach ($reason in @(ConvertTo-MergeGateReason -Check 'ci-checks' -Finding $checkFinding)) { $reasons.Add($reason) }
     $missing = @($checkFinding | Where-Object { $_ -match '^(fail|pending):required-check-missing:' } | ForEach-Object { $_.Split(':', 3)[2] })
     $Result.details['checks'] = [ordered]@{
@@ -1108,15 +1192,31 @@ function Complete-MergeGateEvaluation {
     $body = [string] $pullRequest['body']
     $bodyFinding = @(Get-MergeGateBodyFinding -Body $body)
     foreach ($reason in @(ConvertTo-MergeGateReason -Check 'open-questions' -Finding $bodyFinding)) { $reasons.Add($reason) }
-    if (Test-MergeGateDecisionsUnconfirmed -Body $body) {
-        $warnings.Add([pscustomobject][ordered]@{ check = 'open-questions'; code = 'decisions-unconfirmed'; message = 'The pull request body has decisions for the user without the decisions-accepted marker.' })
+    $accepted = $null
+    $acceptanceError = $null
+    if ($body -match $script:DecisionsHeading -and $body -cmatch $script:DecisionsAcceptedMarker) {
+        try {
+            $decisionData = Invoke-MergeGateGraphQL -Target $Target -Query $script:DecisionAuthorsQuery -Variables ([ordered]@{
+                    owner = $Target.Owner; name = $Target.Name; number = $Number })
+            $accepted = Assert-MergeGateDecisionAuthor -PullRequest (Get-MergeGateValue -Node $decisionData -Path 'repository.pullRequest') -HeadSha $head -Body $body
+        }
+        catch {
+            # G9 deliberately warns on unreadable provenance, including API errors; it must never confirm the marker.
+            $acceptanceError = $_.Exception.Message
+        }
+    }
+    if (Test-MergeGateDecisionsUnconfirmed -Body $body -Verified ($null -ne $accepted)) {
+        $warnings.Add([pscustomobject][ordered]@{
+                check = 'open-questions'; code = 'decisions-unconfirmed'
+                message = 'The pull request body has decisions for the user without a verified decisions-accepted marker.'
+                evidence = [ordered]@{ error = $acceptanceError }
+            })
     }
     $decisions = [regex]::Match($body, $script:DecisionsHeading)
-    $accepted = [regex]::Match($body, $script:DecisionsAcceptedMarker)
     $Result.details['body'] = [ordered]@{
         openQuestions = @($bodyFinding | Where-Object { $_ -ceq 'fail:open-questions' }).Count -gt 0
         decisionsSection = if ($decisions.Success) { $decisions.Groups[1].Value } else { $null }
-        decisionsAccepted = if ($accepted.Success) { [ordered]@{ login = $accepted.Groups['login'].Value; date = $accepted.Groups['date'].Value } } else { $null }
+        decisionsAccepted = $accepted
     }
 
     # G10
