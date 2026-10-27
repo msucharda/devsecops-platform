@@ -40,6 +40,40 @@ SHA v příkladu je pouze placeholder. Platformní tým musí přes API cílové
 
 Modul [actions-catalog](../modules/actions-catalog/README.md#katalog-vendoringu) čte katalog jako jediný zdroj schválených importů. Pro každou položku vytvoří ve vendorované kopii tag `tag` na commitu `sha` a pole `tag` vyžaduje. Offline validátor importu pole `tag` nekontroluje.
 
+## Aktualizace akce v instanci
+
+Release platformy určuje upstream piny šablon. Katalog instance určuje SHA schválených vendorovaných kopií. Tato SHA se liší: upstream SHA označuje zdroj akce, katalogové SHA označuje commit importu v organizaci akcí.
+
+Přepis `uses:` nesmí změnit chování workflow (pravidlo O11). Před importem release musí platformní tým pro každý jeho pin ověřit, že katalogová kopie pochází z tagu se stejným upstream commit SHA. Samotná shoda názvu akce nestačí. Import release používá právě aktuální katalog; nevybírá verzi podle upstream ref v `uses:`.
+
+1. Autor platformy zvýší piny, ověří změny runtime, vstupů a výstupů a vydá release s tabulkou upstream → tag → SHA. Platformní tým zkontroluje tuto tabulku a diff šablon.
+2. **Ještě před importem nového release** spustí platformní tým stávající `import-action.yml` pro každou změněnou akci s přesným upstream repozitářem a novým tagem z tabulky. Tag musí ukazovat na SHA pinu. Cílem zůstává stejný repozitář `{owner}-{repo}`; nový tag vytváří jinou importní větev a nový PR.
+3. Security tým zkontroluje diff, licenci a `.vendoring.json`: `source`, `tag` a upstream `commit` musí odpovídat schválené verzi. Po schválení platformní tým sloučí PR do `main` vendorované kopie a přes API zjistí skutečné SHA tohoto commitu. Upstream SHA nesmí zapsat místo SHA kopie.
+4. V samostatném PR repozitáře instance změní platformní tým `tag` a `sha` příslušné položky `vendoring/actions.json`. `repository` zůstává stejné. Po review a merge provede plan → approval → apply modulu `actions-catalog`; modul vytvoří nový tag na schváleném commitu kopie.
+5. Platformní tým spustí `import-release.yml` pro nový release platformy, už s aktualizovaným katalogem. Ověří, že přepsané šablony používají schválené SHA kopií a že jejich receipt dokládá upstream SHA pinů. Po review a merge povýší šablony do živých workflow samostatným PR podle [postupu povýšení](#ruční-povýšení-živých-workflow-v-16).
+6. Platformní tým spustí workflow s novým pinem a ověří jeho výsledek. Zelené CI platformy ani úspěšný import nenahrazují toto živé ověření.
+
+Starý tag zůstává na původním commitu. Import nového obsahu mění `main`, nikoli starý tag; změna katalogu ani destroy modulu starý tag nemaže. Starý tag a jeho commit musí zůstat dostupné, dokud je používá některý pin v instanci nebo ve workloadech. Modul tagy automaticky nečistí a existující tag nikdy nepřesune.
+
+Opakování stejného importu navazuje na stejný PR. Import jiného tagu po merge předchozího importu založí nový PR nad aktuální `main` a zachová `.github/` i původní tagy. Offline regresní test ověřuje druhý import pomocí lokálního Git transportu; test katalogu ověřuje zachování starého tagu i obnovu po ztrátě odpovědi při tvorbě nového tagu. **Živé ověření aktualizace akce na referenční instanci zůstává otevřené kritérium #130.**
+
+Dependabot v repozitáři platformy upozorňuje na nové upstream verze pomocí PR. Neaktualizuje katalog ani akce instance. Platformní tým musí sledovat releasy platformy a spouštět uvedený postup; pin na SHA interní kopie sám o novém upstream release neinformuje.
+
+### Údržba pinů platformy
+
+`.github/dependabot.yml` kontroluje týdně čtyři umístění: kořenové workflow, `templates/instance/.github/workflows`, acceptance workflow v `tools/acceptance/github` a generované fixtures v `tools/tests/fixtures`. Kořenový záznam `/` prohledává `.github/workflows` a kořenový manifest akce; šablony mimo tento adresář vyžadují vlastní záznam s cestou přímo k YAML souborům. Výběr vlastních adresářů odpovídá [fetcheru Dependabot Core](https://github.com/dependabot/dependabot-core/blob/main/github_actions/lib/dependabot/github_actions/file_fetcher.rb). Úspěšné načtení těchto cest v hostované službě musí autor platformy ověřit v update logu Dependabotu.
+
+Dependabot mění YAML, nikoli PowerShell generátory. Před merge jeho PR musí autor platformy sjednotit nový SHA a komentář tagu ve všech workflow i v `Generate-DeploymentWorkflow.ps1` a `Generate-TeardownWorkflow.ps1`. Potom musí přegenerovat šablony a fixtures:
+
+```powershell
+.\tools\Generate-DeploymentWorkflow.ps1
+.\tools\Generate-DeploymentWorkflow.ps1 -ModulesPath .\tools\tests\fixtures\modules -OutputPath .\tools\tests\fixtures\deploy.yml
+.\tools\Generate-TeardownWorkflow.ps1
+.\tools\Generate-TeardownWorkflow.ps1 -ModulesPath .\tools\tests\fixtures\modules -OutputPath .\tools\tests\fixtures\teardown.yml
+```
+
+Kontroly `-Check` v Source CI odmítnou rozdíl mezi generátorem a uloženými výstupy. Review major aktualizace musí ověřit použité vstupy a výstupy, minimální verzi runneru a způsob předávání artifactů. Nové major verze `checkout`, `upload-artifact`, `download-artifact`, `setup-terraform` a `Azure/login` používají Node 24. Workflow vyžadují runner alespoň `2.327.1` a používají GitHub-hosted `ubuntu-latest`. `upload-artifact` zachovává výchozí archivovaný přenos. `download-artifact` v8 při neshodě digestu skončí chybou místo varování. Checkout v7 odmítá nebezpečný checkout fork PR; autorizace instance fork PR odmítá už před kandidátním checkoutem. Workflow nesmí kvůli aktualizaci zapnout `allow-unsafe-pr-checkout`.
+
 ## Příprava a attestace
 
 `Get-VendoringSource.ps1` nejprve rozliší tag na immutable commit (neměnný commit). ZIP asset vybere z release stejného tagu. Asset musí obsahovat jediný kořenový adresář. Nástroj odmítne traversal, `.git`, duplicitní cesty, symbolické odkazy a rozbalený obsah nad 512 MiB.

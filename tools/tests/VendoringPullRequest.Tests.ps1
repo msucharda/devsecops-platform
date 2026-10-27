@@ -135,6 +135,52 @@ Describe 'Vendoring diff and pull request publication' {
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
+    It 'imports a second tag into the existing action copy while preserving the first tag and governance' {
+        $governance = Join-Path $target '.github'
+        $null = New-Item -ItemType Directory -Path $governance
+        '* @customer-actions/security' | Set-Content (Join-Path $governance 'CODEOWNERS')
+        & $gitExecutable -C $target add .
+        & $gitExecutable -C $target commit --quiet -m governance
+        & $gitExecutable -C $target push --quiet $remotePath main
+        $first = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+        $firstSha = & $gitExecutable -C $target rev-parse HEAD
+        & $gitExecutable -C $target branch -f main $firstSha
+        & $gitExecutable -C $target switch --quiet main
+        & $gitExecutable -C $target tag v1 $firstSha
+        & $gitExecutable -C $target push --quiet $remotePath main refs/tags/v1
+        $cloud.pulls[0].state = 'closed'
+        $cloud.pulls[0].merged_at = '2026-10-27T18:00:00Z'
+
+        'second version' | Set-Content (Join-Path $prepared 'action.yml')
+        $source = Get-Content $receipt -Raw | ConvertFrom-Json -AsHashtable
+        $source.Tag = 'v2'
+        $source.Commit = '4444444444444444444444444444444444444444'
+        $source.Sha256 = 'b' * 64
+        $source | ConvertTo-Json | Set-Content $receipt
+        $second = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+
+        $second.PullRequest | Should -BeExactly 'https://example.ghe.com/customer-actions/upstream-action/pull/2'
+        $second.Branch | Should -Not -BeExactly $first.Branch
+        $cloud.pulls.Count | Should -Be 2
+        & $gitExecutable -C $target rev-parse HEAD^ | Should -BeExactly $firstSha
+        Get-Content (Join-Path $target 'action.yml') | Should -BeExactly 'second version'
+        Get-Content (Join-Path $governance 'CODEOWNERS') | Should -BeExactly '* @customer-actions/security'
+        $metadata = Get-Content (Join-Path $target '.vendoring.json') -Raw | ConvertFrom-Json
+        $metadata.tag | Should -BeExactly 'v2'
+        $metadata.commit | Should -BeExactly $source.Commit
+        & $gitExecutable --git-dir=$remotePath rev-parse refs/tags/v1 | Should -BeExactly $firstSha
+        & $gitExecutable --git-dir=$remotePath show v1:action.yml | Should -BeExactly 'updated'
+        & $gitExecutable --git-dir=$remotePath tag --list v2 | Should -BeNullOrEmpty
+
+        & $gitExecutable -C $target switch --quiet main
+        $resumed = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+        $resumed.PullRequest | Should -BeExactly $second.PullRequest
+        $cloud.pulls.Count | Should -Be 2
+    }
+
     It 'uses the same import branch across different workflow attempts' {
         $first = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com -RunIdentifier first

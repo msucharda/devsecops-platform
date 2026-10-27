@@ -30,7 +30,7 @@ function Add-WorkflowCheckout {
     if ($Candidate) {
         Add-WorkflowBlock @'
       - name: Check out the immutable candidate
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.authorize.outputs.revision }}
           path: candidate
@@ -40,7 +40,7 @@ function Add-WorkflowCheckout {
     else {
         Add-WorkflowBlock @'
       - name: Check out trusted authorization tools
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
@@ -123,12 +123,12 @@ function Add-DeploymentJob {
       - name: Install runtime dependencies
         shell: pwsh
         run: ./trusted/platform/tools/Install-ToolDependencies.ps1
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.16.5
           terraform_wrapper: false
       - name: Sign in to Azure with the phase managed identity
-        uses: Azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -146,7 +146,7 @@ function Add-DeploymentJob {
     foreach ($prerequisite in $Manifest['prerequisites']) {
         Add-WorkflowBlock @"
       - name: Download outputs of $prerequisite
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: $artifactPhase-outputs-$prerequisite
           path: ./artifacts/prerequisites
@@ -177,7 +177,7 @@ function Add-DeploymentJob {
     $outputName = if ($Phase -eq 'rulesetPlan') { "$name.rulesets" } else { $name }
     Add-WorkflowBlock @"
       - name: Upload public module outputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: $artifactName
           path: ./artifacts/module-outputs/$outputName.json

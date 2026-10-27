@@ -86,6 +86,8 @@ Prostředek `terraform_data.release_tag` pro každou položku katalogu vendoring
 
 Nový release je změna položky katalogu vendoringu na nový tag a commit. Starý tag zůstává.
 
+Úplný [postup aktualizace akce](../../docs/vendoring.md#aktualizace-akce-v-instanci) zahrnuje druhý import do stejné kopie, review a merge, změnu `vendoring/actions.json`, apply katalogu a teprve potom import release platformy s novými piny. Starý tag se nesmí odstranit, dokud ho používá některý pin. Změna položky katalogu ani destroy starý tag nemaže.
+
 Omezení: krok 3 ověřuje dosažitelnost z `main`, ne schválení přesné revize. Mezilehlý commit importního PR s platným receiptem proto projde. Commit releasu volí člověk v katalogu vendoringu přes reviewovaný PR repozitáře instance. Vazbu na důkaz schválení řeší [#72](https://github.com/msucharda/devsecops-platform/issues/72).
 
 ### Kontrola stavu

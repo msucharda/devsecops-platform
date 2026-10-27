@@ -40,7 +40,7 @@ jobs:
       roots: ${{ steps.terraform-roots.outputs.roots }}
       has-roots: ${{ steps.terraform-roots.outputs.has-roots }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Discover Terraform roots
         id: terraform-roots
         shell: pwsh
@@ -50,7 +50,7 @@ jobs:
     name: Platform static checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install tool dependencies
         shell: pwsh
         run: ./tools/Install-ToolDependencies.ps1 -Development
@@ -100,12 +100,12 @@ jobs:
     env:
       PESTER_SHARD: ${{ matrix.shard }}/4
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install tool dependencies
         shell: pwsh
         run: ./tools/Install-ToolDependencies.ps1 -Development
       - name: Install Terraform for offline runner tests
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.16.5
           terraform_wrapper: false
@@ -114,7 +114,7 @@ jobs:
         run: ./tools/Invoke-Tests.ps1 -CI -Shard $env:PESTER_SHARD
       - name: Upload test results
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pester-results-${{ matrix.shard }}
           path: artifacts/pester-${{ matrix.shard }}-of-4.xml
@@ -131,7 +131,7 @@ jobs:
     env:
       INTERRUPTION_SHARD: ${{ matrix.shard }}/4
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install tool dependencies
         shell: pwsh
         run: ./tools/Install-ToolDependencies.ps1 -Development
@@ -150,7 +150,7 @@ jobs:
     env:
       MUTATION_SHARD: ${{ matrix.shard }}/4
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install tool dependencies
         shell: pwsh
         run: ./tools/Install-ToolDependencies.ps1 -Development
@@ -191,7 +191,7 @@ jobs:
         run: ./tools/Invoke-MutationTests.ps1 -MergeReport @(Get-ChildItem ./artifacts/mutation-shards -Recurse -Filter mutation-report.json | Select-Object -ExpandProperty FullName) -ShardCount 4 -ReportPath ./artifacts/mutation-report.json
       - name: Upload mutation report
         if: ${{ !cancelled() && hashFiles('artifacts/mutation-report.json') != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mutation-report
           path: artifacts/mutation-report.json
@@ -210,15 +210,15 @@ jobs:
       TF_ROOT: ${{ matrix.root }}
       TF_IN_AUTOMATION: 'true'
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.16.5
           terraform_wrapper: false
-      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
         with:
           tflint_version: v0.60.0
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
           version: v0.72.0
           cache: false
