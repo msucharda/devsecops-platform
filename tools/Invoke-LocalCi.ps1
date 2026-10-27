@@ -327,6 +327,7 @@ try {
     Assert-LocalCiTempPath -Path $temp
     if ($IsWindows) {
         Initialize-LocalCiPrivateTempDirectory -Path $TempRoot
+        Initialize-LocalCiPrivateTempDirectory -Path (Split-Path -Path $temp -Parent)
         Initialize-LocalCiPrivateTempDirectory -Path $temp
     }
     # Acquire the machine turn before clearing or using the worktree's shared TEMP.

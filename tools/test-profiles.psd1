@@ -3,6 +3,7 @@
     Unit = @(
         'DeploymentIdentifier.Tests.ps1'
         'DeploymentSummary.Tests.ps1'
+        'LocalCiGate.Unit.Tests.ps1'
         'ModuleOrder.Tests.ps1'
         'ModuleSelection.Tests.ps1'
         'OrganizationScope.Tests.ps1'
@@ -12,7 +13,6 @@
         'CredentialContract.Tests.ps1'
         'GitHubApiFixture.Tests.ps1'
         'LocalCiConcurrency.Tests.ps1'
-        'LocalCiGate.Tests.ps1'
         'MicrosoftApiFixture.Tests.ps1'
         'SourceCi.Tests.ps1'
     )
@@ -42,6 +42,7 @@
         'InterruptionHarness.Tests.ps1'
         'InvokeTests.Tests.ps1'
         'LocalCi.Tests.ps1'
+        'LocalCiGate.Tests.ps1'
         'MergeGate.Tests.ps1'
         'ModuleRunner.Tests.ps1'
         'MutationTesting.Tests.ps1'

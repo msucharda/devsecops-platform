@@ -12,7 +12,7 @@
         @{
             Name = 'local-ci-index-visibility'
             Tests = @(@{
-                Path = 'tools/tests/LocalCiGate.Tests.ps1'
+                Path = 'tools/tests/LocalCiGate.Unit.Tests.ps1'
                 FullName = 'Local CI index visibility*'
             })
         }
@@ -33,7 +33,7 @@
         @{
             Name = 'local-ci-temp-access'
             Tests = @(@{
-                Path = 'tools/tests/LocalCiGate.Tests.ps1'
+                Path = 'tools/tests/LocalCiGate.Unit.Tests.ps1'
                 FullName = 'Local CI private TEMP access*'
             })
         }

@@ -3,69 +3,6 @@ BeforeAll {
     $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 }
 
-Describe 'Local CI profiles' {
-    It 'keeps every discovered test in the full profile and only isolated suites in the local profile' {
-        $testProfile = Get-LocalCiProfile -RepositoryRoot $repository -AllPester
-        $discovered = @(Get-ChildItem (Join-Path $repository 'tools/tests') -Filter '*.Tests.ps1' |
-            ForEach-Object Name | Sort-Object)
-
-        @($testProfile.Full | ForEach-Object { Split-Path $_ -Leaf } | Sort-Object) | Should -BeExactly $discovered
-        $testProfile.Local | Should -Contain 'tools/tests/DeploymentIdentifier.Tests.ps1'
-        $testProfile.Local | Should -Not -Contain 'tools/tests/EnterpriseBaseline.Tests.ps1'
-        $testProfile.Local | Should -Not -Contain 'tools/tests/GitHubBootstrap.Tests.ps1'
-        $testProfile.Local | Should -Not -Contain 'tools/tests/VendoringPullRequest.Tests.ps1'
-        @($testProfile.Local | Where-Object { $_ -notin $testProfile.Full }).Count | Should -Be 0
-    }
-
-    It 'selects only affected isolated suites and reports the rest as remote work' {
-        $testProfile = Get-LocalCiProfile -RepositoryRoot $repository -PesterPath @(
-            'tools/tests/DeploymentIdentifier.Tests.ps1', 'tools/tests/EnterpriseBaseline.Tests.ps1'
-        )
-        @($testProfile.Selected) | Should -BeExactly @('tools/tests/DeploymentIdentifier.Tests.ps1')
-        $testProfile.Remote | Should -Contain 'tools/tests/EnterpriseBaseline.Tests.ps1'
-    }
-
-    It 'rejects a newly discovered test without an explicit category' {
-        $fixture = Join-Path $TestDrive 'profile'
-        $tests = Join-Path $fixture 'tools/tests'
-        New-Item -ItemType Directory -Force $tests | Out-Null
-        Set-Content (Join-Path $tests 'Known.Tests.ps1') ''
-        Set-Content (Join-Path $tests 'Unknown.Tests.ps1') ''
-        Set-Content (Join-Path $fixture 'tools/test-profiles.psd1') "@{ Unit=@('Known.Tests.ps1'); Contract=@(); Integration=@(); Interruption=@() }"
-        { Get-LocalCiProfile -RepositoryRoot $fixture -AllPester } | Should -Throw '*missing*Unknown.Tests.ps1*'
-    }
-
-    It 'keeps the complete Pester, interruption, mutation and Terraform selection in the full plan' {
-        $log = Join-Path $TestDrive 'full-plan.log'
-        $output = & ([Environment]::ProcessPath) -NoProfile -File (Join-Path $repository 'tools/Invoke-LocalCi.ps1') -Full -Base HEAD -Plan -LogPath $log 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be 0 -Because $output
-        $output | Should -Match 'Mode: Full'
-        $output | Should -Match 'Pester: all'
-        $output | Should -Match 'Interruption: all'
-        $output | Should -Match 'Mutation: all'
-        $output | Should -Not -Match 'Terraform roots: none'
-    }
-}
-
-Describe 'Local CI index visibility' {
-    It 'accepts visible cached entries' {
-        InModuleScope LocalCiGate {
-            { Assert-LocalCiIndexVisibility -Entry @('H source.ps1', 'H file with spaces.ps1') } | Should -Not -Throw
-        }
-    }
-
-    It 'rejects a hidden or unsupported index tag <Tag>' -ForEach @(
-        @{ Tag = 'h' }, @{ Tag = 'S' }, @{ Tag = 's' }, @{ Tag = 'M' }, @{ Tag = 'Z' }
-    ) {
-        InModuleScope LocalCiGate -Parameters @{ Tag = $Tag } {
-            param($Tag)
-            # Z deliberately models invalid Git output.
-            $entries = @('H visible.ps1', "$Tag source.ps1")
-            { Assert-LocalCiIndexVisibility -Entry $entries } | Should -Throw '*index flags*'
-        }
-    }
-}
-
 Describe 'Local CI content-bound result' {
     BeforeEach {
         $repo = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -207,57 +144,6 @@ Describe 'Local CI content-bound result' {
             Should -Throw '*Commit*before*gate*'
     }
 
-    It 'preserves literal changed, added and untracked paths even when Git quotes names by default' {
-        git -C $repo config core.quotepath true
-        $changed = "changed-$([char]0xE9) file.ps1"
-        $added = "added-$([char]0xE9) file.ps1"
-        $untracked = "untracked-$([char]0xE9) file.ps1"
-        Set-Content -LiteralPath (Join-Path $repo $changed) "'before'"
-        git -C $repo add .
-        git -C $repo -c commit.gpgsign=false commit --quiet -m 'Track a non-ASCII path'
-        git -C $repo branch path-baseline
-        Set-Content -LiteralPath (Join-Path $repo $changed) "'after'"
-        Set-Content -LiteralPath (Join-Path $repo $added) "'added'"
-        git -C $repo add .
-        git -C $repo -c commit.gpgsign=false commit --quiet -m 'Change non-ASCII paths'
-        Set-Content -LiteralPath (Join-Path $repo $untracked) "'untracked'"
-
-        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase path-baseline -Head HEAD
-
-        $paths.Changed.Count | Should -Be 3
-        $paths.Changed | Should -Contain $changed
-        $paths.Changed | Should -Contain $added
-        $paths.Changed | Should -Contain $untracked
-        $paths.Added.Count | Should -Be 2
-        $paths.Added | Should -Contain $added
-        $paths.Added | Should -Contain $untracked
-        (Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase path-baseline).Changed | Should -Contain $changed
-    }
-
-    It 'preserves distinct Unicode-normalization paths without culture-based deduplication' {
-        $composed = "$([char]0xE9).ps1"
-        $decomposed = "e$([char]0x301).ps1"
-        Set-Content -LiteralPath (Join-Path $repo $composed) "'composed'"
-        Set-Content -LiteralPath (Join-Path $repo $decomposed) "'decomposed'"
-
-        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase baseline
-
-        $paths.Changed.Count | Should -Be 2
-        $paths.Added.Count | Should -Be 2
-        $paths.Changed | Should -Contain $composed
-        $paths.Changed | Should -Contain $decomposed
-    }
-
-    It 'preserves an embedded newline in a Unix filename' -Skip:$IsWindows {
-        $name = "line`nbreak.ps1"
-        Set-Content -LiteralPath (Join-Path $repo $name) "'source'"
-
-        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase baseline
-
-        $paths.Changed | Should -BeExactly @($name)
-        $paths.Added | Should -BeExactly @($name)
-    }
-
     It 'rejects hidden index flags <Flag> even when Git status reports a clean worktree' -ForEach @(
         @{ Flag = '--assume-unchanged' }, @{ Flag = '--skip-worktree' }
     ) {
@@ -333,7 +219,14 @@ Describe 'Local CI process guards' {
         @{ Case = 'a HEAD change during test selection'; Command = 'Get-LocalCiProfile'; MissingGo = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
         @{ Case = 'missing Go with preflight exit code 2'; Command = 'Test-LocalCiRuntime'; MissingGo = $true; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Go is missing' }
         @{ Case = 'a parser error in a non-ASCII filename'; Command = ''; MissingGo = $false; InvalidFile = $true; ExpectedExit = 1; ExpectedError = 'syntax errors' }
+        @{ Case = 'an intermediate TEMP directory writable by another identity'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'Writable'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
+        @{ Case = 'an intermediate TEMP junction'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'Junction'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
     ) {
+        param([string] $UnsafeTemp = '')
+        if ($UnsafeTemp -and -not $IsWindows) {
+            Set-ItResult -Skipped -Because 'Windows ACL and junction regression.'
+            return
+        }
         $fixture = Join-Path $TestDrive ("guard-$([guid]::NewGuid().ToString('N').Substring(0, 8))")
         $null = New-Item -ItemType Directory -Path $fixture
         foreach ($file in @(git -C $repository ls-files)) {
@@ -357,6 +250,28 @@ Describe 'Local CI process guards' {
         git -C $fixture add .
         git -C $fixture commit --quiet -m initial
         git -C $fixture branch baseline
+        $tempRoot = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".t$([guid]::NewGuid().ToString('N').Substring(0, 6))"
+        if (Test-Path -LiteralPath $tempRoot) { throw 'Fixture TEMP root already exists.' }
+        $container = Join-Path $tempRoot 'devsecops-local-ci'
+        try {
+        if ($UnsafeTemp) {
+            Initialize-LocalCiPrivateTempDirectory -Path $tempRoot
+            if ($UnsafeTemp -ceq 'Junction') {
+                $target = Join-Path $tempRoot 'target'
+                Initialize-LocalCiPrivateTempDirectory -Path $target
+                $null = New-Item -ItemType Junction -Path $container -Value $target
+            }
+            else {
+                Initialize-LocalCiPrivateTempDirectory -Path $container
+                $directory = [IO.DirectoryInfo]::new($container)
+                $acl = [IO.FileSystemAclExtensions]::GetAccessControl($directory, [Security.AccessControl.AccessControlSections]::Access)
+                $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+                    [Security.Principal.SecurityIdentifier]::new('S-1-5-11'), [Security.AccessControl.FileSystemRights]::Modify,
+                    [Security.AccessControl.AccessControlType]::Allow)
+                $null = $acl.AddAccessRule($rule)
+                [IO.FileSystemAclExtensions]::SetAccessControl($directory, $acl)
+            }
+        }
         if ($InvalidFile) {
             git -C $fixture config core.quotepath true
             Set-Content -LiteralPath (Join-Path $fixture "tools/$([char]0xE9).ps1") 'function {'
@@ -384,7 +299,7 @@ Describe 'Local CI process guards' {
     git -C '$escaped' commit --quiet -m 'Change HEAD during selection'
 "@
         }
-        $breakpoint = if ($InvalidFile) { '' } else { @"
+        $breakpoint = if ($InvalidFile -or $UnsafeTemp) { '' } else { @"
 Set-PSBreakpoint -Command '$Command' -Action {
 $action
     Get-PSBreakpoint | Remove-PSBreakpoint
@@ -394,7 +309,7 @@ $action
 `$ErrorActionPreference = 'Stop'
 Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
 $breakpoint
-& '$escaped/tools/Invoke-LocalCi.ps1' -WorkerProcess -Base baseline -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
+& '$escaped/tools/Invoke-LocalCi.ps1' -WorkerProcess -Base baseline -TempRoot '$($tempRoot.Replace("'", "''"))' -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
 exit `$LASTEXITCODE
 "@ | Set-Content $wrapper
         $output = & ([Environment]::ProcessPath) -NoProfile -File $wrapper 2>&1 | Out-String
@@ -402,68 +317,41 @@ exit `$LASTEXITCODE
         $output | Should -Match $ExpectedError
         $receipt = (git -C $fixture rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
         Test-Path -LiteralPath $receipt | Should -BeFalse
+        }
+        finally {
+            if ($UnsafeTemp -ceq 'Junction' -and (Test-Path -LiteralPath $container)) {
+                Remove-Item -LiteralPath $container -Force
+            }
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+}
+
+Describe 'Changed-only PowerShell analysis' {
+    It 'analyzes the explicit file and rejects its parser error' {
+        $valid = Join-Path $TestDrive 'valid.ps1'
+        $invalid = Join-Path $TestDrive 'invalid.ps1'
+        Set-Content $valid "'valid'"
+        Set-Content $invalid 'function {'
+        & (Join-Path $repository 'tools/Test-PowerShell.ps1') -Path @($valid)
+        { & (Join-Path $repository 'tools/Test-PowerShell.ps1') -Path @($invalid) } | Should -Throw '*syntax errors*'
+    }
+}
+
+Describe 'Local CI profiles' {
+    It 'keeps the complete Pester, interruption, mutation and Terraform selection in the full plan' {
+        $log = Join-Path $TestDrive 'full-plan.log'
+        $output = & ([Environment]::ProcessPath) -NoProfile -File (Join-Path $repository 'tools/Invoke-LocalCi.ps1') -Full -Base HEAD -Plan -LogPath $log 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $output
+        $output | Should -Match 'Mode: Full'
+        $output | Should -Match 'Pester: all'
+        $output | Should -Match 'Interruption: all'
+        $output | Should -Match 'Mutation: all'
+        $output | Should -Not -Match 'Terraform roots: none'
     }
 }
 
 Describe 'Local CI private TEMP access' {
-    BeforeEach {
-        $userSid = 'S-1-5-21-1-2-3-1000'
-        $access = @{
-            Directory = $true; ReparsePoint = $false; Owner = $userSid; Protected = $true
-            Rules = @($userSid, 'S-1-5-18' | ForEach-Object {
-                @{ Sid = $_; Type = 'Allow'; Rights = 2032127; Inheritance = 3; Propagation = 0; Inherited = $false }
-            })
-        }
-    }
-
-    It 'accepts the protected owner and SYSTEM ACL' {
-        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Not -Throw
-    }
-
-    It 'accepts SYSTEM ownership with the same restricted access rules' {
-        $access.Owner = 'S-1-5-18'
-        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Not -Throw
-    }
-
-    It 'rejects unsafe access: <Case>' -ForEach @(
-        @{ Case = 'a regular file'; Field = 'Directory'; Value = $false; Error = '*regular directory*' }
-        @{ Case = 'unknown directory type'; Field = 'Directory'; Value = $null; Error = '*regular directory*' }
-        @{ Case = 'string directory type'; Field = 'Directory'; Value = 'True'; Error = '*regular directory*' }
-        @{ Case = 'a reparse point'; Field = 'ReparsePoint'; Value = $true; Error = '*regular directory*' }
-        @{ Case = 'unknown reparse point state'; Field = 'ReparsePoint'; Value = $null; Error = '*regular directory*' }
-        @{ Case = 'string reparse point state'; Field = 'ReparsePoint'; Value = 'False'; Error = '*regular directory*' }
-        @{ Case = 'different owner'; Field = 'Owner'; Value = 'S-1-5-21-9-9-9-1000'; Error = '*untrusted owner*' }
-        @{ Case = 'differently cased owner'; Field = 'Owner'; Value = 's-1-5-21-1-2-3-1000'; Error = '*untrusted owner*' }
-        @{ Case = 'inherited ACL'; Field = 'Protected'; Value = $false; Error = '*inheritance*' }
-        @{ Case = 'unknown inheritance state'; Field = 'Protected'; Value = $null; Error = '*inheritance*' }
-        @{ Case = 'string inheritance state'; Field = 'Protected'; Value = 'True'; Error = '*inheritance*' }
-    ) {
-        $access[$Field] = $Value
-        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Throw $Error
-    }
-
-    It 'rejects an unsafe rule: <Case>' -ForEach @(
-        @{ Case = 'unknown identity'; Field = 'Sid'; Value = 'S-1-5-11'; Error = '*identity*' }
-        @{ Case = 'duplicate identity'; Field = 'Sid'; Value = 'S-1-5-18'; Error = '*identity*' }
-        @{ Case = 'deny rule'; Field = 'Type'; Value = 'Deny'; Error = '*access rule*' }
-        @{ Case = 'differently cased rule'; Field = 'Type'; Value = 'allow'; Error = '*access rule*' }
-        @{ Case = 'incomplete rights'; Field = 'Rights'; Value = 131241; Error = '*access rule*' }
-        @{ Case = 'missing object inheritance'; Field = 'Inheritance'; Value = 1; Error = '*access rule*' }
-        @{ Case = 'missing container inheritance'; Field = 'Inheritance'; Value = 2; Error = '*access rule*' }
-        @{ Case = 'inherit-only propagation'; Field = 'Propagation'; Value = 2; Error = '*access rule*' }
-        @{ Case = 'inherited rule'; Field = 'Inherited'; Value = $true; Error = '*access rule*' }
-        @{ Case = 'unknown rule inheritance'; Field = 'Inherited'; Value = $null; Error = '*access rule*' }
-        @{ Case = 'string rule inheritance'; Field = 'Inherited'; Value = 'False'; Error = '*access rule*' }
-    ) {
-        $access.Rules[0][$Field] = $Value
-        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Throw $Error
-    }
-
-    It 'rejects an additional writable identity' {
-        $access.Rules += @{ Sid = 'S-1-5-11'; Type = 'Allow'; Rights = 2032127; Inheritance = 3; Propagation = 0; Inherited = $false }
-        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Throw '*unexpected access rules*'
-    }
-
     It 'creates a protected Windows directory and refuses existing broader access' -Skip:(-not $IsWindows) {
         $path = Join-Path $TestDrive 'private-temp'
         Initialize-LocalCiPrivateTempDirectory -Path $path
@@ -480,13 +368,67 @@ Describe 'Local CI private TEMP access' {
     }
 }
 
-Describe 'Changed-only PowerShell analysis' {
-    It 'analyzes the explicit file and rejects its parser error' {
-        $valid = Join-Path $TestDrive 'valid.ps1'
-        $invalid = Join-Path $TestDrive 'invalid.ps1'
-        Set-Content $valid "'valid'"
-        Set-Content $invalid 'function {'
-        & (Join-Path $repository 'tools/Test-PowerShell.ps1') -Path @($valid)
-        { & (Join-Path $repository 'tools/Test-PowerShell.ps1') -Path @($invalid) } | Should -Throw '*syntax errors*'
+Describe 'Local CI changed paths' {
+    BeforeEach {
+        $repo = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory $repo | Out-Null
+        git -C $repo init --quiet
+        git -C $repo config user.email 'tests@example.invalid'
+        git -C $repo config user.name 'Local CI tests'
+        Set-Content (Join-Path $repo 'source.ps1') "'initial'" -NoNewline
+        git -C $repo add .
+        git -C $repo -c commit.gpgsign=false commit --quiet -m initial
+        git -C $repo branch baseline
+    }
+
+    It 'preserves literal changed, added and untracked paths even when Git quotes names by default' {
+        git -C $repo config core.quotepath true
+        $changed = "changed-$([char]0xE9) file.ps1"
+        $added = "added-$([char]0xE9) file.ps1"
+        $untracked = "untracked-$([char]0xE9) file.ps1"
+        Set-Content -LiteralPath (Join-Path $repo $changed) "'before'"
+        git -C $repo add .
+        git -C $repo -c commit.gpgsign=false commit --quiet -m 'Track a non-ASCII path'
+        git -C $repo branch path-baseline
+        Set-Content -LiteralPath (Join-Path $repo $changed) "'after'"
+        Set-Content -LiteralPath (Join-Path $repo $added) "'added'"
+        git -C $repo add .
+        git -C $repo -c commit.gpgsign=false commit --quiet -m 'Change non-ASCII paths'
+        Set-Content -LiteralPath (Join-Path $repo $untracked) "'untracked'"
+
+        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase path-baseline -Head HEAD
+
+        $paths.Changed.Count | Should -Be 3
+        $paths.Changed | Should -Contain $changed
+        $paths.Changed | Should -Contain $added
+        $paths.Changed | Should -Contain $untracked
+        $paths.Added.Count | Should -Be 2
+        $paths.Added | Should -Contain $added
+        $paths.Added | Should -Contain $untracked
+        (Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase path-baseline).Changed | Should -Contain $changed
+    }
+
+    It 'preserves distinct Unicode-normalization paths without culture-based deduplication' {
+        $composed = "$([char]0xE9).ps1"
+        $decomposed = "e$([char]0x301).ps1"
+        Set-Content -LiteralPath (Join-Path $repo $composed) "'composed'"
+        Set-Content -LiteralPath (Join-Path $repo $decomposed) "'decomposed'"
+
+        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase baseline
+
+        $paths.Changed.Count | Should -Be 2
+        $paths.Added.Count | Should -Be 2
+        $paths.Changed | Should -Contain $composed
+        $paths.Changed | Should -Contain $decomposed
+    }
+
+    It 'preserves an embedded newline in a Unix filename' -Skip:$IsWindows {
+        $name = "line`nbreak.ps1"
+        Set-Content -LiteralPath (Join-Path $repo $name) "'source'"
+
+        $paths = Get-LocalCiChangedFile -RepositoryRoot $repo -MergeBase baseline
+
+        $paths.Changed | Should -BeExactly @($name)
+        $paths.Added | Should -BeExactly @($name)
     }
 }
