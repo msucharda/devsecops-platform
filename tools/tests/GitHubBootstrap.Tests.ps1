@@ -701,7 +701,7 @@ Describe 'GitHub bootstrap public interface' {
                 'changed repository' { $remoteConfig.githubApps.authorization.resources.repositories['demo-a1b2c3-platform'][0] = 'actions-upload-artifact' }
                 'extra repository' { $remoteConfig.githubApps.authorization.resources.repositories['demo-a1b2c3-platform'] += 'actions-upload-artifact' }
                 'changed case' { $remoteConfig.teams.platform[0] = 'Platform@example.test' }
-                'changed ordered list' { [Array]::Reverse($remoteConfig.teams.platform) }
+                'changed ordered list' { $remoteConfig.teams.platform = @('other@example.test', 'platform@example.test') }
             }
             $configBlob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
             $cloud.blobs[$configBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Yaml $remoteConfig))

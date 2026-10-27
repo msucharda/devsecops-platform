@@ -204,11 +204,17 @@ function Get-PlatformModuleGraph {
     return $modules
 }
 
-function Sort-PlatformString {
+# security-check: platform-ordinal-string
+function Get-PlatformSortedString {
     [CmdletBinding()]
     [OutputType([string])]
-    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]] $Value)
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Value)
 
+    foreach ($item in $Value) {
+        if ($item -isnot [string]) {
+            throw 'Ordinal string ordering requires only string values.'
+        }
+    }
     [string[]] $sorted = @($Value)
     [Array]::Sort($sorted, [StringComparer]::Ordinal)
     return $sorted
@@ -223,7 +229,7 @@ function ConvertTo-PlatformCanonicalJson {
         param($Item)
         if ($Item -is [System.Collections.IDictionary]) {
             $result = [ordered]@{}
-            foreach ($key in @(Sort-PlatformString -Value @($Item.PSBase.Keys))) {
+            foreach ($key in @(Get-PlatformSortedString -Value @($Item.PSBase.Keys))) {
                 $result[$key] = & $normalize $Item[$key]
             }
             return $result
@@ -273,13 +279,13 @@ function Get-PlatformAppScope {
     if (-not $valid) {
         throw "Invalid instance configuration: $.modules.$Module.parameters has invalid GitHub App resource scope."
     }
-    $scope['organizations'] = @(Sort-PlatformString -Value $scope['organizations'])
+    $scope['organizations'] = @(Get-PlatformSortedString -Value $scope['organizations'])
     if ($scope.Contains('repositories')) {
         foreach ($organization in @($scope['repositories'].PSBase.Keys)) {
             if ($organization -cnotin $scope['organizations']) {
                 throw "Invalid instance configuration: $.modules.$Module.parameters references repositories outside the target organizations."
             }
-            $scope['repositories'][$organization] = @(Sort-PlatformString -Value $scope['repositories'][$organization])
+            $scope['repositories'][$organization] = @(Get-PlatformSortedString -Value $scope['repositories'][$organization])
         }
     }
     return $scope
@@ -416,14 +422,14 @@ function Get-PlatformInstance {
     foreach ($alias in $instance['githubApps'].PSBase.Keys) {
         $app = $instance['githubApps'][$alias]
         if ($app['resources'].Contains('organizations')) {
-            $app['resources']['organizations'] = @(Sort-PlatformString -Value $app['resources']['organizations'])
+            $app['resources']['organizations'] = @(Get-PlatformSortedString -Value $app['resources']['organizations'])
         }
         if ($app['resources'].Contains('repositories')) {
             foreach ($organization in @($app['resources']['repositories'].PSBase.Keys)) {
                 if ($organization -cnotin $app['resources']['organizations']) {
                     throw "Invalid instance configuration '$Path': $.githubApps.$alias.resources has repositories outside its organizations."
                 }
-                $app['resources']['repositories'][$organization] = @(Sort-PlatformString -Value $app['resources']['repositories'][$organization])
+                $app['resources']['repositories'][$organization] = @(Get-PlatformSortedString -Value $app['resources']['repositories'][$organization])
             }
         }
     }
@@ -741,8 +747,8 @@ function Get-PlatformModuleOrganization {
     if ($targets -isnot [System.Collections.IList]) {
         throw "Organization-scoped module '$($Manifest.name)' requires a target_organizations list."
     }
-    $expectedJson = ConvertTo-PlatformCanonicalJson @(Sort-PlatformString -Value $expected)
-    if ((ConvertTo-PlatformCanonicalJson @(Sort-PlatformString -Value $targets)) -cne $expectedJson) {
+    $expectedJson = ConvertTo-PlatformCanonicalJson @(Get-PlatformSortedString -Value $expected)
+    if ((ConvertTo-PlatformCanonicalJson @(Get-PlatformSortedString -Value $targets)) -cne $expectedJson) {
         throw "Organization-scoped module '$($Manifest.name)' target_organizations must contain exactly all instance organizations: $($expected -join ', ')."
     }
     if ($Manifest.Contains('organizationParameters')) {
@@ -751,7 +757,7 @@ function Get-PlatformModuleOrganization {
             if ($values -isnot [System.Collections.IDictionary]) {
                 throw "Organization parameter '$parameter' must be a mapping keyed by organization; a shared value cannot be copied across organizations."
             }
-            if ((ConvertTo-PlatformCanonicalJson @(Sort-PlatformString -Value @($values.PSBase.Keys))) -cne $expectedJson) {
+            if ((ConvertTo-PlatformCanonicalJson @(Get-PlatformSortedString -Value @($values.PSBase.Keys))) -cne $expectedJson) {
                 throw "Organization parameter '$parameter' must contain exactly all instance organization keys."
             }
         }
@@ -779,8 +785,8 @@ function Get-PlatformOrganizationToken {
     if ($tokens -isnot [System.Collections.IDictionary]) {
         throw 'Organization-scoped execution requires a PLATFORM_GITHUB_TOKENS object.'
     }
-    if ((ConvertTo-PlatformCanonicalJson @(Sort-PlatformString -Value @($tokens.PSBase.Keys))) -cne
-        (ConvertTo-PlatformCanonicalJson @(Sort-PlatformString -Value $Organization))) {
+    if ((ConvertTo-PlatformCanonicalJson @(Get-PlatformSortedString -Value @($tokens.PSBase.Keys))) -cne
+        (ConvertTo-PlatformCanonicalJson @(Get-PlatformSortedString -Value $Organization))) {
         throw 'Organization token keys must match exactly the execution organizations.'
     }
     foreach ($name in $Organization) {
@@ -791,4 +797,4 @@ function Get-PlatformOrganizationToken {
     return $tokens
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Sort-PlatformString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken

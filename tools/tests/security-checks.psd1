@@ -4,6 +4,12 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'platform-ordinal-string'
+            Tests = @(
+                @{ Path = 'tools/tests/CanonicalConfiguration.Tests.ps1'; FullName = @('Culture-independent configuration normalization*', 'Ordinal organization scope input boundary*') }
+            )
+        }
+        @{
             Name = 'organizations-api-pagination'
             Tests = @(
                 @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*Assignment pagination*', '*incomplete assignment listing*') }
@@ -115,6 +121,7 @@
             Name = 'module-organization-scope'
             Tests = @(
                 @{ Path = 'tools/tests/OrganizationScope.Tests.ps1'; FullName = @('Organization-scoped execution contract*') }
+                @{ Path = 'tools/tests/CanonicalConfiguration.Tests.ps1'; FullName = @('Ordinal organization scope input boundary*') }
             )
         }
         @{

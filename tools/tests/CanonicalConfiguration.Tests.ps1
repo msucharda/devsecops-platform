@@ -69,3 +69,29 @@ Describe 'Culture-independent configuration normalization' {
         { Get-PlatformInstance -Yaml $Yaml -Modules $modules } | Should -Throw $Error
     }
 }
+
+Describe 'Ordinal organization scope input boundary' {
+    It 'rejects a <Case> organization instead of coercing it to a string' -Tag 'OrdinalInput' -ForEach @(
+        @{ Case = 'nested list'; InvalidValue = @('demo-a1b2c3-platform'); Error = '*Ordinal string ordering requires only string values*' }
+        @{ Case = 'number'; InvalidValue = 5; Error = '*Ordinal string ordering requires only string values*' }
+        @{ Case = 'boolean'; InvalidValue = $true; Error = '*Ordinal string ordering requires only string values*' }
+        @{ Case = 'mapping'; InvalidValue = @{ name = 'demo-a1b2c3-platform' }; Error = '*Ordinal string ordering requires only string values*' }
+        @{ Case = 'null'; InvalidValue = $null; Error = "*Cannot bind argument to parameter 'Value' because it is null*" }
+    ) {
+        $configuration = @{
+            instance = @{ name = 'demo' }
+            modules = @{
+                sample = @{
+                    parameters = @{
+                        target_organizations = @($InvalidValue, 'demo-a1b2c3-actions', 'demo-a1b2c3-workloads')
+                    }
+                }
+            }
+        }
+
+        {
+            Get-PlatformModuleOrganization -Instance $configuration -Manifest @{ name = 'sample' } `
+                -PlatformOrganization 'demo-a1b2c3-platform'
+        } | Should -Throw $Error
+    }
+}
