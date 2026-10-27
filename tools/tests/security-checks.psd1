@@ -10,6 +10,20 @@
             )
         }
         @{
+            Name = 'local-ci-lease-inheritance'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiConcurrency.Tests.ps1'
+                FullName = 'Local CI lease inheritance*'
+            })
+        }
+        @{
+            Name = 'local-ci-worker-lifetime'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiConcurrency.Tests.ps1'
+                FullName = 'Local CI worker lifetime*'
+            })
+        }
+        @{
             Name = 'local-ci-temp-access'
             Tests = @(@{
                 Path = 'tools/tests/LocalCiGate.Tests.ps1'

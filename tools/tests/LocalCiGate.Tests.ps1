@@ -240,9 +240,13 @@ Describe 'Local CI external-program preflight' {
     }
 }
 
-Describe 'Local CI selection snapshot' {
-    It 'rejects a HEAD change during selection before running the selected checks' {
-        $fixture = Join-Path $TestDrive 'selection-race'
+Describe 'Local CI process guards' {
+    It 'rejects <Case> without publishing a result' -ForEach @(
+        @{ Case = 'a HEAD change while loading workflow settings'; Command = 'Get-CiWorkflowSetting'; MissingGo = $false; ExpectedError = 'Source changed during test selection \(Head\)' }
+        @{ Case = 'a HEAD change during test selection'; Command = 'Get-LocalCiProfile'; MissingGo = $false; ExpectedError = 'Source changed during test selection \(Head\)' }
+        @{ Case = 'missing Go with preflight exit code 2'; Command = 'Test-LocalCiRuntime'; MissingGo = $true; ExpectedError = 'Go is missing' }
+    ) {
+        $fixture = Join-Path $TestDrive ("guard-$([guid]::NewGuid().ToString('N').Substring(0, 8))")
         $null = New-Item -ItemType Directory -Path $fixture
         foreach ($file in @(git -C $repository ls-files)) {
             $source = Join-Path $repository $file
@@ -260,20 +264,38 @@ Describe 'Local CI selection snapshot' {
         git -C $fixture branch baseline
         $wrapper = Join-Path $TestDrive 'selection-race.ps1'
         $escaped = $fixture.Replace("'", "''")
-        @"
-`$ErrorActionPreference = 'Stop'
-Set-PSBreakpoint -Command Get-LocalCiProfile -Action {
+        $action = if ($MissingGo) {
+            @'
+    & (Get-Module LocalCiGate) {
+        function script:Get-Command {
+            [CmdletBinding()]
+            param([string] $Name, [System.Management.Automation.CommandTypes] $CommandType)
+            if ($Name -eq 'go') { return }
+            Microsoft.PowerShell.Core\Get-Command @PSBoundParameters
+        }
+    }
+'@
+        }
+        else {
+            @"
     'function {' | Set-Content '$escaped/bad.ps1'
     git -C '$escaped' add bad.ps1
     git -C '$escaped' commit --quiet -m 'Change HEAD during selection'
+"@
+        }
+        @"
+`$ErrorActionPreference = 'Stop'
+Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
+Set-PSBreakpoint -Command '$Command' -Action {
+$action
     Get-PSBreakpoint | Remove-PSBreakpoint
 } | Out-Null
-& '$escaped/tools/Invoke-LocalCi.ps1' -Base baseline -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
+& '$escaped/tools/Invoke-LocalCi.ps1' -WorkerProcess -Base baseline -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
 exit `$LASTEXITCODE
 "@ | Set-Content $wrapper
         $output = & ([Environment]::ProcessPath) -NoProfile -File $wrapper 2>&1 | Out-String
-        $LASTEXITCODE | Should -Not -Be 0
-        $output | Should -Match 'Source changed during test selection \(Head\)'
+        $LASTEXITCODE | Should -Be 2 -Because $output
+        $output | Should -Match $ExpectedError
         $receipt = (git -C $fixture rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
         Test-Path -LiteralPath $receipt | Should -BeFalse
     }

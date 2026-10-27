@@ -22,7 +22,8 @@ param(
     [string] $TempRoot,
     [string] $StateRoot,
     [ValidateRange(0, 64)][int] $WorkerBudget = 0,
-    [ValidateRange(1, 86400)][int] $QueueWaitSeconds = 900
+    [ValidateRange(1, 86400)][int] $QueueWaitSeconds = 900,
+    [Parameter(DontShow)][switch] $WorkerProcess
 )
 
 Set-StrictMode -Version Latest
@@ -70,15 +71,35 @@ Import-Module (Join-Path $PSScriptRoot 'LocalCiGate.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'LocalCiConcurrency.psm1') -Force
 if (-not $StateRoot) { $StateRoot = Get-LocalCiMachineStateRoot }
 if ($env:INVOKE_LOCAL_CI_ACTIVE -and -not $Plan) { Exit-Usage 'Another Invoke-LocalCi run is active in this process tree; nested runs are refused.' }
+if ($IsWindows -and -not $Plan -and -not $WorkerProcess) {
+    $forward = @{}
+    foreach ($key in $PSBoundParameters.Keys) {
+        $value = $PSBoundParameters[$key]
+        $forward[$key] = if ($value -is [Management.Automation.SwitchParameter]) { [bool] $value } else { $value }
+    }
+    $forward.WorkerProcess = $true
+    $forward.LogPath = $LogPath
+    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($forward | ConvertTo-Json -Compress)))
+    $command = "`$parameters = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$payload')) | ConvertFrom-Json -AsHashtable; & '$($PSCommandPath.Replace("'", "''"))' @parameters; exit `$LASTEXITCODE"
+    & ([Environment]::ProcessPath) -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)))
+    exit $LASTEXITCODE
+}
+if ($IsWindows -and -not $Plan) {
+    try { Initialize-LocalCiWorkerLifetime }
+    catch { Exit-Usage $_.Exception.Message }
+}
 $worktreeLease = $null
 $machineLease = $null
 try {
 if (-not $Plan) {
-    try { $worktreeLease = Enter-LocalCiWorktreeLock -RepositoryRoot $repo -StateRoot $StateRoot }
+    try { $worktreeLease = Enter-LocalCiWorktreeLock -RepositoryRoot $repo }
     catch { Exit-Usage $_.Exception.Message }
     # A failed or abruptly interrupted rerun must never leave an earlier success usable.
     Clear-LocalCiGateResult -RepositoryRoot $repo
 }
+try { $startState = Get-LocalCiContentState -RepositoryRoot $repo -Base $Base }
+catch { Exit-Usage "Invalid -Base '$Base' or unreadable source state: $($_.Exception.Message)" }
+if (-not $Plan -and -not $startState.Clean) { Exit-Usage 'Commit all source changes before running the local gate.' }
 $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
 $moduleProbe = { param($module) @(Get-Module -ListAvailable -Name $module | ForEach-Object { $_.Version.ToString() }) }
 # ci.yml is parsed with powershell-yaml, so missing modules must be reported before parsing.
@@ -97,9 +118,6 @@ $temp = if ($TempRoot) { Get-LocalCiTempPath -RepoPath $repo -DataRoot $TempRoot
 $changedFiles = @()
 $newFiles = @()
 # The gate is offline. Refresh remote refs explicitly before it, not during the measured run.
-try { $startState = Get-LocalCiContentState -RepositoryRoot $repo -Base $Base }
-catch { Exit-Usage "Invalid -Base '$Base' or unreadable source state: $($_.Exception.Message)" }
-if (-not $Plan -and -not $startState.Clean) { Exit-Usage 'Commit all source changes before running the local gate.' }
 $mb = $startState.MergeBase
 $behind = Invoke-Git @('rev-list', '--count', "$($startState.Head)..$($startState.BaseSha)")
 if ($behind.ExitCode -eq 0 -and [int] $behind.Output[0] -gt 0) {
@@ -317,6 +335,7 @@ try {
     }
     # Acquire the machine turn before clearing or using the worktree's shared TEMP.
     $machineLease = Enter-LocalCiMachineQueue -StateRoot $StateRoot -WorkerBudget $WorkerBudget -WaitSeconds $QueueWaitSeconds
+    Enable-LocalCiLeaseInheritance -Handle @($worktreeLease, $machineLease.Handle, $machineLease.TicketHandle)
     $env:LOCAL_CI_WORKER_BUDGET = [string] $machineLease.WorkerBudget
     Write-Console "Machine queue admitted; worker budget: $($machineLease.WorkerBudget)"
     # The default C:\Windows\TEMP allows creating files but denies deleting and enumerating them, so every run uses its own.
@@ -328,7 +347,8 @@ try {
 
     # 1. Preflight
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    $null = Test-LocalCiRuntime -TempPath $temp
+    try { $null = Test-LocalCiRuntime -TempPath $temp }
+    catch { Exit-Usage $_.Exception.Message }
     $toolProbe = {
         param($tool)
         if (-not (Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
@@ -459,6 +479,6 @@ if (-not $failed) {
 exit $(if ($failed) { 1 } else { 0 })
 }
 finally {
-    if ($null -ne $machineLease) { Exit-LocalCiMachineQueue -Lease $machineLease }
-    if ($null -ne $worktreeLease) { $worktreeLease.Dispose() }
+    try { if ($null -ne $machineLease) { Exit-LocalCiMachineQueue -Lease $machineLease } }
+    finally { if ($null -ne $worktreeLease) { $worktreeLease.Dispose() } }
 }
