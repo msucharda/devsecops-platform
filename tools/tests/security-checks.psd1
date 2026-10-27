@@ -355,6 +355,12 @@
             )
         }
         @{
+            Name = 'merge-gate-required-integration'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G4 integration*', '*G4 rejects a required context reported by another integration*', '*G4 <Case> -> <Expected>') }
+            )
+        }
+        @{
             Name = 'merge-gate-review-threads'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G5 thread*') }
@@ -394,6 +400,12 @@
             Name = 'merge-gate-open-questions'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G9 body*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-decision-authors'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G9 author*') }
             )
         }
         @{

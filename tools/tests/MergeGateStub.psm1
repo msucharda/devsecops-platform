@@ -51,6 +51,7 @@ function Initialize-MergeGateStub {
         Number = $definition.Number
         Now = $definition.Now
         PullRequest = $pullRequest
+        DecisionAuthors = Get-GitHubApiFixture -Name 'graphql/pull-request-decision-authors'
         WorkflowRuns = Get-GitHubApiFixture -Name "actions/list-workflow-runs-for-repo.merge-gate-$($definition.Rest)"
         CheckRuns = Get-GitHubApiFixture -Name "checks/list-for-ref.merge-gate-$($definition.Rest)"
         Status = Get-GitHubApiFixture -Name 'repos/get-combined-status-for-ref.merge-gate' -Set @{ sha = $pullRequest.headRefOid }
@@ -103,7 +104,9 @@ function Invoke-MergeGateStub {
 
     $Stub.Calls.Add($Arguments)
     $request = if ($Arguments[0] -eq 'api' -and $Arguments[1] -eq 'graphql') {
-        if ($Arguments[3] -match 'reviewThreads') { 'graphql pullRequest' } else { 'graphql mergeState' }
+        if ($Arguments[3] -match 'userContentEdits') { 'graphql decisionAuthors' }
+        elseif ($Arguments[3] -match 'reviewThreads') { 'graphql pullRequest' }
+        else { 'graphql mergeState' }
     }
     elseif ($Arguments[0] -eq 'api') { "GET $($Arguments[-1])" }
     else { $Arguments -join ' ' }
@@ -115,6 +118,9 @@ function Invoke-MergeGateStub {
     }
 
     $pullRequest = $Stub.PullRequest
+    if ($request -ceq 'graphql decisionAuthors') {
+        return ConvertTo-Json -InputObject $Stub.DecisionAuthors -Depth 50
+    }
     if ($request -ceq 'graphql pullRequest') {
         return ConvertTo-Json -InputObject @{ data = @{ repository = @{ pullRequest = $pullRequest } } } -Depth 50
     }
