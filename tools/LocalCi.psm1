@@ -361,6 +361,7 @@ function Get-LocalCiPreflightProblem {
         [Parameter(Mandatory)][System.Collections.IDictionary] $Requirements,
         [Parameter(Mandatory)][object] $Setting,
         [switch] $NeedsTerraformTools,
+        [switch] $SkipTerraform,
         [Parameter(Mandatory)][scriptblock] $ModuleProbe,
         [Parameter(Mandatory)][scriptblock] $ToolProbe
     )
@@ -372,11 +373,13 @@ function Get-LocalCiPreflightProblem {
     if ($PowerShellVersion -lt [version] '7.4') { & $fail "PowerShell $PowerShellVersion is too old; install PowerShell 7.4 or newer." }
     foreach ($message in @(Get-LocalCiModuleProblem -Requirements $Requirements -ModuleProbe $ModuleProbe)) { & $fail $message }
 
+    if (-not $SkipTerraform) {
     $terraform = & $ToolProbe 'terraform'
     if ([string]::IsNullOrWhiteSpace($terraform)) {
         & $fail "terraform is missing; Pester tests run Terraform. Install Terraform $($Setting.TerraformVersion): winget install Hashicorp.Terraform or https://releases.hashicorp.com/terraform/$($Setting.TerraformVersion)/"
     }
     elseif ($terraform -cne $Setting.TerraformVersion) { & $warn "terraform $terraform differs from CI $($Setting.TerraformVersion)." }
+    }
 
     if ($NeedsTerraformTools) {
         $tflint = & $ToolProbe 'tflint'

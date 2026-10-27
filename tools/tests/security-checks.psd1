@@ -10,6 +10,19 @@
             )
         }
         @{
+            Name = 'local-ci-temp-access'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiGate.Tests.ps1'
+                FullName = 'Local CI private TEMP access*'
+            })
+        }
+        @{
+            Name = 'local-ci-result-binding'
+            Tests = @(
+                @{ Path = 'tools/tests/LocalCiGate.Tests.ps1'; FullName = @('Local CI content-bound result*') }
+            )
+        }
+        @{
             Name = 'organizations-api-pagination'
             Tests = @(
                 @{ Path = 'tools/tests/OrganizationRoles.Tests.ps1'; FullName = @('*Assignment pagination*', '*incomplete assignment listing*') }

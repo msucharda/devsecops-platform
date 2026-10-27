@@ -1,0 +1,366 @@
+BeforeAll {
+    Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
+    $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+}
+
+Describe 'Local CI profiles' {
+    It 'keeps every discovered test in the full profile and only isolated suites in the local profile' {
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $repository -AllPester
+        $discovered = @(Get-ChildItem (Join-Path $repository 'tools/tests') -Filter '*.Tests.ps1' |
+            ForEach-Object Name | Sort-Object)
+
+        @($testProfile.Full | ForEach-Object { Split-Path $_ -Leaf } | Sort-Object) | Should -BeExactly $discovered
+        $testProfile.Local | Should -Contain 'tools/tests/DeploymentIdentifier.Tests.ps1'
+        $testProfile.Local | Should -Not -Contain 'tools/tests/EnterpriseBaseline.Tests.ps1'
+        $testProfile.Local | Should -Not -Contain 'tools/tests/GitHubBootstrap.Tests.ps1'
+        $testProfile.Local | Should -Not -Contain 'tools/tests/VendoringPullRequest.Tests.ps1'
+        @($testProfile.Local | Where-Object { $_ -notin $testProfile.Full }).Count | Should -Be 0
+    }
+
+    It 'selects only affected isolated suites and reports the rest as remote work' {
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $repository -PesterPath @(
+            'tools/tests/DeploymentIdentifier.Tests.ps1', 'tools/tests/EnterpriseBaseline.Tests.ps1'
+        )
+        @($testProfile.Selected) | Should -BeExactly @('tools/tests/DeploymentIdentifier.Tests.ps1')
+        $testProfile.Remote | Should -Contain 'tools/tests/EnterpriseBaseline.Tests.ps1'
+    }
+
+    It 'rejects a newly discovered test without an explicit category' {
+        $fixture = Join-Path $TestDrive 'profile'
+        $tests = Join-Path $fixture 'tools/tests'
+        New-Item -ItemType Directory -Force $tests | Out-Null
+        Set-Content (Join-Path $tests 'Known.Tests.ps1') ''
+        Set-Content (Join-Path $tests 'Unknown.Tests.ps1') ''
+        Set-Content (Join-Path $fixture 'tools/test-profiles.psd1') "@{ Unit=@('Known.Tests.ps1'); Contract=@(); Integration=@(); Interruption=@() }"
+        { Get-LocalCiProfile -RepositoryRoot $fixture -AllPester } | Should -Throw '*missing*Unknown.Tests.ps1*'
+    }
+
+    It 'keeps the complete Pester, interruption, mutation and Terraform selection in the full plan' {
+        $log = Join-Path $TestDrive 'full-plan.log'
+        $output = & ([Environment]::ProcessPath) -NoProfile -File (Join-Path $repository 'tools/Invoke-LocalCi.ps1') -Full -Base HEAD -Plan -LogPath $log 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $output
+        $output | Should -Match 'Mode: Full'
+        $output | Should -Match 'Pester: all'
+        $output | Should -Match 'Interruption: all'
+        $output | Should -Match 'Mutation: all'
+        $output | Should -Not -Match 'Terraform roots: none'
+    }
+}
+
+Describe 'Local CI content-bound result' {
+    BeforeEach {
+        $repo = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory $repo | Out-Null
+        git -C $repo init --quiet
+        git -C $repo config user.email 'tests@example.invalid'
+        git -C $repo config user.name 'Local CI tests'
+        Set-Content (Join-Path $repo 'source.ps1') "'initial'" -NoNewline
+        git -C $repo add .
+        git -C $repo commit --quiet -m initial
+        git -C $repo branch baseline
+    }
+
+    It 'accepts the exact pushed HEAD and stored base for the <GateProfile> profile' -ForEach @(
+        @{ GateProfile = 'Local' }, @{ GateProfile = 'Full' }
+    ) {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile $GateProfile
+        Test-LocalCiGateResult -RepositoryRoot $repo -ExpectedHead $state.Head | Should -BeTrue
+        { Test-LocalCiGateResult -RepositoryRoot $repo -ExpectedHead ('a' * 40) } | Should -Throw '*stale*'
+        { Test-LocalCiGateResult -RepositoryRoot $repo -ExpectedHead $state.Head.ToUpperInvariant() } | Should -Throw '*stale*'
+    }
+
+    It 'rejects a malformed receipt with <Field> changed independently' -ForEach @(
+        @{ Field = 'Schema'; Value = 2 }
+        @{ Field = 'Schema'; Value = '1' }
+        @{ Field = 'Status'; Value = '' }
+        @{ Field = 'Status'; Value = @('selected-local-gate-passed') }
+        @{ Field = 'Status'; Value = 'SELECTED-LOCAL-GATE-PASSED' }
+        @{ Field = 'Profile'; Value = 'Unknown' }
+        @{ Field = 'Profile'; Value = @('Local') }
+        @{ Field = 'Profile'; Value = 'local' }
+        @{ Field = 'State'; Value = 'not-an-object' }
+    ) {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $path = (git -C $repo rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        $receipt = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable
+        $receipt[$Field] = $Value
+        $receipt | ConvertTo-Json -Depth 5 | Set-Content $path
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*Invalid local gate result*'
+    }
+
+    It 'rejects an incomplete content binding' {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $path = (git -C $repo rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        $receipt = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable
+        $receipt.State.Remove('Fingerprint')
+        $receipt | ConvertTo-Json -Depth 5 | Set-Content $path
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*stale*Fingerprint*'
+    }
+
+    It 'rejects an invalid stored base with <Case>' -ForEach @(
+        @{ Case = 'an empty value'; Value = '' }
+        @{ Case = 'an array'; Value = @('baseline') }
+    ) {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $path = (git -C $repo rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        $receipt = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable
+        $receipt.State['Base'] = $Value
+        $receipt | ConvertTo-Json -Depth 5 | Set-Content $path
+        { Test-LocalCiGateResult -RepositoryRoot $repo } | Should -Throw '*missing base reference*'
+    }
+
+    It 'rejects an unreadable JSON result' {
+        $path = (git -C $repo rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        Set-Content $path '{'
+        { Test-LocalCiGateResult -RepositoryRoot $repo } | Should -Throw
+    }
+
+    It 'rejects an array instead of a result object' {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $path = (git -C $repo rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        $receipt = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable
+        ConvertTo-Json -InputObject @($receipt) -Depth 5 | Set-Content $path
+        { Test-LocalCiGateResult -RepositoryRoot $repo } | Should -Throw '*Invalid local gate result*'
+    }
+
+    It 'rejects a differently cased binding' {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $path = (git -C $repo rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        $receipt = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable
+        $receipt.State['Head'] = $state.Head.ToUpperInvariant()
+        $receipt | ConvertTo-Json -Depth 5 | Set-Content $path
+        { Test-LocalCiGateResult -RepositoryRoot $repo } | Should -Throw '*stale*Head*'
+    }
+
+    It 'rejects a non-string binding even when string comparison would coerce it' {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $path = (git -C $repo rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        $receipt = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable
+        $receipt.State['Head'] = @($state.Head)
+        $receipt | ConvertTo-Json -Depth 5 | Set-Content $path
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*stale*Head*'
+    }
+
+    It 'invalidates a successful result when <Change> changes' -ForEach @(
+        @{ Change = 'tracked content' }
+        @{ Change = 'untracked content' }
+        @{ Change = 'deleted file' }
+        @{ Change = 'HEAD' }
+        @{ Change = 'base' }
+    ) {
+        $start = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $start -GateProfile Local
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Not -Throw
+        switch ($Change) {
+            'tracked content' { Set-Content (Join-Path $repo 'source.ps1') "'changed'" -NoNewline }
+            'untracked content' { Set-Content (Join-Path $repo 'new.ps1') "'new'" -NoNewline }
+            'deleted file' { Remove-Item (Join-Path $repo 'source.ps1') }
+            'HEAD' { git -C $repo -c commit.gpgsign=false commit --quiet --allow-empty -m next }
+            'base' {
+                git -C $repo -c commit.gpgsign=false commit --quiet --allow-empty -m next
+                git -C $repo branch --force baseline HEAD
+                git -C $repo switch --quiet --detach HEAD~1
+            }
+        }
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*stale*'
+    }
+
+    It 'rejects a missing result and a result left by an interrupted rerun' {
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*No successful*'
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        Clear-LocalCiGateResult -RepositoryRoot $repo
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*No successful*'
+    }
+
+    It 'refuses a receipt for uncommitted code even when nothing changes after the gate' {
+        Set-Content (Join-Path $repo 'source.ps1') "'fix-not-in-HEAD'"
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } |
+            Should -Throw '*Commit*before*gate*'
+    }
+
+    It 'enforces the receipt in a real pre-push hook against an isolated bare remote' {
+        $tools = Join-Path $repo 'tools'
+        $hooks = Join-Path $repo '.githooks'
+        New-Item -ItemType Directory $tools, $hooks | Out-Null
+        Copy-Item (Join-Path $repository 'tools/LocalCiGate.psm1'), (Join-Path $repository 'tools/Test-LocalCiResult.ps1') $tools
+        Copy-Item (Join-Path $repository '.githooks/pre-push') $hooks
+        if (-not $IsWindows) { & chmod '+x' (Join-Path $hooks 'pre-push') }
+        git -C $repo add .
+        git -C $repo -c commit.gpgsign=false commit --quiet -m 'Include the hook and validator in HEAD'
+        $remote = Join-Path $TestDrive 'remote.git'
+        git init --quiet --bare $remote
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $output = git -C $repo -c core.hooksPath=.githooks push --quiet $remote HEAD:refs/heads/accepted 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $output
+
+        Set-Content (Join-Path $repo 'source.ps1') "'after-gate'"
+        $output = git -C $repo -c core.hooksPath=.githooks push --quiet $remote HEAD:refs/heads/rejected 2>&1 | Out-String
+        $LASTEXITCODE | Should -Not -Be 0
+        $output | Should -Match 'stale'
+        git --git-dir=$remote show-ref --verify --quiet refs/heads/rejected
+        $LASTEXITCODE | Should -Be 1
+    }
+}
+
+Describe 'Local CI external-program preflight' {
+    It 'runs a real child pwsh with redirected stdin and a string-map response' {
+        Test-LocalCiRuntime -TempPath $TestDrive -Executable ([Environment]::ProcessPath) | Should -BeTrue
+    }
+
+    It 'rejects a pwsh executable that cannot be launched before any tests run' {
+        { Test-LocalCiRuntime -TempPath $TestDrive -Executable (Join-Path $TestDrive 'missing-pwsh') } |
+            Should -Throw '*pwsh external-program preflight failed*'
+    }
+
+    It 'rejects a PowerShell alias that the external-program PATH cannot resolve' {
+        $aliasName = "local-ci-pwsh-$([guid]::NewGuid().ToString('N'))"
+        Set-Alias -Name $aliasName -Value ([Environment]::ProcessPath) -Scope Local
+        try {
+            (Get-Command $aliasName).CommandType | Should -Be 'Alias'
+            { Test-LocalCiRuntime -TempPath $TestDrive -Executable $aliasName } |
+                Should -Throw '*Terraform external-program lookup failed*'
+        }
+        finally { Remove-Item "Alias:$aliasName" }
+    }
+
+    It 'rejects Windows TEMP paths that leave insufficient space for nested git refs' {
+        $long = Join-Path $TestDrive ('x' * 81)
+        { Assert-LocalCiTempPath -Path $long -Windows $true } | Should -Throw '*TEMP*64*TempRoot*'
+    }
+}
+
+Describe 'Local CI selection snapshot' {
+    It 'rejects a HEAD change during selection before running the selected checks' {
+        $fixture = Join-Path $TestDrive 'selection-race'
+        $null = New-Item -ItemType Directory -Path $fixture
+        foreach ($file in @(git -C $repository ls-files)) {
+            $source = Join-Path $repository $file
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+            $destination = Join-Path $fixture $file
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent)
+            Copy-Item -LiteralPath $source -Destination $destination
+        }
+        git -C $fixture init --quiet
+        git -C $fixture config user.email 'tests@example.invalid'
+        git -C $fixture config user.name 'Local CI selection tests'
+        git -C $fixture config commit.gpgsign false
+        git -C $fixture add .
+        git -C $fixture commit --quiet -m initial
+        git -C $fixture branch baseline
+        $wrapper = Join-Path $TestDrive 'selection-race.ps1'
+        $escaped = $fixture.Replace("'", "''")
+        @"
+`$ErrorActionPreference = 'Stop'
+Set-PSBreakpoint -Command Get-LocalCiProfile -Action {
+    'function {' | Set-Content '$escaped/bad.ps1'
+    git -C '$escaped' add bad.ps1
+    git -C '$escaped' commit --quiet -m 'Change HEAD during selection'
+    Get-PSBreakpoint | Remove-PSBreakpoint
+} | Out-Null
+& '$escaped/tools/Invoke-LocalCi.ps1' -Base baseline -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
+exit `$LASTEXITCODE
+"@ | Set-Content $wrapper
+        $output = & ([Environment]::ProcessPath) -NoProfile -File $wrapper 2>&1 | Out-String
+        $LASTEXITCODE | Should -Not -Be 0
+        $output | Should -Match 'Source changed during test selection \(Head\)'
+        $receipt = (git -C $fixture rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        Test-Path -LiteralPath $receipt | Should -BeFalse
+    }
+}
+
+Describe 'Local CI private TEMP access' {
+    BeforeEach {
+        $userSid = 'S-1-5-21-1-2-3-1000'
+        $access = @{
+            Directory = $true; ReparsePoint = $false; Owner = $userSid; Protected = $true
+            Rules = @($userSid, 'S-1-5-18' | ForEach-Object {
+                @{ Sid = $_; Type = 'Allow'; Rights = 2032127; Inheritance = 3; Propagation = 0; Inherited = $false }
+            })
+        }
+    }
+
+    It 'accepts the protected owner and SYSTEM ACL' {
+        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Not -Throw
+    }
+
+    It 'accepts SYSTEM ownership with the same restricted access rules' {
+        $access.Owner = 'S-1-5-18'
+        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Not -Throw
+    }
+
+    It 'rejects unsafe access: <Case>' -ForEach @(
+        @{ Case = 'a regular file'; Field = 'Directory'; Value = $false; Error = '*regular directory*' }
+        @{ Case = 'unknown directory type'; Field = 'Directory'; Value = $null; Error = '*regular directory*' }
+        @{ Case = 'string directory type'; Field = 'Directory'; Value = 'True'; Error = '*regular directory*' }
+        @{ Case = 'a reparse point'; Field = 'ReparsePoint'; Value = $true; Error = '*regular directory*' }
+        @{ Case = 'unknown reparse point state'; Field = 'ReparsePoint'; Value = $null; Error = '*regular directory*' }
+        @{ Case = 'string reparse point state'; Field = 'ReparsePoint'; Value = 'False'; Error = '*regular directory*' }
+        @{ Case = 'different owner'; Field = 'Owner'; Value = 'S-1-5-21-9-9-9-1000'; Error = '*untrusted owner*' }
+        @{ Case = 'differently cased owner'; Field = 'Owner'; Value = 's-1-5-21-1-2-3-1000'; Error = '*untrusted owner*' }
+        @{ Case = 'inherited ACL'; Field = 'Protected'; Value = $false; Error = '*inheritance*' }
+        @{ Case = 'unknown inheritance state'; Field = 'Protected'; Value = $null; Error = '*inheritance*' }
+        @{ Case = 'string inheritance state'; Field = 'Protected'; Value = 'True'; Error = '*inheritance*' }
+    ) {
+        $access[$Field] = $Value
+        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Throw $Error
+    }
+
+    It 'rejects an unsafe rule: <Case>' -ForEach @(
+        @{ Case = 'unknown identity'; Field = 'Sid'; Value = 'S-1-5-11'; Error = '*identity*' }
+        @{ Case = 'duplicate identity'; Field = 'Sid'; Value = 'S-1-5-18'; Error = '*identity*' }
+        @{ Case = 'deny rule'; Field = 'Type'; Value = 'Deny'; Error = '*access rule*' }
+        @{ Case = 'differently cased rule'; Field = 'Type'; Value = 'allow'; Error = '*access rule*' }
+        @{ Case = 'incomplete rights'; Field = 'Rights'; Value = 131241; Error = '*access rule*' }
+        @{ Case = 'missing object inheritance'; Field = 'Inheritance'; Value = 1; Error = '*access rule*' }
+        @{ Case = 'missing container inheritance'; Field = 'Inheritance'; Value = 2; Error = '*access rule*' }
+        @{ Case = 'inherit-only propagation'; Field = 'Propagation'; Value = 2; Error = '*access rule*' }
+        @{ Case = 'inherited rule'; Field = 'Inherited'; Value = $true; Error = '*access rule*' }
+        @{ Case = 'unknown rule inheritance'; Field = 'Inherited'; Value = $null; Error = '*access rule*' }
+        @{ Case = 'string rule inheritance'; Field = 'Inherited'; Value = 'False'; Error = '*access rule*' }
+    ) {
+        $access.Rules[0][$Field] = $Value
+        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Throw $Error
+    }
+
+    It 'rejects an additional writable identity' {
+        $access.Rules += @{ Sid = 'S-1-5-11'; Type = 'Allow'; Rights = 2032127; Inheritance = 3; Propagation = 0; Inherited = $false }
+        { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Throw '*unexpected access rules*'
+    }
+
+    It 'creates a protected Windows directory and refuses existing broader access' -Skip:(-not $IsWindows) {
+        $path = Join-Path $TestDrive 'private-temp'
+        Initialize-LocalCiPrivateTempDirectory -Path $path
+        Initialize-LocalCiPrivateTempDirectory -Path $path
+        $directory = [IO.DirectoryInfo]::new($path)
+        $acl = [IO.FileSystemAclExtensions]::GetAccessControl($directory, [Security.AccessControl.AccessControlSections]::Access)
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+            [Security.Principal.SecurityIdentifier]::new('S-1-5-11'), [Security.AccessControl.FileSystemRights]::Modify,
+            [Security.AccessControl.AccessControlType]::Allow)
+        $null = $acl.AddAccessRule($rule)
+        [IO.FileSystemAclExtensions]::SetAccessControl($directory, $acl)
+        { Initialize-LocalCiPrivateTempDirectory -Path $path } | Should -Throw '*Unsafe CI TEMP*'
+        (Get-Acl -LiteralPath $path).Access.Count | Should -Be 3
+    }
+}
+
+Describe 'Changed-only PowerShell analysis' {
+    It 'analyzes the explicit file and rejects its parser error' {
+        $valid = Join-Path $TestDrive 'valid.ps1'
+        $invalid = Join-Path $TestDrive 'invalid.ps1'
+        Set-Content $valid "'valid'"
+        Set-Content $invalid 'function {'
+        & (Join-Path $repository 'tools/Test-PowerShell.ps1') -Path @($valid)
+        { & (Join-Path $repository 'tools/Test-PowerShell.ps1') -Path @($invalid) } | Should -Throw '*syntax errors*'
+    }
+}

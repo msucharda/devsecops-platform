@@ -109,13 +109,18 @@ CI workflow `Source CI` běží s oprávněním `contents: read`. Pester, harnes
 
 ### Lokální validace
 
-Lokální validace musí běžet ve stejném režimu jako CI.
+Před pushem musí projít rychlý lokální gate. Před merge musí projít úplné Linux Source CI na přesném head SHA PR.
 
 - Před každým pushem spusť `./tools/Invoke-LocalCi.ps1` (výchozí režim `-Changed`). Platí to i pro změny jen v dokumentaci. Push je povolený jen po návratovém kódu 0.
-  - `-Changed` spustí levné kroky CI celé. Pester, harness přerušení, mutační testy a Terraform omezí na soubory, které souvisejí se změnou proti `origin/main`.
-  - `-Plan` vypíše výběr kroků, testovacích souborů a Terraform roots bez spuštění.
+  - `-Changed` analyzuje změněné PowerShell soubory, ověří manifesty a generované workflow a spustí dotčené izolované unit a contract suites. Kategorie určuje `tools/test-profiles.psd1`; nový test musí mít právě jednu kategorii.
+  - `-Plan` vypíše lokální výběr i soubory ponechané vzdálenému CI. Terraform, integration suites, harness přerušení a mutace zůstávají v úplném profilu. Změna runneru lokálně vybere izolované suites, nikoli celou těžkou sadu.
+  - Cíl je 5 minut, nikoli timeout měnící nedokončený běh na úspěch. Pass znamená jen „vybraný lokální gate prošel“.
   - Návratový kód 2 znamená chybějící nástroj, špatnou verzi modulu nebo chybný parametr. Skript vypíše instrukci k opravě.
-- Plnou sadu spouští CI. `-Full` spusť lokálně jen tehdy, když CI není dostupné, když o to požádá uživatel nebo zadavatel úkolu, nebo když `-Changed` hlásí eskalaci.
+- Commit vytvoř před gate. Výsledek platí jen pro stejný HEAD, base SHA a obsah všech sledovaných i neignorovaných nových souborů. Před pushem ho ověř přes `tools/Test-LocalCiResult.ps1`. Push prováděj přes `git -c core.hooksPath=.githooks push`, aby pre-push hook ověřil i skutečně odesílaný commit. Po změně kódu nebo commitu gate zopakuj.
+- `-Base` má výchozí hodnotu `origin/main`; u stacked PR použij jeho base branch. Runner pracuje offline s místními refs; jejich aktualizaci proveď před gate. Ověření výsledku převezme base z uloženého pass.
+- Plnou sadu spouští Linux CI beze změny kategorií či počtu původních případů. `-Full` je dostupný lokálně na výslovné vyžádání, nikoli jako automatická eskalace rychlého gate. Chybějící, neúplný, zastaralý nebo nedostupný vzdálený výsledek blokuje merge; úspěšný lokální gate dovoluje push i při výpadku CI.
+- Lokální běhy drží worktree zámek a sdílejí jednu strojovou FIFO frontu. Konfigurovatelný `-WorkerBudget` se ukládá pro celý stroj; výchozí rozpočet je 4. Těžké child procesy musí respektovat `LOCAL_CI_WORKER_BUDGET`. `-QueueWaitSeconds` omezuje čekání chybou, nikoli úspěchem. Plán zámky nebere.
+- Na Windows runner používá krátký soukromý TEMP mimo checkout (výchozí kořen `<UserProfile>\.dci`). Přepsat ho můžeš přes `-TempRoot`; výsledná cesta smí mít nejvýš 64 znaků. Nové adresáře vzniknou s chráněným ACL jen pro aktuálního uživatele a SYSTEM. Existující kořen i worktree adresář musí mít stejné omezení; runner cizí vlastnictví, širší ACL ani reparse point neopravuje, ale odmítne. Veřejný `C:\t` nepoužívej. Preflight vyžaduje Go: přes jeho `os/exec` skutečně spustí `pwsh` se stdin/stdout protokolem Terraform external provideru. Samotné spuštění přes .NET neověřuje vyhledání a spuštění programu v Go. Nefunkční alias oprav instalací funkčního PowerShell a jeho procesovým PATH.
 - Pester spouštěj jen přes `tools/Invoke-Tests.ps1` (cílený běh přes `-Path`). Skript nastaví `Set-StrictMode -Version Latest` a verzi Pester z `tools/requirements.psd1`. Bez StrictMode test projde i při čtení nedefinované proměnné a v CI pak selže.
 - Kroky CI, které `Invoke-LocalCi.ps1` nepokrývá, spouštěj příkazy z `.github/workflows/ci.yml` beze změny parametrů.
 - Na CI čekej přes `./tools/Wait-PullRequestChecks.ps1 -Pr <číslo>`. Skript se vrátí nejpozději po `-MaxSeconds` (výchozí hodnota 230 s) s řádkem stavu checks a Copilot review. Návratové kódy: 0 prošlo, 1 selhalo, 2 stále běží, 3 chyba.
