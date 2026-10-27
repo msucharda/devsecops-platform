@@ -38,7 +38,7 @@ Katalog `vendoring/actions.json` v repozitáři instance má verzi `1` a mapu `a
 
 SHA v příkladu je pouze placeholder. Platformní tým musí přes API cílového repozitáře ověřit skutečný commit a jeho schválení security týmem. Offline validátor kontroluje formát a cílovou organizaci, nikoli existenci nebo schválení commitu. Katalog vybírá jednu schválenou kopii pro každý upstream repozitář; upstream reference sama nevybírá jinou verzi kopie.
 
-Modul [actions-catalog](../modules/actions-catalog/README.md#katalog-vendoringu) čte katalog jako jediný zdroj schválených importů. Pro každou položku vytvoří ve vendorované kopii tag `tag` na commitu `sha` a pole `tag` vyžaduje. Offline validátor importu pole `tag` nekontroluje.
+Modul [actions-catalog](../modules/actions-catalog/README.md#katalog-vendoringu) čte katalog jako jediný zdroj schválených importů. Pro každou položku vytvoří ve vendorované kopii tag `tag` na commitu `sha` a pole `tag` vyžaduje. Základní offline validace katalogu pole `tag` nekontroluje; při importu release s anotovaným pinem navíc platí kontrola shody tagu popsaná níže.
 
 ## Aktualizace akce v instanci
 
@@ -47,6 +47,8 @@ Release platformy určuje upstream piny šablon. Katalog instance určuje SHA sc
 Přepis `uses:` nesmí změnit chování workflow (pravidlo O11). Před importem release musí platformní tým pro každý jeho pin ověřit, že katalogová kopie pochází z tagu se stejným upstream commit SHA. Samotná shoda názvu akce nestačí. Import release používá právě aktuální katalog; nevybírá verzi podle upstream ref v `uses:`.
 
 U pinů s komentářem `# v<verze>` příprava navíc vyžaduje přesnou shodu tohoto tagu s `tag` katalogu. Jiný, chybějící nebo nečitelný katalogový tag zastaví import před vytvořením výstupu. Tato lokální kontrola nečte receipt kopie a neprokazuje shodu upstream commitů při stejném názvu tagu. Starší reference bez komentáře verze zachovávají původní přepis. Automatické ověření úplné provenance řeší [#136](https://github.com/msucharda/devsecops-platform/issues/136); do té doby zůstává ruční kontrola O11 povinná.
+
+Kontrola se uplatní až po importu a merge release, který ji obsahuje: import spouští schválené nástroje z aktuální `main` instance, nikoli nástroje importovaného zdroje. Při prvním přechodu na release z #130 proto tagy i upstream SHA musí ověřit člověk; stará verze nástroje tuto aktualizaci ještě nechrání.
 
 1. Autor platformy zvýší piny, ověří změny runtime, vstupů a výstupů a vydá release s tabulkou upstream → tag → SHA. Platformní tým zkontroluje tuto tabulku a diff šablon.
 2. **Ještě před importem nového release** spustí platformní tým stávající `import-action.yml` pro každou změněnou akci s přesným upstream repozitářem a novým tagem z tabulky. Tag musí ukazovat na SHA pinu. Cílem zůstává stejný repozitář `{owner}-{repo}`; nový tag vytváří jinou importní větev a nový PR.
