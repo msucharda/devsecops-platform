@@ -594,8 +594,10 @@ if ($main) {
         }
         $inventory['initializationPending'] = $false
         $storedConfiguration = Invoke-GitHubBootstrapApi -Path "/repos/$repository/contents/instance.yaml?ref=$contentRef"
-        $configuration = ConvertFrom-Yaml ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($storedConfiguration['content'])))
-        if ((ConvertTo-PlatformCanonicalJson $configuration) -cne (ConvertTo-PlatformCanonicalJson $instance)) {
+        $configurationYaml = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($storedConfiguration['content']))
+        $configuration = Get-PlatformInstance -Yaml $configurationYaml -Modules $modules -AllowUnboundApps:$ResourcesOnly
+        if (-not [string]::Equals((ConvertTo-PlatformCanonicalJson $configuration),
+            (ConvertTo-PlatformCanonicalJson $instance), [StringComparison]::Ordinal)) {
             throw 'Local instance configuration differs from protected main. Apply configuration changes through a reviewed PR, not bootstrap.'
         }
     }

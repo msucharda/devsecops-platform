@@ -58,11 +58,16 @@ Describe 'Organization-scoped execution contract' {
         @{ Case = 'duplicate organization'; Value = @('demo-platform', 'demo-actions', 'demo-workloads', 'demo-actions') }
         @{ Case = 'different case'; Value = @('demo-platform', 'DEMO-ACTIONS', 'demo-workloads') }
         @{ Case = 'empty'; Value = @() }
-        @{ Case = 'null member'; Value = @('demo-platform', 'demo-actions', $null) }
     ) {
         $instance.modules.scoped.parameters.target_organizations = $Value
         { Get-PlatformModuleOrganization -Instance $instance -Manifest $manifest -PlatformOrganization demo-platform } |
             Should -Throw '*must contain exactly all instance organizations*'
+    }
+
+    It 'rejects a null target member before ordinal ordering' {
+        $instance.modules.scoped.parameters.target_organizations = @('demo-platform', 'demo-actions', $null)
+        { Get-PlatformModuleOrganization -Instance $instance -Manifest $manifest -PlatformOrganization demo-platform } |
+            Should -Throw "*Cannot bind argument to parameter 'Value' because it is null*"
     }
 
     It 'accepts distinct per-organization values without requiring them to be identical' {

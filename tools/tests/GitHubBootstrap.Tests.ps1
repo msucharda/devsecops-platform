@@ -625,6 +625,105 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash $inventory).Hash | Should -BeExactly $before
     }
 
+    It 'accepts byte-identical protected configuration with unordered <Scope> under <Culture> (NoChanges=<ReadOnly>)' -Tag 'ConfigurationComparison' -ForEach @(
+        @{ Scope = 'organizations'; Culture = 'cs-CZ'; ReadOnly = $true }
+        @{ Scope = 'organizations'; Culture = ''; ReadOnly = $true }
+        @{ Scope = 'organizations'; Culture = 'cs-CZ'; ReadOnly = $false }
+        @{ Scope = 'organizations'; Culture = ''; ReadOnly = $false }
+        @{ Scope = 'repositories'; Culture = 'cs-CZ'; ReadOnly = $true }
+        @{ Scope = 'repositories'; Culture = ''; ReadOnly = $true }
+        @{ Scope = 'repositories'; Culture = 'cs-CZ'; ReadOnly = $false }
+        @{ Scope = 'repositories'; Culture = ''; ReadOnly = $false }
+    ) {
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($Culture)
+            $arguments.ResourcesOnly = $false
+            $null = & $bootstrap @arguments
+            $arguments.ResourcesOnly = $true
+            $instance.githubApps['organization-reader'] = @{
+                appId = '102'; installationId = '202'; enterprise = 'example'; permissions = @{ members = 'read' }
+                resources = @{
+                    organizations = @('demo-a1b2c3-platform', 'demo-a1b2c3-actions', 'demo-a1b2c3-workloads')
+                    repositories = @{}
+                }
+            }
+            if ($Scope -eq 'repositories') {
+                $instance.githubApps['organization-reader'].resources.organizations = @('demo-a1b2c3-actions')
+                $instance.githubApps['organization-reader'].resources.repositories = @{
+                    'demo-a1b2c3-actions' = @('actions-upload-artifact', 'actions-checkout',
+                        'actions-download-artifact', 'actions-create-github-app-token')
+                }
+            }
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            $configBlob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
+            $cloud.blobs[$configBlob.sha] = [IO.File]::ReadAllBytes($instancePath)
+            [Convert]::ToBase64String($cloud.blobs[$configBlob.sha]) |
+                Should -BeExactly ([Convert]::ToBase64String([IO.File]::ReadAllBytes($instancePath)))
+            $before = (Get-FileHash $inventory).Hash
+            $cloud.writes.Clear()
+            $arguments.NoChanges = $ReadOnly
+
+            $result = & $bootstrap @arguments
+
+            $result.HasChanges | Should -BeFalse
+            $cloud.writes.Count | Should -Be 0
+            if ($ReadOnly) { (Get-FileHash $inventory).Hash | Should -BeExactly $before }
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
+    }
+
+    It 'rejects a protected configuration <Difference> under cs-CZ before tokens or writes' -Tag 'ConfigurationComparison' -ForEach @(
+        @{ Difference = 'changed scalar' }
+        @{ Difference = 'extra organization' }
+        @{ Difference = 'changed permission' }
+        @{ Difference = 'changed repository' }
+        @{ Difference = 'extra repository' }
+        @{ Difference = 'changed case' }
+        @{ Difference = 'changed ordered list' }
+    ) {
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('cs-CZ')
+            $arguments.ResourcesOnly = $false
+            $null = & $bootstrap @arguments
+            $arguments.ResourcesOnly = $true
+            $instance.githubApps.authorization.resources.repositories = @{
+                'demo-a1b2c3-platform' = @('actions-checkout', 'actions-download-artifact')
+            }
+            $instance.teams.platform = @('platform@example.test', 'other@example.test')
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            $remoteConfig = ConvertFrom-Yaml (Get-Content -LiteralPath $instancePath -Raw)
+            switch ($Difference) {
+                'changed scalar' { $remoteConfig.instance.name = 'other' }
+                'extra organization' { $remoteConfig.githubApps.authorization.resources.organizations += 'demo-other' }
+                'changed permission' { $remoteConfig.githubApps.authorization.permissions.members = 'write' }
+                'changed repository' { $remoteConfig.githubApps.authorization.resources.repositories['demo-a1b2c3-platform'][0] = 'actions-upload-artifact' }
+                'extra repository' { $remoteConfig.githubApps.authorization.resources.repositories['demo-a1b2c3-platform'] += 'actions-upload-artifact' }
+                'changed case' { $remoteConfig.teams.platform[0] = 'Platform@example.test' }
+                'changed ordered list' { $remoteConfig.teams.platform = @('other@example.test', 'platform@example.test') }
+            }
+            $configBlob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
+            $cloud.blobs[$configBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Yaml $remoteConfig))
+            $before = (Get-FileHash $inventory).Hash
+            $cloud.writes.Clear()
+            $arguments.NoChanges = $true
+            $operations = [Collections.Generic.List[string]]::new()
+            $arguments.RequestPolicy = {
+                param($Operation)
+                $operations.Add($Operation.Kind)
+                return $true
+            }.GetNewClosure()
+
+            { & $bootstrap @arguments } | Should -Throw '*configuration differs from protected main*'
+
+            @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 0
+            $cloud.writes.Count | Should -Be 0
+            (Get-FileHash $inventory).Hash | Should -BeExactly $before
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
+    }
+
     It 'validates the current protected release without rewriting historical inventory' -Tag 'NoChanges', 'HistoricalInventory' {
         $arguments.ResourcesOnly = $false
         $null = & $bootstrap @arguments
@@ -813,7 +912,7 @@ Describe 'GitHub bootstrap public interface' {
             'configuration' {
                 $configBlob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
                 $remoteConfig = ConvertFrom-Yaml ([Text.Encoding]::UTF8.GetString($cloud.blobs[$configBlob.sha]))
-                $remoteConfig.instance.name = 'another-instance'
+                $remoteConfig.instance.name = 'other'
                 $cloud.blobs[$configBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Yaml $remoteConfig))
             }
             'missing protection' { $cloud.resources.Remove('/repos/demo-a1b2c3-platform/instance/rulesets/60') }
