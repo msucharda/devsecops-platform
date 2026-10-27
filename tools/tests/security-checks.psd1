@@ -51,6 +51,12 @@
             )
         }
         @{
+            Name = 'platform-release-cache'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoredRuntime.Tests.ps1'; FullName = @('Release cache boundary*') }
+            )
+        }
+        @{
             Name = 'tool-package-sha256'
             Tests = @(
                 @{ Path = 'tools/tests/InstallToolDependencies.Tests.ps1'; FullName = @('*Tool dependency installation*') }

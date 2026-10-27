@@ -46,8 +46,17 @@ Describe 'GitHub acceptance through the public setup wizard' {
         $source = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $null = New-Item -ItemType Directory -Path $source
         foreach ($name in @('tools', 'schemas', 'templates')) {
-            Copy-Item (Join-Path $root $name) -Destination $source -Recurse
+            if ($name -eq 'tools') {
+                $destination = Join-Path $source 'tools'
+                $null = New-Item -ItemType Directory -Path $destination
+                Get-ChildItem (Join-Path $root 'tools') -Force | Where-Object Name -ne '.dependencies' |
+                    Copy-Item -Destination $destination -Recurse
+            }
+            else { Copy-Item (Join-Path $root $name) -Destination $source -Recurse }
         }
+        $cache = Join-Path $source 'tools/.dependencies/interrupted'
+        $null = New-Item -ItemType Directory -Path $cache -Force
+        Set-Content (Join-Path $cache 'unverified.nupkg') 'not an approved release dependency'
         Mock Read-Host -ModuleName InstanceSetup {
             if ($Prompt -like 'Approve*acceptance*') { return 'y' }
             if ($Prompt -like 'Create or reconcile Azure*') { return $(if ($runAzurePreparation) { 'y' } else { 'n' }) }
@@ -75,6 +84,7 @@ Describe 'GitHub acceptance through the public setup wizard' {
         }
         Test-Path (Join-Path $work 'github-acceptance/release/modules/enterprise-baseline/module.yaml') | Should -BeTrue
         Test-Path (Join-Path $work 'github-acceptance/release/templates/instance/.github/workflows/bootstrap-acceptance.yml') | Should -BeTrue
+        Test-Path (Join-Path $work 'github-acceptance/release/tools/.dependencies') | Should -BeFalse
         (Get-Content (Join-Path $work 'instance.yaml') -Raw).TrimEnd() | Should -Be $sourceConfig.TrimEnd()
         Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 0 -Exactly
         Test-Path (Join-Path $work 'github-acceptance/keys.json') | Should -BeFalse

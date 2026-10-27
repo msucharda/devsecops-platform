@@ -80,7 +80,8 @@ function Get-ToolDependencyPath {
     [OutputType([string])]
     param(
         [Parameter(Mandatory)][string] $Name,
-        [string] $ToolsPath = $PSScriptRoot
+        [string] $ToolsPath = $PSScriptRoot,
+        [switch] $ReuseLoaded
     )
 
     $requirements = Import-PowerShellDataFile (Join-Path $ToolsPath 'requirements.psd1')
@@ -91,7 +92,29 @@ function Get-ToolDependencyPath {
     $package = Join-Path $ToolsPath "$root/packages/$Name.$version.nupkg"
     Assert-ToolPackage -Path $package -Sha256 $requirements.Sha256[$Name] -Name $Name
     Assert-ToolModulePayload -PackagePath $package -ModulePath $directory
+    if ($ReuseLoaded -and $group -eq 'Runtime') {
+        # LoadFile keeps DLLs locked on Windows even after Remove-Module. Reuse only byte-identical bundled content.
+        $pattern = "^(?<directory>.+[\\/]vendor[\\/]$([regex]::Escape($Name))[\\/]$([regex]::Escape($version)))[\\/]"
+        foreach ($assembly in [AppDomain]::CurrentDomain.GetAssemblies()) {
+            if ($assembly.IsDynamic) { continue }
+            if ($assembly.Location -match $pattern) {
+                $loadedDirectory = $Matches.directory
+                Assert-ToolModulePayload -PackagePath $package -ModulePath $loadedDirectory
+                return Join-Path $loadedDirectory "$Name.psd1"
+            }
+        }
+    }
     return Join-Path $directory "$Name.psd1"
 }
 
-Export-ModuleMember -Function Assert-ToolPackage, Assert-ToolModulePayload, Expand-ToolPackage, Get-ToolDependencyPath
+# security-check: platform-release-cache
+function Test-PlatformReleaseFile {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([AllowNull()][AllowEmptyString()][string] $RelativePath)
+
+    if ([string]::IsNullOrWhiteSpace($RelativePath)) { return $false }
+    return $RelativePath -notmatch '(^|[\\/])\.dependencies([\\/]|$)'
+}
+
+Export-ModuleMember -Function Assert-ToolPackage, Assert-ToolModulePayload, Expand-ToolPackage, Get-ToolDependencyPath, Test-PlatformReleaseFile

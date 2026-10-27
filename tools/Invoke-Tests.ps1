@@ -16,6 +16,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
 Import-Module (Get-ToolDependencyPath -Name Pester)
 $env:PSModulePath = "$(Join-Path $PSScriptRoot 'vendor')$([IO.Path]::PathSeparator)$env:PSModulePath"
+Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
 $configuration = New-PesterConfiguration
 $configuration.Run.Path = if ($Path) {
     @(foreach ($item in $Path) { (Resolve-Path -LiteralPath $item -ErrorAction Stop).ProviderPath })

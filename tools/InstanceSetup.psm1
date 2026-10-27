@@ -1059,7 +1059,7 @@ function Invoke-StepTool {
     }
     $null = Test-SetupYamlModule
     Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
-    Import-Module (Get-ToolDependencyPath -Name powershell-yaml)
+    Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
     Import-Module -Name (Join-Path $Setup.RepoPath 'tools/PlatformTools.psm1') -Force
     $null = New-Item -ItemType Directory -Force -Path (Join-Path $Setup.WorkPath 'keys')
     $Setup.Existing = $null

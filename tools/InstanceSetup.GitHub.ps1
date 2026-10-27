@@ -479,7 +479,9 @@ function Invoke-StepAcceptanceRelease {
         if ($LASTEXITCODE -ne 0 -or $dirty) { throw 'The source checkout must be clean before preparing an acceptance candidate.' }
     }
     $sourceFiles = @(Get-ChildItem -LiteralPath $source -Recurse -Force -File | Where-Object {
-        [IO.Path]::GetRelativePath($source, $_.FullName) -notmatch '^(\.git|modules|artifacts|node_modules|\.terraform)([\\/]|$)'
+        $relative = [IO.Path]::GetRelativePath($source, $_.FullName)
+        $relative -notmatch '^(\.git|modules|artifacts|node_modules|\.terraform)([\\/]|$)' -and
+        (Test-PlatformReleaseFile -RelativePath $relative)
     })
     $hashes = [ordered]@{}
     foreach ($file in $sourceFiles) {

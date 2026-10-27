@@ -11,6 +11,8 @@ SHA256 původního balíčku 0.4.12: `d4602bc7a4a093766520422d53ca8b09acde162286
 
 Převzaté soubory zůstávají beze změny. Extrakce vynechává jen transportní metadata NuGet. Původní `.nupkg` zůstává v `packages/`. Před importem nástroje ověří hash balíčku a shodu všech souborů modulu s jeho obsahem. CI nekontroluje styl převzatého kódu; ověřuje jeho integritu. `git archive` zahrne tyto soubory do ZIPu releasu a attestace releasu pokryje celý ZIP.
 
+Pokud proces již načetl stejnou přibalenou knihovnu z jiné kopie releasu, může použít tuto kopii. Nejdřív ověří požadovaný modul i již načtený modul proti aktuálnímu balíčku. Ve Windows tak nezamkne DLL v dočasné kopii. Nejde o import globálně instalovaného modulu.
+
 ## Aktualizace
 
 Správce musí nejdřív zkontrolovat změny upstreamu, licence a SHA256 nového balíčku. Hash musí dodat explicitně; aktualizační skript nesmí sám schválit právě stažený obsah.
@@ -24,6 +26,8 @@ Skript ověří archiv, verzi a licence, připraví novou složku a původní ba
 ## Vývojové moduly a binárky CI
 
 `Install-ToolDependencies.ps1 -Development` nejdřív ověří SHA256 `.nupkg` podle `requirements.psd1`. Pak zavolá `Save-Module` do dočasné složky a porovná uložené soubory s ověřeným archivem. Dvojí stažení brání tomu, aby druhá odpověď PSGallery nahradila ověřený obsah. Do `tools/.dependencies/` se zveřejní jen shodný modul. Každý import tuto shodu znovu ověří. Neshoda ukončí běh; oprava vyžaduje odstranit konkrétní poškozenou verzi v cache a instalaci zopakovat.
+
+Bootstrap, acceptance a převod releasu pro vendoring vynechávají všechny cesty se segmentem `.dependencies`. Platí to i pro staging po přerušení instalace nebo aktualizace. Adresář `tools/vendor` tyto kontroly nevynechávají.
 
 | Nástroj CI | Ověřené chování pinované akce | Kontrola platformy |
 |---|---|---|

@@ -49,7 +49,7 @@ Describe 'Local CI reads ci.yml' {
         $setting.InstanceWorkflowFiles | Should -Contain 'templates/instance/.github/workflows/import-action.yml'
     }
 
-    It 'takes the tool pins from the CI actions' {
+    It 'takes the tool pins from the CI actions and the verified installer requirements' {
         $setting.TerraformVersion | Should -Match '^\d+\.\d+\.\d+$'
         $setting.PlatformTerraformVersion | Should -BeExactly $setting.TerraformVersion
         $setting.TflintVersion | Should -Match '^\d+\.\d+\.\d+$'

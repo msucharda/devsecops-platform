@@ -12,6 +12,8 @@ Describe 'Offline schema reference boundary through instance validation' {
         $null = New-Item (Join-Path $root 'schemas') -ItemType Directory
         $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
         Copy-Item (Join-Path $repo 'tools/PlatformTools.psm1') (Join-Path $root 'tools/PlatformTools.psm1')
+        Copy-Item (Join-Path $repo 'tools/ToolDependencies.psm1'), (Join-Path $repo 'tools/requirements.psd1') (Join-Path $root 'tools')
+        Copy-Item (Join-Path $repo 'tools/vendor') (Join-Path $root 'tools') -Recurse
         Copy-Item (Join-Path $repo 'schemas/*.schema.json') (Join-Path $root 'schemas')
         $instanceSchemaPath = Join-Path $root 'schemas/instance.schema.json'
         $moduleSchemaPath = Join-Path $root 'schemas/module.schema.json'

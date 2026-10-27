@@ -15,24 +15,9 @@ BeforeAll {
         throw 'Unexpected network access.'
     }
 
-    Describe 'Tool dependency installer process errors' {
-        BeforeAll {
-            Import-Module (Join-Path $PSScriptRoot 'InstallToolDependenciesStub.psm1') -Force
-        }
-
-        It 'fails closed on a nonterminating <Failure> error' -ForEach @(
-            @{ Failure = 'Download' }, @{ Failure = 'Save' }
-        ) {
-            $state = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
-            $null = New-Item -ItemType Directory -Path $state
-            $result = Invoke-InstallerStub -StatePath $state -WorkingPath $TestDrive -Failure $Failure
-            $result.ExitCode | Should -Be 1
-            $result.Error | Should -Match "Nonterminating $($Failure.ToLowerInvariant()) failure"
-            Test-Path (Join-Path $state 'tools/.dependencies/Pester/5.7.1') | Should -BeFalse
-        }
-    }
-
     function New-InstallerFixture {
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Creates isolated Pester TestDrive fixtures only.')]
+        [CmdletBinding()]
         param([string] $Root)
         $null = New-Item -ItemType Directory -Path $Root -Force
         Copy-Item (Join-Path $script:sourceTools 'Install-ToolDependencies.ps1'), (Join-Path $script:sourceTools 'ToolDependencies.psm1') $Root
@@ -54,6 +39,23 @@ BeforeAll {
         $hash = (Get-FileHash $package).Hash.ToLowerInvariant()
         Set-Content (Join-Path $Root 'requirements.psd1') "@{ Runtime = @{}; Development = @{ Pester = '5.7.1' }; Sha256 = @{ Pester = '$hash' } }"
         return @{ Root = $Root; Payload = $payload; Package = $package; Hash = $hash; Installer = Join-Path $Root 'Install-ToolDependencies.ps1' }
+    }
+}
+
+Describe 'Tool dependency installer process errors' {
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot 'InstallToolDependenciesStub.psm1') -Force
+    }
+
+    It 'fails closed on a nonterminating <Failure> error' -ForEach @(
+        @{ Failure = 'Download' }, @{ Failure = 'Save' }
+    ) {
+        $state = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $state
+        $result = Invoke-InstallerStub -StatePath $state -WorkingPath $TestDrive -Failure $Failure
+        $result.ExitCode | Should -Be 1
+        $result.Error | Should -Match "Nonterminating $($Failure.ToLowerInvariant()) failure"
+        Test-Path (Join-Path $state 'tools/.dependencies/Pester/5.7.1') | Should -BeFalse
     }
 }
 

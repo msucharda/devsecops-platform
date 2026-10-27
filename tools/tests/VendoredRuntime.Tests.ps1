@@ -2,7 +2,74 @@ BeforeAll {
     $script:tools = Split-Path $PSScriptRoot -Parent
 }
 
+Describe 'Release cache boundary' {
+    BeforeAll {
+        Import-Module (Join-Path $tools 'PlatformTools.psm1') -Force
+    }
+
+    It 'excludes local development content <Path>' -ForEach @(
+        @{ Path = 'tools/.dependencies/Pester/5.7.1/Pester.psm1' }
+        @{ Path = 'tools/.dependencies/interrupted/package.nupkg' }
+        @{ Path = 'tools\.DEPENDENCIES\vendor-update-guid\module.psm1' }
+        @{ Path = '.dependencies' }
+        @{ Path = '' }
+        @{ Path = ' ' }
+        @{ Path = $null }
+    ) {
+        Test-PlatformReleaseFile -RelativePath $Path | Should -BeFalse
+    }
+
+    It 'keeps approved release content <Path>' -ForEach @(
+        @{ Path = 'tools/vendor/powershell-yaml/0.4.12/powershell-yaml.psm1' }
+        @{ Path = 'tools/vendor/packages/powershell-yaml.0.4.12.nupkg' }
+        @{ Path = 'tools/ToolDependencies.psm1' }
+        @{ Path = 'docs/dependencies.md' }
+        @{ Path = 'tools/.dependencies.txt' }
+        @{ Path = 'docs/local.dependencies/example.md' }
+    ) {
+        Test-PlatformReleaseFile -RelativePath $Path | Should -BeTrue
+    }
+}
+
 Describe 'Bundled runtime dependencies' {
+    It 'checks both release copies before reusing a loaded runtime: <Case>' -ForEach @(
+        @{ Case = 'identical payload'; Tamper = 'None'; ExitCode = 0; Expected = 'Released' }
+        @{ Case = 'changed requested payload'; Tamper = 'Requested'; ExitCode = 1; Expected = 'SHA256 mismatch' }
+        @{ Case = 'changed loaded payload'; Tamper = 'Loaded'; ExitCode = 1; Expected = 'SHA256 mismatch' }
+    ) {
+        $probe = Join-Path $TestDrive 'release-copy-probe.ps1'
+        Set-Content -LiteralPath $probe -Value @'
+param([string] $ToolsPath, [string] $CopyPath, [string] $Tamper)
+$ErrorActionPreference = 'Stop'
+function Copy-Tools([string] $Destination) {
+    $null = New-Item -ItemType Directory -Path $Destination
+    foreach ($name in @('PlatformTools.psm1', 'ToolDependencies.psm1', 'requirements.psd1', 'vendor')) {
+        Copy-Item (Join-Path $ToolsPath $name) $Destination -Recurse
+    }
+}
+$loadedPath = $ToolsPath
+if ($Tamper -eq 'Loaded') {
+    $loadedPath = "$CopyPath-loaded"
+    Copy-Tools $loadedPath
+}
+Import-Module (Join-Path $loadedPath 'PlatformTools.psm1')
+Copy-Tools $CopyPath
+if ($Tamper -ne 'None') {
+    $target = if ($Tamper -eq 'Requested') { $CopyPath } else { $loadedPath }
+    $version = (Import-PowerShellDataFile (Join-Path $ToolsPath 'requirements.psd1')).Runtime['powershell-yaml']
+    Add-Content (Join-Path $target "vendor/powershell-yaml/$version/powershell-yaml.psm1") '# unapproved change'
+}
+Import-Module (Join-Path $CopyPath 'PlatformTools.psm1') -Force
+$configuration = Get-PlatformYaml -Path (Join-Path $ToolsPath 'tests/fixtures/instance.yaml')
+if (-not $configuration) { throw 'Copied release could not parse YAML.' }
+Remove-Item -LiteralPath $CopyPath -Recurse -Force
+'Released'
+'@
+        $output = & pwsh -NoProfile -NonInteractive -File $probe -ToolsPath $tools -CopyPath (Join-Path $TestDrive "release-copy-$Tamper") -Tamper $Tamper 2>&1
+        $LASTEXITCODE | Should -Be $ExitCode -Because ($output -join "`n")
+        ($output -join "`n") | Should -Match $Expected
+    }
+
     It 'loads YAML from disk in a process without gallery-installed modules' {
         $probe = Join-Path $TestDrive 'runtime-probe.ps1'
         Set-Content -LiteralPath $probe -Value @'
@@ -34,7 +101,15 @@ if (-not $configuration) { throw 'YAML input was not parsed.' }
                 "tools/vendor/powershell-yaml/$version/LICENSE",
                 "tools/vendor/powershell-yaml/$version/lib/net47/LICENSE.txt",
                 "tools/vendor/powershell-yaml/$version/lib/netstandard2.1/LICENSE.txt"
-            )) { $paths | Should -Contain $path }
+            )) {
+                $paths | Should -Contain $path
+                $stream = $zip.GetEntry($path).Open()
+                try {
+                    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)) |
+                        Should -Be (Get-FileHash (Join-Path $repo $path)).Hash
+                }
+                finally { $stream.Dispose() }
+            }
             @($paths | Where-Object { $_ -like 'tools/.dependencies/*' }).Count | Should -Be 0
         }
         finally { $zip.Dispose() }

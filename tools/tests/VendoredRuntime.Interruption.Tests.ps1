@@ -28,8 +28,9 @@ Describe 'Vendored runtime update recovery' -Tag Interruption {
         $hash = (Get-FileHash $fixturePackage).Hash
         Mock Invoke-WebRequest { Copy-Item $fixturePackage $OutFile }
         $state = @{ Interrupted = $false }
+        $moveItemCommand = Get-Command Move-Item -CommandType Cmdlet
         Mock Move-Item {
-            Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+            & $moveItemCommand -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
             $published = if ($Destination -like '*.nupkg') { 'Package' }
                 elseif ($Destination -like '*requirements.psd1') { 'Pin' }
                 else { 'Module' }

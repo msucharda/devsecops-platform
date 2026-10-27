@@ -90,14 +90,15 @@ function Get-CiWorkflowSetting {
     .SYNOPSIS
     Reads the commands, tool pins and actionlint invocations that Invoke-LocalCi mirrors from ci.yml.
     .DESCRIPTION
-    Every value comes from ci.yml so local runs cannot drift from CI. An unexpected ci.yml shape throws.
+    Commands and setup-action pins come from ci.yml; the verified TFLint installer uses requirements.psd1.
+    An unexpected ci.yml shape throws.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $WorkflowPath)
 
     $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
     Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
-    Import-Module (Get-ToolDependencyPath -Name powershell-yaml) -ErrorAction Stop
+    Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded) -ErrorAction Stop
     $workflow = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $WorkflowPath -Raw) -Ordered
     $tflintInstaller = Get-CiWorkflowStep -Workflow $workflow -Job terraform -Name 'Install verified TFLint'
     if ($tflintInstaller['shell'] -cne 'pwsh' -or $tflintInstaller['run'] -cne './tools/Install-CiBinary.ps1 -Name TFLint') {

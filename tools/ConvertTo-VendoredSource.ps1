@@ -12,7 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
-Import-Module (Get-ToolDependencyPath -Name powershell-yaml)
+Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
 
 # security-check: vendoring-release-tag
 function Assert-VendoringReleaseTag {
@@ -59,6 +59,7 @@ $pending = [Collections.Generic.List[object]]::new()
 foreach ($file in $files) {
     $relative = [IO.Path]::GetRelativePath($source, $file.FullName).Replace('\', '/')
     if ($relative -match '(^|/)\.git(/|$)' -or ($Kind -eq 'action' -and $relative.StartsWith('.github/'))) { continue }
+    if ($Kind -eq 'release' -and -not (Test-PlatformReleaseFile -RelativePath $relative)) { continue }
     if ($relative -in @('.vendoring.json', 'platform/.vendoring.json')) { throw "Source contains reserved metadata '$relative'." }
     $bytes = [IO.File]::ReadAllBytes($file.FullName)
     $isManifest = $Kind -eq 'action' -and $file.Name -in @('action.yml', 'action.yaml')

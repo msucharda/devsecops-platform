@@ -4,6 +4,26 @@ BeforeAll {
 }
 
 Describe 'Vendored source preparation through the public command' {
+    It 'excludes platform caches only for release preparation: <Kind>' -ForEach @(
+        @{ Kind = 'release'; Prefix = 'platform/'; IncludesCache = $false }
+        @{ Kind = 'action'; Prefix = ''; IncludesCache = $true }
+    ) {
+        $source = Join-Path $TestDrive "source-$Kind"
+        Copy-Item (Join-Path $fixtures $Kind) $source -Recurse
+        $cache = Join-Path $source 'tools/.dependencies/interrupted'
+        $vendor = Join-Path $source 'tools/vendor'
+        $null = New-Item -ItemType Directory -Path $cache, $vendor -Force
+        Set-Content (Join-Path $cache 'unverified.nupkg') 'unverified download'
+        Set-Content (Join-Path $vendor 'approved.txt') 'bundled content'
+        $output = Join-Path $TestDrive "output-$Kind"
+
+        & $prepare -SourcePath $source -OutputPath $output -CatalogPath (Join-Path $fixtures 'catalog.json') `
+            -ActionsOrganization customer-actions -Kind $Kind
+
+        Test-Path (Join-Path $output "${Prefix}tools/.dependencies/interrupted/unverified.nupkg") | Should -Be $IncludesCache
+        Get-Content (Join-Path $output "${Prefix}tools/vendor/approved.txt") | Should -Be 'bundled content'
+    }
+
     It 'matches the complete owner and repository without case sensitivity and preserves subpath case' -Tag 'VendoringCase' {
         $source = Join-Path $TestDrive 'mixed-case'
         $workflow = Join-Path $source 'templates/instance/.github/workflows'
