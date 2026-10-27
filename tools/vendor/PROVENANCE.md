@@ -23,6 +23,8 @@ Správce musí nejdřív zkontrolovat změny upstreamu, licence a SHA256 nového
 
 Skript ověří archiv, verzi a licence, připraví novou složku a původní balíček a teprve potom atomicky přepne pin v `requirements.psd1`. Přerušení před přepnutím zachová původní aktivní verzi. Opakovaný běh ověří již připravenou složku. Správce musí v PR aktualizovat tento záznam, odstranit neaktivní verze a spustit `.\tools\Invoke-LocalCi.ps1`. Skript necommitne změny a neotevře PR.
 
+Pomocný soubor pinu leží v ignorovaném stagingu `.dependencies`. Existující pin nahrazuje systémová operace `File.Replace`, nikoli `Move-Item -Force`, který může původní soubor nejdřív odstranit. Harness přerušení ověřuje stav před přípravou pinu i po ní a před úklidem po atomickém přepnutí, včetně náhlého ukončení bez `finally`.
+
 ## Vývojové moduly a binárky CI
 
 `Install-ToolDependencies.ps1 -Development` nejdřív ověří SHA256 `.nupkg` podle `requirements.psd1`. Pak zavolá `Save-Module` do dočasné složky a porovná uložené soubory s ověřeným archivem. Dvojí stažení brání tomu, aby druhá odpověď PSGallery nahradila ověřený obsah. Do `tools/.dependencies/` se zveřejní jen shodný modul. Každý import tuto shodu znovu ověří. Neshoda ukončí běh; oprava vyžaduje odstranit konkrétní poškozenou verzi v cache a instalaci zopakovat.

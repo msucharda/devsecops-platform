@@ -51,10 +51,11 @@ try {
     $oldHash = [regex]::Escape($requirements.Sha256[$name])
     $newText = $requirementsText -creplace "('powershell-yaml'\s*=\s*)'$oldVersion'", "`${1}'$Version'"
     $newText = $newText -creplace "('powershell-yaml'\s*=\s*)'$oldHash'", "`${1}'$($Sha256.ToLowerInvariant())'"
-    $temporaryRequirements = Join-Path $ToolsPath "requirements.$([guid]::NewGuid().ToString('N')).tmp"
+    $temporaryRequirements = Join-Path $staging 'requirements.psd1'
     try {
-        [IO.File]::WriteAllText($temporaryRequirements, $newText)
-        Move-Item -LiteralPath $temporaryRequirements -Destination $requirementsPath -Force
+        Set-Content -LiteralPath $temporaryRequirements -Value $newText -NoNewline -Encoding utf8NoBOM
+        # PowerShell coerces $null string arguments to empty strings; Replace requires a real null backup path.
+        [IO.File]::Replace($temporaryRequirements, $requirementsPath, [NullString]::Value)
     }
     finally {
         if (Test-Path -LiteralPath $temporaryRequirements) { Remove-Item -LiteralPath $temporaryRequirements -Force }
