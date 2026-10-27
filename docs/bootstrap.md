@@ -29,6 +29,8 @@ az login --tenant '<tenant-id>'
 gh auth login --hostname example.ghe.com --web --scopes read:enterprise
 ```
 
+Instalátor obnoví chybějící registraci PSGallery a pro každou závislost provede nejvýše čtyři pokusy (`-MaxAttempts 4`). Mezi pokusy čeká 15, 30 a 45 sekund (`-RetryDelaySeconds 15`, lineární prodleva). Po posledním neúspěšném pokusu skončí chybou. Již nainstalovanou verzi z `tools/requirements.psd1` přeskočí. Přepínač `-Development` přidá vývojové závislosti.
+
 Bootstrap čte uložený token pomocí `gh auth token --hostname`. Přijme jen OAuth token `gho_`; odmítne classic i fine-grained PAT. Proměnné `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` a `GITHUB_ENTERPRISE_TOKEN` musí být v procesu bootstrapu prázdné. Bootstrap token nevypisuje, neukládá do souboru ani nepředává jako argument dalšího procesu.
 
 Uživatel Azure musí patřit do `teams.platform`. Administrátor Entra ID mu musí **přímo** přiřadit app roli Enterprise Owner v aplikaci EMU. Přiřazení přes skupinu nestačí. Uživatel přihlášený přes `gh` musí být owner stejného enterprise; oba účty musí podle ručního potvrzení patřit spouštějícímu člověku.

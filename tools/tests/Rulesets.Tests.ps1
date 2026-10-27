@@ -4,6 +4,44 @@ BeforeAll {
     Import-Module (Join-Path $scripts 'Rulesets.psm1') -Force
 }
 
+Describe 'Observed organization ruleset response defaults' {
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot 'RulesetsStub.psm1') -Force
+    }
+
+    It 'keeps the unverified write extension separate from the documented request contract' {
+        $contract = Get-GitHubApiFixtureContract -Name repos/create-org-ruleset
+        $parameters = $contract.ruleParameters.pull_request
+
+        $parameters.required | Should -Not -Contain 'require_extra_approval_for_unattributed_changes'
+        $parameters.properties | Should -Not -Contain 'require_extra_approval_for_unattributed_changes'
+        $parameters.unverifiedRequestProperties | Should -Contain 'require_extra_approval_for_unattributed_changes'
+        $parameters.Contains('observedProperties') | Should -BeFalse
+        $contract.source.note | Should -Match 'not documented or observed in a successful write'
+    }
+
+    It 'adds the observed default to the <Method> response without rewriting the request' -ForEach @(
+        @{ Method = 'POST'; Status = 201; Path = '/orgs/demo/rulesets' }
+        @{ Method = 'PUT'; Status = 200; Path = '/orgs/demo/rulesets/21' }
+    ) {
+        $state = Initialize-RulesetsStub -Origin 'https://api.example.test'
+        $detail = Get-GitHubApiFixture -Name repos/get-org-ruleset -Set @{ source = 'demo' }
+        if ($Method -ceq 'PUT') { $state.Items.Add($detail) }
+        $request = @{}
+        foreach ($field in (Get-GitHubApiFixtureContract -Name repos/create-org-ruleset).requestProperties) {
+            $request[$field] = $detail[$field]
+        }
+        $request.rules[0].parameters.Remove('require_extra_approval_for_unattributed_changes')
+        $reply = Invoke-RulesetsStubRequest -State $state -Method $Method -Path $Path -Headers @{
+            Authorization = "Bearer $($state.Token)"; 'X-GitHub-Api-Version' = '2026-03-10'
+        } -Body (ConvertTo-Json -InputObject $request -Depth 50)
+
+        $reply.Status | Should -Be $Status
+        (ConvertFrom-Json -InputObject $reply.Body).rules[0].parameters.require_extra_approval_for_unattributed_changes | Should -BeTrue
+        $state.Writes[0].Body.rules[0].parameters.Contains('require_extra_approval_for_unattributed_changes') | Should -BeFalse
+    }
+}
+
 Describe 'Organization ruleset detail contract' {
     BeforeEach {
         $previousTokens = $env:PLATFORM_GITHUB_TOKENS
@@ -29,6 +67,8 @@ Describe 'Organization ruleset detail contract' {
 
         $state.bypass_actors.Count | Should -Be 1
         $state.bypass_actors[0].actor_type | Should -Be 'Team'
+        $pullRequest = @($state.rules | Where-Object { $_.type -ceq 'pull_request' })[0]
+        $pullRequest.parameters.require_extra_approval_for_unattributed_changes | Should -BeTrue
         Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
             $Uri -eq 'https://api.example.test/orgs/demo/rulesets/21' -and
             $Headers['Authorization'] -eq 'Bearer installation-token' -and $Headers['X-GitHub-Api-Version'] -eq '2026-03-10'

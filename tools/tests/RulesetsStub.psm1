@@ -1,6 +1,19 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1')
 
+# The GET fixture proves the response default, not acceptance of the field in POST/PUT requests.
+function Complete-RulesetResponse {
+    param([hashtable] $Item)
+
+    $observed = Get-GitHubApiFixture -Name repos/get-org-ruleset
+    $parameters = $observed.rules[0].parameters
+    foreach ($rule in $Item['rules']) {
+        if ($rule['type'] -ceq 'pull_request' -and -not $rule['parameters'].Contains('require_extra_approval_for_unattributed_changes')) {
+            $rule['parameters']['require_extra_approval_for_unattributed_changes'] = $parameters.require_extra_approval_for_unattributed_changes
+        }
+    }
+}
+
 function Initialize-RulesetsStub {
     [CmdletBinding()]
     param([string] $Origin, [string] $Organization = 'demo', [string] $Token = 'stub-token')
@@ -40,8 +53,10 @@ function Invoke-RulesetsStubRequest {
     }
     elseif ($Path -ceq "/orgs/$($State.Organization)/rulesets" -and $Method -ceq 'POST') {
         $inputBody = ConvertFrom-Json -InputObject $Body -AsHashtable
+        $responseBody = ConvertFrom-Json -InputObject $Body -AsHashtable
         $item = Get-GitHubApiFixture -Name repos/create-org-ruleset -Set @{ id = ++$State.NextId; source = $State.Organization }
-        foreach ($key in $inputBody.Keys) { $item[$key] = $inputBody[$key] }
+        foreach ($key in $responseBody.Keys) { $item[$key] = $responseBody[$key] }
+        Complete-RulesetResponse -Item $item
         $State.Items.Add($item)
         $State.Writes.Add(@{ Method = $Method; Body = $inputBody })
         $reply.Status = 201
@@ -58,7 +73,9 @@ function Invoke-RulesetsStubRequest {
             }
             PUT {
                 $inputBody = ConvertFrom-Json -InputObject $Body -AsHashtable
-                foreach ($key in $inputBody.Keys) { $item[$key] = $inputBody[$key] }
+                $responseBody = ConvertFrom-Json -InputObject $Body -AsHashtable
+                foreach ($key in $responseBody.Keys) { $item[$key] = $responseBody[$key] }
+                Complete-RulesetResponse -Item $item
                 $State.Writes.Add(@{ Method = $Method; Body = $inputBody })
                 $reply.Body = ConvertTo-Json -InputObject $item -Depth 50 -Compress
             }

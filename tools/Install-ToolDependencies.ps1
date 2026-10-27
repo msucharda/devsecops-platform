@@ -1,6 +1,12 @@
 #Requires -Version 7.4
 [CmdletBinding()]
-param([switch] $Development)
+param(
+    [switch] $Development,
+    [ValidateRange('Positive')]
+    [int] $MaxAttempts = 4,
+    [ValidateRange('NonNegative')]
+    [int] $RetryDelaySeconds = 15
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -13,6 +19,20 @@ foreach ($name in ($dependencies.Keys | Sort-Object)) {
     $version = $dependencies[$name]
     $installed = Get-Module -ListAvailable -Name $name | Where-Object { $_.Version -eq [version] $version }
     if (-not $installed) {
-        Install-Module -Name $name -RequiredVersion $version -Repository PSGallery -Scope CurrentUser -Force -AllowClobber
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            try {
+                if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+                    Register-PSRepository -Default -ErrorAction Stop
+                }
+                Install-Module -Name $name -RequiredVersion $version -Repository PSGallery -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+                break
+            }
+            catch {
+                if ($attempt -eq $MaxAttempts) { throw }
+                $delay = $RetryDelaySeconds * $attempt
+                Write-Warning "Failed to install $name $version (attempt $attempt/$MaxAttempts): $($_.Exception.Message). Retrying in $delay seconds."
+                Start-Sleep -Seconds $delay
+            }
+        }
     }
 }
