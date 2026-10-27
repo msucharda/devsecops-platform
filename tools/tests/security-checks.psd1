@@ -10,6 +10,13 @@
             )
         }
         @{
+            Name = 'local-ci-index-visibility'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiGate.Tests.ps1'
+                FullName = 'Local CI index visibility*'
+            })
+        }
+        @{
             Name = 'local-ci-lease-inheritance'
             Tests = @(@{
                 Path = 'tools/tests/LocalCiConcurrency.Tests.ps1'

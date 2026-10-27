@@ -55,12 +55,24 @@ function Invoke-LocalCiGitText {
     finally { $process.Dispose() }
 }
 
+# security-check: local-ci-index-visibility
+function Assert-LocalCiIndexVisibility {
+    [CmdletBinding()]
+    param([AllowEmptyCollection()][string[]] $Entry)
+    if (@($Entry | Where-Object { $_ -cnotmatch '^H ' }).Count -gt 0) {
+        throw 'Git index flags hide source state. Clear assume-unchanged and skip-worktree (including sparse-checkout) before running the gate.'
+    }
+}
+
 function Get-LocalCiContentState {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $RepositoryRoot, [Parameter(Mandatory)][string] $Base)
     $head = (Invoke-LocalCiGitText $RepositoryRoot @('rev-parse', '--verify', 'HEAD^{commit}')).Trim()
     $baseSha = (Invoke-LocalCiGitText $RepositoryRoot @('rev-parse', '--verify', "$Base^{commit}")).Trim()
     $mergeBase = (Invoke-LocalCiGitText $RepositoryRoot @('merge-base', $baseSha, $head)).Trim()
+    $indexEntries = (Invoke-LocalCiGitText $RepositoryRoot @('ls-files', '-v', '-z')).Split(
+        [char]0, [StringSplitOptions]::RemoveEmptyEntries)
+    Assert-LocalCiIndexVisibility -Entry $indexEntries
     $paths = (Invoke-LocalCiGitText $RepositoryRoot @('ls-files', '-z', '--cached', '--others', '--exclude-standard')).Split(
         [char]0, [StringSplitOptions]::RemoveEmptyEntries)
     $hash = [Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)

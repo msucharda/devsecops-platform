@@ -47,6 +47,25 @@ Describe 'Local CI profiles' {
     }
 }
 
+Describe 'Local CI index visibility' {
+    It 'accepts visible cached entries' {
+        InModuleScope LocalCiGate {
+            { Assert-LocalCiIndexVisibility -Entry @('H source.ps1', 'H file with spaces.ps1') } | Should -Not -Throw
+        }
+    }
+
+    It 'rejects a hidden or unsupported index tag <Tag>' -ForEach @(
+        @{ Tag = 'h' }, @{ Tag = 'S' }, @{ Tag = 's' }, @{ Tag = 'M' }, @{ Tag = 'Z' }
+    ) {
+        InModuleScope LocalCiGate -Parameters @{ Tag = $Tag } {
+            param($Tag)
+            # Z deliberately models invalid Git output.
+            $entries = @('H visible.ps1', "$Tag source.ps1")
+            { Assert-LocalCiIndexVisibility -Entry $entries } | Should -Throw '*index flags*'
+        }
+    }
+}
+
 Describe 'Local CI content-bound result' {
     BeforeEach {
         $repo = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
@@ -188,6 +207,19 @@ Describe 'Local CI content-bound result' {
             Should -Throw '*Commit*before*gate*'
     }
 
+    It 'rejects hidden index flags <Flag> even when Git status reports a clean worktree' -ForEach @(
+        @{ Flag = '--assume-unchanged' }, @{ Flag = '--skip-worktree' }
+    ) {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        git -C $repo update-index $Flag source.ps1
+        $LASTEXITCODE | Should -Be 0
+        Set-Content (Join-Path $repo 'source.ps1') "'hidden-from-status'" -NoNewline
+        @(git -C $repo status --porcelain=v1).Count | Should -Be 0
+        { Get-LocalCiContentState -RepositoryRoot $repo -Base baseline } | Should -Throw '*index flags*'
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*index flags*'
+    }
+
     It 'enforces the receipt in a real pre-push hook against an isolated bare remote' {
         $tools = Join-Path $repo 'tools'
         $hooks = Join-Path $repo '.githooks'
@@ -223,15 +255,19 @@ Describe 'Local CI external-program preflight' {
             Should -Throw '*pwsh external-program preflight failed*'
     }
 
-    It 'rejects a PowerShell alias that the external-program PATH cannot resolve' {
-        $aliasName = "local-ci-pwsh-$([guid]::NewGuid().ToString('N'))"
-        Set-Alias -Name $aliasName -Value ([Environment]::ProcessPath) -Scope Local
+    It 'rejects a PATH executable that resolves but cannot launch through Go' {
+        $name = "invalid-pwsh-$([guid]::NewGuid().ToString('N')).exe"
+        $path = Join-Path $TestDrive $name
+        # Deliberately invalid executable, not a simulated Windows AppExecLink.
+        [IO.File]::WriteAllBytes($path, [byte[]] @())
+        if (-not $IsWindows) { & chmod '+x' $path }
+        $savedPath = $env:PATH
+        $env:PATH = "$TestDrive$([IO.Path]::PathSeparator)$savedPath"
         try {
-            (Get-Command $aliasName).CommandType | Should -Be 'Alias'
-            { Test-LocalCiRuntime -TempPath $TestDrive -Executable $aliasName } |
-                Should -Throw '*Terraform external-program lookup failed*'
+            { Test-LocalCiRuntime -TempPath $TestDrive -Executable $name } |
+                Should -Throw '*Terraform external-program launch failed*'
         }
-        finally { Remove-Item "Alias:$aliasName" }
+        finally { $env:PATH = $savedPath }
     }
 
     It 'rejects Windows TEMP paths that leave insufficient space for nested git refs' {
