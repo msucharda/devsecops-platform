@@ -8,6 +8,8 @@
     'RemoveBootstrap.Tests.ps1' = 45
     'Bootstrap.Tests.ps1' = 25
     'VendoringPullRequest.Tests.ps1' = 24
+    # Source CI run 40583010425: 22.597 seconds.
+    'MutationRunner.Tests.ps1' = 23
     'Organizations.Tests.ps1' = 18
     'ModuleRunner.Tests.ps1' = 14
     'ActionsCatalog.Tests.ps1' = 14
