@@ -1,0 +1,37 @@
+{
+  "source": {
+    "operation": "query repository(owner:,name:)",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/queries#repository",
+    "description": "https://github.com/github/docs/blob/6a353197c599fd234988764499b15c684a676628/src/graphql/data/ghec/schema.docs.graphql",
+    "status": 200,
+    "schema": "Query.repository: Repository; Repository.pullRequest(number:): PullRequest; PullRequest.author: Actor; PullRequest.userContentEdits: UserContentEditConnection; UserContentEdit.editor: Actor",
+    "variant": "complete unredacted history with User authors",
+    "note": "Schema-based example of the selected fields. Actor is implemented by User, Bot, Organization, Mannequin and EnterpriseUserAccount; all expose login: String!. author, userContentEdits, nodes, individual nodes and editor are nullable. deletedAt is nullable DateTime. diff is deliberately not selected: its String representation is unspecified."
+  },
+  "required": {
+    "data.repository.pullRequest": ["headRefOid", "body", "author", "userContentEdits"],
+    "data.repository.pullRequest.author": ["__typename", "login"],
+    "data.repository.pullRequest.userContentEdits": ["totalCount", "pageInfo", "nodes"],
+    "data.repository.pullRequest.userContentEdits.pageInfo": ["hasNextPage"],
+    "data.repository.pullRequest.userContentEdits.nodes.[]": ["deletedAt", "editor"],
+    "data.repository.pullRequest.userContentEdits.nodes.[].editor": ["__typename", "login"]
+  },
+  "body": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "headRefOid": "5a86d28aa232fff72af137c29c1abd9e75f398a3",
+          "body": "## Rozhodnut\u00ed u\u017eivatele\n- D1\n<!-- merge-gate: decisions-accepted msucharda 2026-10-22 -->",
+          "author": {"__typename": "User", "login": "msucharda"},
+          "userContentEdits": {
+            "totalCount": 1,
+            "pageInfo": {"hasNextPage": false},
+            "nodes": [
+              {"deletedAt": null, "editor": {"__typename": "User", "login": "msucharda"}}
+            ]
+          }
+        }
+      }
+    }
+  }
+}
