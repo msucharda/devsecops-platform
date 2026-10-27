@@ -20,12 +20,19 @@ function Test-SampleB {
 }
 Export-ModuleMember -Function Test-SampleA, Test-SampleB
 '@ | Set-Content -LiteralPath (Join-Path $sample 'tools/Sample.psm1')
+    Copy-Item -LiteralPath (Join-Path $sample 'tools/Sample.psm1') -Destination (Join-Path $sample 'tools/Sample.original')
     @'
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '../Sample.psm1') -Force
 }
 Describe 'Sample controls' {
     It 'accepts the exact allowed value and rejects other values' {
+        $delay = Join-Path $PSScriptRoot 'delay.txt'
+        if (Test-Path -LiteralPath $delay) {
+            $mode = (Get-Content -LiteralPath $delay -Raw).Trim()
+            $isMutant = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../Sample.psm1') -Raw) -cne (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../Sample.original') -Raw)
+            if ($mode -ceq 'baseline' -or ($mode -ceq 'mutant' -and $isMutant)) { Start-Sleep -Seconds 2 }
+        }
         Test-SampleA 'yes' | Should -BeTrue
         Test-SampleB 'yes' | Should -BeTrue
         foreach ($value in 'no', 'YES', '') {
@@ -156,8 +163,13 @@ Describe 'Mutation runner public interface' {
 
     It 'gives mutants a fresh budget and never counts unfinished work as killed' {
         $path = Join-Path $TestDrive 'timed-out.json'
-        { & $runner -RepoPath $sample -ConfigurationPath $configuration -ThrottleLimit 1 -BaselineTimeoutSeconds 60 -TimeoutSeconds 1 -ReportPath $path 6>$null } |
-            Should -Throw '*Mutation testing failed*'
+        $delay = Join-Path $sample 'tools/tests/delay.txt'
+        'mutant' | Set-Content -LiteralPath $delay
+        try {
+            { & $runner -RepoPath $sample -ConfigurationPath $configuration -ThrottleLimit 1 -BaselineTimeoutSeconds 60 -TimeoutSeconds 1 -ReportPath $path 6>$null } |
+                Should -Throw '*Mutation testing failed*'
+        }
+        finally { Remove-Item -LiteralPath $delay -Force }
         $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         $report.phases.baseline.completed | Should -Be 1
         $report.phases.baseline.unfinished | Should -Be 0
@@ -170,8 +182,13 @@ Describe 'Mutation runner public interface' {
 
     It 'writes failure evidence when the baseline never finishes' {
         $path = Join-Path $TestDrive 'baseline-timeout.json'
-        { & $runner -RepoPath $sample -ConfigurationPath $configuration -ThrottleLimit 1 -BaselineTimeoutSeconds 1 -ReportPath $path 6>$null } |
-            Should -Throw '*baseline*not green*'
+        $delay = Join-Path $sample 'tools/tests/delay.txt'
+        'baseline' | Set-Content -LiteralPath $delay
+        try {
+            { & $runner -RepoPath $sample -ConfigurationPath $configuration -ThrottleLimit 1 -BaselineTimeoutSeconds 1 -ReportPath $path 6>$null } |
+                Should -Throw '*baseline*not green*'
+        }
+        finally { Remove-Item -LiteralPath $delay -Force }
         $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         $report.phases.baseline.unfinished | Should -Be 1
         $report.phases.PSObject.Properties.Name | Should -Not -Contain 'mutant'
