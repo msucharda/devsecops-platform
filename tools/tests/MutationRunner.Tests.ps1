@@ -1,4 +1,6 @@
 BeforeAll {
+    $savedWorkerBudget = $env:LOCAL_CI_WORKER_BUDGET
+    $env:LOCAL_CI_WORKER_BUDGET = $null
     $runner = Join-Path $PSScriptRoot '../Invoke-MutationTests.ps1'
     $sample = Join-Path $TestDrive 'sample'
     $null = New-Item -ItemType Directory -Path (Join-Path $sample 'tools/tests') -Force
@@ -45,6 +47,8 @@ Describe 'Sample controls' {
 '@ | Set-Content -LiteralPath $configuration
 }
 
+AfterAll { $env:LOCAL_CI_WORKER_BUDGET = $savedWorkerBudget }
+
 Describe 'Mutation runner public interface' {
     BeforeAll {
         $shardPaths = @(0..1 | ForEach-Object { Join-Path $TestDrive "shard-$_.json" })
@@ -76,24 +80,46 @@ Describe 'Mutation runner public interface' {
 
     It 'rejects incomplete or untrustworthy shard reports: <Case>' -ForEach @(
         @{ Case = 'missing shard'; Message = '*Expected 2 mutation shard reports*' }
+        @{ Case = 'no shards'; Message = '*Expected 2 mutation shard reports*' }
         @{ Case = 'duplicate shard'; Message = '*Invalid or duplicate mutation shard*' }
+        @{ Case = 'unknown shard'; Message = '*Invalid or duplicate mutation shard*' }
         @{ Case = 'missing mutant'; Message = '*Incomplete mutation reports*' }
+        @{ Case = 'no mutants'; Message = '*has no mutant results*' }
         @{ Case = 'duplicate mutant'; Message = '*Duplicate mutant*' }
+        @{ Case = 'unknown mutant'; Message = '*Unexpected mutant*' }
+        @{ Case = 'missing mutant ID'; Message = '*Unexpected mutant*' }
         @{ Case = 'unknown status'; Message = '*unknown status*' }
+        @{ Case = 'empty status'; Message = '*unknown status*' }
         @{ Case = 'changed inventory'; Message = '*inventory differs*' }
         @{ Case = 'failed shard'; Message = '*contains problems*' }
+        @{ Case = 'missing problems'; Message = '*has no problem list*' }
+        @{ Case = 'null problems'; Message = '*has no problem list*' }
+        @{ Case = 'metadata Check'; Message = '*invalid Check*' }
+        @{ Case = 'metadata File'; Message = '*invalid File*' }
+        @{ Case = 'metadata Line'; Message = '*invalid Line*' }
+        @{ Case = 'metadata Kind'; Message = '*invalid Kind*' }
+        @{ Case = 'metadata Description'; Message = '*invalid Description*' }
         @{ Case = 'timeout'; Message = '*Mutation testing failed*' }
         @{ Case = 'unapproved exception'; Message = '*Mutation testing failed*' }
     ) {
         $inputs = @($shardPaths | ForEach-Object { Get-Content -LiteralPath $_ -Raw | ConvertFrom-Json -AsHashtable })
-        switch ($Case) {
+        switch -Wildcard ($Case) {
             'missing shard' { $inputs = @($inputs[0]) }
+            'no shards' { $inputs = @() }
             'duplicate shard' { $inputs[1]['shard'] = '0/2' }
+            'unknown shard' { $inputs[1]['shard'] = '2/2' }
             'missing mutant' { $inputs[0]['mutants'] = @($inputs[0]['mutants'] | Select-Object -Skip 1) }
+            'no mutants' { $inputs[0]['mutants'] = @() }
             'duplicate mutant' { $inputs[0]['mutants'] += @($inputs[0]['mutants'][0]) }
+            'unknown mutant' { $inputs[0]['mutants'][0]['Id'] = 'unknown' }
+            'missing mutant ID' { $null = $inputs[0]['mutants'][0].Remove('Id') }
             'unknown status' { $inputs[0]['mutants'][0]['Status'] = 'Unknown' }
+            'empty status' { $inputs[0]['mutants'][0]['Status'] = '' }
             'changed inventory' { $inputs[0]['inventoryHash'] = 'different' }
             'failed shard' { $inputs[0]['problems'] = @('worker failed') }
+            'missing problems' { $null = $inputs[0].Remove('problems') }
+            'null problems' { $inputs[0]['problems'] = $null }
+            'metadata *' { $inputs[0]['mutants'][0][$Case.Substring('metadata '.Length)] = 'invalid' }
             'timeout' { $inputs[0]['mutants'][0]['Status'] = 'Error'; $inputs[0]['mutants'][0]['Detail'] = 'The worker did not finish the job before the timeout.' }
             'unapproved exception' { $inputs[0]['mutants'][0]['Status'] = 'Excepted' }
         }
@@ -116,6 +142,7 @@ Describe 'Mutation runner public interface' {
         $path = Join-Path $TestDrive 'unsharded.json'
         & $runner -RepoPath $sample -ConfigurationPath $configuration -ThrottleLimit 2 -ReportPath $path 6>$null
         $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $report.workers | Should -Be 2
         $report.phases.baseline.jobs | Should -Be 1
         $report.phases.baseline.completed | Should -Be 1
         $report.phases.baseline.queued | Should -Be 0
@@ -141,11 +168,52 @@ Describe 'Mutation runner public interface' {
         @($report.mutants | Where-Object Status -eq 'Killed').Count | Should -Be $report.phases.mutant.completed
     }
 
+    It 'writes failure evidence when the baseline never finishes' {
+        $path = Join-Path $TestDrive 'baseline-timeout.json'
+        { & $runner -RepoPath $sample -ConfigurationPath $configuration -ThrottleLimit 1 -BaselineTimeoutSeconds 1 -ReportPath $path 6>$null } |
+            Should -Throw '*baseline*not green*'
+        $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $report.phases.baseline.unfinished | Should -Be 1
+        $report.phases.PSObject.Properties.Name | Should -Not -Contain 'mutant'
+        $report.mutants.Status | Select-Object -Unique | Should -BeExactly 'Error'
+        $report.problems.Count | Should -BeGreaterThan 0
+    }
+
     It 'rejects invalid shard selection <Shard>' -ForEach @(
         @{ Shard = '2/2'; Message = '*index must be smaller*' }
         @{ Shard = '0/3'; Message = '*nonempty shards*' }
     ) {
         { & $runner -RepoPath $sample -ConfigurationPath $configuration -Shard $Shard -ReportPath (Join-Path $TestDrive 'invalid-shard.json') 6>$null } |
             Should -Throw $Message
+    }
+
+    It 'caps <Requested> requested workers at the LocalCi budget <Budget>' -Tag 'WorkerBudgetCap' -ForEach @(
+        @{ Requested = 2; Budget = '1' }
+        @{ Requested = 1; Budget = '4' }
+    ) {
+        $path = Join-Path $TestDrive 'worker-budget.json'
+        try {
+            $env:LOCAL_CI_WORKER_BUDGET = $Budget
+            & $runner -RepoPath $sample -ConfigurationPath $configuration -Check sample-a -ThrottleLimit $Requested -ReportPath $path 6>$null
+            $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $report.workers | Should -Be 1
+            $report.mutants.Status | Select-Object -Unique | Should -BeExactly 'Killed'
+        }
+        finally { $env:LOCAL_CI_WORKER_BUDGET = $null }
+    }
+
+    It 'rejects the invalid LocalCi worker budget <Value>' -ForEach @(
+        @{ Value = '0' }, @{ Value = '-1' }, @{ Value = 'four' },
+        @{ Value = '1.5' }, @{ Value = '2147483648' }
+    ) {
+        $path = Join-Path $TestDrive 'invalid-budget.json'
+        'stale success' | Set-Content -LiteralPath $path
+        try {
+            $env:LOCAL_CI_WORKER_BUDGET = $Value
+            { & $runner -RepoPath $sample -ConfigurationPath $configuration -ThrottleLimit 1 -ReportPath $path 6>$null } |
+                Should -Throw '*LOCAL_CI_WORKER_BUDGET must be a positive integer*'
+            Test-Path -LiteralPath $path | Should -BeFalse
+        }
+        finally { $env:LOCAL_CI_WORKER_BUDGET = $null }
     }
 }

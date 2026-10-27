@@ -10,6 +10,7 @@ check accepts more input. Worker processes run the configured tests in their own
 A surviving mutant without an exception, an error, a failed baseline, an unfinished job or a stale exception fails the run.
 Baseline and mutant execution each receive their own time budget; preparation and cleanup do not consume either budget.
 Identical test selections share one baseline. The report records phase wall time, queue size and completed worker time.
+LOCAL_CI_WORKER_BUDGET, when set to a positive integer, caps the requested worker count. Invalid values fail the run.
 
 .EXAMPLE
 ./tools/Invoke-MutationTests.ps1 -Shard 0/4 -ThrottleLimit 4 -ReportPath ./artifacts/mutation-report.json
@@ -45,6 +46,13 @@ try { Remove-Item -LiteralPath $ReportPath -Force -ErrorAction Stop }
 catch [System.Management.Automation.ItemNotFoundException] { $null = $_ }
 catch { throw "The previous mutation report $ReportPath could not be removed: $($_.Exception.Message)" }
 if (Test-Path -LiteralPath $ReportPath) { throw "The previous mutation report $ReportPath could not be removed." }
+if ($null -ne $env:LOCAL_CI_WORKER_BUDGET) {
+    $workerBudget = 0
+    if (-not [int]::TryParse($env:LOCAL_CI_WORKER_BUDGET, [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref] $workerBudget) -or $workerBudget -le 0) {
+        throw "LOCAL_CI_WORKER_BUDGET must be a positive integer; received '$env:LOCAL_CI_WORKER_BUDGET'."
+    }
+    $ThrottleLimit = [Math]::Min($ThrottleLimit, $workerBudget)
+}
 Import-Module (Join-Path $PSScriptRoot 'MutationTesting.psm1') -Force
 
 $started = [Diagnostics.Stopwatch]::StartNew()

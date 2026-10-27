@@ -16,6 +16,14 @@ Describe 'Source CI job dependencies' {
         @($workflow.jobs.mutation.needs) | Should -BeExactly @('mutation-shards')
         $workflow.jobs.mutation.if | Should -BeExactly '${{ always() }}'
         $workflow.jobs.mutation.steps[0].env.MUTATION_RESULT | Should -BeExactly '${{ needs.mutation-shards.result }}'
+        $upload = @($shards.steps | Where-Object { $_['name'] -eq 'Upload mutation report' })
+        $upload[0].with.name | Should -BeExactly 'mutation-report-${{ matrix.shard }}'
+        $download = @($workflow.jobs.mutation.steps | Where-Object { $_['name'] -eq 'Download mutation shards' })
+        $download[0].with.pattern | Should -BeExactly 'mutation-report-*'
+        $download[0].with.path | Should -BeExactly 'artifacts/mutation-shards'
+        $merge = @($workflow.jobs.mutation.steps | Where-Object { $_['name'] -eq 'Verify the full mutation inventory' })
+        $merge.Count | Should -Be 1
+        $merge[0].run | Should -BeExactly './tools/Invoke-MutationTests.ps1 -MergeReport @(Get-ChildItem ./artifacts/mutation-shards -Recurse -Filter mutation-report.json | Select-Object -ExpandProperty FullName) -ShardCount 4 -ReportPath ./artifacts/mutation-report.json'
     }
 
     It 'fails the mutation aggregate when its shards are <Result>' -ForEach @(
