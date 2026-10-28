@@ -291,15 +291,59 @@ Opakovaný běh se stejným release, konfigurací a klíči neprovádí zápisy 
 
 Jediný podporovaný přechod inventory je `0.1.0-rc.5` → `0.1.0-rc.10`. Vyžaduje inicializované inventory a výslovný příznak `-UpgradeInventory`. Ostatní dvojice verzí, včetně `0.1.0-rc.5` → `0.1.0-rc.9` a stejné verze, bootstrap odmítne před prvním požadavkem na GitHub API. Běžné opakování se stejnou verzí příznak nepoužívá.
 
-Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na release `0.1.0-rc.10`. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu. Pak spusť schválený release se stejným inventory:
+Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na release `0.1.0-rc.10`. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu.
+
+Vendoring aktualizuje `platform/**`, nikoli `.platform-bootstrap.json`. Marker vytvoř v lokálním checkoutu **větve tohoto PR**. `$release` musí označovat původní schválený release rc.10, `$cfg` ověřený `instance.yaml` a `$instanceCheckout` checkout repozitáře instance. Nehashuj vendorovanou kopii: vendoring přepisuje odkazy na akce ve workflow šablonách, ale marker používá původní bytes release.
 
 ```powershell
-.\tools\Invoke-GitHubBootstrap.ps1 @arguments -UpgradeInventory
+# Generate the marker from the original approved release, not its vendored copy.
+$release = (Resolve-Path -LiteralPath $release).Path
+Import-Module (Join-Path $release 'tools\PlatformTools.psm1')
+$configuration = Get-PlatformYaml -Path $cfg
+$hashes = @{}
+Get-ChildItem -LiteralPath $release -Recurse -Force -File |
+    Where-Object {
+        $_.FullName -notmatch '[\\/](\.git|\.terraform|artifacts|node_modules)[\\/]' -and
+        (Test-PlatformReleaseFile -RelativePath ([IO.Path]::GetRelativePath($release, $_.FullName)))
+    } |
+    ForEach-Object {
+        $relative = [IO.Path]::GetRelativePath($release, $_.FullName).Replace('\', '/')
+        $hashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+$marker = @{
+    instance = $configuration['instance']['name']
+    releaseVersion = '0.1.0-rc.10'
+    files = $hashes
+}
+[IO.File]::WriteAllText(
+    (Join-Path $instanceCheckout '.platform-bootstrap.json'),
+    (ConvertTo-PlatformCanonicalJson $marker) + "`n",
+    [Text.UTF8Encoding]::new($false))
+```
+
+Commit markeru přidej do stejného PR. Po review a merge použij stejný release, inventory, výstup Azure bootstrapu a konfiguraci shodnou s `main`.
+
+Do `$arguments` převezmi **všechny** parametry posledního úspěšného bootstrapu, včetně těch, které byly předané samostatně. Povinné `AuthorizationApp` a `AppKeysPath` musí zachovat původní alias a externí manifest klíčů. Pokud byly použité `DriftReportApp`, `VendoringActionApp`, `VendoringReleaseApp`, `VendoringSourceApp`, `VendoringSourceRepository` nebo `VendoringSourceApiUrl`, ponech je se stejnými hodnotami. Jejich vynechání není způsob, jak App odpojit.
+
+```powershell
+$upgradeArguments = @{} + $arguments
+$upgradeArguments.ReleasePath = $release
+$upgradeArguments.ReleaseVersion = '0.1.0-rc.10'
+foreach ($name in @('AuthorizationApp', 'AppKeysPath')) {
+    if (-not $upgradeArguments.ContainsKey($name) -or
+        [string]::IsNullOrWhiteSpace($upgradeArguments[$name])) {
+        throw "Reuse the previously used $name in the complete bootstrap argument set."
+    }
+}
+& (Join-Path $release 'tools\Invoke-GitHubBootstrap.ps1') @upgradeArguments -NoChanges
+& (Join-Path $release 'tools\Invoke-GitHubBootstrap.ps1') @upgradeArguments -UpgradeInventory
 ```
 
 Před prvním reconcile requestem bootstrap ověří vazbu inventory na repozitář a enterprise, aktuální `main`, přesný marker schváleného release a konfiguraci shodnou s lokálním `instance.yaml`. Větev musí vrátit commit SHA o 40 hexadecimálních znacích. Bootstrap připne čtení markeru i konfigurace k této SHA. Přes Git commit načte kořenový Git tree a pro obě cesty vyžaduje právě jeden běžný soubor (`blob`, mode `100644` nebo `100755`). Neúplný tree odmítne. Samotné `type=file` z Contents API nestačí: API může vrátit obsah cíle symbolického odkazu.
 
 Před každým GitHub zápisem, Azure zápisem federated credential i potvrzením nové verze inventory bootstrap ověří, že `main` stále ukazuje na stejný commit. Obsah API musí mít typ `file` a kódování `base64`; bootstrap odmítne adresáře, symbolické odkazy i submoduly. Bootstrap odmítne chybějící větev `main`, nepodporovanou dvojici verzí, neplatnou SHA, nesoulad markeru, změnu konfigurace i pohyb větve během ověřování. Při chybě markeru nebo konfigurace nejdřív oprav stav přes review PR; nepoužívej přímý zápis bootstrapu do `main`.
+
+Před uložením inventory a prvním reconcile requestem bootstrap read-only ověří také existující security tým a aktivní ruleset `platform-instance-main`: přesný rozsah `main`, zákaz smazání a force push, požadovaná PR schválení včetně security týmu a prázdný bypass. Chybějící, vypnutou, oslabenou nebo nečitelnou ochranu odmítne i s `-ResourcesOnly`; během upgradu ji neopravuje. Platformní tým musí ochranu obnovit samostatně schváleným postupem.
 
 Po ověření chráněného `main` bootstrap uloží aktualizované deklarace Apps ještě před prvním reconcile requestem. Zachová původní App IDs v historii a zatím nezmění verzi inventory. Přerušení tak neztratí evidenci ručně registrované App.
 

@@ -112,6 +112,18 @@ function Assert-GitHubBootstrapInventoryUpgradePair {
         throw "Unsupported bootstrap inventory upgrade '$From' to '$To'."
     }
 }
+# security-check: bootstrap-upgrade-inventory-state
+function Assert-GitHubBootstrapUpgradeInventoryState {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowNull()][object] $Inventory)
+
+    if ($null -eq $Inventory) {
+        throw '-UpgradeInventory requires an existing initialized bootstrap inventory.'
+    }
+    if ($Inventory['initializationPending'] -isnot [bool] -or $Inventory['initializationPending']) {
+        throw 'Only an initialized bootstrap inventory can upgrade to another release.'
+    }
+}
 # security-check: bootstrap-main-commit-reference
 function Assert-GitHubBootstrapMainCommitReference {
     [CmdletBinding()]
@@ -213,8 +225,10 @@ if ($LASTEXITCODE -ne 0 -or $oauth -cnotmatch '^gho_[A-Za-z0-9_]+$') {
 $api = "https://api.$($connection['githubHost'])"
 $changed = [Collections.Generic.List[string]]::new()
 $ownership = "Platform instance $($instance['instance']['name']); bootstrap-owned."
-if (Test-Path -LiteralPath $inventoryFile) {
-    $inventory = Get-Content -LiteralPath $inventoryFile -Raw | ConvertFrom-Json -AsHashtable
+$inventoryExists = Test-Path -LiteralPath $inventoryFile
+$inventory = if ($inventoryExists) { Get-Content -LiteralPath $inventoryFile -Raw | ConvertFrom-Json -AsHashtable } else { $null }
+if ($UpgradeInventory) { Assert-GitHubBootstrapUpgradeInventoryState -Inventory $inventory }
+if ($inventoryExists) {
     if ($inventory.Contains('deploymentIdentifier')) {
         try {
             $organization = Get-PlatformOrganizationName -InstanceName $instance['instance']['name'] `
@@ -238,9 +252,6 @@ if (Test-Path -LiteralPath $inventoryFile) {
     }
     if ($UpgradeInventory) {
         Assert-GitHubBootstrapInventoryUpgradePair -From ([string] $inventory['releaseVersion']) -To $ReleaseVersion
-        if ($inventory['initializationPending'] -isnot [bool] -or $inventory['initializationPending']) {
-            throw 'Only an initialized bootstrap inventory can upgrade to another release.'
-        }
         $inventoryUpgradePending = $true
     }
     elseif ($NoChanges -and -not [StringComparer]::Ordinal.Equals($inventory['releaseVersion'], $ReleaseVersion)) {
@@ -253,7 +264,6 @@ if (Test-Path -LiteralPath $inventoryFile) {
         throw 'NoChanges requires an initialized inventory with initializationPending=false.'
     }
 }
-elseif ($UpgradeInventory) { throw '-UpgradeInventory requires an existing initialized bootstrap inventory.' }
 elseif ($NoChanges) { throw 'NoChanges requires an existing initialized bootstrap inventory.' }
 else {
     $deploymentIdentifier = Get-RandomPlatformDeploymentIdentifier
@@ -422,7 +432,7 @@ function Test-GitHubBootstrapValue {
         }
         return $true
     }
-    return (ConvertTo-PlatformCanonicalJson $Actual) -ceq (ConvertTo-PlatformCanonicalJson $Desired)
+    return [StringComparer]::Ordinal.Equals((ConvertTo-PlatformCanonicalJson $Actual), (ConvertTo-PlatformCanonicalJson $Desired))
 }
 
 function Initialize-GitHubBootstrapVariable {
@@ -605,6 +615,64 @@ function Invoke-GitHubBootstrapAzure {
     return ConvertFrom-Json -InputObject $response.Content -AsHashtable
 }
 
+function Get-GitHubBootstrapMainRuleset {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param([Parameter(Mandatory)][long] $SecurityTeamId)
+
+    return @{
+        name = 'platform-instance-main'; target = 'branch'; enforcement = 'active'; bypass_actors = @()
+        conditions = @{ ref_name = @{ include = @('refs/heads/main'); exclude = @() } }
+        rules = @(
+            @{ type = 'deletion' }, @{ type = 'non_fast_forward' },
+            @{ type = 'pull_request'; parameters = @{
+                required_approving_review_count = 1; dismiss_stale_reviews_on_push = $true
+                require_code_owner_review = $true; require_last_push_approval = $true; required_review_thread_resolution = $true
+                required_reviewers = @(
+                    @{ reviewer = @{ id = $SecurityTeamId; type = 'Team' }; minimum_approvals = 1
+                        file_patterns = @('instance.yaml', 'platform/**', '.github/**') }
+                )
+            } }
+        )
+    }
+}
+
+# security-check: bootstrap-upgrade-main-protection
+function Assert-GitHubBootstrapUpgradeMainProtection {
+    [CmdletBinding()]
+    param()
+
+    $security = Invoke-GitHubBootstrapApi -Path "/orgs/$organization/teams/security" -AllowNotFound
+    if ($security -isnot [Collections.IDictionary] -or
+        ($security['id'] -isnot [int] -and $security['id'] -isnot [long]) -or $security['id'] -le 0 -or
+        -not [StringComparer]::Ordinal.Equals($security['slug'], 'security') -or
+        -not [StringComparer]::Ordinal.Equals($security['type'], 'organization') -or
+        $security['organization'] -isnot [Collections.IDictionary] -or
+        -not [StringComparer]::Ordinal.Equals($security['organization']['login'], $organization) -or
+        -not [StringComparer]::Ordinal.Equals($security['description'], $ownership)) {
+        throw 'A bootstrap upgrade requires the existing bootstrap-owned security team.'
+    }
+    $desired = Get-GitHubBootstrapMainRuleset -SecurityTeamId $security['id']
+    $existing = @(Get-GitHubBootstrapCollection -Path "/repos/$repository/rulesets?includes_parents=false" |
+        Where-Object { $_ -is [Collections.IDictionary] -and [StringComparer]::Ordinal.Equals($_['name'], $desired['name']) })
+    if ($existing.Count -ne 1) {
+        throw 'A bootstrap upgrade requires the existing main protection: exactly one bootstrap main ruleset.'
+    }
+    $id = $existing[0]['id']
+    if (($id -isnot [int] -and $id -isnot [long]) -or $id -le 0) {
+        throw 'A bootstrap upgrade requires the existing main protection: a valid ruleset ID.'
+    }
+    $rule = Invoke-GitHubBootstrapApi -Path "/repos/$repository/rulesets/$id"
+    if ($rule -isnot [Collections.IDictionary] -or
+        -not (Test-GitHubBootstrapValue -Actual $rule['id'] -Desired $id) -or
+        -not [StringComparer]::Ordinal.Equals($rule['source_type'], 'Repository') -or
+        -not [StringComparer]::Ordinal.Equals($rule['source'], $repository) -or
+        $rule['conditions'] -isnot [Collections.IDictionary] -or $rule['conditions'].Count -ne 1 -or
+        -not (Test-GitHubBootstrapValue -Actual $rule -Desired $desired)) {
+        throw 'A bootstrap upgrade requires the existing main protection with enforced security-team PR reviews and no bypass.'
+    }
+}
+
 $files = @{}
 $releaseHashes = @{}
 $releaseFiles = @(Get-ChildItem -LiteralPath $ReleasePath -Recurse -Force -File |
@@ -658,6 +726,7 @@ if ($inventoryUpgradePending) {
         (ConvertTo-PlatformCanonicalJson $instance), [StringComparison]::Ordinal)) {
         throw 'Local instance configuration differs from protected main. Apply configuration changes through a reviewed PR, not bootstrap.'
     }
+    Assert-GitHubBootstrapUpgradeMainProtection
     Assert-GitHubBootstrapUpgradeMainUnchanged
     Save-GitHubBootstrapInventory
 }
@@ -839,21 +908,7 @@ function Initialize-GitHubBootstrapRepositoryContent {
     $inventory['initializationPending'] = $false
     Save-GitHubBootstrapInventory
 }
-$ruleset = @{
-    name = 'platform-instance-main'; target = 'branch'; enforcement = 'active'; bypass_actors = @()
-    conditions = @{ ref_name = @{ include = @('refs/heads/main'); exclude = @() } }
-    rules = @(
-        @{ type = 'deletion' }, @{ type = 'non_fast_forward' },
-        @{ type = 'pull_request'; parameters = @{
-            required_approving_review_count = 1; dismiss_stale_reviews_on_push = $true
-            require_code_owner_review = $true; require_last_push_approval = $true; required_review_thread_resolution = $true
-            required_reviewers = @(
-                @{ reviewer = @{ id = $teams['security']['id']; type = 'Team' }; minimum_approvals = 1
-                    file_patterns = @('instance.yaml', 'platform/**', '.github/**') }
-            )
-        } }
-    )
-}
+$ruleset = Get-GitHubBootstrapMainRuleset -SecurityTeamId $teams['security']['id']
 function Initialize-GitHubBootstrapMainProtection {
     [CmdletBinding()]
     param()

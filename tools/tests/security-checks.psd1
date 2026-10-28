@@ -408,6 +408,18 @@
             )
         }
         @{
+            Name = 'bootstrap-upgrade-inventory-state'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*rejects upgrade inventory state <State> before any API request', '*upgrades initialized historical inventory only after protected main proves the current release') }
+            )
+        }
+        @{
+            Name = 'bootstrap-upgrade-main-protection'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*rejects upgrade protection <ProtectionCase> before saving inventory or reconciling', '*rejects upgrade security team <TeamCase> before saving inventory or reconciling', '*accepts existing main protection (ResourcesOnly=<OnlyResources>, Parent=<Parent>)') }
+            )
+        }
+        @{
             Name = 'bootstrap-upgrade-main-stability'
             Tests = @(
                 @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*stops before an Azure write when protected main moves after preflight', '*keeps the previous inventory version when protected main moves during provisioning', '*rejects case-only movement of protected main before reconciliation') }
