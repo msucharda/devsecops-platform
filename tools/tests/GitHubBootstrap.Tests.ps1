@@ -265,7 +265,10 @@ Describe 'GitHub bootstrap public interface' {
             }
             elseif ($path -like '*/git/commits' -and $Method -eq 'POST') {
                 $cloud.commit = $data
-                $reply = @{ sha = $(if ($cloud.commitShaOverride) { $cloud.commitShaOverride } else { $upgradeMainSha }) }
+                $status = 201
+                $reply = Get-GitHubApiFixture -Name git/create-commit -Set @{
+                    sha = $(if ($cloud.commitShaOverride) { $cloud.commitShaOverride } else { $upgradeMainSha })
+                }
             }
             elseif ($path -like '*/git/commits/*' -and $Method -eq 'GET') {
                 $reply = Get-GitHubApiFixture -Name git/get-commit -Set @{ sha = $path.Split('/')[-1] }
@@ -1517,6 +1520,58 @@ Describe 'GitHub bootstrap public interface' {
         (Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -BeExactly '0.1.0-rc.10'
     }
 
+    It 'persists changed App declarations before an upgrade write interrupted at <Failure>' -Tag 'BootstrapUpgrade', 'AppDeclarationRecovery' -ForEach @(
+        @{ Failure = 'BeforeApply' }
+        @{ Failure = 'LoseResponse' }
+    ) {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
+        $instance.githubApps.authorization.appId = '102'
+        $instance.githubApps.authorization.installationId = '202'
+        $cloud.apps['102'] = @{
+            installationId = '202'; permissions = @{ members = 'read'; metadata = 'read' }
+            selection = 'selected'; slug = 'authorization-replacement'
+        }
+        $replacementKey = [Security.Cryptography.RSA]::Create(2048)
+        try { $replacementKey.ExportRSAPrivateKeyPem() | Set-Content -LiteralPath $keyPath }
+        finally { $replacementKey.Dispose() }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $configurationBlob = $cloud.tree | Where-Object path -CEQ 'instance.yaml'
+        $cloud.blobs[$configurationBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Yaml $instance))
+        $credential = @($cloud.resources.Keys | Where-Object { $_ -like '*/federatedIdentityCredentials/*' })[0]
+        $cloud.resources.Remove($credential)
+        $failureState = @{ Triggered = $false; Inventory = $null; Path = $inventory; RequestPath = $credential }
+        Mock Invoke-WebRequest {
+            param([uri] $Uri, [string] $Body, [string] $Method = 'GET', [hashtable] $Headers)
+            $call = @{ Uri = $Uri; Body = $Body; Method = $Method; Headers = $Headers }
+            if (-not $failureState.Triggered -and $Method -eq 'PUT' -and
+                $Uri.AbsolutePath -ceq $failureState.RequestPath) {
+                $failureState.Triggered = $true
+                $failureState.Inventory = Get-Content -LiteralPath $failureState.Path -Raw | ConvertFrom-Json -AsHashtable
+                if ($Failure -ceq 'LoseResponse') { $null = & $cloudTransport @call }
+                return [pscustomobject]@{ StatusCode = 503; Content = '{"message":"Injected interruption."}' }
+            }
+            & $cloudTransport @call
+        }
+
+        { & $bootstrap @arguments } | Should -Throw '*HTTP 503*'
+
+        $failureState.Triggered | Should -BeTrue
+        $failureState.Inventory.declaredApps.authorization.appId | Should -BeExactly '102'
+        $failureState.Inventory.declaredApps.authorization.previousAppIds | Should -Contain '101'
+        $failureState.Inventory.declaredApps.authorization.removalRequired | Should -BeTrue
+        $failureState.Inventory.releaseVersion | Should -BeExactly '0.1.0-rc.5'
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.declaredApps.authorization.appId | Should -BeExactly '102'
+        $record.releaseVersion | Should -BeExactly '0.1.0-rc.5'
+
+        $result = & $bootstrap @arguments
+
+        $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.declaredApps.authorization.previousAppIds | Should -Contain '101'
+        $record.apps.authorization.appId | Should -BeExactly '102'
+    }
+
     It 'validates matching inventory without rewriting its version' -Tag 'NoChanges' {
         $arguments.ResourcesOnly = $false
         $null = & $bootstrap @arguments
@@ -1716,7 +1771,7 @@ Describe 'GitHub bootstrap public interface' {
             return $true
         }.GetNewClosure()
         Mock Invoke-WebRequest {
-            $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = 'changed-commit' } }
+            $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = 'bb218f56b14c9653891f9e74264a383fa43fefbd' } }
             $blob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
             $bytes = $cloud.blobs[$blob.sha]
             $content = Get-GitHubApiFixture -Name 'repos/get-content.file' -Set @{
@@ -1732,6 +1787,46 @@ Describe 'GitHub bootstrap public interface' {
         @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 0
         $cloud.writes.Count | Should -Be 0
         (Get-FileHash $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects an invalid final NoChanges reference: <Case>' -Tag 'NoChanges', 'FinalMainReference' -ForEach @(
+        @{ Case = 'empty SHA array'; ExpectedError = '*commit reference with a valid SHA*' }
+        @{ Case = 'array SHA'; ExpectedError = '*commit reference with a valid SHA*' }
+        @{ Case = 'unknown type'; ExpectedError = '*commit reference with a valid SHA*' }
+        @{ Case = 'array type'; ExpectedError = '*commit reference with a valid SHA*' }
+        @{ Case = 'ignorable SHA'; ExpectedError = '*commit reference with a valid SHA*' }
+        @{ Case = 'SHA casing'; ExpectedError = '*main changed during NoChanges*' }
+    ) {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $cloud.writes.Clear()
+        $arguments.NoChanges = $true
+        $referenceState = @{ Reads = 0 }
+        Mock Invoke-WebRequest {
+            $referenceState.Reads++
+            $reply = Get-GitHubApiFixture -Name git/get-ref -Set @{
+                ref = 'refs/heads/main'; 'object.sha' = $upgradeMainSha; 'object.type' = 'commit'
+            }
+            if ($referenceState.Reads -gt 1) {
+                # Deliberately invalid final reference shapes must not pass NoChanges verification.
+                switch ($Case) {
+                    'empty SHA array' { $reply.object.sha = @() }
+                    'array SHA' { $reply.object.sha = @($upgradeMainSha) }
+                    'unknown type' { $reply.object.type = 'blob' }
+                    'array type' { $reply.object.type = @('commit') }
+                    'ignorable SHA' { $reply.object.sha = $upgradeMainSha.Insert(2, [string][char]0x200b) }
+                    'SHA casing' { $reply.object.sha = $upgradeMainSha.ToUpperInvariant() }
+                }
+            }
+            [pscustomobject]@{ StatusCode = 200; Content = (ConvertTo-Json -InputObject $reply -Depth 100 -Compress) }
+        } -ParameterFilter { $Method -ceq 'GET' -and $Uri -like '*/git/ref/heads/main' }
+
+        { & $bootstrap @arguments } | Should -Throw $ExpectedError
+
+        $referenceState.Reads | Should -Be 2
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
     }
 
     It 'rejects <Drift> before tokens or writes with matching inventory' -Tag 'NoChanges' -ForEach @(
@@ -1755,12 +1850,20 @@ Describe 'GitHub bootstrap public interface' {
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $remoteMarker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
         switch ($Drift) {
-            'missing marker' { $cloud.tree = @($cloud.tree | Where-Object { $_.path -cne '.platform-bootstrap.json' }) }
+            'missing marker' {
+                Mock Invoke-WebRequest {
+                    [pscustomobject]@{ StatusCode = 404; Content = '{"message":"Not Found"}' }
+                } -ParameterFilter { $Method -ceq 'GET' -and $Uri -like '*/contents/.platform-bootstrap.json?*' }
+            }
             'marker version' { $remoteMarker.releaseVersion = '0.9.0' }
             'marker instance' { $remoteMarker.instance = 'another-instance' }
             'marker file hash' { $remoteMarker.files['tools/Invoke-GitHubBootstrap.ps1'] = 'wrong-hash' }
             'extra marker file' { $remoteMarker.files['extra.ps1'] = 'unapproved-hash' }
-            'missing configuration' { $cloud.tree = @($cloud.tree | Where-Object { $_.path -cne 'instance.yaml' }) }
+            'missing configuration' {
+                Mock Invoke-WebRequest {
+                    [pscustomobject]@{ StatusCode = 404; Content = '{"message":"Not Found"}' }
+                } -ParameterFilter { $Method -ceq 'GET' -and $Uri -like '*/contents/instance.yaml?*' }
+            }
             'configuration' {
                 $configBlob = $cloud.tree | Where-Object { $_.path -ceq 'instance.yaml' }
                 $remoteConfig = ConvertFrom-Yaml ([Text.Encoding]::UTF8.GetString($cloud.blobs[$configBlob.sha]))

@@ -386,7 +386,7 @@
         @{
             Name = 'bootstrap-main-commit-reference'
             Tests = @(
-                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*upgrades initialized historical inventory only after protected main proves the current release', '*rejects an invalid main reference <ReferenceCase> before reading protected files') }
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*upgrades initialized historical inventory only after protected main proves the current release', '*rejects an invalid main reference <ReferenceCase> before reading protected files', '*rejects an invalid final NoChanges reference: <Case>') }
             )
         }
         @{

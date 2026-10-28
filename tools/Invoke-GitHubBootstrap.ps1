@@ -659,6 +659,7 @@ if ($inventoryUpgradePending) {
         throw 'Local instance configuration differs from protected main. Apply configuration changes through a reviewed PR, not bootstrap.'
     }
     Assert-GitHubBootstrapUpgradeMainUnchanged
+    Save-GitHubBootstrapInventory
 }
 
 $selected = Get-PlatformModuleSelection -Instance $instance -Modules $modules
@@ -1001,7 +1002,8 @@ foreach ($name in $selected) {
 }
 if ($NoChanges) {
     $currentMain = Invoke-GitHubBootstrapApi -Path "/repos/$repository/git/ref/heads/main"
-    if ($currentMain['object']['sha'] -cne $main['object']['sha']) {
+    $currentMainSha = Assert-GitHubBootstrapMainCommitReference -Reference $currentMain
+    if (-not [StringComparer]::Ordinal.Equals($currentMainSha, $verifiedMainSha)) {
         throw 'Repository main changed during NoChanges verification. Review the new main before retrying.'
     }
 }

@@ -35,6 +35,11 @@
       "sha",
       "url"
     ],
+    "parents.[]": [
+      "sha",
+      "url",
+      "html_url"
+    ],
     "verification": [
       "verified",
       "reason",

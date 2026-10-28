@@ -301,6 +301,8 @@ Před prvním reconcile requestem bootstrap ověří vazbu inventory na repozit�
 
 Před každým GitHub zápisem, Azure zápisem federated credential i potvrzením nové verze inventory bootstrap ověří, že `main` stále ukazuje na stejný commit. Obsah API musí mít typ `file` a kódování `base64`; bootstrap odmítne adresáře, symbolické odkazy i submoduly. Bootstrap odmítne chybějící větev `main`, nepodporovanou dvojici verzí, neplatnou SHA, nesoulad markeru, změnu konfigurace i pohyb větve během ověřování. Při chybě markeru nebo konfigurace nejdřív oprav stav přes review PR; nepoužívej přímý zápis bootstrapu do `main`.
 
+Po ověření chráněného `main` bootstrap uloží aktualizované deklarace Apps ještě před prvním reconcile requestem. Zachová původní App IDs v historii a zatím nezmění verzi inventory. Přerušení tak neztratí evidenci ručně registrované App.
+
 Po úspěšném provisioningu bootstrap zapíše novou `releaseVersion` do stejného inventory. Do té doby ponechá zaznamenanou verzi. Zachová identifikátor nasazení, záznamy prostředků, Apps, otisky klíčů, termíny rotace a historii klíčů. Pokud běh selže, oprav příčinu a spusť znovu bootstrap se stejným inventory a release. `-NoChanges` zůstává read-only: ověřuje inventory stejné verze nebo jediný podporovaný pár `0.1.0-rc.5` → `0.1.0-rc.10` proti markeru, Git tree a konfiguraci na `main`, ale inventory ani prostředky nemění. Chybějící, prázdnou či nepodporovanou verzi inventory odmítne před prvním GitHub API požadavkem.
 
 `-NoChanges` nelze kombinovat s `-UpgradeInventory`; slouží pouze k ověření bez zápisů.
