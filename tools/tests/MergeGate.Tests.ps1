@@ -16,7 +16,8 @@ BeforeAll {
         param(
             [Parameter(Mandatory)][hashtable] $Stub,
             [Parameter(Mandatory)][string] $Directory,
-            [switch] $Aba
+            [switch] $Aba,
+            [string] $AcknowledgedSha = ''
         )
 
         $state = @{}
@@ -27,7 +28,7 @@ BeforeAll {
         $tracePath = Join-Path $Directory "$id-trace.json"
         $state | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $statePath
         $output = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Invoke-MergeGateStubCli.ps1') `
-            -StatePath $statePath -TracePath $tracePath -Aba:$Aba 2>$null
+            -StatePath $statePath -TracePath $tracePath -Aba:$Aba -AcknowledgedSha $AcknowledgedSha 2>$null
         $code = $LASTEXITCODE
         return @{
             ExitCode = $code
@@ -1006,6 +1007,170 @@ Describe 'Merge gate pinned G10' {
         )
     }
 
+    It 'G10 pinned trees through CLI reject reactivation of a workflow already removed on main' -Tag G10AbaRegression,G10BaseTipRegression {
+        $ancestor = 'f' * 40
+        $stub.Compare.merge_base_commit.sha = $ancestor
+        $stub.TreeRefs[$ancestor] = '9' * 40
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $stub.Trees[$ancestor] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{
+            sha = $stub.TreeRefs[$ancestor]; 'tree.0.path' = $oldName
+        }
+        $stub.Trees[$base].tree = @()
+        $stub.Trees[$head].tree[0].path = $newName
+        $stub.Contents["$ancestor/$oldName"] = "name: Old`non: push`njobs: {build: {runs-on: ubuntu-latest, steps: [{run: 'echo old'}]}}"
+        $stub.Contents["$head/$newName"] = "name: New`non: push`njobs: {build: {runs-on: ubuntu-latest, steps: [{run: 'echo rewritten'}]}}"
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
+        $run.Result.details.github.sensitiveLines | Should -Contain "${newName}: sensitive YAML settings changed"
+        $run.Result.details.github.workflowFiles | Should -Contain $newName
+    }
+
+    It 'G10 pinned trees through CLI require acknowledgement when main changed <Case>' -Tag G10BaseTipRegression -ForEach @(
+        @{ Case = 'permissions'; Before = "on: push`npermissions: {contents: read}"; Tip = "on: push`npermissions: {contents: write}" }
+        @{ Case = 'a case-sensitive trigger filter'; Before = 'on: {push: {branches: [main]}}'; Tip = 'on: {push: {branches: [MAIN]}}' }
+    ) {
+        $ancestor = 'f' * 40
+        $stub.Compare.merge_base_commit.sha = $ancestor
+        $stub.TreeRefs[$ancestor] = '9' * 40
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $stub.Trees[$ancestor] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{
+            sha = $stub.TreeRefs[$ancestor]; 'tree.0.path' = $oldName
+        }
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$base].tree[0].sha = '7' * 40
+        $stub.Trees[$head].tree[0].path = $newName
+        $stub.Contents["$ancestor/$oldName"] = "name: Old`n$Before`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$base/$oldName"] = "name: Main`n$Tip`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$head/$newName"] = "name: New`n$Before`njobs: {build: {runs-on: ubuntu-latest}}"
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
+        $run.Result.details.github.sensitiveLines | Should -Contain "${newName}: sensitive YAML settings changed"
+        $run.Result.details.github.workflowFiles | Should -Contain $newName
+    }
+
+    It 'G10 pinned trees through CLI allow acknowledgement of an unsupported <Case>' -Tag G10UnsupportedEntryRegression -ForEach @(
+        @{ Case = 'symlink'; Mode = '120000'; Type = 'blob'; Side = 'head' }
+        @{ Case = 'submodule'; Mode = '160000'; Type = 'commit'; Side = 'head' }
+        @{ Case = 'added symlink'; Mode = '120000'; Type = 'blob'; Side = 'head' }
+        @{ Case = 'added submodule'; Mode = '160000'; Type = 'commit'; Side = 'head' }
+        @{ Case = 'directory replacement'; Mode = '040000'; Type = 'tree'; Side = 'head' }
+        @{ Case = 'removed symlink'; Mode = '120000'; Type = 'blob'; Side = 'base' }
+        @{ Case = 'removed submodule'; Mode = '160000'; Type = 'commit'; Side = 'base' }
+        @{ Case = 'replaced directory'; Mode = '040000'; Type = 'tree'; Side = 'base' }
+    ) {
+        $ref = if ($Side -eq 'head') { $head } else { $base }
+        $stub.Trees[$ref].tree[0].mode = $Mode
+        $stub.Trees[$ref].tree[0].type = $Type
+        if ($Case -like 'removed*') { $stub.Trees[$head].tree = @() }
+        if ($Case -like 'added*') { $stub.Trees[$base].tree = @() }
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
+        ($run.Result.details.github.sensitiveLines -join "`n") | Should -Match 'unsupported workflow tree entry'
+        (Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -AcknowledgedSha ('8' * 40)).ExitCode | Should -Be 1
+        (Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -AcknowledgedSha $head).ExitCode | Should -Be 0
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 0
+    }
+
+    It 'G10 pinned trees never pair an opaque rename <Side>' -Tag G10UnsupportedEntryRegression -ForEach @(
+        @{ Side = 'source' }
+        @{ Side = 'destination' }
+    ) {
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$head].tree[0].path = $newName
+        $ref = if ($Side -eq 'source') { $base } else { $head }
+        $stub.Trees[$ref].tree[0].mode = '120000'
+        $stub.Contents["$base/$oldName"] = "on: push`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$head/$newName"] = $stub.Contents["$base/$oldName"]
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
+        $run.Result.details.github.workflowFiles | Should -Be @($newName, $oldName)
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 1
+    }
+
+    It 'G10 pinned trees through CLI retain a rename with a <Case> source on main' -Tag G10BaseTipRegression -ForEach @(
+        @{ Case = 'regular'; Mode = '100644'; Blob = '44b4fc6d56897b048c772eb4087f854f46256132' }
+        @{ Case = 'regular executable'; Mode = '100755'; Blob = '44b4fc6d56897b048c772eb4087f854f46256132' }
+        @{ Case = 'non-sensitive rewritten'; Mode = '100644'; Blob = '7777777777777777777777777777777777777777' }
+    ) {
+        $ancestor = 'f' * 40
+        $stub.Compare.merge_base_commit.sha = $ancestor
+        $stub.TreeRefs[$ancestor] = '9' * 40
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $stub.Trees[$ancestor] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{
+            sha = $stub.TreeRefs[$ancestor]; 'tree.0.path' = $oldName
+        }
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$base].tree[0].sha = $Blob
+        $stub.Trees[$base].tree[0].mode = $Mode
+        $stub.Trees[$head].tree[0].path = $newName
+        $stub.Contents["$ancestor/$oldName"] = "name: Old`non: push`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$base/$oldName"] = "name: Main`non: push`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$head/$newName"] = "name: New`non: push`njobs: {build: {runs-on: ubuntu-latest}}"
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 0
+        $run.Result.details.github.workflowFiles | Should -Be @($newName)
+        $run.Result.details.github.sensitiveLines | Should -Be @()
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/git/commits/' } | ForEach-Object { $_[-1] }) | Should -Be @(
+            "repos/$repository/git/commits/$ancestor"
+            "repos/$repository/git/commits/$head"
+            "repos/$repository/git/commits/$base"
+        )
+    }
+
+    It 'G10 pinned trees through CLI reject a rename from a <Case> source on main' -Tag G10BaseTipRegression -ForEach @(
+        @{ Case = 'symlink'; Mode = '120000'; Type = 'blob' }
+        @{ Case = 'submodule'; Mode = '160000'; Type = 'commit' }
+        @{ Case = 'directory'; Mode = '040000'; Type = 'tree' }
+    ) {
+        $ancestor = 'f' * 40
+        $stub.Compare.merge_base_commit.sha = $ancestor
+        $stub.TreeRefs[$ancestor] = '9' * 40
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $stub.Trees[$ancestor] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{
+            sha = $stub.TreeRefs[$ancestor]; 'tree.0.path' = $oldName
+        }
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$base].tree[0].mode = $Mode
+        $stub.Trees[$base].tree[0].type = $Type
+        $stub.Trees[$head].tree[0].path = $newName
+        $stub.Contents["$ancestor/$oldName"] = "on: push`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$head/$newName"] = $stub.Contents["$ancestor/$oldName"]
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
+        $run.Result.details.github.workflowFiles | Should -Contain $newName
+    }
+
+    It 'G10 pinned trees through CLI fail closed for a <Case> base-tip tree' -Tag G10BaseTipRegression -ForEach @(
+        @{ Case = 'truncated' }
+        @{ Case = 'missing' }
+        @{ Case = 'incomplete' }
+    ) {
+        $ancestor = 'f' * 40
+        $stub.Compare.merge_base_commit.sha = $ancestor
+        $stub.TreeRefs[$ancestor] = '9' * 40
+        $stub.Trees[$ancestor] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{
+            sha = $stub.TreeRefs[$ancestor]; 'tree.0.path' = '.github/workflows/old.yml'
+        }
+        $stub.Trees[$head].tree[0].path = '.github/workflows/new.yml'
+        if ($Case -eq 'truncated') { $stub.Trees[$base].truncated = $true }
+        elseif ($Case -eq 'missing') { $stub.Failures["/git/trees/$($stub.TreeRefs[$base])"] = 'HTTP 404: missing base-tip tree' }
+        else { $stub.Trees[$base].Remove('tree') }
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -AcknowledgedSha $head
+        $run.ExitCode | Should -Be 5
+        Get-ReasonCode $run.Result | Should -Be @('fail:evaluation-error')
+    }
+
     It 'G10 merge base accepts a pinned <Status> comparison' -ForEach @(
         @{ Status = 'ahead' }
         @{ Status = 'identical' }
@@ -1194,17 +1359,31 @@ Describe 'Merge gate pinned G10' {
     }
 
     It 'G10 pinned trees reject an unsupported workflow <Case>' -ForEach @(
-        @{ Case = 'symlink even when contents dereferences its target'; Field = 'mode'; Value = '120000' }
-        @{ Case = 'submodule'; Field = 'type'; Value = 'commit' }
-        @{ Case = 'mode'; Field = 'mode'; Value = 'unknown' }
+        @{ Case = 'symlink even when contents dereferences its target'; Mode = '120000'; Type = 'blob' }
+        @{ Case = 'submodule'; Mode = '160000'; Type = 'commit' }
     ) {
         # Unsupported entry kinds are not regular inline YAML, even if the contents endpoint returns a file.
         $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10'
         $stub.Trees[$head].tree[0].sha = $stub.Trees[$base].tree[0].sha
-        $stub.Trees[$head].tree[0][$Field] = $Value
+        $stub.Trees[$head].tree[0].mode = $Mode
+        $stub.Trees[$head].tree[0].type = $Type
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        ($result.details.github.sensitiveLines -join "`n") | Should -Match 'unsupported workflow tree entry'
+    }
+
+    # Deliberately invalid Git mode/type combinations, unlike supported opaque Git entry variants.
+    It 'G10 pinned trees reject an invalid <Case>' -ForEach @(
+        @{ Case = 'unknown mode'; Mode = 'unknown'; Type = 'blob' }
+        @{ Case = 'blob directory mode'; Mode = '040000'; Type = 'blob' }
+        @{ Case = 'regular submodule mode'; Mode = '100644'; Type = 'commit' }
+        @{ Case = 'regular directory mode'; Mode = '100644'; Type = 'tree' }
+    ) {
+        $stub.Trees[$head].tree[0].mode = $Mode
+        $stub.Trees[$head].tree[0].type = $Type
         $result = Invoke-ScenarioGate -Stub $stub
         Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
-        $result.reasons[0].message | Should -Match 'unsupported workflow tree entry'
+        $result.reasons[0].message | Should -Match 'invalid entry mode/type combination'
     }
 }
 

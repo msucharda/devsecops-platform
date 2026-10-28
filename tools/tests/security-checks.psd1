@@ -559,6 +559,12 @@
             )
         }
         @{
+            Name = 'merge-gate-workflow-regular-entry'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 pinned trees through CLI allow acknowledgement*', '*G10 pinned trees through CLI retain a rename*', '*G10 pinned trees through CLI reject a rename from*') }
+            )
+        }
+        @{
             Name = 'merge-gate-workflow-merge-base'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 merge base*', '*G10 pinned trees through CLI do not use a base-only*', '*G10 pinned trees through CLI ignore a base-only*') }

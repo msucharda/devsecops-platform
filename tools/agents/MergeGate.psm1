@@ -799,6 +799,16 @@ function Test-MergeGateDirectWorkflowPath {
     return $Path -cmatch '\A\.github/workflows/[^/]+\.ya?ml\z'
 }
 
+# security-check: merge-gate-workflow-regular-entry
+function Test-MergeGateRegularWorkflowEntry {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Entry)
+
+    # Tree validation enforces mode/type compatibility before this predicate is used.
+    return $Entry['mode'] -in @('100644', '100755')
+}
+
 # security-check: merge-gate-workflow-content
 function Get-MergeGateWorkflowContent {
     [CmdletBinding()]
@@ -841,6 +851,7 @@ function Get-MergeGateWorkflowTree {
     if ($tree['sha'] -isnot [string] -or $tree['sha'] -cne $treeSha) { throw "Git tree response does not match '$treeSha'." }
     $entries = Get-MergeGateList -Node $tree -Path 'tree'
     $files = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    $modes = @{ blob = @('100644', '100755', '120000'); tree = @('040000'); commit = @('160000') }
     foreach ($entry in $entries) {
         if ($entry -isnot [System.Collections.IDictionary]) { throw "Git tree '$Sha' contains a non-object entry." }
         foreach ($field in @('path', 'mode', 'type', 'sha')) {
@@ -849,6 +860,7 @@ function Get-MergeGateWorkflowTree {
             if ($value -isnot [string] -or $empty) { throw "Git tree '$Sha' entry has no valid '$field'." }
         }
         if ($entry['type'] -cnotin @('blob', 'tree', 'commit')) { throw "Git tree '$Sha' has an unsupported entry type." }
+        if ($entry['mode'] -notin $modes[$entry['type']]) { throw "Git tree '$Sha' has an invalid entry mode/type combination." }
         if (-not $files.TryAdd($entry['path'], $entry)) { throw "Git tree '$Sha' has a duplicate path '$($entry['path'])'." }
     }
     return , $files
@@ -879,6 +891,7 @@ function Get-MergeGatePinnedFile {
         [Parameter(Mandatory)][hashtable] $Target,
         [Parameter(Mandatory)][string] $BaseSha,
         [Parameter(Mandatory)][string] $HeadSha,
+        [Parameter(Mandatory)][string] $BaseTipSha,
         [AllowEmptyCollection()][object[]] $Files = @()
     )
 
@@ -902,20 +915,23 @@ function Get-MergeGatePinnedFile {
         # Directory entries are covered by their recursively enumerated children.
         $sides = @(if ($hasBase) { $before[$path] }; if ($hasHead) { $after[$path] })
         if (@($sides | Where-Object { $_['type'] -ne 'tree' }).Count -eq 0) { continue }
-        if (Test-MergeGateWorkflowPath -Path $path) {
-            foreach ($side in $sides) {
-                if ($side['type'] -ne 'blob' -or $side['mode'] -notin @('100644', '100755')) { throw "Git tree has an unsupported workflow tree entry '$path'." }
-            }
-        }
         $status = if (-not $hasBase) { 'added' } elseif (-not $hasHead) { 'removed' } else { 'modified' }
         $result.Add($path, @{ filename = $path; status = $status })
+        if (Test-MergeGateWorkflowPath -Path $path) {
+            foreach ($side in $sides) {
+                if (-not (Test-MergeGateRegularWorkflowEntry -Entry $side)) {
+                    $result[$path]['gateSnapshotError'] = "Git tree has an unsupported workflow tree entry '$path'."
+                }
+            }
+        }
     }
 
     # Infer benign workflow renames only from fixed content, not the mutable PR diff's pairing or status.
-    $removed = @($paths | Where-Object { $result.ContainsKey($_) -and $result[$_]['status'] -eq 'removed' -and (Test-MergeGateDirectWorkflowPath -Path $_) })
-    $added = @($paths | Where-Object { $result.ContainsKey($_) -and $result[$_]['status'] -eq 'added' -and (Test-MergeGateDirectWorkflowPath -Path $_) })
+    $removed = @($paths | Where-Object { $result.ContainsKey($_) -and -not $result[$_].Contains('gateSnapshotError') -and $result[$_]['status'] -eq 'removed' -and (Test-MergeGateDirectWorkflowPath -Path $_) })
+    $added = @($paths | Where-Object { $result.ContainsKey($_) -and -not $result[$_].Contains('gateSnapshotError') -and $result[$_]['status'] -eq 'added' -and (Test-MergeGateDirectWorkflowPath -Path $_) })
     $sources = [Collections.Generic.Dictionary[string, Collections.Generic.Queue[string]]]::new([StringComparer]::Ordinal)
     if ($removed.Count -gt 0 -and $added.Count -gt 0) {
+        $baseTip = if ($BaseTipSha -eq $BaseSha) { $before } else { Get-MergeGateWorkflowTree -Target $Target -Sha $BaseTipSha }
         foreach ($path in @($removed) + @($added)) {
             $file = $result[$path]
             $isBase = $file['status'] -eq 'removed'
@@ -924,6 +940,13 @@ function Get-MergeGatePinnedFile {
             try {
                 $snapshot = Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $path -Sha $sha)
                 $file[$field] = $snapshot
+                if ($isBase) {
+                    if (-not $baseTip.ContainsKey($path)) { continue }
+                    if (-not (Test-MergeGateRegularWorkflowEntry -Entry $baseTip[$path])) { continue }
+                    $tipSnapshot = if ($baseTip[$path]['sha'] -eq $before[$path]['sha']) { $snapshot }
+                    else { Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $path -Sha $BaseTipSha) }
+                    if (($snapshot -join "`n") -cne ($tipSnapshot -join "`n")) { continue }
+                }
             }
             catch {
                 $file['gateSnapshotError'] = $_.Exception.Message
@@ -1498,7 +1521,7 @@ function Complete-MergeGateEvaluation {
     $workflowBaseSha = Get-MergeGateWorkflowBase -Comparison $comparison -BaseSha $baseSha
     $Result.details['base']['mergeBaseSha'] = $workflowBaseSha
     $files = Get-MergeGateRestList -Target $Target -Path "repos/$slug/pulls/$Number/files" -MaxPages $script:MaxFilePages
-    $files = Get-MergeGatePinnedFile -Target $Target -BaseSha $workflowBaseSha -HeadSha $head -Files $files
+    $files = Get-MergeGatePinnedFile -Target $Target -BaseSha $workflowBaseSha -HeadSha $head -BaseTipSha $baseSha -Files $files
     $change = Get-MergeGateGitHubChange -Files $files -Target $Target -BaseSha $workflowBaseSha -HeadSha $head
     # Reject a lasting ref change as well; the pinned trees also cover a ref that moves away and back.
     $current = Get-MergeGatePullRequest -Target $Target -Number $Number

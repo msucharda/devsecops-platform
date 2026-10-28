@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory)][string] $StatePath,
     [Parameter(Mandatory)][string] $TracePath,
-    [switch] $Aba
+    [switch] $Aba,
+    [string] $AcknowledgedSha = ''
 )
 
 Set-StrictMode -Version Latest
@@ -37,8 +38,12 @@ $ghStub = {
 }.GetNewClosure()
 Set-Item -LiteralPath Function:\global:gh -Value $ghStub
 
-& (Join-Path $PSScriptRoot '../agents/Test-MergeGate.ps1') -Repository msucharda/devsecops-platform -Pr 78 `
-    -ExpectedHeadSha $stub.PullRequest.headRefOid -Now $stub.Now
+$parameters = @{
+    Repository = 'msucharda/devsecops-platform'; Pr = 78
+    ExpectedHeadSha = $stub.PullRequest.headRefOid; Now = $stub.Now
+}
+if ($AcknowledgedSha) { $parameters['AcknowledgeWorkflowChanges'] = $AcknowledgedSha }
+& (Join-Path $PSScriptRoot '../agents/Test-MergeGate.ps1') @parameters
 $code = $LASTEXITCODE
 @{
     calls = $stub.Calls.ToArray()
