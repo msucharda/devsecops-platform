@@ -46,12 +46,13 @@ BeforeAll {
     $recovery = Join-Path (Split-Path $PSScriptRoot -Parent) 'Restore-RulesetState.ps1'
 
     function Invoke-RulesetTerraform {
+        $terraformArguments = @($args)
         if ($args[0] -ceq 'destroy') {
             try { & $recovery -TerraformRoot $root -VariableFile (Join-Path $root 'terraform.tfvars.json') }
             catch { return @{ Code = 1; Text = $_.Exception.Message } }
-            $args += '-var=ruleset_destroy_started=true'
+            $terraformArguments += '-var=ruleset_destroy_started=true'
         }
-        $output = & terraform "-chdir=$root" @args -no-color 2>&1 | Out-String
+        $output = & terraform "-chdir=$root" @terraformArguments -no-color 2>&1 | Out-String
         return @{ Code = $LASTEXITCODE; Text = $output }
     }
 }

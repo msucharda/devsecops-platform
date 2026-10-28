@@ -540,6 +540,7 @@ function Get-CodeSecurityCoverageStatus {
     return 'compliant'
 }
 
+# security-check: code-security-coverage-identity
 function Get-CodeSecurityCoverage {
     <#
     .SYNOPSIS
@@ -573,8 +574,10 @@ function Get-CodeSecurityCoverage {
         }
         $securityStatus = 'unverified'
         if ($null -ne $repository) {
-            if ($repository -isnot [Collections.IDictionary] -or [string] $repository['id'] -cne $entry.id -or
-                [string] $repository['full_name'] -ine $entry.repository) {
+            if ($repository -isnot [Collections.IDictionary] -or
+                ($repository['id'] -isnot [int] -and $repository['id'] -isnot [long]) -or
+                [string] $repository['id'] -cne $entry.id -or $repository['full_name'] -isnot [string] -or
+                $repository['full_name'] -ine $entry.repository) {
                 throw "Repository security response of '$($entry.repository)' has mismatched identity."
             }
             $security = $repository['security_and_analysis']

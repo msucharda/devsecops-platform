@@ -207,6 +207,33 @@ Describe 'Repository Code Security coverage' {
         { Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo } | Should -Throw '*mismatched identity*'
     }
 
+    It 'rejects a differently named attachment for the same repository ID' {
+        $attachments[0]['repository']['full_name'] = 'demo/other'
+        { Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo } |
+            Should -Throw '*mismatched repository identity*'
+    }
+
+    It 'rejects a differently named repository response with the same ID' {
+        $repository['full_name'] = 'demo/other'
+        { Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo } |
+            Should -Throw '*mismatched identity*'
+    }
+
+    It 'rejects repository identity with <Case>' -ForEach @(
+        @{ Case = 'a string ID'; Field = 'id'; Value = '101' }
+        @{ Case = 'an array ID'; Field = 'id'; Value = @(101) }
+        @{ Case = 'a null ID'; Field = 'id'; Value = $null }
+        @{ Case = 'a boolean ID'; Field = 'id'; Value = $true }
+        @{ Case = 'an array full name'; Field = 'full_name'; Value = @('demo/app') }
+        @{ Case = 'a null full name'; Field = 'full_name'; Value = $null }
+        @{ Case = 'an empty full name'; Field = 'full_name'; Value = '' }
+    ) {
+        # Deliberately invalid identity type or value in an otherwise valid contract response.
+        $repository[$Field] = $Value
+        { Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo } |
+            Should -Throw '*mismatched identity*'
+    }
+
     It 'publishes separate coverage counters and restores the caller token' {
         $checker = Join-Path (Split-Path $PSScriptRoot -Parent) 'Test-CodeSecurityCoverage.ps1'
         $output = Join-Path $TestDrive 'coverage.out'

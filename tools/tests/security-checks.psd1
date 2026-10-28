@@ -4,6 +4,12 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'code-security-coverage-identity'
+            Tests = @(
+                @{ Path = 'tools/tests/CodeSecurityCoverage.Tests.ps1'; FullName = @('Repository Code Security coverage*') }
+            )
+        }
+        @{
             Name = 'code-security-repository-coverage'
             Tests = @(
                 @{ Path = 'tools/tests/CodeSecurityCoverage.Tests.ps1'; FullName = @('Repository Code Security coverage*') }
