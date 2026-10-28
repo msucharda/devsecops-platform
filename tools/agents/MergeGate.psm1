@@ -817,8 +817,10 @@ function Test-MergeGateSensitiveSetting {
     [OutputType([bool])]
     param([AllowEmptyString()][string] $Key, [AllowEmptyString()][string] $Value)
 
-    if ($Key -eq 'on' -or $Key -eq 'runs-on' -or $Key -in @('permissions', 'secrets', 'GITHUB_TOKEN')) { return $true }
-    return $Value -match '\bsecrets\b|\bGITHUB_TOKEN\b'
+    if ($Key -eq 'on') { return $true }
+    if ($Key -eq 'runs-on') { return $true }
+    if ($Key -in @('permissions', 'secrets', 'GITHUB_TOKEN')) { return $true }
+    return $Value -match '\bsecrets\b|\bGITHUB_TOKEN\b|\bgithub\s*(\.\s*token\b|\[)|\bgithub\b(?!\s*(\.|\[))'
 }
 
 function Get-MergeGateYamlSetting {

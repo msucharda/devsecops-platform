@@ -571,8 +571,13 @@ Describe 'Merge gate structural G10' {
         @{ Case = 'an indexed secret'; Before = "env: {TOKEN: `"`${{ secrets['OLD'] }}`"}"; After = "env: {TOKEN: `"`${{ secrets['NEW'] }}`"}" }
         @{ Case = 'a removed secret reference'; Before = 'env: {TOKEN: "${{ secrets.TOKEN }}"}'; After = 'env: {TOKEN: literal}' }
         @{ Case = 'the whole secrets context'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ toJSON(secrets) }}"}' }
+        @{ Case = 'a nested secrets-context expression'; Before = 'env: {TOKEN: literal}'; After = "env: {TOKEN: `"`${{ format('{0}', toJSON(secrets)) }}`"}" }
         @{ Case = 'GITHUB_TOKEN binding'; Before = 'env: {GITHUB_TOKEN: "${{ github.token }}"}'; After = 'env: {GITHUB_TOKEN: literal}' }
         @{ Case = 'GITHUB_TOKEN usage'; Before = "run: 'echo `$GITHUB_TOKEN'"; After = "run: 'upload `$GITHUB_TOKEN'" }
+        @{ Case = 'the github.token alias'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ github.token }}"}' }
+        @{ Case = 'an indexed github.token alias'; Before = 'env: {TOKEN: literal}'; After = "env: {TOKEN: `"`${{ github['token'] }}`"}" }
+        @{ Case = 'the whole github context'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ toJSON(github) }}"}' }
+        @{ Case = 'a dynamic github context lookup'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ github[inputs.key] }}"}' }
     ) {
         $stub.Contents[$baseKey] = $Before
         $stub.Contents[$headKey] = $After
@@ -589,6 +594,8 @@ Describe 'Merge gate structural G10' {
         @{ Case = 'unrelated step text'; Before = "jobs:`n  build:`n    runs-on: ubuntu-latest`n    steps: [{run: 'echo old'}]"; After = "jobs:`n  build:`n    runs-on: ubuntu-latest`n    steps: [{run: 'echo new'}]" }
         @{ Case = 'an unchanged secret reference'; Before = "name: Old`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}"; After = "name: New`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}" }
         @{ Case = 'empty settings'; Before = '{}'; After = 'name: CI' }
+        @{ Case = 'ordinary github context properties'; Before = 'env: {REF: "${{ github.ref }}"}'; After = 'env: {REF: "${{ github.sha }}"}' }
+        @{ Case = 'exactly 100 nesting levels'; Before = 'permissions: ' + ('{x: ' * 99) + 'read' + ('}' * 99); After = 'permissions: ' + ('{x: ' * 99) + 'read' + ('}' * 99) }
     ) {
         $stub.Contents[$baseKey] = $Before
         $stub.Contents[$headKey] = $After
@@ -610,6 +617,8 @@ Describe 'Merge gate structural G10' {
             @{ Case = 'an anchor'; Side = $side; Content = 'permissions: &p {contents: write}'; Error = 'anchors' }
             @{ Case = 'an alias'; Side = $side; Content = 'permissions: *p'; Error = 'aliases' }
             @{ Case = 'a merge key'; Side = $side; Content = "defaults: &p {contents: write}`npermissions: {<<: *p}"; Error = 'anchors' }
+            @{ Case = 'more than 100 nesting levels'; Side = $side; Content = 'permissions: ' + ('{x: ' * 100) + 'read' + ('}' * 100); Error = 'nesting exceeds 100 levels' }
+            @{ Case = 'a non-scalar mapping key'; Side = $side; Content = "? [permissions, contents]`n: read"; Error = 'non-scalar mapping key' }
         }
     ) {
         $stub.Contents[$baseKey] = 'permissions: read-all'
