@@ -12,6 +12,9 @@ Describe 'Local CI profiles' {
         @($testProfile.Full | ForEach-Object { Split-Path $_ -Leaf } | Sort-Object) | Should -BeExactly $discovered
         $testProfile.Local | Should -Contain 'tools/tests/DeploymentIdentifier.Tests.ps1'
         $testProfile.Local | Should -Contain 'tools/tests/LocalCiGate.Unit.Tests.ps1'
+        $testProfile.Local | Should -Contain 'tools/tests/CanonicalConfiguration.Tests.ps1'
+        $testProfile.Local | Should -Contain 'tools/tests/ActionUpdates.Tests.ps1'
+        $testProfile.Local | Should -Not -Contain 'tools/tests/MutationRunner.Tests.ps1'
         $testProfile.Local | Should -Not -Contain 'tools/tests/LocalCiGate.Tests.ps1'
         $testProfile.Local | Should -Not -Contain 'tools/tests/EnterpriseBaseline.Tests.ps1'
         $testProfile.Local | Should -Not -Contain 'tools/tests/GitHubBootstrap.Tests.ps1'

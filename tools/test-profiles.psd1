@@ -1,6 +1,7 @@
 @{
     # Local suites use isolated inputs without Terraform, live services, or production setup flows.
     Unit = @(
+        'CanonicalConfiguration.Tests.ps1'
         'DeploymentIdentifier.Tests.ps1'
         'DeploymentSummary.Tests.ps1'
         'LocalCiGate.Unit.Tests.ps1'
@@ -9,6 +10,7 @@
         'OrganizationScope.Tests.ps1'
     )
     Contract = @(
+        'ActionUpdates.Tests.ps1'
         'BootstrapExecutionPolicy.Tests.ps1'
         'CredentialContract.Tests.ps1'
         'GitHubApiFixture.Tests.ps1'
@@ -45,6 +47,7 @@
         'LocalCiGate.Tests.ps1'
         'MergeGate.Tests.ps1'
         'ModuleRunner.Tests.ps1'
+        'MutationRunner.Tests.ps1'
         'MutationTesting.Tests.ps1'
         'OrganizationDrift.Tests.ps1'
         'OrganizationModule.Tests.ps1'
