@@ -245,6 +245,25 @@ if ($query['probe'] -cne 'local-ci') { throw 'Invalid preflight input' }
     }
 }
 
+# security-check: local-ci-temp-root-scope
+function Assert-LocalCiWindowsTempRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string] $Path,
+        [Parameter(Mandatory)][string] $UserProfile,
+        [bool] $Windows = $IsWindows
+    )
+    if (-not $Windows) {
+        if ($Path) { throw '-TempRoot is only supported on Windows. Omit it on other platforms and use the default private data directory.' }
+        return
+    }
+    $root = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Path))
+    $profileRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($UserProfile))
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($root), $profileRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Unsafe CI TEMP root: use a direct child of UserProfile, for example <UserProfile>\.dci. Nested paths and volume-root children are not supported.'
+    }
+}
+
 # security-check: local-ci-temp-access
 function Assert-LocalCiTempAccess {
     [CmdletBinding()]
@@ -310,4 +329,4 @@ function Initialize-LocalCiPrivateTempDirectory {
 }
 
 Export-ModuleMember -Function Get-LocalCiProfile, Get-LocalCiChangedFile, Get-LocalCiContentState, Clear-LocalCiGateResult, Save-LocalCiGateResult,
-    Test-LocalCiGateResult, Assert-LocalCiTempPath, Test-LocalCiRuntime, Assert-LocalCiTempAccess, Initialize-LocalCiPrivateTempDirectory
+    Test-LocalCiGateResult, Assert-LocalCiTempPath, Test-LocalCiRuntime, Assert-LocalCiWindowsTempRoot, Assert-LocalCiTempAccess, Initialize-LocalCiPrivateTempDirectory

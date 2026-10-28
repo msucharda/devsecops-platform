@@ -58,6 +58,65 @@ Describe 'Local CI index visibility' {
     }
 }
 
+Describe 'Local CI Windows TEMP root scope' {
+    BeforeEach {
+        $userProfile = Join-Path $TestDrive 'profile'
+    }
+
+    It 'accepts the default root omission outside Windows' {
+        { Assert-LocalCiWindowsTempRoot -Path '' -UserProfile $userProfile -Windows $false } | Should -Not -Throw
+    }
+
+    It 'rejects a custom root outside Windows: <Root>' -ForEach @(
+        @{ Root = '/tmp' }, @{ Root = 'relative' }, @{ Root = ' ' }
+    ) {
+        { Assert-LocalCiWindowsTempRoot -Path $Root -UserProfile $userProfile -Windows $false } |
+            Should -Throw '*TempRoot*only supported on Windows*'
+    }
+
+    It 'accepts a direct profile child with <Case>' -ForEach @(
+        @{ Case = 'the default name'; Leaf = '.dci'; UpperCase = $false; TrailingSeparator = $false }
+        @{ Case = 'a custom name'; Leaf = 'custom'; UpperCase = $false; TrailingSeparator = $false }
+        @{ Case = 'different Windows casing'; Leaf = 'custom'; UpperCase = $true; TrailingSeparator = $false }
+        @{ Case = 'a trailing separator'; Leaf = 'custom'; UpperCase = $false; TrailingSeparator = $true }
+    ) {
+        $path = Join-Path $userProfile $Leaf
+        if ($UpperCase) { $path = $path.ToUpperInvariant() }
+        if ($TrailingSeparator) { $path += [IO.Path]::DirectorySeparatorChar }
+        { Assert-LocalCiWindowsTempRoot -Path $path -UserProfile $userProfile -Windows $true } | Should -Not -Throw
+    }
+
+    It 'rejects <Case>' -ForEach @(
+        @{ Case = 'the profile itself'; Kind = 'Profile' }
+        @{ Case = 'a nested directory'; Kind = 'Nested' }
+        @{ Case = 'a profile-prefix sibling'; Kind = 'Sibling' }
+        @{ Case = 'a volume-root child'; Kind = 'Volume' }
+        @{ Case = 'the public C:\t directory'; Kind = 'Public' }
+    ) {
+        $path = switch ($Kind) {
+            Profile { $userProfile }
+            Nested { Join-Path $userProfile 'nested/temp' }
+            Sibling { Join-Path "$userProfile-other" 'temp' }
+            Volume { Join-Path ([IO.Path]::GetPathRoot($userProfile)) 'temp' }
+            Public { 'C:\t' }
+        }
+        { Assert-LocalCiWindowsTempRoot -Path $path -UserProfile $userProfile -Windows $true } | Should -Throw '*direct child*UserProfile*'
+    }
+
+    It 'rejects a junction between the profile and root without accessing its target' -Skip:(-not $IsWindows) {
+        $target = Join-Path $TestDrive 'outside-profile'
+        $junction = Join-Path $userProfile 'alias'
+        New-Item -ItemType Directory -Path $userProfile, $target | Out-Null
+        $null = New-Item -ItemType Junction -Path $junction -Value $target
+        try {
+            { Assert-LocalCiWindowsTempRoot -Path (Join-Path $junction 'temp') -UserProfile $userProfile -Windows $true } |
+                Should -Throw '*direct child*UserProfile*'
+            Test-Path -LiteralPath (Join-Path $target 'temp') | Should -BeFalse
+        }
+        finally { Remove-Item -LiteralPath $junction -Force }
+    }
+}
+
 Describe 'Local CI private TEMP access' {
     BeforeEach {
         $userSid = 'S-1-5-21-1-2-3-1000'
@@ -117,4 +176,30 @@ Describe 'Local CI private TEMP access' {
         { Assert-LocalCiTempAccess -Access $access -UserSid $userSid } | Should -Throw '*unexpected access rules*'
     }
 
+    It 'creates a protected Windows directory and refuses existing broader access' -Skip:(-not $IsWindows) {
+        $path = Join-Path $TestDrive 'private-temp'
+        Initialize-LocalCiPrivateTempDirectory -Path $path
+        Initialize-LocalCiPrivateTempDirectory -Path $path
+        $directory = [IO.DirectoryInfo]::new($path)
+        $acl = [IO.FileSystemAclExtensions]::GetAccessControl($directory, [Security.AccessControl.AccessControlSections]::Access)
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+            [Security.Principal.SecurityIdentifier]::new('S-1-5-11'), [Security.AccessControl.FileSystemRights]::Modify,
+            [Security.AccessControl.AccessControlType]::Allow)
+        $null = $acl.AddAccessRule($rule)
+        [IO.FileSystemAclExtensions]::SetAccessControl($directory, $acl)
+        { Initialize-LocalCiPrivateTempDirectory -Path $path } | Should -Throw '*Unsafe CI TEMP*'
+        (Get-Acl -LiteralPath $path).Access.Count | Should -Be 3
+    }
+
+    It 'rejects a real Windows junction without following or repairing it' -Skip:(-not $IsWindows) {
+        $target = Join-Path $TestDrive 'private-target'
+        $junction = Join-Path $TestDrive 'temp-junction'
+        Initialize-LocalCiPrivateTempDirectory -Path $target
+        $null = New-Item -ItemType Junction -Path $junction -Value $target
+        try {
+            { Initialize-LocalCiPrivateTempDirectory -Path $junction } | Should -Throw '*regular directory*'
+            ((Get-Item -LiteralPath $junction).Attributes -band [IO.FileAttributes]::ReparsePoint) | Should -Not -Be 0
+        }
+        finally { Remove-Item -LiteralPath $junction -Force }
+    }
 }

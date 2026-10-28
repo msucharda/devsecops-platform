@@ -31,6 +31,13 @@
             })
         }
         @{
+            Name = 'local-ci-temp-root-scope'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiGate.Unit.Tests.ps1'
+                FullName = 'Local CI Windows TEMP root scope*'
+            })
+        }
+        @{
             Name = 'local-ci-temp-access'
             Tests = @(@{
                 Path = 'tools/tests/LocalCiGate.Unit.Tests.ps1'

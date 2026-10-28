@@ -324,6 +324,8 @@ function ConvertTo-PwshList {
 
 try {
     $env:INVOKE_LOCAL_CI_ACTIVE = '1'
+    try { Assert-LocalCiWindowsTempRoot -Path $TempRoot -UserProfile ([Environment]::GetFolderPath('UserProfile')) -Windows $IsWindows }
+    catch { Exit-Usage $_.Exception.Message }
     Assert-LocalCiTempPath -Path $temp
     if ($IsWindows) {
         Initialize-LocalCiPrivateTempDirectory -Path $TempRoot

@@ -221,10 +221,18 @@ Describe 'Local CI process guards' {
         @{ Case = 'a parser error in a non-ASCII filename'; Command = ''; MissingGo = $false; InvalidFile = $true; ExpectedExit = 1; ExpectedError = 'syntax errors' }
         @{ Case = 'an intermediate TEMP directory writable by another identity'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'Writable'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
         @{ Case = 'an intermediate TEMP junction'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'Junction'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
+        @{ Case = 'a junction between UserProfile and the TEMP root'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'RootJunction'; ExpectedExit = 2; ExpectedError = 'direct child of UserProfile' }
+        @{ Case = 'a TEMP root writable by another identity'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'RootWritable'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
+        @{ Case = 'a worktree TEMP junction'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'LeafJunction'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
+        @{ Case = 'a custom TEMP root outside Windows'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsupportedTemp = $true; ExpectedExit = 2; ExpectedError = 'TempRoot.*only supported on Windows' }
     ) {
-        param([string] $UnsafeTemp = '')
+        param([string] $UnsafeTemp = '', [bool] $UnsupportedTemp = $false)
         if ($UnsafeTemp -and -not $IsWindows) {
             Set-ItResult -Skipped -Because 'Windows ACL and junction regression.'
+            return
+        }
+        if ($UnsupportedTemp -and $IsWindows) {
+            Set-ItResult -Skipped -Because 'Non-Windows parameter rejection.'
             return
         }
         $fixture = Join-Path $TestDrive ("guard-$([guid]::NewGuid().ToString('N').Substring(0, 8))")
@@ -239,7 +247,7 @@ Describe 'Local CI process guards' {
         if ($InvalidFile) {
             # Keep this parser regression from recursively running its own fixture suite.
             $names = @(Get-ChildItem (Join-Path $fixture 'tools/tests') -Filter '*.Tests.ps1' |
-                ForEach-Object { "'$($_.Name)'" })
+                    ForEach-Object { "'$($_.Name)'" })
             Set-Content -LiteralPath (Join-Path $fixture 'tools/test-profiles.psd1') (
                 "@{ Unit=@(); Contract=@(); Integration=@($($names -join ',')); Interruption=@() }")
         }
@@ -252,36 +260,51 @@ Describe 'Local CI process guards' {
         git -C $fixture branch baseline
         $tempRoot = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".t$([guid]::NewGuid().ToString('N').Substring(0, 6))"
         if (Test-Path -LiteralPath $tempRoot) { throw 'Fixture TEMP root already exists.' }
+        $fixtureTempRoot = $tempRoot
+        $rootJunction = Join-Path $fixtureTempRoot 'alias'
+        $leafJunction = $null
         $container = Join-Path $tempRoot 'devsecops-local-ci'
         try {
-        if ($UnsafeTemp) {
-            Initialize-LocalCiPrivateTempDirectory -Path $tempRoot
-            if ($UnsafeTemp -ceq 'Junction') {
-                $target = Join-Path $tempRoot 'target'
-                Initialize-LocalCiPrivateTempDirectory -Path $target
-                $null = New-Item -ItemType Junction -Path $container -Value $target
+            if ($UnsafeTemp) {
+                Initialize-LocalCiPrivateTempDirectory -Path $tempRoot
+                if ($UnsafeTemp -cin @('Junction', 'RootJunction', 'LeafJunction')) {
+                    $target = Join-Path $tempRoot 'target'
+                    Initialize-LocalCiPrivateTempDirectory -Path $target
+                    if ($UnsafeTemp -ceq 'RootJunction') {
+                        $null = New-Item -ItemType Junction -Path $rootJunction -Value $target
+                        $tempRoot = Join-Path $rootJunction 'temp'
+                    }
+                    elseif ($UnsafeTemp -ceq 'LeafJunction') {
+                        Import-Module (Join-Path $repository 'tools/LocalCi.psm1') -Force
+                        Initialize-LocalCiPrivateTempDirectory -Path $container
+                        $leafJunction = Get-LocalCiTempPath -RepoPath $fixture -DataRoot $tempRoot
+                        Set-Content -LiteralPath (Join-Path $target 'preserve.txt') 'untouched'
+                        $null = New-Item -ItemType Junction -Path $leafJunction -Value $target
+                    }
+                    else { $null = New-Item -ItemType Junction -Path $container -Value $target }
+                }
+                else {
+                    $unsafeDirectory = if ($UnsafeTemp -ceq 'RootWritable') { $tempRoot } else { $container }
+                    Initialize-LocalCiPrivateTempDirectory -Path $unsafeDirectory
+                    $directory = [IO.DirectoryInfo]::new($unsafeDirectory)
+                    $acl = [IO.FileSystemAclExtensions]::GetAccessControl($directory, [Security.AccessControl.AccessControlSections]::Access)
+                    $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+                        [Security.Principal.SecurityIdentifier]::new('S-1-5-11'), [Security.AccessControl.FileSystemRights]::Modify,
+                        [Security.AccessControl.AccessControlType]::Allow)
+                    $null = $acl.AddAccessRule($rule)
+                    [IO.FileSystemAclExtensions]::SetAccessControl($directory, $acl)
+                }
             }
-            else {
-                Initialize-LocalCiPrivateTempDirectory -Path $container
-                $directory = [IO.DirectoryInfo]::new($container)
-                $acl = [IO.FileSystemAclExtensions]::GetAccessControl($directory, [Security.AccessControl.AccessControlSections]::Access)
-                $rule = [Security.AccessControl.FileSystemAccessRule]::new(
-                    [Security.Principal.SecurityIdentifier]::new('S-1-5-11'), [Security.AccessControl.FileSystemRights]::Modify,
-                    [Security.AccessControl.AccessControlType]::Allow)
-                $null = $acl.AddAccessRule($rule)
-                [IO.FileSystemAclExtensions]::SetAccessControl($directory, $acl)
+            if ($InvalidFile) {
+                git -C $fixture config core.quotepath true
+                Set-Content -LiteralPath (Join-Path $fixture "tools/$([char]0xE9).ps1") 'function {'
+                git -C $fixture add .
+                git -C $fixture commit --quiet -m 'Include an invalid non-ASCII source file'
             }
-        }
-        if ($InvalidFile) {
-            git -C $fixture config core.quotepath true
-            Set-Content -LiteralPath (Join-Path $fixture "tools/$([char]0xE9).ps1") 'function {'
-            git -C $fixture add .
-            git -C $fixture commit --quiet -m 'Include an invalid non-ASCII source file'
-        }
-        $wrapper = Join-Path $TestDrive 'selection-race.ps1'
-        $escaped = $fixture.Replace("'", "''")
-        $action = if ($MissingGo) {
-            @'
+            $wrapper = Join-Path $TestDrive 'selection-race.ps1'
+            $escaped = $fixture.Replace("'", "''")
+            $action = if ($MissingGo) {
+                @'
     & (Get-Module LocalCiGate) {
         function script:Get-Command {
             [CmdletBinding()]
@@ -291,38 +314,46 @@ Describe 'Local CI process guards' {
         }
     }
 '@
-        }
-        else {
-            @"
+            }
+            else {
+                @"
     'function {' | Set-Content '$escaped/bad.ps1'
     git -C '$escaped' add bad.ps1
     git -C '$escaped' commit --quiet -m 'Change HEAD during selection'
 "@
-        }
-        $breakpoint = if ($InvalidFile -or $UnsafeTemp) { '' } else { @"
+            }
+            $breakpoint = if ($InvalidFile -or $UnsafeTemp -or $UnsupportedTemp) { '' } else { @"
 Set-PSBreakpoint -Command '$Command' -Action {
 $action
     Get-PSBreakpoint | Remove-PSBreakpoint
 } | Out-Null
 "@ }
-        @"
+            $tempArgument = if ($IsWindows -or $UnsupportedTemp) { " -TempRoot '$($tempRoot.Replace("'", "''"))'" } else { '' }
+            @"
 `$ErrorActionPreference = 'Stop'
 Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
 $breakpoint
-& '$escaped/tools/Invoke-LocalCi.ps1' -WorkerProcess -Base baseline -TempRoot '$($tempRoot.Replace("'", "''"))' -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
+& '$escaped/tools/Invoke-LocalCi.ps1' -WorkerProcess -Base baseline$tempArgument -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
 exit `$LASTEXITCODE
 "@ | Set-Content $wrapper
-        $output = & ([Environment]::ProcessPath) -NoProfile -File $wrapper 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be $ExpectedExit -Because $output
-        $output | Should -Match $ExpectedError
-        $receipt = (git -C $fixture rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
-        Test-Path -LiteralPath $receipt | Should -BeFalse
+            $output = & ([Environment]::ProcessPath) -NoProfile -File $wrapper 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be $ExpectedExit -Because $output
+            $output | Should -Match $ExpectedError
+            $receipt = (git -C $fixture rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+            Test-Path -LiteralPath $receipt | Should -BeFalse
+            if ($UnsafeTemp -ceq 'LeafJunction') {
+                Get-Content -LiteralPath (Join-Path $target 'preserve.txt') | Should -BeExactly 'untouched'
+            }
         }
         finally {
+            if ($leafJunction -and (Test-Path -LiteralPath $leafJunction)) { Remove-Item -LiteralPath $leafJunction -Force }
             if ($UnsafeTemp -ceq 'Junction' -and (Test-Path -LiteralPath $container)) {
                 Remove-Item -LiteralPath $container -Force
             }
-            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+            if ($UnsafeTemp -ceq 'RootJunction' -and (Test-Path -LiteralPath $rootJunction)) {
+                Remove-Item -LiteralPath $rootJunction -Force
+            }
+            if (Test-Path -LiteralPath $fixtureTempRoot) { Remove-Item -LiteralPath $fixtureTempRoot -Recurse -Force }
         }
     }
 }
@@ -348,23 +379,6 @@ Describe 'Local CI profiles' {
         $output | Should -Match 'Interruption: all'
         $output | Should -Match 'Mutation: all'
         $output | Should -Not -Match 'Terraform roots: none'
-    }
-}
-
-Describe 'Local CI private TEMP access' {
-    It 'creates a protected Windows directory and refuses existing broader access' -Skip:(-not $IsWindows) {
-        $path = Join-Path $TestDrive 'private-temp'
-        Initialize-LocalCiPrivateTempDirectory -Path $path
-        Initialize-LocalCiPrivateTempDirectory -Path $path
-        $directory = [IO.DirectoryInfo]::new($path)
-        $acl = [IO.FileSystemAclExtensions]::GetAccessControl($directory, [Security.AccessControl.AccessControlSections]::Access)
-        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
-            [Security.Principal.SecurityIdentifier]::new('S-1-5-11'), [Security.AccessControl.FileSystemRights]::Modify,
-            [Security.AccessControl.AccessControlType]::Allow)
-        $null = $acl.AddAccessRule($rule)
-        [IO.FileSystemAclExtensions]::SetAccessControl($directory, $acl)
-        { Initialize-LocalCiPrivateTempDirectory -Path $path } | Should -Throw '*Unsafe CI TEMP*'
-        (Get-Acl -LiteralPath $path).Access.Count | Should -Be 3
     }
 }
 
