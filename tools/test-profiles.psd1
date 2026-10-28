@@ -37,6 +37,7 @@
         'EnterpriseBaseline.Tests.ps1'
         'EnterpriseInstallationToken.Tests.ps1'
         'GitHubAcceptance.Tests.ps1'
+        'GitHubAcceptanceBindings.Tests.ps1'
         'GitHubAcceptanceProbe.Tests.ps1'
         'GitHubAppOwner.Tests.ps1'
         'GitHubAppToken.Tests.ps1'
