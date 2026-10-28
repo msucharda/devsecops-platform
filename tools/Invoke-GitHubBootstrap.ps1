@@ -553,7 +553,10 @@ foreach ($name in @('platform', 'security')) {
 $files = @{}
 $releaseHashes = @{}
 $releaseFiles = @(Get-ChildItem -LiteralPath $ReleasePath -Recurse -Force -File |
-    Where-Object { $_.FullName -notmatch '[\\/](\.git|\.terraform|artifacts|node_modules)[\\/]' })
+    Where-Object {
+        $_.FullName -notmatch '[\\/](\.git|\.terraform|artifacts|node_modules)[\\/]' -and
+        (Test-PlatformReleaseFile -RelativePath ([IO.Path]::GetRelativePath($ReleasePath, $_.FullName)))
+    })
 foreach ($file in $releaseFiles) {
     if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint -or $file.Extension -in @('.pem', '.pfx', '.tfstate') -or
         $file.Name -in @('.env', 'keys.json', 'bootstrap-resources.json') -or $file.Name -like '*.tfstate.*') {
@@ -565,7 +568,8 @@ foreach ($file in $releaseFiles) {
     $releaseHashes[$relative] = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 }
 if ($releaseHashes.Count -eq 0) { throw 'The release is empty.' }
-foreach ($file in Get-ChildItem -LiteralPath (Join-Path $ReleasePath 'templates/instance') -Recurse -Force -File) {
+foreach ($file in Get-ChildItem -LiteralPath (Join-Path $ReleasePath 'templates/instance') -Recurse -Force -File |
+    Where-Object { Test-PlatformReleaseFile -RelativePath ([IO.Path]::GetRelativePath($ReleasePath, $_.FullName)) }) {
     $relative = [IO.Path]::GetRelativePath((Join-Path $ReleasePath 'templates/instance'), $file.FullName).Replace('\', '/')
     $files[$relative] = [IO.File]::ReadAllBytes($file.FullName)
 }

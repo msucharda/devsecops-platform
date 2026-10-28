@@ -760,7 +760,9 @@ function Test-SetupYamlModule {
     [OutputType([bool])]
     param()
 
-    return $null -ne (Get-Module -ListAvailable -Name powershell-yaml | Where-Object { $_.Version -eq [version] '0.4.12' } | Select-Object -First 1)
+    Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+    $null = Get-ToolDependencyPath -Name powershell-yaml
+    return $true
 }
 
 #endregion
@@ -1055,17 +1057,9 @@ function Invoke-StepTool {
             $missing | ForEach-Object { "winget install --exact --id $($_.Package)" }
         ) + 'Open a new PowerShell window after the installation, then rerun the wizard.')
     }
-    $installer = Join-Path $Setup.RepoPath 'tools/Install-ToolDependencies.ps1'
-    if (-not (Test-SetupYamlModule)) {
-        if (-not (Confirm-SetupAction -Prompt 'The PowerShell module powershell-yaml 0.4.12 is missing. Install it for the current user now?' -DefaultYes)) {
-            Exit-SetupStage -Status Missing -Message 'powershell-yaml 0.4.12 is missing.' -Guidance @("Run: & '$installer'")
-        }
-        $null = & $installer
-        if (-not (Test-SetupYamlModule)) {
-            Exit-SetupStage -Status Error -Message 'powershell-yaml 0.4.12 is still missing after the installation.' -Guidance @("Run: & '$installer'")
-        }
-    }
-    Import-Module -Name powershell-yaml -RequiredVersion 0.4.12
+    $null = Test-SetupYamlModule
+    Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+    Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
     Import-Module -Name (Join-Path $Setup.RepoPath 'tools/PlatformTools.psm1') -Force
     $null = New-Item -ItemType Directory -Force -Path (Join-Path $Setup.WorkPath 'keys')
     $Setup.Existing = $null

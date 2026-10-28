@@ -51,6 +51,7 @@ Describe 'GitHub bootstrap public interface' {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination (Join-Path $release 'modules') -Recurse
         $releaseTools = New-Item -ItemType Directory -Path (Join-Path $release 'tools')
         Get-ChildItem -LiteralPath $tools -File | Copy-Item -Destination $releaseTools.FullName
+        Copy-Item (Join-Path $tools 'vendor') -Destination $releaseTools.FullName -Recurse
         & (Join-Path $releaseTools.FullName 'Generate-DeploymentWorkflow.ps1') -ModulesPath (Join-Path $release 'modules') `
             -OutputPath (Join-Path $release 'templates/instance/.github/workflows/deploy.yml')
         $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
@@ -469,7 +470,12 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.secrets.Count | Should -Be 0
     }
 
-    It 'creates the instance repository with the exact release and both organization teams' {
+    It 'creates the instance repository with the exact release and both organization teams' -Tag 'SupplyChain' {
+        foreach ($relative in @('tools/.dependencies/interrupted', 'templates/instance/tools/.dependencies/interrupted')) {
+            $cache = Join-Path $release $relative
+            $null = New-Item -ItemType Directory -Path $cache -Force
+            Set-Content (Join-Path $cache 'unverified.nupkg') 'not an approved release dependency'
+        }
         $arguments.ResourcesOnly = $false
         $result = & $bootstrap @arguments
 
@@ -478,6 +484,10 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.resources['/orgs/demo-a1b2c3-platform/teams/platform/memberships/owner_example'].state | Should -Be 'active'
         $cloud.resources['/orgs/demo-a1b2c3-platform/teams/security/memberships/owner_example'].state | Should -Be 'active'
         $cloud.tree.path | Should -Contain 'platform/schemas/instance.schema.json'
+        @($cloud.tree.path | Where-Object { $_ -match '[\\/]\.dependencies[\\/]' }).Count | Should -Be 0
+        $markerBlob = $cloud.tree | Where-Object { $_.path -eq '.platform-bootstrap.json' }
+        $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
+        @($marker.files.Keys | Where-Object { $_ -match '[\\/]\.dependencies[\\/]' }).Count | Should -Be 0
         $codeowners = $cloud.tree | Where-Object { $_.path -eq '.github/CODEOWNERS' }
         [Text.Encoding]::UTF8.GetString($cloud.blobs[$codeowners.sha]) | Should -Be "* @demo-a1b2c3-platform/platform`n"
         $rules = $cloud.resources['/repos/demo-a1b2c3-platform/instance/rulesets/60']

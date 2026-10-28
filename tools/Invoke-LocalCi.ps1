@@ -101,7 +101,15 @@ try { $startState = Get-LocalCiContentState -RepositoryRoot $repo -Base $Base }
 catch { Exit-Usage "Invalid -Base '$Base' or unreadable source state: $($_.Exception.Message)" }
 if (-not $Plan -and -not $startState.Clean) { Exit-Usage 'Commit all source changes before running the local gate.' }
 $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
-$moduleProbe = { param($module) @(Get-Module -ListAvailable -Name $module | ForEach-Object { $_.Version.ToString() }) }
+Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+$moduleProbe = {
+    param($module)
+    try {
+        $path = Get-ToolDependencyPath -Name $module
+        (Import-PowerShellDataFile $path).ModuleVersion
+    }
+    catch { Write-Warning $_.Exception.Message }
+}
 # ci.yml is parsed with powershell-yaml, so missing modules must be reported before parsing.
 $moduleProblems = @(Get-LocalCiModuleProblem -Requirements $requirements -ModuleProbe $moduleProbe)
 if ($moduleProblems.Count -gt 0) {

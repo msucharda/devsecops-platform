@@ -186,7 +186,7 @@ Dílčí kroky: `Command-line tools`, `Instance inputs`.
 **Průvodce:**
 
 - Ověří `az` a `gh`. Chybějící nástroj ohlásí s příkazem `winget install`.
-- Po potvrzení nainstaluje modul `powershell-yaml` 0.4.12 pro aktuálního uživatele.
+- Ověří a načte přibalený modul `powershell-yaml` z `tools/vendor/`. Nestahuje ho z PSGallery ani neinstaluje pro aktuálního uživatele.
 - Vytvoří `$work\keys` a přečte existující `$work\instance.yaml`.
 - Vyžádá vstupy a ověří jejich formát:
 

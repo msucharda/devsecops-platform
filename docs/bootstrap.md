@@ -29,7 +29,7 @@ az login --tenant '<tenant-id>'
 gh auth login --hostname example.ghe.com --web --scopes read:enterprise
 ```
 
-Instalátor obnoví chybějící registraci PSGallery a pro každou závislost provede nejvýše čtyři pokusy (`-MaxAttempts 4`). Mezi pokusy čeká 15, 30 a 45 sekund (`-RetryDelaySeconds 15`, lineární prodleva). Po posledním neúspěšném pokusu skončí chybou. Již nainstalovanou verzi z `tools/requirements.psd1` přeskočí. Přepínač `-Development` přidá vývojové závislosti.
+Parser YAML je přibalený v `tools/vendor/`. Instalační skript bez `-Development` pouze ověří jeho integritu; bootstrap ani deploy nestahují moduly z PSGallery. Přepínač `-Development` stáhne vývojové moduly do izolované cache a ověří SHA256 i obsah před importem. Stahování balíčku opakuje nejvýše čtyřikrát (`-MaxAttempts 4`) s prodlevami 15, 30 a 45 sekund (`-RetryDelaySeconds 15`). Neshodu hashe nesmí opakovat ani obejít. Postup aktualizace uvádí [provenience závislostí](../tools/vendor/PROVENANCE.md).
 
 Bootstrap čte uložený token pomocí `gh auth token --hostname`. Přijme jen OAuth token `gho_`; odmítne classic i fine-grained PAT. Proměnné `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` a `GITHUB_ENTERPRISE_TOKEN` musí být v procesu bootstrapu prázdné. Bootstrap token nevypisuje, neukládá do souboru ani nepředává jako argument dalšího procesu.
 

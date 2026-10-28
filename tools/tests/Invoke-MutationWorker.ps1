@@ -7,6 +7,7 @@ Runs mutation jobs in one process: writes each mutant into the repository copy, 
 Each job holds the check, the file, the mutated text (null for a baseline) and the Pester tests. Before every job the worker
 removes the modules loaded from the copy so that the tests import the current file. Results are appended as JSON lines,
 so a killed worker keeps the results of finished jobs.
+Worker dependencies are verified from the runner's tools directory, independently of the repository under test.
 #>
 [CmdletBinding()]
 param(
@@ -17,8 +18,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$requirements = Import-PowerShellDataFile (Join-Path $RepoPath 'tools/requirements.psd1')
-Import-Module Pester -RequiredVersion $requirements.Development.Pester
+$toolsPath = Split-Path $PSScriptRoot -Parent
+Import-Module (Join-Path $toolsPath 'ToolDependencies.psm1')
+Import-Module (Get-ToolDependencyPath -Name Pester -ToolsPath $toolsPath)
+$env:PSModulePath = "$(Join-Path $toolsPath 'vendor')$([IO.Path]::PathSeparator)$env:PSModulePath"
+# Initialize aliases outside Pester scopes so successive suites reuse the same verified module.
+Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ToolsPath $toolsPath -ReuseLoaded)
 
 $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 $prefix = $RepoPath.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
@@ -29,7 +34,11 @@ foreach ($job in $jobs) {
     $target = Join-Path $RepoPath $job['File']
     $original = [IO.File]::ReadAllBytes($target)
     try {
-        Get-Module | Where-Object { $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) } | Remove-Module -Force
+        Get-Module | Where-Object {
+            $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and
+            $_.Path -notlike "$(Join-Path $RepoPath 'tools/.dependencies')$([IO.Path]::DirectorySeparatorChar)*" -and
+            $_.Path -notlike "$(Join-Path $RepoPath 'tools/vendor')$([IO.Path]::DirectorySeparatorChar)*"
+        } | Remove-Module -Force
         if ($null -ne $job['Text']) { [IO.File]::WriteAllText($target, $job['Text'], [Text.UTF8Encoding]::new($false)) }
         foreach ($test in @($job['Tests'])) {
             if ($null -eq $job['Text']) {

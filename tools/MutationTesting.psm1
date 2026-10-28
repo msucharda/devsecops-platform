@@ -32,7 +32,7 @@ function Get-SecurityCheckMarker {
         $root = Join-Path $RepoPath $folder
         if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
         $files = Get-ChildItem -LiteralPath $root -Recurse -File -Include '*.ps1', '*.psm1' |
-            Where-Object { $_.FullName -notmatch '[\\/]tests[\\/]' } | Sort-Object FullName
+            Where-Object { $_.FullName -notmatch '[\\/](tests|vendor|\.dependencies)[\\/]' } | Sort-Object FullName
         foreach ($file in $files) {
             $relative = [IO.Path]::GetRelativePath($RepoPath, $file.FullName).Replace('\', '/')
             $tokens = $null

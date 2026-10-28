@@ -127,6 +127,9 @@ function Add-DeploymentJob {
         with:
           terraform_version: 1.16.5
           terraform_wrapper: false
+      - name: Verify Terraform checksum
+        shell: pwsh
+        run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:

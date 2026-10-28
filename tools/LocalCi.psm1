@@ -90,14 +90,20 @@ function Get-CiWorkflowSetting {
     .SYNOPSIS
     Reads the commands, tool pins and actionlint invocations that Invoke-LocalCi mirrors from ci.yml.
     .DESCRIPTION
-    Every value comes from ci.yml so local runs cannot drift from CI. An unexpected ci.yml shape throws.
+    Commands and setup-action pins come from ci.yml; the verified TFLint installer uses requirements.psd1.
+    An unexpected ci.yml shape throws.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $WorkflowPath)
 
     $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
-    Import-Module powershell-yaml -RequiredVersion $requirements.Runtime['powershell-yaml'] -ErrorAction Stop
+    Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+    Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded) -ErrorAction Stop
     $workflow = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $WorkflowPath -Raw) -Ordered
+    $tflintInstaller = Get-CiWorkflowStep -Workflow $workflow -Job terraform -Name 'Install verified TFLint'
+    if ($tflintInstaller['shell'] -cne 'pwsh' -or $tflintInstaller['run'] -cne './tools/Install-CiBinary.ps1 -Name TFLint') {
+        throw 'ci.yml must install the pinned TFLint archive. Update tools/LocalCi.psm1.'
+    }
     $pwshSteps = [ordered]@{}
     foreach ($name in 'Check PowerShell', 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {
         $step = Get-CiWorkflowStep -Workflow $workflow -Job platform-checks -Name $name
@@ -146,7 +152,7 @@ function Get-CiWorkflowSetting {
         InstanceActionlintArguments = $instanceLint.Arguments
         TerraformVersion = Get-CiActionInput -Workflow $workflow -Job terraform -Action 'hashicorp/setup-terraform' -InputName terraform_version
         PlatformTerraformVersion = Get-CiActionInput -Workflow $workflow -Job pester -Action 'hashicorp/setup-terraform' -InputName terraform_version
-        TflintVersion = (Get-CiActionInput -Workflow $workflow -Job terraform -Action 'terraform-linters/setup-tflint' -InputName tflint_version).TrimStart('v')
+        TflintVersion = $requirements.Binaries.TFLint.Version
         TrivyVersion = (Get-CiActionInput -Workflow $workflow -Job terraform -Action 'aquasecurity/setup-trivy' -InputName version).TrimStart('v')
         TerraformRunCommands = $terraformCommands
         TerraformFingerprint = ConvertTo-Json -Compress -Depth 20 -InputObject @(

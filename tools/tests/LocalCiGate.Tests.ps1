@@ -244,6 +244,15 @@ Describe 'Local CI process guards' {
             $null = New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent)
             Copy-Item -LiteralPath $source -Destination $destination
         }
+        $requirements = Import-PowerShellDataFile (Join-Path $repository 'tools/requirements.psd1')
+        $cache = Join-Path $fixture 'tools/.dependencies'
+        $null = New-Item -ItemType Directory -Force -Path (Join-Path $cache 'packages')
+        foreach ($name in $requirements.Development.Keys) {
+            $version = $requirements.Development[$name]
+            $null = New-Item -ItemType Directory -Force -Path (Join-Path $cache $name)
+            Copy-Item -LiteralPath (Join-Path $repository "tools/.dependencies/$name/$version") -Destination (Join-Path $cache "$name/$version") -Recurse
+            Copy-Item -LiteralPath (Join-Path $repository "tools/.dependencies/packages/$name.$version.nupkg") -Destination (Join-Path $cache 'packages')
+        }
         if ($InvalidFile) {
             # Keep this parser regression from recursively running its own fixture suite.
             $names = @(Get-ChildItem (Join-Path $fixture 'tools/tests') -Filter '*.Tests.ps1' |

@@ -4,7 +4,6 @@ BeforeAll {
     $runner = Join-Path $PSScriptRoot '../Invoke-MutationTests.ps1'
     $sample = Join-Path $TestDrive 'sample'
     $null = New-Item -ItemType Directory -Path (Join-Path $sample 'tools/tests') -Force
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../requirements.psd1') -Destination (Join-Path $sample 'tools/requirements.psd1')
     @'
 # security-check: sample-a
 function Test-SampleA {
@@ -55,6 +54,16 @@ Describe 'Sample controls' {
 }
 
 AfterAll { $env:LOCAL_CI_WORKER_BUDGET = $savedWorkerBudget }
+
+Describe 'Mutation runner verified runtime boundary' -Tag Integration {
+    It 'keeps YAML imports usable across different baseline suites in one worker' {
+        $path = Join-Path $TestDrive 'runtime-boundary.json'
+        & $runner -ThrottleLimit 1 -Check @('bootstrap-request-policy', 'platform-app-manifest-scope') -ReportPath $path 6>$null
+        $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        @($report.problems).Count | Should -Be 0
+        $report.mutants.Status | Select-Object -Unique | Should -BeExactly 'Killed'
+    }
+}
 
 Describe 'Mutation runner public interface' {
     BeforeAll {

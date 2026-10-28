@@ -30,7 +30,7 @@ Nástroje vyžadují PowerShell 7.4 nebo novější. Verze modulů PowerShellu u
 .\tools\Invoke-Tests.ps1
 ```
 
-Instalační skript stáhne chybějící verze modulů z PowerShell Gallery do rozsahu `CurrentUser`. Bez `-Development` instaluje jen parser YAML pro běh nástrojů.
+Parser YAML patří do releasu a nástroje ho načítají z `tools/vendor/` bez PSGallery. Bez `-Development` skript pouze ověří přibalené runtime závislosti. S `-Development` stáhne vývojové moduly do `tools/.dependencies/`, ověří SHA256 balíčků podle pinu a porovná obsah `Save-Module` s ověřeným archivem. Podrobnosti a postup aktualizace uvádí [provenience závislostí](tools/vendor/PROVENANCE.md).
 
 ### Instance configuration (konfigurace instance)
 
