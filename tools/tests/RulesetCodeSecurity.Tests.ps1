@@ -3,7 +3,7 @@ BeforeAll {
     $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/organization-rulesets'
     Import-Module (Join-Path $moduleRoot 'scripts/Rulesets.psm1') -Force
 
-    function Get-TestSecurityDefaults {
+    function Get-TestSecurityDefault {
         $configuration = Get-GitHubApiFixture -Name code-security/get-configuration -Set @{
             id = 42; name = 'platform-baseline'; target_type = 'organization'
             advanced_security = 'enabled'; code_scanning_default_setup = 'enabled'; enforcement = 'enforced'
@@ -21,7 +21,7 @@ Describe 'Ruleset Code Security prerequisite' {
         $previousTokens = $env:PLATFORM_GITHUB_TOKENS
         $env:PLATFORM_GITHUB_TOKENS = '{"demo":"stub-token"}'
         Mock -ModuleName Rulesets Start-Sleep {}
-        $defaults = Get-TestSecurityDefaults
+        $defaults = Get-TestSecurityDefault
         Mock -ModuleName Rulesets Invoke-WebRequest {
             $Uri | Should -BeExactly 'https://api.example.ghe.com/orgs/demo/code-security/configurations/defaults'
             [string] $Method | Should -Be 'GET'
@@ -46,7 +46,7 @@ Describe 'Ruleset Code Security prerequisite' {
     }
 
     It 'accepts separate public and private/internal defaults with the same configuration ID' {
-        $other = (Get-TestSecurityDefaults)[0]
+        $other = (Get-TestSecurityDefault)[0]
         $defaults[0]['default_for_new_repos'] = 'public'
         $other['default_for_new_repos'] = 'private_and_internal'
         $defaults += $other
@@ -141,7 +141,7 @@ Describe 'Ruleset Code Security prerequisite' {
     }
 
     It 'rejects different configuration IDs across the two visibility defaults' {
-        $other = (Get-TestSecurityDefaults)[0]
+        $other = (Get-TestSecurityDefault)[0]
         $defaults[0]['default_for_new_repos'] = 'public'
         $other['default_for_new_repos'] = 'private_and_internal'
         $other['configuration']['id'] = 43
@@ -152,7 +152,7 @@ Describe 'Ruleset Code Security prerequisite' {
     }
 
     It 'rejects overlapping default records' {
-        $defaults += (Get-TestSecurityDefaults)[0]
+        $defaults += (Get-TestSecurityDefault)[0]
         { Assert-RulesetCodeSecurityPrerequisite -ApiUrl 'https://api.example.ghe.com' -Organization demo } |
             Should -Throw '*overlap*'
     }
