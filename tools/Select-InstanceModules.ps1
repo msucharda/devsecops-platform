@@ -11,8 +11,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-if ($DeploymentScope -cnotin @('full', 'code-security')) {
-    throw "Invalid DeploymentScope '$DeploymentScope': expected 'full' or 'code-security'."
+if ($DeploymentScope -cnotin @('full', 'code-security', 'catalog')) {
+    throw "Invalid DeploymentScope '$DeploymentScope': expected 'full', 'code-security' or 'catalog'."
 }
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
@@ -26,13 +26,18 @@ if ($TrustedInstancePath) {
     }
 }
 $phaseNodes = Get-PlatformModulePhaseGraph -Modules $modules
-if ($DeploymentScope -ceq 'code-security') {
+if ($DeploymentScope -cin @('code-security', 'catalog')) {
     if (-not $instance['modules'].Contains('enterprise-baseline') -or
         -not $phaseNodes.Contains('enterprise-baseline:code-security')) {
         throw 'Code Security deployment requires a configured enterprise-baseline module and its declared code-security phase.'
     }
+    if ($DeploymentScope -ceq 'catalog' -and
+        (-not $instance['modules'].Contains('actions-catalog') -or -not $phaseNodes.Contains('actions-catalog'))) {
+        throw 'Catalog deployment requires a configured actions-catalog module.'
+    }
     $pending = [System.Collections.Generic.Queue[string]]::new()
-    $pending.Enqueue('enterprise-baseline:code-security')
+    $seed = if ($DeploymentScope -ceq 'catalog') { 'actions-catalog' } else { 'enterprise-baseline:code-security' }
+    $pending.Enqueue($seed)
     $selectedNodes = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     while ($pending.Count -gt 0) {
         $nodeName = $pending.Dequeue()
@@ -41,6 +46,12 @@ if ($DeploymentScope -ceq 'code-security') {
                 $pending.Enqueue($prerequisite)
             }
         }
+    }
+    if ($DeploymentScope -ceq 'catalog' -and
+        (-not $selectedNodes.Contains('enterprise-baseline:code-security') -or
+            -not $selectedNodes.Contains('organization-rulesets') -or
+            $selectedNodes.Contains('enterprise-baseline'))) {
+        throw 'Catalog deployment requires the early Code Security and organization-rulesets prerequisites without the late enterprise-baseline root.'
     }
 }
 else {

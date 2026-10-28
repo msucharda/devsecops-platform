@@ -239,7 +239,7 @@ on:
         required: true
         type: choice
         default: full
-        options: [full, code-security]
+        options: [full, code-security, catalog]
 permissions:
   contents: read
 concurrency:
@@ -256,7 +256,7 @@ jobs:
         shell: pwsh
         run: |
           if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-            if ($env:DEPLOYMENT_SCOPE -cnotin @('full', 'code-security')) {
+            if ($env:DEPLOYMENT_SCOPE -cnotin @('full', 'code-security', 'catalog')) {
               throw 'Unsupported deployment scope.'
             }
           } elseif (-not [string]::IsNullOrEmpty($env:DEPLOYMENT_SCOPE)) {

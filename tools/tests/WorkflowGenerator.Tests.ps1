@@ -116,7 +116,7 @@ Describe 'Deployment workflow generation' {
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
         $workflow.on.workflow_dispatch.inputs.deployment.type | Should -Be 'choice'
         $workflow.on.workflow_dispatch.inputs.deployment.default | Should -Be 'full'
-        @($workflow.on.workflow_dispatch.inputs.deployment.options) | Should -Be @('full', 'code-security')
+        @($workflow.on.workflow_dispatch.inputs.deployment.options) | Should -Be @('full', 'code-security', 'catalog')
         (Get-Content -LiteralPath $output -Raw) | Should -Match '(?m)^jobs:\r?\n  validate_scope:'
         $workflow.jobs.authorize.needs | Should -Be 'validate_scope'
         $workflow.jobs.validate_scope.Contains('environment') | Should -BeFalse
@@ -127,11 +127,11 @@ Describe 'Deployment workflow generation' {
         $previousScope = $env:DEPLOYMENT_SCOPE
         try {
             $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
-            foreach ($value in @('full', 'code-security')) {
+            foreach ($value in @('full', 'code-security', 'catalog')) {
                 $env:DEPLOYMENT_SCOPE = $value
                 { & ([scriptblock]::Create($run)) } | Should -Not -Throw
             }
-            foreach ($value in @('', 'unexpected', 'FULL')) {
+            foreach ($value in @('', 'unexpected', 'FULL', 'Catalog', 'CODE-SECURITY')) {
                 $env:DEPLOYMENT_SCOPE = $value
                 { & ([scriptblock]::Create($run)) } | Should -Throw '*Unsupported deployment scope*'
             }

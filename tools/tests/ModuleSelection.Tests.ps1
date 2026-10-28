@@ -1,7 +1,9 @@
 BeforeAll {
+    Import-Module powershell-yaml -RequiredVersion 0.4.12
     $toolsPath = Split-Path $PSScriptRoot -Parent
     $selector = Join-Path $toolsPath 'Select-InstanceModules.ps1'
     $fixtures = Join-Path $PSScriptRoot 'fixtures/modules'
+    $releasedModules = Join-Path (Split-Path $toolsPath -Parent) 'modules'
     $header = @'
 instance: {name: demo}
 regions: {primary: westeurope}
@@ -10,91 +12,167 @@ teams:
   security: [security@example.test]
 
 '@
+
+    function Get-ReleasedPhaseInstance {
+        Import-Module (Join-Path $toolsPath 'PlatformTools.psm1')
+        $graph = Get-PlatformModuleGraph -ModulesPath $releasedModules
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $toolsPath '../templates/instance/instance.yaml') -Raw)
+        $organizations = @('demo-actions', 'demo-platform', 'demo-workloads')
+        $reviewers = @{}
+        foreach ($organization in $organizations) {
+            $reviewers[$organization] = @(@{ reviewer_type = 'TEAM'; reviewer_id = 17 })
+        }
+        $instance.modules = @{
+            organizations = @{ parameters = @{
+                admin_logins = @('admin')
+                billing_email = 'billing@example.test'
+            } }
+            'enterprise-baseline' = @{ parameters = @{
+                target_organizations = $organizations
+                secret_scanning_bypass_reviewers = $reviewers
+            } }
+            'organization-rulesets' = @{ parameters = @{ target_organizations = $organizations } }
+            'actions-catalog' = @{ parameters = @{ target_organizations = $organizations; security_team = 'security' } }
+        }
+        $instance.githubApps = @{}
+        $instance.credentials = @{}
+        $appId = 100
+        foreach ($name in @('organizations', 'enterprise-baseline', 'organization-rulesets', 'actions-catalog')) {
+            $instance.credentials[$name] = @{}
+            foreach ($phase in $graph[$name].permissions.githubApp.PSBase.Keys) {
+                $declaration = $graph[$name].permissions.githubApp[$phase]
+                $alias = "$name-$($phase.ToLowerInvariant())"
+                $resources = if ($declaration.resources.Contains('enterprise')) {
+                    @{ enterprise = $true }
+                }
+                else {
+                    $scope = @{ organizations = $organizations }
+                    if ($declaration.resources.Contains('installationSelection') -and
+                        $declaration.resources.installationSelection -ceq 'none') { $scope.repositories = @{} }
+                    $scope
+                }
+                $instance.githubApps[$alias] = @{
+                    appId = "$appId"
+                    installationId = "$($appId + 100)"
+                    enterprise = 'example'
+                    permissions = $declaration.permissions
+                    resources = $resources
+                }
+                $instance.credentials[$name][$phase] = @{
+                    environment = "$name-$($phase.ToLowerInvariant())"
+                    githubApp = $alias
+                }
+                $appId++
+            }
+        }
+        return $instance
+    }
 }
 
 Describe 'Instance module selection' {
-    It 'keeps the early phase but not the late baseline when deploying rulesets or the catalog before workflow promotion' {
-        Import-Module powershell-yaml -RequiredVersion 0.4.12
-        $modules = Join-Path $TestDrive 'catalog-phase-modules'
-        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
-        $baselinePath = Join-Path $modules 'enterprise-baseline/module.yaml'
-        $baseline = ConvertFrom-Yaml (Get-Content -LiteralPath $baselinePath -Raw)
-        $baseline.prerequisites = @('actions-catalog')
-        $baseline.permissions.githubApp = @{}
-        $baseline.phases = @{ 'code-security' = @{ prerequisites = @('foundation') } }
-        ConvertTo-Yaml $baseline | Set-Content -LiteralPath $baselinePath
-        New-Item -ItemType Directory -Path (Join-Path $modules 'enterprise-baseline/code-security') | Out-Null
-        foreach ($name in @('organization-rulesets', 'actions-catalog')) {
-            Copy-Item -LiteralPath (Join-Path $fixtures 'observer') -Destination (Join-Path $modules $name) -Recurse
-            $manifestPath = Join-Path $modules "$name/module.yaml"
-            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
-            $manifest.name = $name
-            $manifest.prerequisites = @('organization-rulesets')
-            if ($name -eq 'organization-rulesets') {
-                $manifest.prerequisites = @('enterprise-baseline:code-security')
-            }
-            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+    BeforeAll {
+        $releaseInstancePath = Join-Path $TestDrive 'release-phase-instance.yaml'
+        ConvertTo-Yaml (Get-ReleasedPhaseInstance) | Set-Content -LiteralPath $releaseInstancePath
+        $workflowPath = Join-Path $TestDrive 'release-phase-deploy.yml'
+        & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $releasedModules -OutputPath $workflowPath
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $workflowPath -Raw)
+    }
+
+    It 'uses the released manifest App permissions instead of an unbound baseline fixture' {
+        $baseline = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $releasedModules 'enterprise-baseline/module.yaml') -Raw)
+        $rulesets = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $releasedModules 'organization-rulesets/module.yaml') -Raw)
+        $catalog = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $releasedModules 'actions-catalog/module.yaml') -Raw)
+
+        $baseline.permissions.githubApp.plan.permissions.organization_administration | Should -Be 'read'
+        $baseline.permissions.githubApp.apply.permissions.organization_administration | Should -Be 'write'
+        $rulesets.permissions.githubApp.rulesetPlan.permissions.organization_administration | Should -Be 'write'
+        $catalog.permissions.githubApp.apply.permissions.administration | Should -Be 'write'
+    }
+
+    It 'uses the released manifest credentials and selects only <Scope> phase nodes before promotion' -ForEach @(
+        @{
+            Scope = 'code-security'
+            Nodes = @('enterprise-baseline:code-security', 'organizations')
+            Modules = @('enterprise-baseline', 'organizations')
+            RulesetModules = @()
+        },
+        @{
+            Scope = 'catalog'
+            Nodes = @('actions-catalog', 'enterprise-baseline:code-security', 'organization-rulesets', 'organizations')
+            Modules = @('actions-catalog', 'enterprise-baseline', 'organization-rulesets', 'organizations')
+            RulesetModules = @('organization-rulesets')
+        },
+        @{
+            Scope = 'full'
+            Nodes = @('actions-catalog', 'enterprise-baseline', 'enterprise-baseline:code-security', 'organization-rulesets', 'organizations')
+            Modules = @('actions-catalog', 'enterprise-baseline', 'organization-rulesets', 'organizations')
+            RulesetModules = @('organization-rulesets')
+        }
+    ) {
+        $output = Join-Path $TestDrive "release-$Scope-selection"
+        $json = & $selector -ModulesPath $releasedModules -InstancePath $releaseInstancePath -DeploymentScope $Scope -GitHubOutputPath $output
+        $selection = @{}
+        foreach ($line in [IO.File]::ReadAllLines($output)) {
+            $key, $value = $line.Split('=', 2)
+            $selection[$key] = $value
         }
 
-        foreach ($case in @(
-            @{ Module = 'organization-rulesets'; Nodes = @('enterprise-baseline:code-security', 'foundation', 'organization-rulesets') },
-            @{ Module = 'actions-catalog'; Nodes = @('actions-catalog', 'enterprise-baseline:code-security', 'foundation', 'organization-rulesets') }
-        )) {
-            $instance = Join-Path $TestDrive "$($case.Module)-instance.yaml"
-            $output = Join-Path $TestDrive "$($case.Module)-selection"
-            ($header + "modules: {$($case.Module): {}}") | Set-Content -LiteralPath $instance
-
-            $null = & $selector -ModulesPath $modules -InstancePath $instance -DeploymentScope full -GitHubOutputPath $output
-
-            $selection = @{}
-            foreach ($line in [IO.File]::ReadAllLines($output)) {
-                $key, $value = $line.Split('=', 2)
-                $selection[$key] = $value
-            }
-            @(ConvertFrom-Json $selection.phaseNodes) | Should -Be $case.Nodes
-            @(ConvertFrom-Json $selection.modules) | Should -Contain 'enterprise-baseline'
-            (ConvertFrom-Json -AsHashtable $selection.environments)['enterprise-baseline'] |
-                Should -Be 'enterprise-baseline-plan'
+        $json | Should -Be (ConvertTo-Json -InputObject $Modules -Compress)
+        @(ConvertFrom-Json -InputObject $selection.phaseNodes) | Should -Be $Nodes
+        @(ConvertFrom-Json -InputObject $selection.rulesetModules) | Should -Be $RulesetModules
+        (ConvertFrom-Json -AsHashtable -InputObject $selection.environments)['enterprise-baseline'] |
+            Should -Be 'enterprise-baseline-plan'
+        (ConvertFrom-Json -AsHashtable -InputObject $selection.applyEnvironments)['enterprise-baseline'] |
+            Should -Be 'enterprise-baseline-apply'
+        if ($Scope -cne 'code-security') {
+            (ConvertFrom-Json -AsHashtable -InputObject $selection.rulesetEnvironments)['organization-rulesets'] |
+                Should -Be 'organization-rulesets-rulesetplan'
+        }
+        $workflow.jobs.approve_apply.environment | Should -Be 'approve-apply'
+        $workflow.jobs.approve_apply.needs | Should -Contain 'plan_complete'
+        $workflow.jobs.authorize.needs | Should -Be 'validate_scope'
+        $workflow.jobs.validate.needs | Should -Be 'authorize'
+        @($workflow.jobs.select.needs) | Should -Be @('authorize', 'validate')
+        $workflow.jobs.validate.Contains('if') | Should -BeFalse
+        $workflow.jobs.validate.steps[0].with.ref | Should -Be '${{ needs.authorize.outputs.revision }}'
+        $preflight = @($workflow.jobs.authorize.steps | Where-Object { $_.Contains('id') -and $_.id -ceq 'preflight' })
+        $preflight.Count | Should -Be 1
+        $preflight[0].run | Should -Be './trusted/platform/tools/Test-DeploymentAuthorization.ps1 -Preflight -GitHubOutputPath $env:GITHUB_OUTPUT'
+        $configuration = @($workflow.jobs.validate.steps | Where-Object { $_.Contains('run') -and $_.run -match 'Test-InstanceConfiguration\.ps1' })
+        $configuration.Count | Should -Be 1
+        $configuration[0].run | Should -Be './candidate/platform/tools/Test-InstanceConfiguration.ps1 -InstancePath ./candidate/instance.yaml'
+        foreach ($boundary in @('authorize', 'validate')) {
+            ConvertTo-Json -InputObject $workflow.jobs[$boundary] -Depth 100 |
+                Should -Not -Match 'DEPLOYMENT_SCOPE|inputs\.deployment|DeploymentScope'
+        }
+        foreach ($node in $Nodes) {
+            $suffix = $node.Replace('-', '_').Replace(':', '_')
+            $job = $workflow.jobs["module_$suffix"]
+            $job.needs | Should -Contain 'authorize'
+            $job.needs | Should -Contain 'select'
+            $job.if | Should -Match ([regex]::Escape("contains(fromJSON(needs.select.outputs.phaseNodes), '$node')"))
+            $job.environment | Should -Be ('${{ fromJSON(needs.select.outputs.environments)[''' + $node.Split(':')[0] + '''] }}')
+            $workflow.jobs["apply_$suffix"].needs | Should -Contain 'approve_apply'
+        }
+        if ($Scope -cne 'full') {
             $selection.phaseNodes | Should -Not -Match '"enterprise-baseline"'
+            $workflow.jobs.module_enterprise_baseline.if |
+                Should -Match "contains\(fromJSON\(needs.select.outputs.phaseNodes\), 'enterprise-baseline'\)"
+        }
+        if ($Scope -ceq 'catalog') {
+            $workflow.jobs.module_actions_catalog.needs | Should -Contain 'ruleset_plan_organization_rulesets'
+            $workflow.jobs.apply_actions_catalog.needs | Should -Contain 'apply_organization_rulesets'
+            $workflow.jobs.apply_actions_catalog.if | Should -Match "needs.approve_apply.result == 'success'"
         }
     }
 
-    It 'rejects differently cased deployment scopes instead of selecting the full graph' {
-        $instance = Join-Path $TestDrive 'case-scope-instance.yaml'
-        ($header + 'modules: {application: {}}') | Set-Content -LiteralPath $instance
-        foreach ($scope in @('Code-Security', 'CODE-SECURITY', 'FULL')) {
-            $output = Join-Path $TestDrive "scope-$scope-output"
-            { & $selector -ModulesPath $fixtures -InstancePath $instance -DeploymentScope $scope -GitHubOutputPath $output } |
+    It 'rejects differently cased and unknown scopes before publishing selections' {
+        foreach ($scope in @('Code-Security', 'Catalog', 'CATALOG', 'FULL', 'unexpected', '')) {
+            $output = Join-Path $TestDrive "scope-$([guid]::NewGuid())"
+            { & $selector -ModulesPath $releasedModules -InstancePath $releaseInstancePath -DeploymentScope $scope -GitHubOutputPath $output } |
                 Should -Throw '*DeploymentScope*'
             Test-Path -LiteralPath $output | Should -BeFalse
         }
-    }
-
-    It 'selects only the early Code Security node and its recursive prerequisites for staged deployment' {
-        Import-Module powershell-yaml -RequiredVersion 0.4.12
-        $modules = Join-Path $TestDrive 'phase-modules'
-        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
-        $baselinePath = Join-Path $modules 'enterprise-baseline/module.yaml'
-        $baseline = ConvertFrom-Yaml (Get-Content -LiteralPath $baselinePath -Raw)
-        $baseline.prerequisites = @('service')
-        $baseline.permissions.githubApp = @{}
-        $baseline.phases = @{ 'code-security' = @{ prerequisites = @('application') } }
-        ConvertTo-Yaml $baseline | Set-Content -LiteralPath $baselinePath
-        New-Item -ItemType Directory -Path (Join-Path $modules 'enterprise-baseline/code-security') | Out-Null
-        $instance = Join-Path $TestDrive 'phase-instance.yaml'
-        ($header + 'modules: {enterprise-baseline: {}}') | Set-Content -LiteralPath $instance
-        $stageOutput = Join-Path $TestDrive 'stage-output'
-        $fullOutput = Join-Path $TestDrive 'full-output'
-
-        $stage = & $selector -ModulesPath $modules -InstancePath $instance -DeploymentScope code-security -GitHubOutputPath $stageOutput
-        $full = & $selector -ModulesPath $modules -InstancePath $instance -DeploymentScope full -GitHubOutputPath $fullOutput
-
-        $stage | Should -Be '["application","enterprise-baseline","foundation"]'
-        ([IO.File]::ReadAllText($stageOutput)) | Should -Match 'phaseNodes=\["application","enterprise-baseline:code-security","foundation"\]'
-        ([IO.File]::ReadAllText($stageOutput)) | Should -Not -Match 'phaseNodes=.*"enterprise-baseline",'
-        ([IO.File]::ReadAllText($stageOutput)) | Should -Match 'rulesetModules=\[\]'
-        $full | Should -Be '["application","enterprise-baseline","foundation","service"]'
-        ([IO.File]::ReadAllText($fullOutput)) | Should -Match 'phaseNodes=\["application","enterprise-baseline","enterprise-baseline:code-security","foundation","service"\]'
     }
 
     It 'rejects an invalid or unconfigured staged deployment before publishing selection' {
