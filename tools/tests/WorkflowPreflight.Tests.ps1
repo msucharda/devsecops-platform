@@ -8,7 +8,7 @@ BeforeAll {
         (& git -C $repository rev-parse HEAD).Trim()
     }
 
-    function New-WorkflowRunnerFixture([string] $RepositoryPath) {
+    function Initialize-WorkflowRunnerFixture([string] $RepositoryPath) {
         $modulesPath = Join-Path $RepositoryPath 'platform/modules'
         $null = New-Item -ItemType Directory -Path $modulesPath -Force
         $moduleRoot = Join-Path $modulesPath 'enterprise-baseline'
@@ -398,7 +398,7 @@ jobs:
         @{ Action = 'plan' }
         @{ Action = 'apply' }
     ) {
-        $fixture = New-WorkflowRunnerFixture $repository
+        $fixture = Initialize-WorkflowRunnerFixture $repository
         $runnerArguments = $fixture.Arguments
         $runnerArguments.Action = $Action
         (Get-Content -LiteralPath $workflowPath -Raw).Replace('demo-actions/checkout', 'actions/checkout') |
@@ -413,7 +413,7 @@ jobs:
 Describe 'Enterprise workflow preflight boundary' {
     BeforeEach {
         $repository = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
-        $fixture = New-WorkflowRunnerFixture $repository
+        $fixture = Initialize-WorkflowRunnerFixture $repository
         $instance = $fixture.Instance
         $runnerArguments = $fixture.Arguments
         $instancePath = $runnerArguments.InstancePath
