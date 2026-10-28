@@ -100,7 +100,8 @@ function Invoke-RulesetsStubRequest {
     }
     if ($State.FailNext -and "$Method $Path" -cmatch $State.FailNext) {
         $State.FailNext = ''
-        $reply.Status = 503
+        # This fault must interrupt the run, not be healed by the transient retry policy.
+        $reply.Status = 500
         $reply.Body = ''
     }
     return $reply

@@ -76,8 +76,11 @@ BeforeAll {
     (Invoke-WebRequest -Uri "$apiUrl/health" -TimeoutSec 10).StatusCode | Should -Be 200
     $previousBearer = $env:REST_API_BEARER
     $env:REST_API_BEARER = 'stub-token'
-    $root = Join-Path $TestDrive 'catalog'
-    $null = New-Item -ItemType Directory -Path $root
+    $parent = Join-Path $TestDrive 'catalog'
+    $modules = Join-Path $parent 'modules'
+    $root = Join-Path $modules 'actions-catalog'
+    $null = New-Item -ItemType Directory -Path $root -Force
+    Copy-Item -LiteralPath (Join-Path $moduleRoot '../shared') -Destination $modules -Recurse
     Copy-Item -Path (Join-Path $moduleRoot '*.tf'), (Join-Path $moduleRoot '.terraform.lock.hcl') -Destination $root
     Copy-Item -LiteralPath (Join-Path $moduleRoot 'scripts') -Destination $root -Recurse
     $vendoring = Join-Path $root 'vendoring'

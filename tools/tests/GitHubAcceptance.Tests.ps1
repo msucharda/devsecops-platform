@@ -54,6 +54,10 @@ Describe 'GitHub acceptance through the public setup wizard' {
             }
             else { Copy-Item (Join-Path $root $name) -Destination $source -Recurse }
         }
+        $sourceModules = Join-Path $source 'modules'
+        $null = New-Item -ItemType Directory -Path $sourceModules
+        Copy-Item -LiteralPath (Join-Path $root 'modules/shared') -Destination $sourceModules -Recurse
+        Set-Content (Join-Path $sourceModules 'production-only.txt') 'not an acceptance probe'
         $cache = Join-Path $source 'tools/.dependencies/interrupted'
         $null = New-Item -ItemType Directory -Path $cache -Force
         Set-Content (Join-Path $cache 'unverified.nupkg') 'not an approved release dependency'
@@ -98,6 +102,23 @@ Describe 'GitHub acceptance through the public setup wizard' {
         $acceptance.credentials['enterprise-baseline'].Contains('rulesetPlan') | Should -BeFalse
         Test-Path (Join-Path $work 'github-acceptance/release/templates/instance/.github/workflows/bootstrap-acceptance.yml') | Should -BeTrue
         Test-Path (Join-Path $work 'github-acceptance/release/tools/.dependencies') | Should -BeFalse
+        $release = Join-Path $work 'github-acceptance/release'
+        $helperRelative = Join-Path 'modules' 'shared/scripts/GitHubRetry.ps1'
+        $helper = Join-Path $release $helperRelative
+        Test-Path -LiteralPath $helper | Should -BeTrue
+        (Get-FileHash -LiteralPath $helper).Hash |
+            Should -Be (Get-FileHash -LiteralPath (Join-Path $root $helperRelative)).Hash
+        $marker = Get-Content (Join-Path $release 'bootstrap-acceptance.json') -Raw | ConvertFrom-Json -AsHashtable
+        $marker.files[$helperRelative] | Should -Be (Get-FileHash -LiteralPath $helper).Hash
+        Test-Path (Join-Path $release 'modules/production-only.txt') | Should -BeFalse
+        Mock Invoke-WebRequest { throw 'No cloud request is authorized.' }
+        $savedJobTokens = $env:PLATFORM_GITHUB_TOKENS
+        try {
+            $env:PLATFORM_GITHUB_TOKENS = '{"example":"acceptance-test-token"}'
+            & (Join-Path $release 'tools/Remove-PlatformGitHubToken.ps1') -ApiUrl https://api.example.test -WhatIf
+        }
+        finally { $env:PLATFORM_GITHUB_TOKENS = $savedJobTokens }
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
         (Get-Content (Join-Path $work 'instance.yaml') -Raw).TrimEnd() | Should -Be $sourceConfig.TrimEnd()
         Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 0 -Exactly
         Test-Path (Join-Path $work 'github-acceptance/keys.json') | Should -BeFalse

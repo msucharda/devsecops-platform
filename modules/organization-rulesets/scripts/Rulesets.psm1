@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../../shared/scripts/GitHubRetry.ps1')
 
 # Endpoints, API version 2026-03-10:
 # https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/rules?apiVersion=2026-03-10
@@ -50,7 +51,7 @@ function Invoke-RulesetRestApi {
             $request.Body = ConvertTo-Json -InputObject $Body -Depth 20 -Compress
             $request.ContentType = 'application/json'
         }
-        $reply = Invoke-WebRequest @request
+        $reply = Invoke-GitHubRetryRequest -Request $request
         $status = [int] $reply.StatusCode
         if ($status -eq 404 -and $AllowNotFound) { return $null }
         if ($status -lt 200 -or $status -gt 299) { throw "GitHub returned HTTP $status for $Method $($Path.Split('?')[0])." }
