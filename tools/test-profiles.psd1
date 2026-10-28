@@ -38,6 +38,7 @@
         'DriftIssue.Tests.ps1'
         'DriftReport.Tests.ps1'
         'EnterpriseBaseline.Tests.ps1'
+        'EnterpriseBaselinePatchContract.Tests.ps1'
         'EnterpriseInstallationToken.Tests.ps1'
         'GitHubAcceptance.Tests.ps1'
         'GitHubAcceptanceBindings.Tests.ps1'
