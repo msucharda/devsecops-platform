@@ -24,12 +24,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
-if ($Rulesets -and $DeploymentPhase) { throw 'A deployment phase cannot use the isolated rulesets root.' }
 $outputName = if ($Rulesets) { "$Module.rulesets" } elseif ($DeploymentPhase) { "$Module.$DeploymentPhase" } else { $Module }
 $artifactFile = [IO.Path]::GetFullPath((Join-Path $ArtifactsPath "$outputName.json"))
 if ($Action -ne 'state' -and (Test-Path -LiteralPath $artifactFile -PathType Leaf)) {
     [IO.File]::Delete($artifactFile)
 }
+if ($Rulesets -and $DeploymentPhase) { throw 'A deployment phase cannot use the isolated rulesets root.' }
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 if ($GitHubOutputPath -and $Action -ne 'plan') {
     throw 'The workflow change output is supported only for plan.'

@@ -114,6 +114,22 @@ Describe 'Module runner with local Terraform' {
         Test-Path -LiteralPath $stale | Should -BeFalse
     }
 
+    It 'clears a stale ruleset artifact before refusing a phase during <Action>' -Tag 'PhaseArtifactCleanup' -ForEach @(
+        @{ Action = 'plan' }
+        @{ Action = 'apply' }
+        @{ Action = 'destroy' }
+        @{ Action = 'output' }
+    ) {
+        $stale = Join-Path $arguments.ArtifactsPath 'foundation.rulesets.json'
+        New-Item -ItemType Directory -Path $arguments.ArtifactsPath -Force | Out-Null
+        Set-Content -LiteralPath $stale -Value '{"stale":true}'
+        function terraform { throw 'Terraform must not run.' }
+
+        { & $runner -Module foundation -Action $Action -Rulesets -DeploymentPhase code-security @arguments 6>$null } |
+            Should -Throw '*A deployment phase cannot use the isolated rulesets root*'
+        Test-Path -LiteralPath $stale | Should -BeFalse
+    }
+
     It 'refuses a ruleset component without a declared isolated exception' {
         { & $runner -Module foundation -Action plan -Rulesets @arguments 6>$null } |
             Should -Throw '*declared ruleset*'
