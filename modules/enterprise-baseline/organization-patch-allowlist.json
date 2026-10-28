@@ -1,0 +1,17 @@
+{
+  "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/orgs#update-an-organization",
+  "apiVersion": "2026-03-10",
+  "allowedFields": {
+    "default_repository_permission": "Modul spravuje základní oprávnění členů: none při apply a read při teardownu. Pole ponecháváme pro organizační baseline; enterprise musí jeho správu delegovat organizaci. Allow-list nedokazuje delegování ani zapisovatelnost.",
+    "members_can_create_repositories": "Modul zakazuje členům vytvářet repozitáře a při teardownu obnovuje true. Pole ponecháváme pro organizační baseline; enterprise musí jeho správu delegovat organizaci. Allow-list nedokazuje delegování ani zapisovatelnost.",
+    "members_can_create_private_repositories": "Modul výslovně zakazuje vytváření private repozitářů a při teardownu obnovuje true. Granulární pole zachovává zákaz i vedle obecného příznaku. Enterprise musí jeho správu delegovat organizaci; allow-list zapisovatelnost neověřuje.",
+    "members_can_create_internal_repositories": "Modul výslovně zakazuje vytváření internal repozitářů a při teardownu obnovuje true. Granulární pole zachovává zákaz i vedle obecného příznaku. Enterprise musí jeho správu delegovat organizaci; allow-list zapisovatelnost neověřuje."
+  },
+  "omittedEnterpriseFields": {
+    "members_can_create_public_repositories": "Modul pole neposílá. EMU organizace nemají public repozitáře.",
+    "members_can_fork_private_repositories": "Pole řídí enterprise politika. API odmítá i zápis nezměněné hodnoty s HTTP 422 (#147). Modul pouze ověřuje efektivní false.",
+    "has_organization_projects": "Enterprise může řídit Projects. Modul jejich dostupnost nespravuje a pole neposílá.",
+    "has_repository_projects": "Enterprise může řídit repository Projects. Modul jejich dostupnost nespravuje a pole neposílá.",
+    "deploy_keys_enabled_for_repositories": "Enterprise může řídit deploy keys. Modul jejich dostupnost nespravuje a pole neposílá."
+  }
+}
