@@ -61,6 +61,29 @@ Describe 'Offline real-Terraform probe entry point' {
         { & $probeScript -ProviderDirectory $providers -TempPath $TestDrive } | Should -Throw '*positive probe did not pass*'
     }
 
+    It 'rejects a nonboolean positive result' {
+        Mock Test-LocalCiRuntime { 'true' }
+        { & $probeScript -ProviderDirectory $providers -TempPath $TestDrive } | Should -Throw '*positive probe did not pass*'
+    }
+
+    It 'rejects a lookup failure for a different executable' {
+        Mock Test-LocalCiRuntime {
+            if ($Executable -eq 'pwsh') { return $true }
+            throw 'External Program Lookup Failed: other-executable'
+        }
+        { & $probeScript -ProviderDirectory $providers -TempPath $TestDrive } |
+            Should -Throw '*External Program Lookup Failed: other-executable*'
+    }
+
+    It 'rejects a different failure for the expected executable' {
+        Mock Test-LocalCiRuntime {
+            if ($Executable -eq 'pwsh') { return $true }
+            throw "Other Terraform failure: $Executable"
+        }
+        { & $probeScript -ProviderDirectory $providers -TempPath $TestDrive } |
+            Should -Throw '*Other Terraform failure: missing-local-ci-pwsh-*'
+    }
+
     It 'rejects a missing installed external provider without running a probe' {
         { & $probeScript -ProviderDirectory (Join-Path $TestDrive 'missing') -TempPath $TestDrive } |
             Should -Throw '*installed hashicorp/external provider*'
