@@ -1,0 +1,39 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/git/trees/{tree_sha}",
+    "operationId": "git/get-tree",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/trees#get-a-tree",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/git-tree"
+  },
+  "required": {
+    "": [
+      "sha",
+      "tree",
+      "truncated"
+    ],
+    "tree": [
+      "path",
+      "mode",
+      "type",
+      "sha"
+    ]
+  },
+  "body": {
+    "sha": "b4eecafa9be2f2006ce1b709d6857b07069b4608",
+    "url": "https://api.github.com/repos/octocat/Hello-World/git/trees/b4eecafa9be2f2006ce1b709d6857b07069b4608",
+    "tree": [
+      {
+        "path": "README",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "980a0d5f19a64b4b30a87d4206aade58726b60e3",
+        "size": 13,
+        "url": "https://api.github.com/repos/octocat/Hello-World/git/blobs/980a0d5f19a64b4b30a87d4206aade58726b60e3"
+      }
+    ],
+    "truncated": false
+  }
+}
