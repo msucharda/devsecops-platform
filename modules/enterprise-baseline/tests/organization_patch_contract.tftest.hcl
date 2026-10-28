@@ -26,15 +26,23 @@ run "organization_patch_fields_require_explicit_justification" {
   assert {
     condition = alltrue(flatten([
       for settings in restapi_object.organization_settings : [
-        for payload in [jsondecode(settings.data), jsondecode(settings.destroy_data)] : length(keys(payload)) > 0 && alltrue([
+        for payload in [jsondecode(settings.data), jsondecode(coalesce(settings.update_data, settings.data)), jsondecode(settings.destroy_data)] : length(keys(payload)) > 0 && alltrue([
           for field in keys(payload) : try(
-            startswith(jsonencode(jsondecode(file("organization-patch-allowlist.json")).allowedFields[field]), "\"") &&
-            trimspace(jsondecode(file("organization-patch-allowlist.json")).allowedFields[field]) != "",
+            startswith(jsonencode(jsondecode(file("${path.module}/organization-patch-allowlist.json")).allowedFields[field]), "\"") &&
+            trimspace(jsondecode(file("${path.module}/organization-patch-allowlist.json")).allowedFields[field]) != "",
             false
           )
         ])
       ]
     ]))
     error_message = "PATCH payload fields must have a nonempty reason in the explicit allow-list. This offline contract does not prove writability under enterprise policy."
+  }
+
+  assert {
+    condition = try(alltrue([
+      for reason in jsondecode(file("${path.module}/organization-patch-allowlist.json")).omittedEnterpriseFields :
+      startswith(jsonencode(reason), "\"") && trimspace(reason) != ""
+    ]), false)
+    error_message = "Omitted enterprise fields must have nonempty string reasons."
   }
 }

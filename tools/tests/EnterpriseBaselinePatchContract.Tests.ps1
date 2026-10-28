@@ -11,6 +11,7 @@ BeforeAll {
     New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/github-api/orgs/get.json') -Destination $fixtureDirectory
     $mainPath = Join-Path $root 'main.tf'
+    $overridePath = Join-Path $root 'payload_override.tf'
     $allowListPath = Join-Path $root 'organization-patch-allowlist.json'
     $originalMain = Get-Content -LiteralPath $mainPath -Raw
     $originalAllowList = Get-Content -LiteralPath $allowListPath -Raw
@@ -29,6 +30,7 @@ Describe 'enterprise-baseline offline PATCH allow-list' -Tag 'Terraform' {
     BeforeEach {
         Set-Content -LiteralPath $mainPath -Value $originalMain -NoNewline
         Set-Content -LiteralPath $allowListPath -Value $originalAllowList -NoNewline
+        if (Test-Path -LiteralPath $overridePath) { Remove-Item -LiteralPath $overridePath }
     }
 
     It 'accepts the documented apply and destroy payloads with explicit reasons' {
@@ -56,7 +58,7 @@ Describe 'enterprise-baseline offline PATCH allow-list' -Tag 'Terraform' {
         foreach ($group in @($allowList.allowedFields, $allowList.omittedEnterpriseFields)) {
             foreach ($field in $group.get_Keys()) {
                 $documented | Should -Contain $field
-                $group[$field] | Should -BeOfType [string]
+                ($group[$field] -is [string]) | Should -BeTrue -Because "'$field' must have a string reason, not an array of strings"
                 $group[$field].Trim() | Should -Not -BeNullOrEmpty
             }
         }
@@ -78,6 +80,44 @@ Describe 'enterprise-baseline offline PATCH allow-list' -Tag 'Terraform' {
         $result = Invoke-PatchContract
         $result.ExitCode | Should -Not -Be 0 -Because 'adding a field must fail the same Terraform contract used by CI'
         $result.Output | Should -Match 'PATCH payload fields must have a nonempty reason in the explicit allow-list'
+    }
+
+    It 'validates the effective update payload: <Case>' -ForEach @(
+        @{ Case = 'allowed override'; Payload = 'jsonencode(local.organization_settings)'; Valid = $true }
+        @{ Case = 'null override falls back to data'; Payload = 'null'; Valid = $true }
+        @{ Case = 'update-only unlisted field'; Payload = 'jsonencode(merge(local.organization_settings, { has_organization_projects = false }))'; Valid = $false }
+        @{ Case = 'empty update object'; Payload = 'jsonencode({})'; Valid = $false }
+    ) {
+        Set-Content -LiteralPath $overridePath -Value @"
+resource "restapi_object" "organization_settings" {
+  update_data = $Payload
+}
+"@
+        $result = Invoke-PatchContract
+        if ($Valid) {
+            $result.ExitCode | Should -Be 0 -Because $result.Output
+            $result.Output | Should -Match '1 passed, 0 failed'
+        }
+        else {
+            $result.ExitCode | Should -Not -Be 0 -Because 'an update override must not bypass the allow-list'
+            $result.Output | Should -Match 'PATCH payload fields must have a nonempty reason in the explicit allow-list'
+        }
+    }
+
+    It 'rejects an invalid omitted-field reason: <Case>' -ForEach @(
+        @{ Case = 'array'; Value = @('reason') }
+        @{ Case = 'boolean'; Value = $true }
+        @{ Case = 'null'; Value = $null }
+        @{ Case = 'empty string'; Value = '' }
+        @{ Case = 'whitespace'; Value = " `t " }
+    ) {
+        $allowList = $originalAllowList | ConvertFrom-Json -AsHashtable
+        $allowList.omittedEnterpriseFields.has_organization_projects = $Value
+        Set-Content -LiteralPath $allowListPath -Value ($allowList | ConvertTo-Json -Depth 10)
+
+        $result = Invoke-PatchContract
+        $result.ExitCode | Should -Not -Be 0 -Because 'an omitted field must have a nonempty string reason'
+        $result.Output | Should -Match 'Omitted enterprise fields must have nonempty string reasons'
     }
 
     It 'rejects an unreadable allow-list: <Case>' -ForEach @(
@@ -111,6 +151,7 @@ Describe 'enterprise-baseline offline PATCH allow-list' -Tag 'Terraform' {
         @{ Case = 'whitespace reason'; Mode = 'whitespace' }
         @{ Case = 'null reason'; Mode = 'null' }
         @{ Case = 'non-string reason'; Mode = 'boolean' }
+        @{ Case = 'array-valued reason'; Mode = 'array' }
     ) {
         $allowList = $originalAllowList | ConvertFrom-Json -AsHashtable
         switch ($Mode) {
@@ -119,6 +160,7 @@ Describe 'enterprise-baseline offline PATCH allow-list' -Tag 'Terraform' {
             'whitespace' { $allowList.allowedFields.default_repository_permission = " `t " }
             'null' { $allowList.allowedFields.default_repository_permission = $null }
             'boolean' { $allowList.allowedFields.default_repository_permission = $true }
+            'array' { $allowList.allowedFields.default_repository_permission = @('reason') }
         }
         Set-Content -LiteralPath $allowListPath -Value ($allowList | ConvertTo-Json -Depth 10)
 
