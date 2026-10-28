@@ -1327,13 +1327,13 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
     }
 
-    It 'keeps the previous inventory version when protected main moves during provisioning' -Tag 'BootstrapUpgrade' {
+    It 'keeps the previous inventory version when protected main moves during provisioning' -Tag 'BootstrapUpgrade', 'MainMovement' {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
         $null = & $bootstrap @arguments
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
         $record.releaseVersion = '0.1.0-rc.5'
-        $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
+        Set-Content -LiteralPath $inventory -Value ((ConvertTo-PlatformCanonicalJson $record) + "`n") -NoNewline
         $before = (Get-FileHash -LiteralPath $inventory).Hash
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
@@ -1357,6 +1357,7 @@ Describe 'GitHub bootstrap public interface' {
 
         { & $bootstrap @arguments } | Should -Throw '*Protected main changed during bootstrap upgrade*'
         $movement.ReferenceReads | Should -Be 4
+        $cloud.writes.Count | Should -Be 0
         (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -BeExactly '0.1.0-rc.5'
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
     }

@@ -3,7 +3,8 @@
 # Missing files receive a one-second estimate and are still selected automatically.
 @{
     'EnterpriseBaseline.Tests.ps1' = 220
-    'GitHubBootstrap.Tests.ps1' = 151
+    # Source CI run 40763358782: 439.7855 seconds, rounded up.
+    'GitHubBootstrap.Tests.ps1' = 440
     'RulesetsTerraform.Tests.ps1' = 138
     'OrganizationRolePrograms.Tests.ps1' = 105
     'RemoveBootstrap.Tests.ps1' = 45
