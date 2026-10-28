@@ -578,6 +578,11 @@ Describe 'Merge gate structural G10' {
         @{ Case = 'an indexed github.token alias'; Before = 'env: {TOKEN: literal}'; After = "env: {TOKEN: `"`${{ github['token'] }}`"}" }
         @{ Case = 'the whole github context'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ toJSON(github) }}"}' }
         @{ Case = 'a dynamic github context lookup'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ github[inputs.key] }}"}' }
+        @{ Case = 'a github wildcard filter'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ toJSON(github.*) }}"}' }
+        @{ Case = 'trigger-filter ordering'; Before = 'on: {push: {paths: ["src/**", "!src/private/**"]}}'; After = 'on: {push: {paths: ["!src/private/**", "src/**"]}}' }
+        @{ Case = 'sensitive-step ordering'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "${{ secrets.TWO }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.TWO }}"}, {run: "${{ secrets.ONE }}"}]}}' }
+        @{ Case = 'an added sensitive step'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "${{ secrets.TWO }}"}]}}' }
+        @{ Case = 'a removed sensitive step'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "${{ secrets.TWO }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}]}}' }
     ) {
         $stub.Contents[$baseKey] = $Before
         $stub.Contents[$headKey] = $After
@@ -593,6 +598,9 @@ Describe 'Merge gate structural G10' {
         @{ Case = 'block/flow syntax and quoting'; Before = "on: push`npermissions:`n  contents: read"; After = "'permissions': {'contents': 'read'}`n'on': 'push'" }
         @{ Case = 'unrelated step text'; Before = "jobs:`n  build:`n    runs-on: ubuntu-latest`n    steps: [{run: 'echo old'}]"; After = "jobs:`n  build:`n    runs-on: ubuntu-latest`n    steps: [{run: 'echo new'}]" }
         @{ Case = 'an unchanged secret reference'; Before = "name: Old`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}"; After = "name: New`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}" }
+        @{ Case = 'an unrelated step inserted before a secret'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.TOKEN }}"}]}}'; After = 'jobs: {build: {steps: [{run: "echo setup"}, {run: "${{ secrets.TOKEN }}"}]}}' }
+        @{ Case = 'an unrelated step inserted between secrets'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "${{ secrets.TWO }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "echo setup"}, {run: "${{ secrets.TWO }}"}]}}' }
+        @{ Case = 'an unrelated step removed before a secret'; Before = 'jobs: {build: {steps: [{run: "echo setup"}, {run: "${{ secrets.TOKEN }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.TOKEN }}"}]}}' }
         @{ Case = 'empty settings'; Before = '{}'; After = 'name: CI' }
         @{ Case = 'ordinary github context properties'; Before = 'env: {REF: "${{ github.ref }}"}'; After = 'env: {REF: "${{ github.sha }}"}' }
         @{ Case = 'exactly 100 nesting levels'; Before = 'permissions: ' + ('{x: ' * 99) + 'read' + ('}' * 99); After = 'permissions: ' + ('{x: ' * 99) + 'read' + ('}' * 99) }

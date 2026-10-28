@@ -820,7 +820,7 @@ function Test-MergeGateSensitiveSetting {
     if ($Key -eq 'on') { return $true }
     if ($Key -eq 'runs-on') { return $true }
     if ($Key -in @('permissions', 'secrets', 'GITHUB_TOKEN')) { return $true }
-    return $Value -match '\bsecrets\b|\bGITHUB_TOKEN\b|\bgithub\s*(\.\s*token\b|\[)|\bgithub\b(?!\s*(\.|\[))'
+    return $Value -match '\bsecrets\b|\bGITHUB_TOKEN\b|\bgithub\s*(\.\s*(token\b|\*)|\[)|\bgithub\b(?!\s*(\.|\[))'
 }
 
 function Get-MergeGateYamlSetting {
@@ -853,8 +853,14 @@ function Get-MergeGateYamlSetting {
         }
     }
     elseif ($Node -is [YamlDotNet.RepresentationModel.YamlSequenceNode]) {
-        for ($index = 0; $index -lt $Node.Children.Count; $index++) {
-            Get-MergeGateYamlSetting -Node $Node.Children[$index] -Path "$Path[$index]" -Selected:$Selected -Depth ($Depth + 1)
+        $index = 0
+        foreach ($child in $Node.Children) {
+            # Unselected siblings must not shift sensitive paths; selected sequences retain every child.
+            $childSettings = @(Get-MergeGateYamlSetting -Node $child -Path "$Path[$index]" -Selected:$Selected -Depth ($Depth + 1))
+            if ($childSettings.Count -gt 0) {
+                $childSettings
+                $index++
+            }
         }
     }
     else { throw 'Workflow YAML contains an unsupported node.' }
