@@ -5,7 +5,8 @@
 @{
     'EnterpriseBaseline.Tests.ps1' = 280
     'EnterpriseBaselinePatchContract.Tests.ps1' = 5
-    'GitHubBootstrap.Tests.ps1' = 151
+    # Source CI run 40771671425: 543.7233 seconds, rounded up.
+    'GitHubBootstrap.Tests.ps1' = 544
     'RulesetsTerraform.Tests.ps1' = 138
     'OrganizationRolePrograms.Tests.ps1' = 105
     'RemoveBootstrap.Tests.ps1' = 45

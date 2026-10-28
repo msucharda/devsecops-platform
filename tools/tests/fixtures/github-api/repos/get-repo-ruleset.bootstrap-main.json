@@ -1,0 +1,58 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/rulesets/{ruleset_id}",
+    "operationId": "repos/get-repo-ruleset",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-a-repository-ruleset",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/repository-ruleset",
+    "note": "The documented repository-ruleset example with the platform-instance-main policy from docs/bootstrap.md. Rule shapes, required_reviewers and ref-name conditions follow the pinned schema; configured values are sanitized."
+  },
+  "required": {
+    "": ["id", "name", "source", "enforcement"]
+  },
+  "body": {
+    "id": 60,
+    "name": "platform-instance-main",
+    "target": "branch",
+    "source_type": "Repository",
+    "source": "demo-a1b2c3-platform/instance",
+    "enforcement": "active",
+    "bypass_actors": [],
+    "conditions": {
+      "ref_name": {
+        "include": ["refs/heads/main"],
+        "exclude": []
+      }
+    },
+    "rules": [
+      { "type": "deletion" },
+      { "type": "non_fast_forward" },
+      {
+        "type": "pull_request",
+        "parameters": {
+          "required_approving_review_count": 1,
+          "dismiss_stale_reviews_on_push": true,
+          "require_code_owner_review": true,
+          "require_last_push_approval": true,
+          "required_review_thread_resolution": true,
+          "required_reviewers": [
+            {
+              "reviewer": { "id": 31, "type": "Team" },
+              "minimum_approvals": 1,
+              "file_patterns": ["instance.yaml", "platform/**", ".github/**"]
+            }
+          ]
+        }
+      }
+    ],
+    "node_id": "RRS_lACkVXNlcgQB",
+    "_links": {
+      "self": { "href": "https://api.github.com/repos/monalisa/my-repo/rulesets/42" },
+      "html": { "href": "https://github.com/monalisa/my-repo/rules/42" }
+    },
+    "created_at": "2023-07-15T08:43:03Z",
+    "updated_at": "2023-08-23T16:29:47Z"
+  }
+}
