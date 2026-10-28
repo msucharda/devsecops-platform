@@ -74,6 +74,7 @@
         'VendoringSource.Tests.ps1'
         'WaitPullRequestChecks.Tests.ps1'
         'WorkflowGenerator.Tests.ps1'
+        'WorkflowPreflight.Tests.ps1'
     )
     Interruption = @(
         'ActionsCatalog.Interruption.Tests.ps1'
