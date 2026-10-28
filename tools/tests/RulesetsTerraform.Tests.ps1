@@ -65,6 +65,12 @@ AfterAll {
 }
 
 Describe 'Ruleset Terraform root against the documented and observed API' -Tag Terraform {
+    AfterEach {
+        # Restore-RulesetState imports the fixture copy into this process.
+        Get-Module -Name Rulesets | Where-Object { $_.Path -eq (Join-Path $parent 'scripts/Rulesets.psm1') } |
+            Remove-Module -Force
+    }
+
     BeforeEach {
         $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $root = Join-Path $parent 'rulesets'

@@ -12,6 +12,16 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module powershell-yaml -RequiredVersion 0.4.12
+
+# security-check: vendoring-release-tag
+function Assert-VendoringReleaseTag {
+    param([AllowNull()][object] $CatalogTag, [string] $ExpectedTag, [string] $Upstream)
+
+    if ($CatalogTag -isnot [string] -or $CatalogTag -cne $ExpectedTag) {
+        throw "Catalog tag for '$Upstream' must match release pin tag '$ExpectedTag'; update the action copy and catalog before importing this release."
+    }
+}
+
 $catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable
 if ($catalog['version'] -ne 1 -or $catalog['actions'] -isnot [Collections.IDictionary]) {
     throw 'Action catalog must declare version 1 and an actions mapping.'
@@ -109,6 +119,15 @@ foreach ($file in $files) {
                 throw "Action '$upstream' is missing from the catalog (uses '$reference' in '$relative')."
             }
             $copy = $catalog['actions'][$upstream]
+            if ($Kind -eq 'release') {
+                $lineEnd = $text.IndexOf("`n", $node.End.Index)
+                if ($lineEnd -lt 0) { $lineEnd = $text.Length }
+                $comment = $text.Substring($node.End.Index, $lineEnd - $node.End.Index)
+                $pinTag = [regex]::Match($comment, '^\s+#\s+(?<tag>v[0-9][0-9A-Za-z.+_-]*)(?:\s|$)')
+                if ($pinTag.Success) {
+                    Assert-VendoringReleaseTag -CatalogTag $copy['tag'] -ExpectedTag $pinTag.Groups['tag'].Value -Upstream $upstream
+                }
+            }
             $replacement = "'$($copy['repository'])$subpath@$($copy['sha'])'"
             $text = $text.Remove($node.Start.Index, $node.End.Index - $node.Start.Index).Insert($node.Start.Index, $replacement)
         }

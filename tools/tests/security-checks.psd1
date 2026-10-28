@@ -100,6 +100,12 @@
             )
         }
         @{
+            Name = 'vendoring-release-tag'
+            Tests = @(
+                @{ Path = 'tools/tests/Vendoring.Tests.ps1'; FullName = @('*checks the annotated release pin tag against the catalog: <Case>') }
+            )
+        }
+        @{
             Name = 'bootstrap-vendoring-contract'
             Tests = @(
                 @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*vendoring App isolation*verifies separate*', '*vendoring App isolation*rejects a vendoring binding*') }

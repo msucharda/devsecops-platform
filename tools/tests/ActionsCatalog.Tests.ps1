@@ -809,6 +809,32 @@ Describe 'Actions catalog module against the documented GitHub API' {
             (Get-StubWrite).Count | Should -Be 0
         }
 
+        It 'publishes a newer approved import without moving or deleting the older tag after a lost response' {
+            New-CatalogReleaseTag @tagTarget
+            $nextRelease = Add-StubCommit -Files @{
+                '.vendoring.json' = (Get-StubReceipt -Tag 'v5.0.0')
+                'action.yml' = 'name: updated checkout'
+            }
+            $stub.Override['createRef'] = {
+                param($Request)
+                $repository.tags[$Request.ref.Substring(10)] = $Request.sha
+                throw 'Injected lost second tag response.'
+            }.GetNewClosure()
+            { New-CatalogReleaseTag @target -Tag v5.0.0 -Commit $nextRelease } |
+                Should -Throw '*Injected lost second tag response*'
+            $stub.Override.Remove('createRef')
+
+            New-CatalogReleaseTag @target -Tag v5.0.0 -Commit $nextRelease
+
+            $repository.tags['v4.2.2'] | Should -BeExactly $release
+            $repository.tags['v5.0.0'] | Should -BeExactly $nextRelease
+            $repository.tags.Count | Should -Be 2
+            $state = Get-CatalogRepositoryState @target -Tag v5.0.0 -Commit $nextRelease
+            @(Get-CatalogStateViolation -State $state -Organization $organization -SecurityTeam $securityTeam `
+                -Tag v5.0.0 -Commit $nextRelease).Count | Should -Be 0
+            (Get-StubRequest createRef).Count | Should -Be 2
+        }
+
         It 'never moves a tag that points to <Case>' -ForEach @(
             @{ Case = 'another commit'; Object = 'other' }
             @{ Case = 'an annotated tag object'; Object = 'annotated' }

@@ -70,6 +70,46 @@ Describe 'Vendored source preparation through the public command' {
         Test-Path -LiteralPath (Join-Path $output '.github/workflows') | Should -BeFalse
     }
 
+    It 'checks the annotated release pin tag against the catalog: <Case>' -ForEach @(
+        @{ Case = 'matching tag'; Tag = 'v7.0.1'; Allowed = $true }
+        @{ Case = 'older tag'; Tag = 'v4.4.0'; Allowed = $false }
+        @{ Case = 'different case'; Tag = 'V7.0.1'; Allowed = $false }
+        @{ Case = 'empty tag'; Tag = ''; Allowed = $false }
+        @{ Case = 'missing tag'; Tag = '__missing__'; Allowed = $false }
+        @{ Case = 'null tag'; Tag = $null; Allowed = $false }
+        @{ Case = 'non-string tag'; Tag = 7; Allowed = $false }
+        @{ Case = 'array tag'; Tag = @('v7.0.1'); Allowed = $false }
+    ) {
+        $caseId = $Case.Replace(' ', '-')
+        $source = Join-Path $TestDrive "tagged-release-$caseId"
+        $workflow = Join-Path $source 'templates/instance/.github/workflows'
+        $null = New-Item -ItemType Directory -Path $workflow -Force
+        @'
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+'@ | Set-Content (Join-Path $workflow 'deploy.yml')
+        $catalogPath = Join-Path $TestDrive "tagged-catalog-$caseId.json"
+        $catalog = Get-Content (Join-Path $fixtures 'catalog.json') -Raw | ConvertFrom-Json -AsHashtable
+        if ($Tag -cne '__missing__') { $catalog.actions['actions/checkout']['tag'] = $Tag }
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content $catalogPath
+        $output = Join-Path $TestDrive "tagged-output-$caseId"
+
+        if ($Allowed) {
+            & $prepare -SourcePath $source -OutputPath $output -CatalogPath $catalogPath `
+                -ActionsOrganization customer-actions -Kind release
+            Get-Content (Join-Path $output 'platform/templates/instance/.github/workflows/deploy.yml') -Raw |
+                Should -Match "customer-actions/actions-checkout@1111111111111111111111111111111111111111' # v7.0.1"
+        }
+        else {
+            { & $prepare -SourcePath $source -OutputPath $output -CatalogPath $catalogPath `
+                    -ActionsOrganization customer-actions -Kind release } |
+                Should -Throw "*Catalog tag for 'actions/checkout' must match release pin tag 'v7.0.1'*"
+            Test-Path $output | Should -BeFalse
+        }
+    }
+
     It 'rejects dynamic references with an explicit error and no prepared files' {
         $source = Join-Path $TestDrive 'dynamic'
         $null = New-Item -ItemType Directory -Path $source
