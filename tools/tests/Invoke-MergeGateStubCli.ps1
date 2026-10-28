@@ -9,38 +9,39 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MergeGateStub.psm1')
-$global:MergeGateCliStub = Initialize-MergeGateStub -Scenario pr-78
+$stub = Initialize-MergeGateStub -Scenario pr-78
 $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
-foreach ($key in $state.Keys) { $global:MergeGateCliStub[$key] = $state[$key] }
-$global:MergeGateCliAba = $Aba.IsPresent
-$global:MergeGateCliMoves = [Collections.Generic.List[string]]::new()
+foreach ($key in $state.get_Keys()) { $stub[$key] = $state[$key] }
+$abaEnabled = $Aba.IsPresent
+$moves = [Collections.Generic.List[string]]::new()
 
-function global:gh {
+$ghStub = {
     $arguments = [string[]] $args
-    $head = $global:MergeGateCliStub.PullRequest.headRefOid
-    $move = $global:MergeGateCliAba -and $arguments[-1] -match '/pulls/\d+/files\?'
+    $head = $stub.PullRequest.headRefOid
+    $move = $abaEnabled -and $arguments[-1] -match '/pulls/\d+/files\?'
     if ($move) {
-        $files = $global:MergeGateCliStub.Files
-        if ($global:MergeGateCliStub.ContainsKey('AbaFiles')) { $global:MergeGateCliStub.Files = $global:MergeGateCliStub.AbaFiles }
-        $global:MergeGateCliStub.PullRequest.headRefOid = 'c' * 40
-        $global:MergeGateCliMoves.Add($global:MergeGateCliStub.PullRequest.headRefOid)
+        $files = $stub.Files
+        if ($stub.ContainsKey('AbaFiles')) { $stub.Files = $stub.AbaFiles }
+        $stub.PullRequest.headRefOid = 'c' * 40
+        $moves.Add($stub.PullRequest.headRefOid)
     }
-    try { Invoke-MergeGateStub -Stub $global:MergeGateCliStub -Arguments $arguments }
+    try { Invoke-MergeGateStub -Stub $stub -Arguments $arguments }
     finally {
         if ($move) {
-            $global:MergeGateCliStub.Files = $files
-            $global:MergeGateCliStub.PullRequest.headRefOid = $head
-            $global:MergeGateCliMoves.Add($head)
+            $stub.Files = $files
+            $stub.PullRequest.headRefOid = $head
+            $moves.Add($head)
         }
         $global:LASTEXITCODE = 0
     }
-}
+}.GetNewClosure()
+Set-Item -LiteralPath Function:\global:gh -Value $ghStub
 
 & (Join-Path $PSScriptRoot '../agents/Test-MergeGate.ps1') -Repository msucharda/devsecops-platform -Pr 78 `
-    -ExpectedHeadSha $global:MergeGateCliStub.PullRequest.headRefOid -Now $global:MergeGateCliStub.Now
+    -ExpectedHeadSha $stub.PullRequest.headRefOid -Now $stub.Now
 $code = $LASTEXITCODE
 @{
-    calls = $global:MergeGateCliStub.Calls.ToArray()
-    moves = $global:MergeGateCliMoves.ToArray()
+    calls = $stub.Calls.ToArray()
+    moves = $moves.ToArray()
 } | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $TracePath
 exit $code

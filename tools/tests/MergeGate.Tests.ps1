@@ -697,6 +697,24 @@ Describe 'Merge gate pinned G10' {
         $run.Result.reasons[0].message | Should -Match 'truncated'
     }
 
+    It 'G10 pinned trees through CLI reject a shadowing Keys file on <Side>' -Tag G10AbaRegression -ForEach @(
+        @{ Side = 'base' }
+        @{ Side = 'head' }
+    ) {
+        $stub.Trees[$head].tree[0].sha = $stub.Trees[$base].tree[0].sha
+        $ref = if ($Side -eq 'base') { $base } else { $head }
+        $keys = $stub.Trees[$ref].tree[0].Clone()
+        $keys.path = 'Keys'
+        $hidden = $keys.Clone()
+        $hidden.path = '.github/workflows/unreviewed.yml'
+        $stub.Trees[$ref].tree += @($keys, $hidden)
+        $stub.Contents["$ref/$($hidden.path)"] = "on: push`npermissions: {contents: write}"
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
+        $run.Result.details.github.workflowFiles | Should -Contain $hidden.path
+    }
+
     It 'G10 CLI rejects the existing 3000-file PR API limit without accepting a partial list' {
         $template = (Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10')[0]
         $stub.Files = @(1..3000 | ForEach-Object {

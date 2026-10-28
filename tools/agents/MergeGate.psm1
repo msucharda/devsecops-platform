@@ -862,8 +862,9 @@ function Get-MergeGatePinnedFile {
     }
     $result = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     $paths = [Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
-    $paths.UnionWith([string[]] @($before.Keys))
-    $paths.UnionWith([string[]] @($after.Keys))
+    # A repository entry named Keys shadows PowerShell's dictionary property adapter.
+    $paths.UnionWith([string[]] @($before.get_Keys()))
+    $paths.UnionWith([string[]] @($after.get_Keys()))
     foreach ($path in $paths) {
         $hasBase = $before.ContainsKey($path)
         $hasHead = $after.ContainsKey($path)
