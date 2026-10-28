@@ -7,6 +7,7 @@ Runs mutation jobs in one process: writes each mutant into the repository copy, 
 Each job holds the check, the file, the mutated text (null for a baseline) and the Pester tests. Before every job the worker
 removes the modules loaded from the copy so that the tests import the current file. Results are appended as JSON lines,
 so a killed worker keeps the results of finished jobs.
+Worker dependencies are verified from the runner's tools directory, independently of the repository under test.
 #>
 [CmdletBinding()]
 param(
@@ -17,9 +18,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $RepoPath 'tools/ToolDependencies.psm1')
-Import-Module (Get-ToolDependencyPath -Name Pester)
-$env:PSModulePath = "$(Join-Path $RepoPath 'tools/vendor')$([IO.Path]::PathSeparator)$env:PSModulePath"
+$toolsPath = Split-Path $PSScriptRoot -Parent
+Import-Module (Join-Path $toolsPath 'ToolDependencies.psm1')
+Import-Module (Get-ToolDependencyPath -Name Pester -ToolsPath $toolsPath)
+$env:PSModulePath = "$(Join-Path $toolsPath 'vendor')$([IO.Path]::PathSeparator)$env:PSModulePath"
 
 $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 $prefix = $RepoPath.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar

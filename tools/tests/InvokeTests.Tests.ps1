@@ -2,7 +2,13 @@ BeforeAll {
     $toolRoot = Split-Path $PSScriptRoot -Parent
     $fixture = Join-Path $TestDrive 'runner'
     $null = New-Item -ItemType Directory -Path (Join-Path $fixture 'tools/tests/nested') -Force
-    Copy-Item -LiteralPath (Join-Path $toolRoot 'Invoke-Tests.ps1'), (Join-Path $toolRoot 'requirements.psd1') -Destination (Join-Path $fixture 'tools')
+    Copy-Item -LiteralPath (Join-Path $toolRoot 'Invoke-Tests.ps1'), (Join-Path $toolRoot 'requirements.psd1'), (Join-Path $toolRoot 'ToolDependencies.psm1') -Destination (Join-Path $fixture 'tools')
+    Copy-Item -LiteralPath (Join-Path $toolRoot 'vendor') -Destination (Join-Path $fixture 'tools') -Recurse
+    $requirements = Import-PowerShellDataFile (Join-Path $toolRoot 'requirements.psd1')
+    $cache = Join-Path $fixture 'tools/.dependencies'
+    $null = New-Item -ItemType Directory -Path (Join-Path $cache 'Pester'), (Join-Path $cache 'packages') -Force
+    Copy-Item -LiteralPath (Join-Path $toolRoot ".dependencies/Pester/$($requirements.Development.Pester)") -Destination (Join-Path $cache 'Pester') -Recurse
+    Copy-Item -LiteralPath (Join-Path $toolRoot ".dependencies/packages/Pester.$($requirements.Development.Pester).nupkg") -Destination (Join-Path $cache 'packages')
     Set-Content -LiteralPath (Join-Path $fixture 'tools/pester-durations.psd1') -Value "@{ 'Case0.Tests.ps1' = 20; 'Case1.Tests.ps1' = 11; 'Case2.Tests.ps1' = 7; 'Case3.Tests.ps1' = 5 }"
     foreach ($index in 0..7) {
         $directory = if ($index -ge 4) { 'tools/tests/nested' } else { 'tools/tests' }

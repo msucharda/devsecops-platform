@@ -4,7 +4,6 @@ BeforeAll {
     $runner = Join-Path $PSScriptRoot '../Invoke-MutationTests.ps1'
     $sample = Join-Path $TestDrive 'sample'
     $null = New-Item -ItemType Directory -Path (Join-Path $sample 'tools/tests') -Force
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../requirements.psd1') -Destination (Join-Path $sample 'tools/requirements.psd1')
     @'
 # security-check: sample-a
 function Test-SampleA {
