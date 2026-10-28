@@ -835,7 +835,9 @@ function Get-MergeGateWorkflowTree {
     foreach ($entry in $entries) {
         if ($entry -isnot [System.Collections.IDictionary]) { throw "Git tree '$Sha' contains a non-object entry." }
         foreach ($field in @('path', 'mode', 'type', 'sha')) {
-            if ($entry[$field] -isnot [string] -or [string]::IsNullOrWhiteSpace($entry[$field])) { throw "Git tree '$Sha' entry has no valid '$field'." }
+            $value = $entry[$field]
+            $empty = if ($field -eq 'path') { [string]::IsNullOrEmpty($value) } else { [string]::IsNullOrWhiteSpace($value) }
+            if ($value -isnot [string] -or $empty) { throw "Git tree '$Sha' entry has no valid '$field'." }
         }
         if ($entry['type'] -cnotin @('blob', 'tree', 'commit')) { throw "Git tree '$Sha' has an unsupported entry type." }
         if (-not $files.TryAdd($entry['path'], $entry)) { throw "Git tree '$Sha' has a duplicate path '$($entry['path'])'." }

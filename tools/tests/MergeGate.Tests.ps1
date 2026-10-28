@@ -715,6 +715,28 @@ Describe 'Merge gate pinned G10' {
         $run.Result.details.github.workflowFiles | Should -Contain $hidden.path
     }
 
+    It 'G10 pinned trees through CLI allow an unchanged whitespace path' -Tag G10AbaRegression {
+        $stub.Trees[$head].tree[0].sha = $stub.Trees[$base].tree[0].sha
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{
+            '0.filename' = 'README.md'; '0.previous_filename' = 'README.md'
+        }
+        foreach ($ref in @($base, $head)) {
+            $readme = $stub.Trees[$ref].tree[0].Clone()
+            $readme.path = 'README.md'
+            $readme.sha = if ($ref -ceq $base) { 'b' * 40 } else { 'a' * 40 }
+            $stub.Trees[$ref].tree += @($readme)
+        }
+        (Invoke-ScenarioCli -Stub $stub -Directory $TestDrive).ExitCode | Should -Be 0
+        foreach ($ref in @($base, $head)) {
+            $space = $stub.Trees[$ref].tree[0].Clone()
+            $space.path = ' '
+            $stub.Trees[$ref].tree += @($space)
+        }
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 0
+        $run.Result.details.github.workflowFiles | Should -Be @()
+    }
+
     It 'G10 CLI rejects the existing 3000-file PR API limit without accepting a partial list' {
         $template = (Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10')[0]
         $stub.Files = @(1..3000 | ForEach-Object {
@@ -823,12 +845,15 @@ Describe 'Merge gate pinned G10' {
         @{ Case = 'non-string path'; Field = 'path'; Value = 1; Error = "valid 'path'" }
         @{ Case = 'missing mode'; Field = 'mode'; Value = $null; Error = "valid 'mode'" }
         @{ Case = 'empty mode'; Field = 'mode'; Value = ''; Error = "valid 'mode'" }
+        @{ Case = 'whitespace mode'; Field = 'mode'; Value = ' '; Error = "valid 'mode'" }
         @{ Case = 'missing type'; Field = 'type'; Value = $null; Error = "valid 'type'" }
         @{ Case = 'empty type'; Field = 'type'; Value = ''; Error = "valid 'type'" }
+        @{ Case = 'whitespace type'; Field = 'type'; Value = ' '; Error = "valid 'type'" }
         @{ Case = 'unknown type'; Field = 'type'; Value = 'unknown'; Error = 'unsupported entry type' }
         @{ Case = 'upper-case type'; Field = 'type'; Value = 'Blob'; Error = 'unsupported entry type' }
         @{ Case = 'missing SHA'; Field = 'sha'; Value = $null; Error = "valid 'sha'" }
         @{ Case = 'empty SHA'; Field = 'sha'; Value = ''; Error = "valid 'sha'" }
+        @{ Case = 'whitespace SHA'; Field = 'sha'; Value = ' '; Error = "valid 'sha'" }
     ) {
         if ($Field) { $stub.Trees[$head].tree[0][$Field] = $Value }
         else { $stub.Trees[$head].tree[0] = $Value }
