@@ -410,13 +410,13 @@
         @{
             Name = 'bootstrap-upgrade-inventory-state'
             Tests = @(
-                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*rejects upgrade inventory state <State> before any API request', '*upgrades initialized historical inventory only after protected main proves the current release') }
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*isolated upgrade guards*inventory*') }
             )
         }
         @{
             Name = 'bootstrap-upgrade-main-protection'
             Tests = @(
-                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*rejects upgrade protection <ProtectionCase> before saving inventory or reconciling', '*rejects upgrade security team <TeamCase> before saving inventory or reconciling', '*accepts existing main protection (ResourcesOnly=<OnlyResources>, Parent=<Parent>)') }
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*isolated upgrade guards*protection*', '*isolated upgrade guards*team*') }
             )
         }
         @{

@@ -1,3 +1,58 @@
+BeforeDiscovery {
+    $upgradeProtectionCases = @(
+        @{ ProtectionCase = 'disabled' }
+        @{ ProtectionCase = 'missing' }
+        @{ ProtectionCase = 'duplicate' }
+        @{ ProtectionCase = 'non-object list entry' }
+        @{ ProtectionCase = 'missing ruleset ID' }
+        @{ ProtectionCase = 'string ruleset ID' }
+        @{ ProtectionCase = 'zero ruleset ID' }
+        @{ ProtectionCase = 'non-object detail' }
+        @{ ProtectionCase = 'different detail ID' }
+        @{ ProtectionCase = 'array detail ID' }
+        @{ ProtectionCase = 'wrong source type' }
+        @{ ProtectionCase = 'wrong source' }
+        @{ ProtectionCase = 'source casing' }
+        @{ ProtectionCase = 'missing conditions' }
+        @{ ProtectionCase = 'extra conditions' }
+        @{ ProtectionCase = 'bypass actor' }
+        @{ ProtectionCase = 'wrong target' }
+        @{ ProtectionCase = 'wrong branch' }
+        @{ ProtectionCase = 'excluded main' }
+        @{ ProtectionCase = 'missing deletion rule' }
+        @{ ProtectionCase = 'missing force-push rule' }
+        @{ ProtectionCase = 'missing pull-request rule' }
+        @{ ProtectionCase = 'missing approval' }
+        @{ ProtectionCase = 'stale approval' }
+        @{ ProtectionCase = 'missing code-owner approval' }
+        @{ ProtectionCase = 'missing last-push approval' }
+        @{ ProtectionCase = 'unresolved threads' }
+        @{ ProtectionCase = 'wrong review team' }
+        @{ ProtectionCase = 'missing required reviewer' }
+        @{ ProtectionCase = 'wrong reviewer pattern' }
+    )
+    $upgradeTeamCases = @(
+        @{ TeamCase = 'missing' }
+        @{ TeamCase = 'missing ID' }
+        @{ TeamCase = 'string ID' }
+        @{ TeamCase = 'zero ID' }
+        @{ TeamCase = 'wrong slug' }
+        @{ TeamCase = 'slug casing' }
+        @{ TeamCase = 'enterprise type' }
+        @{ TeamCase = 'missing organization' }
+        @{ TeamCase = 'wrong organization' }
+        @{ TeamCase = 'wrong ownership' }
+    )
+    $upgradeInventoryCases = @(
+        @{ State = 'absent inventory' }
+        @{ State = 'pending initialization'; Pending = $true }
+        @{ State = 'missing initialization' }
+        @{ State = 'null initialization'; Pending = $null }
+        @{ State = 'string initialization'; Pending = 'false' }
+        @{ State = 'numeric initialization'; Pending = 0 }
+    )
+}
+
 BeforeAll {
     Import-Module powershell-yaml -RequiredVersion 0.4.12
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
@@ -53,6 +108,149 @@ BeforeAll {
             $keys[$entry.alias].privateKeyPath = $path
         }
         ConvertTo-Json -InputObject $keys -Depth 10 | Set-Content -LiteralPath $KeysPath
+    }
+
+    function Set-TestUpgradeProtection {
+        param($Cloud, [string] $ProtectionCase)
+
+        $rule = Get-GitHubApiFixture -Name repos/get-repo-ruleset.bootstrap-main
+        $list = Get-GitHubApiFixture -Name repos/get-repo-rulesets -Set @{
+            '0.id' = 60; '0.name' = 'platform-instance-main'; '0.source' = 'demo-a1b2c3-platform/instance'
+        }
+        $Cloud.rulesetListOverride = $list
+        $Cloud.rulesetDetailOverride = $rule
+        $review = $rule.rules[2].parameters
+        # Each case changes one field of a contract fixture; malformed types are deliberate.
+        switch ($ProtectionCase) {
+            valid { }
+            disabled { $rule.enforcement = 'disabled' }
+            missing { $Cloud.rulesetListOverride = @() }
+            duplicate { $Cloud.rulesetListOverride = @($list[0], $list[0]) }
+            'non-object list entry' { $Cloud.rulesetListOverride = @('invalid ruleset') }
+            'missing ruleset ID' { $list[0].Remove('id') }
+            'string ruleset ID' { $list[0].id = '60' }
+            'zero ruleset ID' { $list[0].id = 0 }
+            'non-object detail' { $Cloud.rulesetDetailOverride = @('invalid ruleset') }
+            'different detail ID' { $rule.id = 61 }
+            'array detail ID' { $rule.id = @(60) }
+            'wrong source type' { $rule.source_type = 'Organization' }
+            'wrong source' { $rule.source = 'other/instance' }
+            'source casing' { $rule.source = 'Demo-a1b2c3-platform/instance' }
+            'missing conditions' { $rule.Remove('conditions') }
+            'extra conditions' { $rule.conditions.repository_name = @{ include = @('other'); exclude = @() } }
+            'bypass actor' { $rule.bypass_actors = @(@{ actor_id = 31; actor_type = 'Team'; bypass_mode = 'always' }) }
+            'wrong target' { $rule.target = 'tag' }
+            'wrong branch' { $rule.conditions.ref_name.include = @('refs/heads/other') }
+            'excluded main' { $rule.conditions.ref_name.exclude = @('refs/heads/main') }
+            'missing deletion rule' { $rule.rules = @($rule.rules | Where-Object type -CNE deletion) }
+            'missing force-push rule' { $rule.rules = @($rule.rules | Where-Object type -CNE non_fast_forward) }
+            'missing pull-request rule' { $rule.rules = @($rule.rules | Where-Object type -CNE pull_request) }
+            'missing approval' { $review.required_approving_review_count = 0 }
+            'stale approval' { $review.dismiss_stale_reviews_on_push = $false }
+            'missing code-owner approval' { $review.require_code_owner_review = $false }
+            'missing last-push approval' { $review.require_last_push_approval = $false }
+            'unresolved threads' { $review.required_review_thread_resolution = $false }
+            'wrong review team' { $review.required_reviewers[0].reviewer.id = 32 }
+            'missing required reviewer' { $review.required_reviewers = @() }
+            'wrong reviewer pattern' { $review.required_reviewers[0].file_patterns[0] = 'other.yaml' }
+            default { throw "Unknown protection case '$ProtectionCase'." }
+        }
+    }
+
+    function Set-TestUpgradeTeam {
+        param($Cloud, [string] $TeamCase)
+
+        $path = '/orgs/demo-a1b2c3-platform/teams/security'
+        $team = $Cloud.resources[$path]
+        # Deliberately invalid/mismatched fields must not prove the existing security team.
+        switch ($TeamCase) {
+            missing { $Cloud.resources.Remove($path) }
+            'missing ID' { $team.Remove('id') }
+            'string ID' { $team.id = '31' }
+            'zero ID' { $team.id = 0 }
+            'wrong slug' { $team.slug = 'other' }
+            'slug casing' { $team.slug = 'Security' }
+            'enterprise type' { $team.type = 'enterprise' }
+            'missing organization' { $team.Remove('organization') }
+            'wrong organization' { $team.organization.login = 'other' }
+            'wrong ownership' { $team.description = 'other' }
+            default { throw "Unknown team case '$TeamCase'." }
+        }
+    }
+}
+
+Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
+    BeforeAll {
+        Import-Module (Join-Path $tools 'PlatformTools.psm1') -Force
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $tools 'Invoke-GitHubBootstrap.ps1'), [ref] $null, [ref] $null)
+        foreach ($name in @(
+            'Assert-GitHubBootstrapUpgradeInventoryState', 'Assert-GitHubBootstrapUpgradeMainProtection',
+            'Get-GitHubBootstrapMainRuleset', 'Test-GitHubBootstrapValue'
+        )) {
+            $definition = $ast.Find({
+                param($node)
+                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
+            }, $true)
+            if ($null -eq $definition) { throw "Missing bootstrap function '$name'." }
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        function Invoke-GitHubBootstrapApi {
+            param([string] $Path, [switch] $AllowNotFound)
+            if ($Path -ceq "/orgs/$organization/teams/security") { return $cloud.resources[$Path] }
+            if ($Path -ceq "/repos/$repository/rulesets/60") { return $cloud.rulesetDetailOverride }
+            throw "Unexpected isolated bootstrap API path '$Path'."
+        }
+        function Get-GitHubBootstrapCollection {
+            param([string] $Path)
+            if ($Path -cne "/repos/$repository/rulesets?includes_parents=false") {
+                throw "Unexpected isolated bootstrap collection '$Path'."
+            }
+            return $cloud.rulesetListOverride
+        }
+    }
+
+    BeforeEach {
+        $organization = 'demo-a1b2c3-platform'
+        $repository = "$organization/instance"
+        $ownership = 'bootstrap-test-ownership'
+        $team = Get-GitHubApiFixture -Name teams/get-by-name -Set @{
+            id = 31; slug = 'security'; type = 'organization'; description = $ownership
+            'organization.login' = $organization
+        }
+        $cloud = @{ resources = @{ "/orgs/$organization/teams/security" = $team } }
+        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase valid
+    }
+
+    It 'accepts the documented main protection fixture' {
+        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Not -Throw
+    }
+
+    It 'rejects isolated protection <ProtectionCase>' -ForEach $upgradeProtectionCases {
+        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase $ProtectionCase
+        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Throw '*upgrade requires the existing main protection*'
+    }
+
+    It 'rejects isolated team <TeamCase>' -ForEach $upgradeTeamCases {
+        Set-TestUpgradeTeam -Cloud $cloud -TeamCase $TeamCase
+        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Throw '*upgrade requires the existing bootstrap-owned security team*'
+    }
+
+    It 'accepts initialized inventory' {
+        { Assert-GitHubBootstrapUpgradeInventoryState -Inventory @{ initializationPending = $false } } |
+            Should -Not -Throw
+    }
+
+    It 'rejects isolated inventory <State>' -ForEach $upgradeInventoryCases {
+        $record = @{ initializationPending = $false }
+        $expected = '*Only an initialized bootstrap inventory*'
+        if ($State -ceq 'absent inventory') {
+            $record = $null
+            $expected = '*UpgradeInventory requires an existing initialized bootstrap inventory*'
+        }
+        elseif ($State -ceq 'missing initialization') { $record.Remove('initializationPending') }
+        else { $record.initializationPending = $Pending }
+        { Assert-GitHubBootstrapUpgradeInventoryState -Inventory $record } | Should -Throw $expected
     }
 }
 
@@ -1291,79 +1489,9 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
     }
 
-    It 'rejects upgrade protection <ProtectionCase> before saving inventory or reconciling' -Tag 'BootstrapUpgrade', 'UpgradeProtection' -ForEach @(
-        @{ ProtectionCase = 'disabled' }
-        @{ ProtectionCase = 'missing' }
-        @{ ProtectionCase = 'duplicate' }
-        @{ ProtectionCase = 'non-object list entry' }
-        @{ ProtectionCase = 'missing ruleset ID' }
-        @{ ProtectionCase = 'string ruleset ID' }
-        @{ ProtectionCase = 'zero ruleset ID' }
-        @{ ProtectionCase = 'non-object detail' }
-        @{ ProtectionCase = 'different detail ID' }
-        @{ ProtectionCase = 'array detail ID' }
-        @{ ProtectionCase = 'wrong source type' }
-        @{ ProtectionCase = 'wrong source' }
-        @{ ProtectionCase = 'source casing' }
-        @{ ProtectionCase = 'missing conditions' }
-        @{ ProtectionCase = 'extra conditions' }
-        @{ ProtectionCase = 'bypass actor' }
-        @{ ProtectionCase = 'wrong target' }
-        @{ ProtectionCase = 'wrong branch' }
-        @{ ProtectionCase = 'excluded main' }
-        @{ ProtectionCase = 'missing deletion rule' }
-        @{ ProtectionCase = 'missing force-push rule' }
-        @{ ProtectionCase = 'missing pull-request rule' }
-        @{ ProtectionCase = 'missing approval' }
-        @{ ProtectionCase = 'stale approval' }
-        @{ ProtectionCase = 'missing code-owner approval' }
-        @{ ProtectionCase = 'missing last-push approval' }
-        @{ ProtectionCase = 'unresolved threads' }
-        @{ ProtectionCase = 'wrong review team' }
-        @{ ProtectionCase = 'missing required reviewer' }
-        @{ ProtectionCase = 'wrong reviewer pattern' }
-    ) {
+    It 'rejects upgrade protection <ProtectionCase> before saving inventory or reconciling' -Tag 'BootstrapUpgrade', 'UpgradeProtection' -ForEach $upgradeProtectionCases {
         Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
-        $rule = Get-GitHubApiFixture -Name repos/get-repo-ruleset.bootstrap-main
-        $list = Get-GitHubApiFixture -Name repos/get-repo-rulesets -Set @{
-            '0.id' = 60; '0.name' = 'platform-instance-main'; '0.source' = 'demo-a1b2c3-platform/instance'
-        }
-        $cloud.rulesetListOverride = $list
-        $cloud.rulesetDetailOverride = $rule
-        $review = $rule.rules[2].parameters
-        # Each case changes one field of a contract fixture; malformed types are deliberate.
-        switch ($ProtectionCase) {
-            disabled { $rule.enforcement = 'disabled' }
-            missing { $cloud.rulesetListOverride = @() }
-            duplicate { $cloud.rulesetListOverride = @($list[0], $list[0]) }
-            'non-object list entry' { $cloud.rulesetListOverride = @('invalid ruleset') }
-            'missing ruleset ID' { $list[0].Remove('id') }
-            'string ruleset ID' { $list[0].id = '60' }
-            'zero ruleset ID' { $list[0].id = 0 }
-            'non-object detail' { $cloud.rulesetDetailOverride = @('invalid ruleset') }
-            'different detail ID' { $rule.id = 61 }
-            'array detail ID' { $rule.id = @(60) }
-            'wrong source type' { $rule.source_type = 'Organization' }
-            'wrong source' { $rule.source = 'other/instance' }
-            'source casing' { $rule.source = 'Demo-a1b2c3-platform/instance' }
-            'missing conditions' { $rule.Remove('conditions') }
-            'extra conditions' { $rule.conditions.repository_name = @{ include = @('other'); exclude = @() } }
-            'bypass actor' { $rule.bypass_actors = @(@{ actor_id = 31; actor_type = 'Team'; bypass_mode = 'always' }) }
-            'wrong target' { $rule.target = 'tag' }
-            'wrong branch' { $rule.conditions.ref_name.include = @('refs/heads/other') }
-            'excluded main' { $rule.conditions.ref_name.exclude = @('refs/heads/main') }
-            'missing deletion rule' { $rule.rules = @($rule.rules | Where-Object type -CNE deletion) }
-            'missing force-push rule' { $rule.rules = @($rule.rules | Where-Object type -CNE non_fast_forward) }
-            'missing pull-request rule' { $rule.rules = @($rule.rules | Where-Object type -CNE pull_request) }
-            'missing approval' { $review.required_approving_review_count = 0 }
-            'stale approval' { $review.dismiss_stale_reviews_on_push = $false }
-            'missing code-owner approval' { $review.require_code_owner_review = $false }
-            'missing last-push approval' { $review.require_last_push_approval = $false }
-            'unresolved threads' { $review.required_review_thread_resolution = $false }
-            'wrong review team' { $review.required_reviewers[0].reviewer.id = 32 }
-            'missing required reviewer' { $review.required_reviewers = @() }
-            'wrong reviewer pattern' { $review.required_reviewers[0].file_patterns[0] = 'other.yaml' }
-        }
+        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase $ProtectionCase
         $before = (Get-FileHash -LiteralPath $inventory).Hash
         $operations = [Collections.Generic.List[object]]::new()
         $arguments.RequestPolicy = {
@@ -1392,33 +1520,9 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
     }
 
-    It 'rejects upgrade security team <TeamCase> before saving inventory or reconciling' -Tag 'BootstrapUpgrade', 'UpgradeProtection' -ForEach @(
-        @{ TeamCase = 'missing' }
-        @{ TeamCase = 'missing ID' }
-        @{ TeamCase = 'string ID' }
-        @{ TeamCase = 'zero ID' }
-        @{ TeamCase = 'wrong slug' }
-        @{ TeamCase = 'slug casing' }
-        @{ TeamCase = 'enterprise type' }
-        @{ TeamCase = 'missing organization' }
-        @{ TeamCase = 'wrong organization' }
-        @{ TeamCase = 'wrong ownership' }
-    ) {
+    It 'rejects upgrade security team <TeamCase> before saving inventory or reconciling' -Tag 'BootstrapUpgrade', 'UpgradeProtection' -ForEach $upgradeTeamCases {
         Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
-        $team = $cloud.resources['/orgs/demo-a1b2c3-platform/teams/security']
-        # Deliberately invalid/mismatched fields must not prove the existing security team.
-        switch ($TeamCase) {
-            missing { $cloud.resources.Remove('/orgs/demo-a1b2c3-platform/teams/security') }
-            'missing ID' { $team.Remove('id') }
-            'string ID' { $team.id = '31' }
-            'zero ID' { $team.id = 0 }
-            'wrong slug' { $team.slug = 'other' }
-            'slug casing' { $team.slug = 'Security' }
-            'enterprise type' { $team.type = 'enterprise' }
-            'missing organization' { $team.Remove('organization') }
-            'wrong organization' { $team.organization.login = 'other' }
-            'wrong ownership' { $team.description = 'other' }
-        }
+        Set-TestUpgradeTeam -Cloud $cloud -TeamCase $TeamCase
         $before = (Get-FileHash -LiteralPath $inventory).Hash
         { & $bootstrap @arguments } | Should -Throw '*upgrade requires the existing bootstrap-owned security team*'
         $cloud.writes.Count | Should -Be 0
@@ -1461,14 +1565,7 @@ Describe 'GitHub bootstrap public interface' {
         (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -BeExactly '0.1.0-rc.10'
     }
 
-    It 'rejects upgrade inventory state <State> before any API request' -Tag 'BootstrapUpgrade', 'UpgradeInventoryState' -ForEach @(
-        @{ State = 'absent inventory' }
-        @{ State = 'pending initialization'; Pending = $true }
-        @{ State = 'missing initialization' }
-        @{ State = 'null initialization'; Pending = $null }
-        @{ State = 'string initialization'; Pending = 'false' }
-        @{ State = 'numeric initialization'; Pending = 0 }
-    ) {
+    It 'rejects upgrade inventory state <State> before any API request' -Tag 'BootstrapUpgrade', 'UpgradeInventoryState' -ForEach $upgradeInventoryCases {
         Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
         $expected = '*Only an initialized bootstrap inventory*'
