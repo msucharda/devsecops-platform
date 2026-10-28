@@ -1,9 +1,11 @@
 # Rounded file-suite seconds from Source CI run 40546699139 (2026-10-27).
 # LocalCiGate, LocalCiGate.Unit and LocalCiConcurrency measured in run 40606534079 (2026-10-28), rounded up.
+# EnterpriseBaselinePatchContract baseline measured in Source CI run 40776003849 (2026-10-28), rounded up.
 # Missing files receive a one-second estimate and are still selected automatically.
 @{
     'EnterpriseBaseline.Tests.ps1' = 280
-    # Source CI run 40763358782: 439.7855 seconds, rounded up.
+    'EnterpriseBaselinePatchContract.Tests.ps1' = 5
+    # Source CI run 40771671425: 543.7233 seconds, rounded up.
     'GitHubBootstrap.Tests.ps1' = 544
     'RulesetsTerraform.Tests.ps1' = 138
     'OrganizationRolePrograms.Tests.ps1' = 105

@@ -2,6 +2,7 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $mainPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline/main.tf'
     $main = Get-Content -LiteralPath $mainPath -Raw
+    $patchAllowList = Get-Content -LiteralPath (Join-Path (Split-Path $mainPath -Parent) 'organization-patch-allowlist.json') -Raw | ConvertFrom-Json -AsHashtable
 
     function Get-TerraformLocalMap {
         param([Parameter(Mandatory)][string] $Name)
@@ -184,8 +185,11 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
     }
 
     BeforeEach {
-        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-        New-Item -ItemType Directory -Path $root | Out-Null
+        $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        $modules = Join-Path $parent 'modules'
+        $root = Join-Path $modules 'enterprise-baseline'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $moduleRoot '../shared') -Destination $modules -Recurse
         Copy-Item -Path (Join-Path $moduleRoot '*.tf'), (Join-Path $moduleRoot '.terraform.lock.hcl') -Destination $root
         Copy-Item -Path (Join-Path $moduleRoot 'scripts') -Destination $root -Recurse
         Set-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @"
@@ -303,6 +307,9 @@ locals {
         $stubState.OrganizationPatches.Count | Should -Be ($patchesBeforeDestroy + 1)
         $stubState.OrganizationPatches[-1].default_repository_permission | Should -BeExactly 'read'
         foreach ($patch in $stubState.OrganizationPatches) {
+            foreach ($field in $patch.get_Keys()) {
+                ($field -cin @($patchAllowList.allowedFields.get_Keys())) | Should -BeTrue -Because "the actual PATCH field '$field' must be explicitly allowed"
+            }
             @($patch.Keys) | Should -Not -Contain 'members_can_fork_private_repositories'
             @($patch.Keys) | Should -Not -Contain 'members_can_change_repo_visibility'
             @($patch.Keys) | Should -Not -Contain 'members_can_delete_repositories'

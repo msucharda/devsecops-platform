@@ -67,16 +67,19 @@ AfterAll {
 Describe 'Ruleset Terraform root against the documented and observed API' -Tag Terraform {
     AfterEach {
         # Restore-RulesetState imports the fixture copy into this process.
-        Get-Module -Name Rulesets | Where-Object { $_.Path -eq (Join-Path $parent 'scripts/Rulesets.psm1') } |
+        Get-Module -Name Rulesets | Where-Object { $_.Path -eq (Join-Path $modules 'organization-rulesets/scripts/Rulesets.psm1') } |
             Remove-Module -Force
     }
 
     BeforeEach {
         $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-        $root = Join-Path $parent 'rulesets'
-        New-Item -ItemType Directory -Path $root | Out-Null
+        $modules = Join-Path $parent 'modules'
+        $module = Join-Path $modules 'organization-rulesets'
+        $root = Join-Path $module 'rulesets'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $moduleRoot '../shared') -Destination $modules -Recurse
         Copy-Item -Path (Join-Path $moduleRoot 'rulesets/*.tf'), (Join-Path $moduleRoot 'rulesets/.terraform.lock.hcl') -Destination $root
-        Copy-Item -LiteralPath (Join-Path $moduleRoot 'scripts') -Destination $parent -Recurse
+        Copy-Item -LiteralPath (Join-Path $moduleRoot 'scripts') -Destination $module -Recurse
         Set-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @"
 terraform {
   backend "local" {}
@@ -256,11 +259,12 @@ data "external" "ruleset_plan_state" {
         $plan.Code | Should -Be 0 -Because $plan.Text
     }
 
-    It 'recovers interruption after the remote write but before its ID is captured in state' {
+    It 'recovers interruption after the remote write but before its ID is captured in state' -Tag 'RulesetRecovery' {
         $server.State.FailNext = '^GET /orgs/demo/rulesets/[0-9]+$'
         $interrupted = Invoke-RulesetTerraform apply -input=false -auto-approve
         $server.State.FailNext | Should -BeNullOrEmpty
         $interrupted.Code | Should -Not -Be 0
+        $interrupted.Text | Should -Match 'HTTP 500'
         $server.State.Items.Count | Should -Be 1
         $resumed = Invoke-RulesetTerraform apply -input=false -auto-approve
         $resumed.Code | Should -Be 0 -Because $resumed.Text

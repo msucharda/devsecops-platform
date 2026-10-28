@@ -330,7 +330,7 @@ Describe 'Organizations module against the documented GitHub API' {
         It 'recovers when the run ends between the mutation and its response' {
             $null = $stub.Drop.Add('createOrganization')
 
-            { New-EnterpriseOrganization @target @create -AllowExisting } | Should -Throw '*connection was closed*'
+            { New-EnterpriseOrganization @target @create -AllowExisting } | Should -Throw '*POST /graphql status=none attempt=1*'
             New-EnterpriseOrganization @target @create -AllowExisting | Should -BeExactly 'demo-a1b2c3-actions'
 
             (Get-StubRequest createOrganization).Count | Should -Be 1
@@ -518,7 +518,7 @@ Describe 'Organizations module against the documented GitHub API' {
         It 'recovers an all-repositories installation after losing its creation response' {
             $null = $stub.Drop.Add('createInstallation')
 
-            { Install-OrganizationApp @target @install -RepositorySelection all } | Should -Throw '*connection was closed*'
+            { Install-OrganizationApp @target @install -RepositorySelection all } | Should -Throw '*POST /enterprises/example/apps/organizations/demo-a1b2c3-actions/installations status=none attempt=1*'
             (Install-OrganizationApp @target @install -RepositorySelection all).repository_selection | Should -BeExactly all
             (Get-StubRequest createInstallation).Count | Should -Be 1
         }
@@ -606,7 +606,7 @@ Describe 'Organizations module against the documented GitHub API' {
         It 'recovers when the run ends between the installation and its response' {
             $null = $stub.Drop.Add('createInstallation')
 
-            { Install-OrganizationApp @target @install } | Should -Throw '*connection was closed*'
+            { Install-OrganizationApp @target @install } | Should -Throw '*POST /enterprises/example/apps/organizations/demo-a1b2c3-actions/installations status=none attempt=1*'
             $null = Install-OrganizationApp @target @install
 
             (Get-StubRequest createInstallation).Count | Should -Be 1
@@ -694,7 +694,7 @@ Describe 'Organizations module against the documented GitHub API' {
             Add-StubInstallation -Organization 'demo-a1b2c3-actions' -ClientId 'Iv23liOther0001'
             $null = $stub.Drop.Add('deleteInstallation')
 
-            { Uninstall-OrganizationApp @target @install } | Should -Throw '*connection was closed*'
+            { Uninstall-OrganizationApp @target @install } | Should -Throw '*DELETE /enterprises/example/apps/organizations/demo-a1b2c3-actions/installations/101 status=none attempt=1*'
             Uninstall-OrganizationApp @target @install
 
             (Get-StubRequest deleteInstallation).Count | Should -Be 1
