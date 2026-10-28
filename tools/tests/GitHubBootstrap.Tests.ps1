@@ -51,6 +51,17 @@ BeforeDiscovery {
         @{ State = 'string initialization'; Pending = 'false' }
         @{ State = 'numeric initialization'; Pending = 0 }
     )
+    foreach ($case in $upgradeProtectionCases) {
+        $case.ExpectedError = switch ($case.ProtectionCase) {
+            { $_ -in @('missing ruleset ID', 'string ruleset ID', 'zero ruleset ID') } {
+                '*main protection: a valid ruleset ID*'
+            }
+            { $_ -in @('missing', 'duplicate', 'non-object list entry') } {
+                '*main protection: exactly one bootstrap main ruleset*'
+            }
+            default { '*main protection with enforced security-team PR reviews and no bypass*' }
+        }
+    }
 }
 
 BeforeAll {
@@ -176,81 +187,6 @@ BeforeAll {
             'wrong ownership' { $team.description = 'other' }
             default { throw "Unknown team case '$TeamCase'." }
         }
-    }
-}
-
-Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
-    BeforeAll {
-        Import-Module (Join-Path $tools 'PlatformTools.psm1') -Force
-        $ast = [Management.Automation.Language.Parser]::ParseFile(
-            (Join-Path $tools 'Invoke-GitHubBootstrap.ps1'), [ref] $null, [ref] $null)
-        foreach ($name in @(
-            'Assert-GitHubBootstrapUpgradeInventoryState', 'Assert-GitHubBootstrapUpgradeMainProtection',
-            'Get-GitHubBootstrapMainRuleset', 'Test-GitHubBootstrapValue'
-        )) {
-            $definition = $ast.Find({
-                param($node)
-                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
-            }, $true)
-            if ($null -eq $definition) { throw "Missing bootstrap function '$name'." }
-            . ([scriptblock]::Create($definition.Extent.Text))
-        }
-        function Invoke-GitHubBootstrapApi {
-            param([string] $Path, [switch] $AllowNotFound)
-            if ($Path -ceq "/orgs/$organization/teams/security") { return $cloud.resources[$Path] }
-            if ($Path -ceq "/repos/$repository/rulesets/60") { return $cloud.rulesetDetailOverride }
-            throw "Unexpected isolated bootstrap API path '$Path'."
-        }
-        function Get-GitHubBootstrapCollection {
-            param([string] $Path)
-            if ($Path -cne "/repos/$repository/rulesets?includes_parents=false") {
-                throw "Unexpected isolated bootstrap collection '$Path'."
-            }
-            return $cloud.rulesetListOverride
-        }
-    }
-
-    BeforeEach {
-        $organization = 'demo-a1b2c3-platform'
-        $repository = "$organization/instance"
-        $ownership = 'bootstrap-test-ownership'
-        $team = Get-GitHubApiFixture -Name teams/get-by-name -Set @{
-            id = 31; slug = 'security'; type = 'organization'; description = $ownership
-            'organization.login' = $organization
-        }
-        $cloud = @{ resources = @{ "/orgs/$organization/teams/security" = $team } }
-        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase valid
-    }
-
-    It 'accepts the documented main protection fixture' {
-        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Not -Throw
-    }
-
-    It 'rejects isolated protection <ProtectionCase>' -ForEach $upgradeProtectionCases {
-        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase $ProtectionCase
-        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Throw '*upgrade requires the existing main protection*'
-    }
-
-    It 'rejects isolated team <TeamCase>' -ForEach $upgradeTeamCases {
-        Set-TestUpgradeTeam -Cloud $cloud -TeamCase $TeamCase
-        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Throw '*upgrade requires the existing bootstrap-owned security team*'
-    }
-
-    It 'accepts initialized inventory' {
-        { Assert-GitHubBootstrapUpgradeInventoryState -Inventory @{ initializationPending = $false } } |
-            Should -Not -Throw
-    }
-
-    It 'rejects isolated inventory <State>' -ForEach $upgradeInventoryCases {
-        $record = @{ initializationPending = $false }
-        $expected = '*Only an initialized bootstrap inventory*'
-        if ($State -ceq 'absent inventory') {
-            $record = $null
-            $expected = '*UpgradeInventory requires an existing initialized bootstrap inventory*'
-        }
-        elseif ($State -ceq 'missing initialization') { $record.Remove('initializationPending') }
-        else { $record.initializationPending = $Pending }
-        { Assert-GitHubBootstrapUpgradeInventoryState -Inventory $record } | Should -Throw $expected
     }
 }
 
@@ -1500,7 +1436,7 @@ Describe 'GitHub bootstrap public interface' {
             return $true
         }.GetNewClosure()
 
-        { & $bootstrap @arguments } | Should -Throw '*upgrade requires the existing main protection*'
+        { & $bootstrap @arguments } | Should -Throw $ExpectedError
 
         @($operations | Where-Object Kind -CEQ 'Reconcile').Count | Should -Be 0
         $cloud.writes.Count | Should -Be 0
@@ -3253,5 +3189,81 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         $unavailable.AcceptancePassed | Should -BeFalse
         Test-Path $proofPath | Should -BeTrue
         (Get-Content $proofPath -Raw) | Should -Be $retainedProof
+    }
+}
+
+# The interruption harness reuses the first BeforeEach, which must remain the public setup.
+Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
+    BeforeAll {
+        Import-Module (Join-Path $tools 'PlatformTools.psm1') -Force
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $tools 'Invoke-GitHubBootstrap.ps1'), [ref] $null, [ref] $null)
+        foreach ($name in @(
+            'Assert-GitHubBootstrapUpgradeInventoryState', 'Assert-GitHubBootstrapUpgradeMainProtection',
+            'Get-GitHubBootstrapMainRuleset', 'Test-GitHubBootstrapValue'
+        )) {
+            $definition = $ast.Find({
+                param($node)
+                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
+            }, $true)
+            if ($null -eq $definition) { throw "Missing bootstrap function '$name'." }
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        function Invoke-GitHubBootstrapApi {
+            param([string] $Path, [switch] $AllowNotFound)
+            if ($Path -ceq "/orgs/$organization/teams/security") { return $cloud.resources[$Path] }
+            if ($Path -ceq "/repos/$repository/rulesets/60") { return $cloud.rulesetDetailOverride }
+            throw "Unexpected isolated bootstrap API path '$Path'."
+        }
+        function Get-GitHubBootstrapCollection {
+            param([string] $Path)
+            if ($Path -cne "/repos/$repository/rulesets?includes_parents=false") {
+                throw "Unexpected isolated bootstrap collection '$Path'."
+            }
+            return $cloud.rulesetListOverride
+        }
+    }
+
+    BeforeEach {
+        $organization = 'demo-a1b2c3-platform'
+        $repository = "$organization/instance"
+        $ownership = 'bootstrap-test-ownership'
+        $team = Get-GitHubApiFixture -Name teams/get-by-name -Set @{
+            id = 31; slug = 'security'; type = 'organization'; description = $ownership
+            'organization.login' = $organization
+        }
+        $cloud = @{ resources = @{ "/orgs/$organization/teams/security" = $team } }
+        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase valid
+    }
+
+    It 'accepts the documented main protection fixture' {
+        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Not -Throw
+    }
+
+    It 'rejects isolated protection <ProtectionCase>' -ForEach $upgradeProtectionCases {
+        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase $ProtectionCase
+        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Throw $ExpectedError
+    }
+
+    It 'rejects isolated team <TeamCase>' -ForEach $upgradeTeamCases {
+        Set-TestUpgradeTeam -Cloud $cloud -TeamCase $TeamCase
+        { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Throw '*upgrade requires the existing bootstrap-owned security team*'
+    }
+
+    It 'accepts initialized inventory' {
+        { Assert-GitHubBootstrapUpgradeInventoryState -Inventory @{ initializationPending = $false } } |
+            Should -Not -Throw
+    }
+
+    It 'rejects isolated inventory <State>' -ForEach $upgradeInventoryCases {
+        $record = @{ initializationPending = $false }
+        $expected = '*Only an initialized bootstrap inventory*'
+        if ($State -ceq 'absent inventory') {
+            $record = $null
+            $expected = '*UpgradeInventory requires an existing initialized bootstrap inventory*'
+        }
+        elseif ($State -ceq 'missing initialization') { $record.Remove('initializationPending') }
+        else { $record.initializationPending = $Pending }
+        { Assert-GitHubBootstrapUpgradeInventoryState -Inventory $record } | Should -Throw $expected
     }
 }
