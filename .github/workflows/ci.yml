@@ -57,8 +57,6 @@ jobs:
       - name: Check PowerShell
         shell: pwsh
         run: ./tools/Test-PowerShell.ps1
-      - name: Check external-program preflight helper
-        run: go vet -p=1 tools/probes/powershell-external.go
       - name: Validate module manifests
         shell: pwsh
         run: |
@@ -79,8 +77,11 @@ jobs:
           ./tools/Generate-DeploymentWorkflow.ps1 -ModulesPath ./tools/tests/fixtures/modules -OutputPath ./tools/tests/fixtures/deploy.yml -Check
           ./tools/Generate-TeardownWorkflow.ps1 -Check
           ./tools/Generate-TeardownWorkflow.ps1 -ModulesPath ./tools/tests/fixtures/modules -OutputPath ./tools/tests/fixtures/teardown.yml -Check
+      - name: Install verified actionlint
+        shell: pwsh
+        run: ./tools/Install-CiBinary.ps1 -Name Actionlint
       - name: Validate deployment workflow syntax
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/ci.yml .github/workflows/release.yml templates/instance/.github/workflows/deploy.yml templates/instance/.github/workflows/drift.yml templates/instance/.github/workflows/teardown.yml templates/instance/.github/workflows/vendor.yml tools/tests/fixtures/deploy.yml tools/tests/fixtures/drift.yml tools/tests/fixtures/teardown.yml tools/acceptance/github/bootstrap-acceptance.yml
+        run: actionlint -shellcheck= -pyflakes= .github/workflows/ci.yml .github/workflows/release.yml templates/instance/.github/workflows/deploy.yml templates/instance/.github/workflows/drift.yml templates/instance/.github/workflows/teardown.yml templates/instance/.github/workflows/vendor.yml tools/tests/fixtures/deploy.yml tools/tests/fixtures/drift.yml tools/tests/fixtures/teardown.yml tools/acceptance/github/bootstrap-acceptance.yml
       - name: Validate instance workflows that call local reusable workflows
         # actionlint resolves ./.github/workflows/<file> from the project root, so the instance caller is checked
         # in a separate project that has the layout of an instance repository.
@@ -90,7 +91,7 @@ jobs:
           cp templates/instance/.github/workflows/import-release.yml templates/instance/.github/workflows/import-action.yml templates/instance/.github/workflows/vendor.yml "$project/.github/workflows/"
           git init -q "$project"
           cd "$project"
-          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/import-release.yml .github/workflows/import-action.yml
+          actionlint -shellcheck= -pyflakes= .github/workflows/import-release.yml .github/workflows/import-action.yml
 
   pester:
     name: Pester (${{ matrix.shard }}/4)

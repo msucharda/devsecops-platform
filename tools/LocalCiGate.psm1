@@ -189,46 +189,82 @@ function Assert-LocalCiTempPath {
     }
 }
 
+function Invoke-LocalCiTerraform {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Directory,
+        [Parameter(Mandatory)][string[]] $Arguments
+    )
+    $process = $null
+    try {
+        $start = [Diagnostics.ProcessStartInfo]::new('terraform')
+        $start.WorkingDirectory = $Directory
+        $start.UseShellExecute = $false
+        $start.RedirectStandardInput = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
+        $start.Environment['TF_DATA_DIR'] = Join-Path $Directory '.terraform'
+        $start.Environment['TF_PLUGIN_CACHE_DIR'] = Join-Path $Directory 'plugins'
+        $start.Environment['TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE'] = 'false'
+        $start.Environment['TF_IN_AUTOMATION'] = 'true'
+        $process = [Diagnostics.Process]::Start($start)
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit(180000)) {
+            $process.Kill($true)
+            $process.WaitForExit()
+            throw "Terraform preflight $($Arguments[0]) did not finish within 180 seconds."
+        }
+        if ($process.ExitCode -ne 0) { throw "Terraform preflight $($Arguments[0]) exited $($process.ExitCode): $($stderr.GetAwaiter().GetResult())" }
+        return $stdout.GetAwaiter().GetResult()
+    }
+    finally {
+        if ($null -ne $process) {
+            if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+            $process.Dispose()
+        }
+    }
+}
+
 function Test-LocalCiRuntime {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $TempPath,
         [string] $Executable = 'pwsh'
     )
-    $probe = Join-Path $TempPath "external-probe-$([guid]::NewGuid().ToString('N')).ps1"
-    $process = $null
+    $directory = Join-Path $TempPath "external-probe-$([guid]::NewGuid().ToString('N'))"
     try {
-        $null = New-Item -ItemType Directory -Force -Path $TempPath
-        [IO.File]::WriteAllText($probe, @'
+        $null = New-Item -ItemType Directory -Force -Path (Join-Path $directory 'plugins')
+        $lock = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../modules/organizations/.terraform.lock.hcl') -Raw
+        $provider = [regex]::Match($lock, '(?ms)^provider "registry\.terraform\.io/hashicorp/external" \{.*?^\}')
+        $version = [regex]::Match($provider.Value, 'version\s*=\s*"(?<version>[0-9.]+)"')
+        if (-not $provider.Success -or -not $version.Success) { throw 'The committed external provider lock is missing or unreadable.' }
+        [IO.File]::WriteAllText((Join-Path $directory '.terraform.lock.hcl'), $provider.Value + "`n")
+        [IO.File]::WriteAllText((Join-Path $directory 'probe.ps1'), @'
 $ErrorActionPreference = 'Stop'
 $query = [Console]::In.ReadToEnd() | ConvertFrom-Json -AsHashtable
 if ($query['probe'] -cne 'local-ci') { throw 'Invalid preflight input' }
 @{ probe = 'local-ci'; version = $PSVersionTable.PSVersion.ToString() } | ConvertTo-Json -Compress
 '@)
-        # .NET can launch Store aliases that Go (and Terraform) reject. Probe Go's os/exec, not .NET's pwsh lookup.
-        if (-not (Get-Command go -CommandType Application -ErrorAction SilentlyContinue)) {
-            throw 'Go is missing. Install Go to run the Terraform-compatible external-program preflight.'
+        $configuration = @{
+            terraform = @{ required_providers = @{ external = @{ source = 'hashicorp/external'; version = $version.Groups['version'].Value } } }
+            data = @{ external = @{ runtime = @{
+                program = @($Executable, '-NoProfile', '-NonInteractive', '-File', 'probe.ps1')
+                query = @{ probe = 'local-ci' }
+            } } }
+            output = @{ runtime = @{ value = '${data.external.runtime.result}' } }
         }
-        $start = [Diagnostics.ProcessStartInfo]::new('go')
-        $start.UseShellExecute = $false
-        $start.RedirectStandardInput = $true
-        $start.RedirectStandardOutput = $true
-        $start.RedirectStandardError = $true
-        foreach ($argument in 'run', '-p=1', (Join-Path $PSScriptRoot 'probes/powershell-external.go'), $Executable, $probe) { $start.ArgumentList.Add($argument) }
-        $start.Environment['GOMAXPROCS'] = '1'
-        $process = [Diagnostics.Process]::Start($start)
-        $stdout = $process.StandardOutput.ReadToEndAsync()
-        $stderr = $process.StandardError.ReadToEndAsync()
-        $process.StandardInput.Close()
-        if (-not $process.WaitForExit(60000)) {
-            $process.Kill($true)
-            $process.WaitForExit()
-            throw 'The Go/pwsh preflight did not finish within 60 seconds.'
-        }
-        if ($process.ExitCode -ne 0) { throw "pwsh exited $($process.ExitCode): $($stderr.GetAwaiter().GetResult())" }
-        $response = $stdout.GetAwaiter().GetResult() | ConvertFrom-Json -AsHashtable -NoEnumerate
+        [IO.File]::WriteAllText((Join-Path $directory 'main.tf.json'), ($configuration | ConvertTo-Json -Depth 10))
+        $null = Invoke-LocalCiTerraform -Directory $directory -Arguments @('init', '-backend=false', '-input=false', '-lockfile=readonly', '-no-color')
+        $null = Invoke-LocalCiTerraform -Directory $directory -Arguments @('plan', '-input=false', '-no-color', '-lock=false', '-out=probe.tfplan')
+        $plan = Invoke-LocalCiTerraform -Directory $directory -Arguments @('show', '-json', 'probe.tfplan') | ConvertFrom-Json -AsHashtable
+        $response = $plan.planned_values.outputs.runtime.value
+        $runtimeVersion = $null
         if ($response -isnot [hashtable] -or $response.Count -ne 2 -or $response['probe'] -isnot [string] -or $response['probe'] -cne 'local-ci' -or
-            $response['version'] -isnot [string] -or [version] $response['version'] -lt [version] '7.4') {
+            $response['version'] -isnot [string] -or -not [version]::TryParse($response['version'], [ref] $runtimeVersion) -or
+            $runtimeVersion -lt [version] '7.4') {
             throw 'pwsh did not return the expected external-program string map for PowerShell 7.4 or newer.'
         }
         return $true
@@ -237,11 +273,7 @@ if ($query['probe'] -cne 'local-ci') { throw 'Invalid preflight input' }
         throw "pwsh external-program preflight failed: $($_.Exception.Message) Install a working PowerShell distribution and put its directory before Microsoft Store aliases on PATH."
     }
     finally {
-        if ($null -ne $process) {
-            if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
-            $process.Dispose()
-        }
-        if (Test-Path -LiteralPath $probe) { Remove-Item -LiteralPath $probe -Force }
+        if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
     }
 }
 

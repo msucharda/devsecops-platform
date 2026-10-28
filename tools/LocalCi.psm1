@@ -76,11 +76,10 @@ function ConvertFrom-ActionlintCommand {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Line)
 
-    if ($Line.Trim() -cnotmatch '^go run github\.com/rhysd/actionlint/cmd/actionlint@v(?<version>[0-9.]+)(?<arguments>( [A-Za-z0-9_./=-]+)+)$') {
+    if ($Line.Trim() -cnotmatch '^actionlint(?<arguments>( [A-Za-z0-9_./=-]+)+)$') {
         throw "ci.yml actionlint command has an unexpected form: '$Line'. Update tools/LocalCi.psm1."
     }
     return [pscustomobject]@{
-        Version = $Matches['version']
         Arguments = [string[]] @($Matches['arguments'].Trim().Split(' ', [StringSplitOptions]::RemoveEmptyEntries))
     }
 }
@@ -90,7 +89,7 @@ function Get-CiWorkflowSetting {
     .SYNOPSIS
     Reads the commands, tool pins and actionlint invocations that Invoke-LocalCi mirrors from ci.yml.
     .DESCRIPTION
-    Commands and setup-action pins come from ci.yml; the verified TFLint installer uses requirements.psd1.
+    Commands and setup-action pins come from ci.yml; verified binary installers use requirements.psd1.
     An unexpected ci.yml shape throws.
     #>
     [CmdletBinding()]
@@ -103,6 +102,10 @@ function Get-CiWorkflowSetting {
     $tflintInstaller = Get-CiWorkflowStep -Workflow $workflow -Job terraform -Name 'Install verified TFLint'
     if ($tflintInstaller['shell'] -cne 'pwsh' -or $tflintInstaller['run'] -cne './tools/Install-CiBinary.ps1 -Name TFLint') {
         throw 'ci.yml must install the pinned TFLint archive. Update tools/LocalCi.psm1.'
+    }
+    $actionlintInstaller = Get-CiWorkflowStep -Workflow $workflow -Job platform-checks -Name 'Install verified actionlint'
+    if ($actionlintInstaller['shell'] -cne 'pwsh' -or $actionlintInstaller['run'] -cne './tools/Install-CiBinary.ps1 -Name Actionlint') {
+        throw 'ci.yml must install the pinned actionlint archive. Update tools/LocalCi.psm1.'
     }
     $pwshSteps = [ordered]@{}
     foreach ($name in 'Check PowerShell', 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {
@@ -121,14 +124,13 @@ function Get-CiWorkflowSetting {
     $instance = Get-CiWorkflowStep -Workflow $workflow -Job platform-checks -Name 'Validate instance workflows that call local reusable workflows'
     $instanceLines = @(([string] $instance['run']).Split("`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $copy = @($instanceLines | Where-Object { $_ -cmatch '^cp (?<files>.+) "\$project/\.github/workflows/"$' })
-    $lint = @($instanceLines | Where-Object { $_.StartsWith('go run ', [StringComparison]::Ordinal) })
+    $lint = @($instanceLines | Where-Object { $_.StartsWith('actionlint ', [StringComparison]::Ordinal) })
     if ($copy.Count -ne 1 -or $lint.Count -ne 1) {
         throw "ci.yml step 'Validate instance workflows that call local reusable workflows' has an unexpected form. Update tools/LocalCi.psm1."
     }
     $null = $copy[0] -cmatch '^cp (?<files>.+) "\$project/\.github/workflows/"$'
     $instanceFiles = [string[]] @($Matches['files'].Split(' ', [StringSplitOptions]::RemoveEmptyEntries))
     $instanceLint = ConvertFrom-ActionlintCommand -Line $lint[0]
-    if ($instanceLint.Version -cne $actionlint.Version) { throw 'ci.yml uses two actionlint versions. Update tools/LocalCi.psm1.' }
 
     $terraformCommands = [ordered]@{}
     foreach ($name in $script:TerraformStepCommands.Keys) {
@@ -146,7 +148,7 @@ function Get-CiWorkflowSetting {
 
     return [pscustomobject]@{
         PwshSteps = $pwshSteps
-        ActionlintVersion = $actionlint.Version
+        ActionlintVersion = $requirements.Binaries.Actionlint.Version
         ActionlintArguments = $actionlint.Arguments
         InstanceWorkflowFiles = $instanceFiles
         InstanceActionlintArguments = $instanceLint.Arguments
@@ -403,14 +405,10 @@ function Get-LocalCiPreflightProblem {
     }
 
     $actionlint = & $ToolProbe 'actionlint'
-    $go = & $ToolProbe 'go'
-    if ($actionlint -cne $Setting.ActionlintVersion -and [string]::IsNullOrWhiteSpace($go)) {
+    if ($actionlint -cne $Setting.ActionlintVersion) {
         $version = $Setting.ActionlintVersion
         $found = if ([string]::IsNullOrWhiteSpace($actionlint)) { 'missing' } else { "version $actionlint" }
-        & $fail ("actionlint $version is $found and go is missing. Download " +
-            "https://github.com/rhysd/actionlint/releases/download/v$version/actionlint_$($version)_<os>_<arch>.<tar.gz|zip>, " +
-            "check its SHA-256 against https://github.com/rhysd/actionlint/releases/download/v$version/actionlint_$($version)_checksums.txt " +
-            '(Get-FileHash -Algorithm SHA256) and put actionlint on PATH.')
+        & $fail "actionlint $version is $found. Run ./tools/Install-ToolDependencies.ps1 -Binary Actionlint to restore the verified archive."
     }
     return $problems.ToArray()
 }

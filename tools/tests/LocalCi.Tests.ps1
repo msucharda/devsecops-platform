@@ -41,9 +41,10 @@ Describe 'Local CI reads ci.yml' {
         $workflow = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $workflowPath -Raw)
     }
 
-    It 'takes the actionlint version and arguments from the CI step' {
+    It 'takes actionlint arguments from CI and its version from verified installer requirements' {
         $run = (@($workflow.jobs['platform-checks'].steps | Where-Object { $_['name'] -eq 'Validate deployment workflow syntax' }))[0].run.Trim()
-        $run | Should -BeExactly "go run github.com/rhysd/actionlint/cmd/actionlint@v$($setting.ActionlintVersion) $($setting.ActionlintArguments -join ' ')"
+        $run | Should -BeExactly "actionlint $($setting.ActionlintArguments -join ' ')"
+        $setting.ActionlintVersion | Should -BeExactly (Import-PowerShellDataFile (Join-Path $toolRoot 'requirements.psd1')).Binaries.Actionlint.Version
         $setting.ActionlintArguments | Should -Contain '.github/workflows/ci.yml'
         $setting.InstanceWorkflowFiles | Should -Contain 'templates/instance/.github/workflows/import-release.yml'
         $setting.InstanceWorkflowFiles | Should -Contain 'templates/instance/.github/workflows/import-action.yml'
@@ -69,6 +70,7 @@ Describe 'Local CI reads ci.yml' {
         @{ Label = 'pwsh step is missing'; Find = 'name: Check PowerShell'; Replace = 'name: Check scripts' }
         @{ Label = 'actionlint command changed form'; Find = '-shellcheck= -pyflakes= .github/workflows/ci.yml'; Replace = '-shellcheck= -pyflakes= .github/workflows/ci.yml && echo done |' }
         @{ Label = 'TFLint installer changed'; Find = './tools/Install-CiBinary.ps1 -Name TFLint'; Replace = './tools/Install-CiBinary.ps1 -Name Other' }
+        @{ Label = 'actionlint installer changed'; Find = './tools/Install-CiBinary.ps1 -Name Actionlint'; Replace = './tools/Install-CiBinary.ps1 -Name Other' }
         @{ Label = 'Trivy command changed'; Find = '--severity HIGH,CRITICAL'; Replace = '--severity MEDIUM,HIGH,CRITICAL' }
         @{ Label = 'TFLint step runs another command'; Find = 'tflint --chdir="$TF_ROOT"' + "`n"; Replace = 'tflint --chdir="$TF_ROOT"' + "`n" + '          tflint --chdir="$TF_ROOT" --format json' + "`n" }
     ) {
@@ -197,12 +199,12 @@ Describe 'Local CI preflight' {
         $requirements = @{ Runtime = @{ 'powershell-yaml' = '0.4.12' }; Development = @{ Pester = '5.7.1' } }
 
         function Get-Problem {
-            param([hashtable] $Tool = @{}, [hashtable] $Module = @{}, [version] $PowerShell = '7.4.6', [switch] $Terraform)
+            param([hashtable] $Tool = @{}, [hashtable] $Module = @{}, [version] $PowerShell = '7.4.6', [switch] $Terraform, [switch] $SkipTerraform)
             $tools = @{ terraform = '1.16.5'; tflint = '0.60.0'; trivy = '0.72.0'; actionlint = '1.7.7'; go = $null }
             foreach ($key in $Tool.Keys) { $tools[$key] = $Tool[$key] }
             $modules = @{ 'powershell-yaml' = @('0.4.12'); Pester = @('5.7.1', '3.4.0') }
             foreach ($key in $Module.Keys) { $modules[$key] = $Module[$key] }
-            @(Get-LocalCiPreflightProblem -PowerShellVersion $PowerShell -Requirements $requirements -Setting $setting -NeedsTerraformTools:$Terraform `
+            @(Get-LocalCiPreflightProblem -PowerShellVersion $PowerShell -Requirements $requirements -Setting $setting -NeedsTerraformTools:$Terraform -SkipTerraform:$SkipTerraform `
                 -ModuleProbe { param($name) $modules[$name] }.GetNewClosure() -ToolProbe { param($name) $tools[$name] }.GetNewClosure())
         }
     }
@@ -219,8 +221,8 @@ Describe 'Local CI preflight' {
         @{ Label = 'missing tflint for a root'; Arguments = @{ Terraform = $true; Tool = @{ tflint = $null } }; Message = '*tflint is missing*' }
         @{ Label = 'another tflint version'; Arguments = @{ Terraform = $true; Tool = @{ tflint = '0.59.1' } }; Message = '*tflint 0.59.1 differs*' }
         @{ Label = 'missing trivy for a root'; Arguments = @{ Terraform = $true; Tool = @{ trivy = $null } }; Message = '*trivy is missing*' }
-        @{ Label = 'missing actionlint and go'; Arguments = @{ Tool = @{ actionlint = $null } }; Message = '*actionlint_1.7.7_checksums.txt*' }
-        @{ Label = 'another actionlint without go'; Arguments = @{ Tool = @{ actionlint = '1.7.6' } }; Message = '*actionlint 1.7.7 is version 1.7.6*' }
+        @{ Label = 'missing actionlint'; Arguments = @{ Tool = @{ actionlint = $null } }; Message = '*Install-ToolDependencies.ps1 -Binary Actionlint*' }
+        @{ Label = 'another actionlint'; Arguments = @{ Tool = @{ actionlint = '1.7.6' } }; Message = '*actionlint 1.7.7 is version 1.7.6*' }
     ) {
         $problems = Get-Problem @Arguments
         $errors = @($problems | Where-Object Severity -eq 'Error')
@@ -241,8 +243,15 @@ Describe 'Local CI preflight' {
         Get-Problem -Tool @{ tflint = $null; trivy = $null } | Should -BeNullOrEmpty
     }
 
-    It 'accepts go instead of actionlint' {
-        Get-Problem -Tool @{ actionlint = $null; go = 'go version go1.23.4 linux/amd64' } | Should -BeNullOrEmpty
+    It 'does not probe Terraform or Go in the Changed profile' {
+        Get-LocalCiPreflightProblem -PowerShellVersion '7.4' -Requirements $requirements -Setting $setting -SkipTerraform `
+            -ModuleProbe { param($name) @($requirements.Runtime[$name], $requirements.Development[$name]) } `
+            -ToolProbe { param($name) if ($name -in @('terraform', 'go')) { throw "Unexpected tool probe: $name" }; '1.7.7' } |
+            Should -BeNullOrEmpty
+    }
+
+    It 'does not accept Go instead of the pinned actionlint binary' {
+        @(Get-Problem -Tool @{ actionlint = $null; go = 'installed' } | Where-Object Severity -eq 'Error').Count | Should -Be 1
     }
 }
 

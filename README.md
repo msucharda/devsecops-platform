@@ -274,10 +274,18 @@ Workflow vendoringu, katalogový kontrakt, oddělené App identity a deklarovan�
 Testy Pester volají veřejné skripty bootstrapu, generátoru, výběru, validátorů, token issueru, reportování a runneru. Kontrolují výsledné YAML, JSON, summary, environmenty, pořadí jobů, PR původ, členství autora a oddělení skutečných App oprávnění. GitHub API testy nahrazují jen HTTP hranici; nevolají cloud. Testy bootstrapu nahrazují jen GitHub CLI, Azure CLI a HTTP API; ověřují potvrzení před změnou, preflight bez zápisu, ochrany backendu, scope identit, oddělení fází, opakovaný běh a dokončení přerušeného běhu. Testy runneru vyžadují Terraform; CI ho instaluje před Pesterem. Používají skutečný lokální backend a vestavěný provider `terraform_data`, včetně úplných pravidel a bypass driftu izolovaného ruleset rootu. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
 
 ```powershell
-Import-Module Pester -RequiredVersion 5.7.1
-Invoke-Pester -Path .\tools\tests\ModuleRunner.Tests.ps1 -Output Detailed
-Invoke-Pester -Path .\tools\tests\Bootstrap.Tests.ps1 -Output Detailed
+.\tools\Invoke-Tests.ps1 -Path .\tools\tests\ModuleRunner.Tests.ps1
+.\tools\Invoke-Tests.ps1 -Path .\tools\tests\Bootstrap.Tests.ps1
 ```
+
+Před lokálním gate obnov moduly a ověřený actionlint do worktree cache:
+
+```powershell
+.\tools\Install-ToolDependencies.ps1 -Development -Binary Actionlint
+.\tools\Invoke-LocalCi.ps1 -Changed
+```
+
+`-Changed` nevyžaduje Go ani Terraform. `-Full` s vybranými Terraform rooty nejdřív ověří spuštění `pwsh` přes skutečný Terraform external provider. Sonda používá soukromý TEMP a verzi i hashe provideru z `modules/organizations/.terraform.lock.hcl`. Nefunkční alias Microsoft Store ukončí gate s exit 2; nastav procesový PATH na funkční PowerShell. Actionlint používá pinované archivy pro Windows a Linux amd64; globální instalace není nutná.
 
 Workflow `Source CI` spouští Pester, syntaktickou a statickou kontrolu PowerShellu, validaci Module manifest a kontrolu aktuálnosti obou commitnutých workflow. `Get-TerraformRoots.ps1` vyhledá v repozitáři každý adresář se soubory `.tf` nebo `.tf.json`, včetně fixture; vynechá `.git`, `.terraform` a symbolické adresáře. CI na každém nalezeném rootu spustí `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`, tflint a Trivy. Nález Trivy úrovně `HIGH` nebo `CRITICAL` způsobí chybu CI. Pokud repozitář nemá žádný Terraform root, CI tuto část přeskočí.
 

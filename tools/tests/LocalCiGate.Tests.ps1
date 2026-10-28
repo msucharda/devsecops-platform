@@ -1,3 +1,7 @@
+BeforeDiscovery {
+    Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
+}
+
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
     $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -182,29 +186,59 @@ Describe 'Local CI content-bound result' {
     }
 }
 
-Describe 'Local CI external-program preflight' {
-    It 'runs a real child pwsh with redirected stdin and a string-map response' {
-        Test-LocalCiRuntime -TempPath $TestDrive -Executable ([Environment]::ProcessPath) | Should -BeTrue
-    }
-
-    It 'rejects a pwsh executable that cannot be launched before any tests run' {
-        { Test-LocalCiRuntime -TempPath $TestDrive -Executable (Join-Path $TestDrive 'missing-pwsh') } |
-            Should -Throw '*pwsh external-program preflight failed*'
-    }
-
-    It 'rejects a PATH executable that resolves but cannot launch through Go' {
-        $name = "invalid-pwsh-$([guid]::NewGuid().ToString('N')).exe"
-        $path = Join-Path $TestDrive $name
-        # Deliberately invalid executable, not a simulated Windows AppExecLink.
-        [IO.File]::WriteAllBytes($path, [byte[]] @())
-        if (-not $IsWindows) { & chmod '+x' $path }
-        $savedPath = $env:PATH
-        $env:PATH = "$TestDrive$([IO.Path]::PathSeparator)$savedPath"
-        try {
-            { Test-LocalCiRuntime -TempPath $TestDrive -Executable $name } |
-                Should -Throw '*Terraform external-program launch failed*'
+Describe 'Local CI external-program preflight' -Tag LocalCiRuntime {
+    InModuleScope LocalCiGate {
+        BeforeEach {
+            Mock Invoke-LocalCiTerraform {
+                if ($Arguments[0] -eq 'show') {
+                    '{"planned_values":{"outputs":{"runtime":{"value":{"probe":"local-ci","version":"7.4.0"}}}}}'
+                }
+            }
         }
-        finally { $env:PATH = $savedPath }
+
+        It 'checks the external string map from a Terraform plan using the committed provider lock' {
+            Mock Invoke-LocalCiTerraform {
+                if ($Arguments[0] -eq 'init') {
+                    $configuration = Get-Content (Join-Path $Directory 'main.tf.json') -Raw | ConvertFrom-Json -AsHashtable
+                    $configuration.data.external.runtime.program[0] | Should -BeExactly 'probe-pwsh'
+                    $configuration.data.external.runtime.query.probe | Should -BeExactly 'local-ci'
+                    $configuration.terraform.required_providers.external.version | Should -BeExactly '2.4.2'
+                    $Arguments | Should -Contain '-lockfile=readonly'
+                    Get-Content (Join-Path $Directory '.terraform.lock.hcl') -Raw | Should -Match 'zh:0b51793'
+                }
+                if ($Arguments[0] -eq 'show') {
+                    '{"planned_values":{"outputs":{"runtime":{"value":{"probe":"local-ci","version":"7.4.0"}}}}}'
+                }
+            }
+            Test-LocalCiRuntime -TempPath $TestDrive -Executable 'probe-pwsh' | Should -BeTrue
+            Should -Invoke Invoke-LocalCiTerraform -Times 1 -Exactly -ParameterFilter { $Arguments[0] -eq 'plan' }
+            @(Get-ChildItem $TestDrive -Filter 'external-probe-*') | Should -BeNullOrEmpty
+        }
+
+        It 'rejects <Case> and removes the interrupted probe directory' -ForEach @(
+            @{ Case = 'a missing executable'; Detail = 'exec: pwsh not found' }
+            @{ Case = 'a non-launchable Store alias'; Detail = 'fork/exec pwsh.exe: The file cannot be accessed by the system.' }
+            @{ Case = 'a failed provider initialization'; Detail = 'Provider checksum mismatch' }
+        ) {
+            Mock Invoke-LocalCiTerraform { throw $Detail }
+            { Test-LocalCiRuntime -TempPath $TestDrive } | Should -Throw "*$Detail*working PowerShell*Microsoft Store*"
+            @(Get-ChildItem $TestDrive -Filter 'external-probe-*') | Should -BeNullOrEmpty
+        }
+
+        It 'rejects <Case> in the external response' -ForEach @(
+            @{ Case = 'a wrong probe'; Value = '{"probe":"other","version":"7.4.0"}' }
+            @{ Case = 'an old version'; Value = '{"probe":"local-ci","version":"7.3.9"}' }
+            @{ Case = 'a missing version'; Value = '{"probe":"local-ci"}' }
+            @{ Case = 'a non-string version'; Value = '{"probe":"local-ci","version":7.4}' }
+            @{ Case = 'an extra field'; Value = '{"probe":"local-ci","version":"7.4.0","extra":"value"}' }
+            @{ Case = 'an empty version'; Value = '{"probe":"local-ci","version":""}' }
+            @{ Case = 'an array'; Value = '[]' }
+        ) {
+            Mock Invoke-LocalCiTerraform {
+                if ($Arguments[0] -eq 'show') { '{"planned_values":{"outputs":{"runtime":{"value":' + $Value + '}}}}' }
+            }
+            { Test-LocalCiRuntime -TempPath $TestDrive } | Should -Throw '*expected external-program string map*'
+        }
     }
 
     It 'rejects Windows TEMP paths that leave insufficient space for nested git refs' {
@@ -215,18 +249,20 @@ Describe 'Local CI external-program preflight' {
 
 Describe 'Local CI process guards' {
     It 'rejects <Case> without publishing a result' -ForEach @(
-        @{ Case = 'a HEAD change while loading workflow settings'; Command = 'Get-CiWorkflowSetting'; MissingGo = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
-        @{ Case = 'a HEAD change during test selection'; Command = 'Get-LocalCiProfile'; MissingGo = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
-        @{ Case = 'missing Go with preflight exit code 2'; Command = 'Test-LocalCiRuntime'; MissingGo = $true; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Go is missing' }
-        @{ Case = 'a parser error in a non-ASCII filename'; Command = ''; MissingGo = $false; InvalidFile = $true; ExpectedExit = 1; ExpectedError = 'syntax errors' }
-        @{ Case = 'an intermediate TEMP directory writable by another identity'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'Writable'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
-        @{ Case = 'an intermediate TEMP junction'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'Junction'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
-        @{ Case = 'a junction between UserProfile and the TEMP root'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'RootJunction'; ExpectedExit = 2; ExpectedError = 'direct child of UserProfile' }
-        @{ Case = 'a TEMP root writable by another identity'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'RootWritable'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
-        @{ Case = 'a worktree TEMP junction'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsafeTemp = 'LeafJunction'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
-        @{ Case = 'a custom TEMP root outside Windows'; Command = ''; MissingGo = $false; InvalidFile = $false; UnsupportedTemp = $true; ExpectedExit = 2; ExpectedError = 'TempRoot.*only supported on Windows' }
+        @{ Case = 'a HEAD change while loading workflow settings'; Command = 'Get-CiWorkflowSetting'; RuntimeFailure = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
+        @{ Case = 'a HEAD change during test selection'; Command = 'Get-LocalCiProfile'; RuntimeFailure = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
+        @{ Case = 'missing pwsh in Full with preflight exit code 2'; Command = 'Test-LocalCiRuntime'; RuntimeFailure = $true; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'pwsh not found.*working PowerShell' }
+        @{ Case = 'Changed reaching actionlint without a Terraform probe'; Command = 'Clear-LocalCiTemp'; RuntimeFailure = $false; InvalidFile = $false; ProbeSkipped = $true; ExpectedExit = 2; ExpectedError = 'Reached actionlint without Terraform' }
+        @{ Case = 'Full without roots reaching actionlint without a Terraform probe'; Command = 'Clear-LocalCiTemp'; RuntimeFailure = $false; InvalidFile = $false; ProbeSkipped = $true; NoRoots = $true; ExpectedExit = 2; ExpectedError = 'Reached actionlint without Terraform' }
+        @{ Case = 'a parser error in a non-ASCII filename'; Command = ''; RuntimeFailure = $false; InvalidFile = $true; ExpectedExit = 1; ExpectedError = 'syntax errors' }
+        @{ Case = 'an intermediate TEMP directory writable by another identity'; Command = ''; RuntimeFailure = $false; InvalidFile = $false; UnsafeTemp = 'Writable'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
+        @{ Case = 'an intermediate TEMP junction'; Command = ''; RuntimeFailure = $false; InvalidFile = $false; UnsafeTemp = 'Junction'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
+        @{ Case = 'a junction between UserProfile and the TEMP root'; Command = ''; RuntimeFailure = $false; InvalidFile = $false; UnsafeTemp = 'RootJunction'; ExpectedExit = 2; ExpectedError = 'direct child of UserProfile' }
+        @{ Case = 'a TEMP root writable by another identity'; Command = ''; RuntimeFailure = $false; InvalidFile = $false; UnsafeTemp = 'RootWritable'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
+        @{ Case = 'a worktree TEMP junction'; Command = ''; RuntimeFailure = $false; InvalidFile = $false; UnsafeTemp = 'LeafJunction'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
+        @{ Case = 'a custom TEMP root outside Windows'; Command = ''; RuntimeFailure = $false; InvalidFile = $false; UnsupportedTemp = $true; ExpectedExit = 2; ExpectedError = 'TempRoot.*only supported on Windows' }
     ) {
-        param([string] $UnsafeTemp = '', [bool] $UnsupportedTemp = $false)
+        param([string] $UnsafeTemp = '', [bool] $UnsupportedTemp = $false, [bool] $ProbeSkipped = $false, [bool] $NoRoots = $false)
         if ($UnsafeTemp -and -not $IsWindows) {
             Set-ItResult -Skipped -Because 'Windows ACL and junction regression.'
             return
@@ -243,6 +279,10 @@ Describe 'Local CI process guards' {
             $destination = Join-Path $fixture $file
             $null = New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent)
             Copy-Item -LiteralPath $source -Destination $destination
+        }
+        if ($NoRoots) {
+            Get-ChildItem -LiteralPath $fixture -Recurse -File | Where-Object { $_.Name -match '\.tf(\.json)?$' } |
+                Remove-Item -Force
         }
         $requirements = Import-PowerShellDataFile (Join-Path $repository 'tools/requirements.psd1')
         $cache = Join-Path $fixture 'tools/.dependencies'
@@ -312,15 +352,20 @@ Describe 'Local CI process guards' {
             }
             $wrapper = Join-Path $TestDrive 'selection-race.ps1'
             $escaped = $fixture.Replace("'", "''")
-            $action = if ($MissingGo) {
+            $action = if ($RuntimeFailure) {
                 @'
     & (Get-Module LocalCiGate) {
-        function script:Get-Command {
-            [CmdletBinding()]
-            param([string] $Name, [System.Management.Automation.CommandTypes] $CommandType)
-            if ($Name -eq 'go') { return }
-            Microsoft.PowerShell.Core\Get-Command @PSBoundParameters
-        }
+        function script:Invoke-LocalCiTerraform { throw 'pwsh not found' }
+    }
+'@
+            }
+            elseif ($ProbeSkipped) {
+                @'
+    & (Get-Module LocalCiGate) {
+        function script:Test-LocalCiRuntime { throw 'Unexpected Terraform probe' }
+    }
+    & (Get-Module ToolDependencies) {
+        function script:Get-ToolBinaryPath { throw 'Reached actionlint without Terraform' }
     }
 '@
             }
@@ -338,10 +383,27 @@ $action
 } | Out-Null
 "@ }
             $tempArgument = if ($IsWindows -or $UnsupportedTemp) { " -TempRoot '$($tempRoot.Replace("'", "''"))'" } else { '' }
+            if ($RuntimeFailure -or $NoRoots) { $tempArgument += ' -Full' }
+            $parserStub = if ($InvalidFile) {
+                @"
+Set-PSBreakpoint -Command Clear-LocalCiTemp -Action {
+    & (Get-Module ToolDependencies) {
+        function script:Get-ToolBinaryPath { '$escaped/fake-actionlint.ps1' }
+    }
+    Get-PSBreakpoint | Remove-PSBreakpoint
+} | Out-Null
+"@
+            } else { '' }
+            if ($InvalidFile) {
+                Set-Content -LiteralPath (Join-Path $fixture 'fake-actionlint.ps1') "'1.7.7'"
+                git -C $fixture add .
+                git -C $fixture commit --quiet -m 'Add offline actionlint stub'
+            }
             @"
 `$ErrorActionPreference = 'Stop'
 Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
 $breakpoint
+$parserStub
 & '$escaped/tools/Invoke-LocalCi.ps1' -WorkerProcess -Base baseline$tempArgument -LogPath '$escaped/../selection.log' -StateRoot '$escaped/../machine-state'
 exit `$LASTEXITCODE
 "@ | Set-Content $wrapper
