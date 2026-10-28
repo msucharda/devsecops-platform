@@ -567,7 +567,7 @@
         @{
             Name = 'merge-gate-workflow-comparison'
             Tests = @(
-                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 compares*', '*G10 ignores*', '*G10 handles*', '*G10 rejects*file list*') }
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 compares*', '*G10 ignores*', '*G10 handles*', '*G10 rejects*file list*', '*G10 pinned trees*', '*G10 CLI evaluates*') }
             )
         }
         @{

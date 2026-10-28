@@ -136,6 +136,24 @@ Describe 'Merge gate replay of real pull requests' {
         $raced.Trace.moves | Should -Be @(('c' * 40), $head)
     }
 
+    It 'G10 CLI ignores an ABA removal of an unchanged workflow' -Tag G10AbaRegression {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $base = $stub.PullRequest.baseRefOid
+        $head = $stub.PullRequest.headRefOid
+        $name = '.github/workflows/ci.yml'
+        $stub.Files = @()
+        $tree = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$base]; 'tree.0.path' = $name }
+        $stub.Trees[$base] = $tree
+        $stub.Trees[$head] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$head]; tree = $tree.tree }
+        $stub.AbaFiles = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{ '0.status' = 'removed' }
+        $normal = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $raced = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -Aba
+        $normal.ExitCode | Should -Be 0
+        $raced.ExitCode | Should -Be 0
+        $raced.Result.details.github.sensitiveLines | Should -Be $normal.Result.details.github.sensitiveLines
+        $raced.Trace.moves | Should -Be @(('c' * 40), $head)
+    }
+
     It 'passes #78: green checks, Copilot review on the head; behind base only warns' {
         $stub = Initialize-MergeGateStub -Scenario pr-78
         $result = Invoke-ScenarioGate -Stub $stub
@@ -835,6 +853,97 @@ Describe 'Merge gate pinned G10' {
         $result.details.github.sensitiveLines.Count | Should -Be 1
     }
 
+    It 'G10 CLI derives a benign rename independently of ABA file metadata' -Tag G10AbaRegression {
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$head].tree[0].path = $newName
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{
+            '0.filename' = $newName; '0.previous_filename' = $oldName; '0.status' = 'renamed'
+        }
+        $stub.AbaFiles = @()
+        $stub.Contents["$base/$oldName"] = "name: Old`non: push`njobs: {build: {runs-on: ubuntu-latest, steps: [{run: 'echo old'}]}}"
+        $stub.Contents["$head/$newName"] = "name: New`non: push`njobs: {build: {runs-on: ubuntu-latest, steps: [{run: 'echo new'}]}}"
+        $normal = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $raced = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -Aba
+        $normal.ExitCode | Should -Be 0
+        $raced.ExitCode | Should -Be 0
+        $raced.Result.details.github.workflowFiles | Should -Be @($newName)
+        $raced.Result.details.github.sensitiveLines | Should -Be @()
+        @($raced.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+        $raced.Trace.moves | Should -Be @(('c' * 40), $head)
+    }
+
+    It 'G10 pinned trees preserve a rename snapshot error without retrying it' {
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$head].tree[0].path = $newName
+        $stub.Failures["/contents/$oldName"] = 'HTTP 502'
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        ($result.details.github.sensitiveLines -join "`n") | Should -Match 'comparison unavailable:.*HTTP 502'
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+    }
+
+    It 'G10 CLI evaluates a copied <Case> only by its pinned sensitive projection' -Tag G10AbaRegression -ForEach @(
+        @{ Case = 'workflow'; Directory = '.github/workflows'; Suffix = '.yml'; Content = "on: push`njobs: {build: {runs-on: ubuntu-latest}}"; Expected = 1 }
+        @{ Case = 'sensitive local action'; Directory = '.github/actions'; Suffix = '/action.yml'; Content = "name: Action`ndescription: Fixture`nruns: {using: composite, steps: [{run: 'echo hi', shell: bash, env: {GITHUB_TOKEN: fixture-placeholder}}]}"; Expected = 1 }
+        @{ Case = 'benign local action'; Directory = '.github/actions'; Suffix = '/action.yml'; Content = "name: Action`ndescription: Fixture`nruns: {using: composite, steps: [{run: 'echo hi', shell: bash}]}"; Expected = 0 }
+    ) {
+        $oldName = "$Directory/old$Suffix"
+        $newName = "$Directory/new$Suffix"
+        $old = $stub.Trees[$base].tree[0].Clone()
+        $old.path = $oldName
+        $copy = $old.Clone()
+        $copy.path = $newName
+        $stub.Trees[$base].tree = @($old)
+        $stub.Trees[$head].tree = @($old, $copy)
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{
+            '0.filename' = $newName; '0.previous_filename' = $oldName; '0.status' = 'copied'
+        }
+        $stub.Contents["$base/$oldName"] = $Content
+        $stub.Contents["$head/$oldName"] = $Content
+        $stub.Contents["$head/$newName"] = $Content
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be $Expected
+        $run.Result.details.github.workflowFiles | Should -Be @($newName)
+        $codes = @(Get-ReasonCode $run.Result)
+        if ($Expected) { $codes | Should -Be @('fail:workflow-permissions-changed') }
+        else { $codes | Should -Be @() }
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 1
+    }
+
+    It 'G10 pinned trees do not pair different sensitive rename projections' {
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$head].tree[0].path = $newName
+        $stub.Contents["$base/$oldName"] = 'permissions: {contents: read}'
+        $stub.Contents["$head/$newName"] = 'permissions: {contents: write}'
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $result.details.github.workflowFiles | Should -Be @($newName, $oldName)
+        $result.details.github.sensitiveLines.Count | Should -Be 2
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+    }
+
+    It 'G10 pinned trees consume each matching rename source at most once' {
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $extraName = '.github/workflows/extra.yml'
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$head].tree[0].path = $newName
+        $extra = $stub.Trees[$head].tree[0].Clone()
+        $extra.path = $extraName
+        $stub.Trees[$head].tree += @($extra)
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $result.details.github.workflowFiles | Should -Be @($extraName, $newName)
+        $result.details.github.sensitiveLines | Should -Be @("${newName}: sensitive YAML settings changed")
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 3
+    }
+
     It 'G10 pinned trees validate rename topology: <Case>' -ForEach @(
         @{ Case = 'a proven rename'; BaseOld = $true; HeadOld = $false; BaseNew = $false; HeadNew = $true; Expected = 'pass' }
         @{ Case = 'the source remains in head'; BaseOld = $true; HeadOld = $true; BaseNew = $false; HeadNew = $true; Expected = 'fail' }
@@ -903,6 +1012,18 @@ Describe 'Merge gate pinned G10' {
     It 'G10 pinned trees reject a non-object supplemental file' {
         # Deliberately invalid: a list item must be a diff-entry object.
         $stub.Files = @('not a file')
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match 'A changed file has no filename'
+    }
+
+    # Deliberately invalid diff-entry filename values, changed independently.
+    It 'G10 pinned trees reject a <Case> supplemental filename' -ForEach @(
+        @{ Case = 'missing'; Value = $null }
+        @{ Case = 'empty'; Value = '' }
+        @{ Case = 'non-string'; Value = 1 }
+    ) {
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{ '0.filename' = $Value }
         $result = Invoke-ScenarioGate -Stub $stub
         Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
         $result.reasons[0].message | Should -Match 'A changed file has no filename'
@@ -1131,10 +1252,12 @@ Describe 'Merge gate structural G10' {
         $file.status = $Status
         $file.previous_filename = $Previous
         $file.filename = $Name
-        $result = Invoke-ScenarioGate -Stub $stub
-        $codes = @(Get-ReasonCode $result)
-        if ($Expected) { $codes | Should -Be @('fail:workflow-permissions-changed') }
-        else { $codes | Should -Be @() }
+        $findings = @(InModuleScope MergeGate -Parameters @{
+            TestFile = $file; TestRepository = $repository; Base = $stub.PullRequest.baseRefOid; Head = $stub.PullRequest.headRefOid
+        } {
+            Get-MergeGateSensitiveChange -File $TestFile -Target (ConvertTo-MergeGateTarget -Repository $TestRepository) -BaseSha $Base -HeadSha $Head
+        })
+        $findings.Count | Should -Be $(if ($Expected) { 1 } else { 0 })
         $requests = @($stub.Calls | Where-Object { $_[-1] -match '/contents/' } | ForEach-Object { $_[-1] })
         $requests.Count | Should -Be $Reads
         if ($Status -ne 'added') { $requests[0] | Should -Be "repos/$repository/contents/${Previous}?ref=$($stub.PullRequest.baseRefOid)" }
@@ -1150,9 +1273,13 @@ Describe 'Merge gate structural G10' {
     ) {
         $file.status = $Status
         $file.previous_filename = $Previous
-        $result = Invoke-ScenarioGate -Stub $stub
-        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
-        ($result.details.github.sensitiveLines -join "`n") | Should -Match $Error
+        $findings = @(InModuleScope MergeGate -Parameters @{
+            TestFile = $file; TestRepository = $repository; Base = $stub.PullRequest.baseRefOid; Head = $stub.PullRequest.headRefOid
+        } {
+            Get-MergeGateSensitiveChange -File $TestFile -Target (ConvertTo-MergeGateTarget -Repository $TestRepository) -BaseSha $Base -HeadSha $Head
+        })
+        $findings.Count | Should -Be 1
+        ($findings -join "`n") | Should -Match $Error
     }
 
     It 'G10 rejects a moving <Ref> across the SHA-pinned content reads' -ForEach @(

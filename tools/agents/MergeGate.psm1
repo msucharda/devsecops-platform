@@ -855,23 +855,12 @@ function Get-MergeGatePinnedFile {
 
     $before = Get-MergeGateWorkflowTree -Target $Target -Sha $BaseSha
     $after = Get-MergeGateWorkflowTree -Target $Target -Sha $HeadSha
-    $reads = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $result = [Collections.Generic.List[object]]::new()
     foreach ($file in $Files) {
-        $result.Add($file)
-        if ($file -isnot [System.Collections.IDictionary]) { throw 'A changed file has no filename.' }
-        $name = $file['filename']
-        $status = $file['status']
-        if ($status -eq 'renamed') {
-            $source = [string] $file['previous_filename']
-            if (-not $before.ContainsKey($source) -or $after.ContainsKey($source) -or
-                $before.ContainsKey([string] $name) -or -not $after.ContainsKey([string] $name)) { continue }
+        if ($file -isnot [System.Collections.IDictionary] -or $file['filename'] -isnot [string] -or $file['filename'] -eq '') {
+            throw 'A changed file has no filename.'
         }
-        # A PR-scoped entry covers only the fixed-SHA sides that the YAML comparison actually reads.
-        if ($status -in @('modified', 'changed', 'unchanged', 'removed')) { $null = $reads.Add("base/$name") }
-        if ($status -in @('renamed', 'copied')) { $null = $reads.Add("base/$($file['previous_filename'])") }
-        if ($status -in @('added', 'modified', 'changed', 'unchanged', 'renamed', 'copied')) { $null = $reads.Add("head/$name") }
     }
+    $result = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
     $paths = [Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
     $paths.UnionWith([string[]] @($before.Keys))
     $paths.UnionWith([string[]] @($after.Keys))
@@ -888,11 +877,44 @@ function Get-MergeGatePinnedFile {
                 if ($side['type'] -ne 'blob' -or $side['mode'] -notin @('100644', '100755')) { throw "Git tree has an unsupported workflow tree entry '$path'." }
             }
         }
-        if ((-not $hasBase -or $reads.Contains("base/$path")) -and (-not $hasHead -or $reads.Contains("head/$path"))) { continue }
         $status = if (-not $hasBase) { 'added' } elseif (-not $hasHead) { 'removed' } else { 'modified' }
-        $result.Add(@{ filename = $path; status = $status })
+        $result.Add($path, @{ filename = $path; status = $status })
     }
-    return , $result.ToArray()
+
+    # Infer benign workflow renames only from fixed content, not the mutable PR diff's pairing or status.
+    $direct = '^\.github/workflows/[^/]+\.ya?ml$'
+    $removed = @($paths | Where-Object { $result.ContainsKey($_) -and $result[$_]['status'] -eq 'removed' -and $_ -match $direct })
+    $added = @($paths | Where-Object { $result.ContainsKey($_) -and $result[$_]['status'] -eq 'added' -and $_ -match $direct })
+    $sources = [Collections.Generic.Dictionary[string, Collections.Generic.Queue[string]]]::new([StringComparer]::Ordinal)
+    if ($removed.Count -gt 0 -and $added.Count -gt 0) {
+        foreach ($path in @($removed) + @($added)) {
+            $file = $result[$path]
+            $isBase = $file['status'] -eq 'removed'
+            $sha = if ($isBase) { $BaseSha } else { $HeadSha }
+            $field = if ($isBase) { 'gateBaseSnapshot' } else { 'gateHeadSnapshot' }
+            try {
+                $snapshot = Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $path -Sha $sha)
+                $file[$field] = $snapshot
+            }
+            catch {
+                $file['gateSnapshotError'] = $_.Exception.Message
+                continue
+            }
+            $key = $snapshot -join "`n"
+            if ($isBase) {
+                if (-not $sources.ContainsKey($key)) { $sources.Add($key, [Collections.Generic.Queue[string]]::new()) }
+                $sources[$key].Enqueue($path)
+            }
+            elseif ($sources.ContainsKey($key) -and $sources[$key].Count -gt 0) {
+                $source = $sources[$key].Dequeue()
+                $file['status'] = 'renamed'
+                $file['previous_filename'] = $source
+                $file['gateBaseSnapshot'] = $result[$source]['gateBaseSnapshot']
+                $null = $result.Remove($source)
+            }
+        }
+    }
+    return , @($paths | Where-Object { $result.ContainsKey($_) } | ForEach-Object { $result[$_] })
 }
 
 # security-check: merge-gate-workflow-settings
@@ -1002,6 +1024,7 @@ function Get-MergeGateSensitiveChange {
 
     $name = [string] $File['filename']
     try {
+        if ($File.Contains('gateSnapshotError')) { throw $File['gateSnapshotError'] }
         if ($File['status'] -notin @('added', 'removed', 'modified', 'changed', 'renamed', 'copied', 'unchanged')) {
             throw "Unsupported file status '$($File['status'])'."
         }
@@ -1019,10 +1042,12 @@ function Get-MergeGateSensitiveChange {
         $before = @()
         $after = @()
         if ($File['status'] -ne 'added') {
-            $before = Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $previous -Sha $BaseSha)
+            $before = if ($File.Contains('gateBaseSnapshot')) { $File['gateBaseSnapshot'] }
+            else { Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $previous -Sha $BaseSha) }
         }
         if ($File['status'] -ne 'removed') {
-            $after = Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $name -Sha $HeadSha)
+            $after = if ($File.Contains('gateHeadSnapshot')) { $File['gateHeadSnapshot'] }
+            else { Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $name -Sha $HeadSha) }
         }
         if (($before -join "`n") -cne ($after -join "`n")) {
             "${name}: sensitive YAML settings changed"
