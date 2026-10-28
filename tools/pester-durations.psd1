@@ -2,7 +2,7 @@
 # LocalCiGate, LocalCiGate.Unit and LocalCiConcurrency measured in run 40606534079 (2026-10-28), rounded up.
 # Missing files receive a one-second estimate and are still selected automatically.
 @{
-    'EnterpriseBaseline.Tests.ps1' = 220
+    'EnterpriseBaseline.Tests.ps1' = 280
     'GitHubBootstrap.Tests.ps1' = 151
     'RulesetsTerraform.Tests.ps1' = 138
     'OrganizationRolePrograms.Tests.ps1' = 105
