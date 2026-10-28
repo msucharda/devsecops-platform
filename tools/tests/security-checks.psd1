@@ -380,13 +380,25 @@
         @{
             Name = 'bootstrap-inventory-upgrade-pair'
             Tests = @(
-                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*upgrades initialized historical inventory only after protected main proves the current release', '*rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request') }
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*upgrades initialized historical inventory only after protected main proves the current release', '*rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request', '*rejects ignorable inventory version character <CodePoint> before any GitHub request under <Culture>') }
             )
         }
         @{
             Name = 'bootstrap-main-commit-reference'
             Tests = @(
                 @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*upgrades initialized historical inventory only after protected main proves the current release', '*rejects an invalid main reference <ReferenceCase> before reading protected files') }
+            )
+        }
+        @{
+            Name = 'bootstrap-main-commit-tree'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*upgrades initialized historical inventory only after protected main proves the current release', '*rejects pinned commit <CommitCase> before reconciliation') }
+            )
+        }
+        @{
+            Name = 'bootstrap-main-protected-tree'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*accepts regular protected files with mode <FileMode>', '*rejects a dereferenced symlink at <ProtectedPath> before reconciliation (NoChanges=<ReadOnly>)', '*rejects pinned tree <TreeCase> before reconciliation', '*rejects protected tree entry <EntryCase> at <ProtectedPath> before reconciliation') }
             )
         }
         @{
@@ -398,7 +410,7 @@
         @{
             Name = 'bootstrap-upgrade-main-stability'
             Tests = @(
-                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*stops before an Azure write when protected main moves after preflight', '*keeps the previous inventory version when protected main moves during provisioning') }
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*stops before an Azure write when protected main moves after preflight', '*keeps the previous inventory version when protected main moves during provisioning', '*rejects case-only movement of protected main before reconciliation') }
             )
         }
         @{

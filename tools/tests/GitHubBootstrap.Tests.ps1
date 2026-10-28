@@ -8,6 +8,25 @@ BeforeAll {
     $privateKey = $rsa.ExportRSAPrivateKeyPem()
     $rsa.Dispose()
 
+    function Initialize-TestInventoryUpgrade {
+        param($Arguments, $Cloud, $Inventory, $Bootstrap)
+
+        $Arguments.ResourcesOnly = $false
+        $Cloud.commitShaOverride = $upgradeMainSha
+        $null = & $Bootstrap @Arguments
+        $record = Get-Content -LiteralPath $Inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.1.0-rc.5'
+        $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $Inventory
+        $Arguments.ReleaseVersion = '0.1.0-rc.10'
+        $Arguments.UpgradeInventory = $true
+        $Cloud.requiredContentRef = $upgradeMainSha
+        $markerBlob = $Cloud.tree | Where-Object path -CEQ '.platform-bootstrap.json'
+        $marker = [Text.Encoding]::UTF8.GetString($Cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
+        $marker.releaseVersion = $Arguments.ReleaseVersion
+        $Cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
+        $Cloud.writes.Clear()
+    }
+
     function Initialize-TestVendoringAppSet {
         param($Instance, $Cloud, $KeysPath, $CasePath)
 
@@ -104,8 +123,10 @@ Describe 'GitHub bootstrap public interface' {
             referenceShaOverrideEnabled = $false; referenceShaOverride = $null
             referenceTypeOverrideEnabled = $false; referenceTypeOverride = $null
             referenceInvalidCase = ''; contentVariant = ''; contentVariantPath = ''
+            protectedCommitMutation = ''; protectedTreeMutation = ''
             contentEncodingOverrideEnabled = $false; contentEncodingOverride = $null
             contentValueOverrideEnabled = $false; contentValueOverride = $null
+            contentTypeOverrideEnabled = $false; contentTypeOverride = $null
             appOwner = @{ login = 'example'; type = 'enterprise' }
             appPermissions = @{ members = 'read'; metadata = 'read' }
             apps = @{}
@@ -195,7 +216,7 @@ Describe 'GitHub bootstrap public interface' {
                 }
                 $cloud.resources["/repos/demo-a1b2c3-platform/instance/actions/runs/$runId"] = @{
                     id = $runId; display_title = "Bootstrap acceptance $($data.inputs.evidence_id)"
-                    head_sha = 'commit-sha'; head_branch = 'main'; run_attempt = 1
+                    head_sha = $upgradeMainSha; head_branch = 'main'; run_attempt = 1
                     status = 'completed'; conclusion = 'success'; event = 'workflow_dispatch'
                 }
                 if ($cloud.loseDispatchResponse) {
@@ -244,7 +265,43 @@ Describe 'GitHub bootstrap public interface' {
             }
             elseif ($path -like '*/git/commits' -and $Method -eq 'POST') {
                 $cloud.commit = $data
-                $reply = @{ sha = $(if ($cloud.commitShaOverride) { $cloud.commitShaOverride } else { 'commit-sha' }) }
+                $reply = @{ sha = $(if ($cloud.commitShaOverride) { $cloud.commitShaOverride } else { $upgradeMainSha }) }
+            }
+            elseif ($path -like '*/git/commits/*' -and $Method -eq 'GET') {
+                $reply = Get-GitHubApiFixture -Name git/get-commit -Set @{ sha = $path.Split('/')[-1] }
+                # Deliberately invalid response shapes exercise the fail-closed commit binding.
+                switch ($cloud.protectedCommitMutation) {
+                    'non-object' { $reply = @('invalid commit') }
+                    'wrong SHA' { $reply.sha = 'bb218f56b14c9653891f9e74264a383fa43fefbd' }
+                    'SHA casing' { $reply.sha = $reply.sha.ToUpperInvariant() }
+                    'missing tree' { $reply.Remove('tree') }
+                    'wrong tree shape' { $reply.tree = @('invalid tree') }
+                    'numeric tree SHA' { $reply.tree.sha = [Numerics.BigInteger]::Parse('1234567890123456789012345678901234567890') }
+                    'missing tree SHA' { $reply.tree.Remove('sha') }
+                    'invalid tree SHA' { $reply.tree.sha = 'main' }
+                    'tree SHA newline' { $reply.tree.sha += "`n" }
+                }
+            }
+            elseif ($path -like '*/git/trees/*' -and $Method -eq 'GET') {
+                $entry = (Get-GitHubApiFixture -Name git/get-tree).tree[0]
+                $entries = @(foreach ($item in $cloud.tree | Where-Object { -not $_.path.Contains('/') }) {
+                    $copy = @{} + $entry
+                    foreach ($key in @('path', 'mode', 'type', 'sha')) { $copy[$key] = $item[$key] }
+                    $copy
+                })
+                $reply = Get-GitHubApiFixture -Name git/get-tree -Set @{ tree = $entries }
+                # Deliberately invalid or incomplete trees must not prove the protected file paths.
+                switch ($cloud.protectedTreeMutation) {
+                    'non-object' { $reply = @('invalid tree') }
+                    'wrong SHA' { $reply.sha = 'bb218f56b14c9653891f9e74264a383fa43fefbd' }
+                    'SHA casing' { $reply.sha = $reply.sha.ToUpperInvariant() }
+                    'missing truncated' { $reply.Remove('truncated') }
+                    'string truncated' { $reply.truncated = 'false' }
+                    'truncated' { $reply.truncated = $true }
+                    'missing entries' { $reply.Remove('tree') }
+                    'wrong entries shape' { $reply.tree = @{ path = 'instance.yaml' } }
+                    'non-object entry' { $reply.tree = @($reply.tree | Where-Object path -CNE 'instance.yaml') + @('instance.yaml') }
+                }
             }
             elseif ($path -like '*/git/refs' -and $Method -eq 'POST') {
                 $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'] = @{ object = @{ sha = $data.sha } }
@@ -398,6 +455,7 @@ Describe 'GitHub bootstrap public interface' {
                     }
                     if ($cloud.contentEncodingOverrideEnabled) { $fixture.encoding = $cloud.contentEncodingOverride }
                     if ($cloud.contentValueOverrideEnabled) { $fixture.content = $cloud.contentValueOverride }
+                    if ($cloud.contentTypeOverrideEnabled) { $fixture.type = $cloud.contentTypeOverride }
                     $reply = Get-GitHubApiFixture -Name 'repos/get-content.file' -Set $fixture
                 }
                 else { $status = 404 }
@@ -799,7 +857,7 @@ Describe 'GitHub bootstrap public interface' {
 
             $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
             $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-            $arguments.ReleaseVersion = '0.1.0-rc.9'
+            $arguments.ReleaseVersion = '0.1.0-rc.10'
             $arguments.UpgradeInventory = $true
             $cloud.requiredContentRef = $upgradeMainSha
             $marker.releaseVersion = $arguments.ReleaseVersion
@@ -815,9 +873,9 @@ Describe 'GitHub bootstrap public interface' {
 
             $result = & $bootstrap @arguments
 
-            $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.9'
+            $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
             $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
-            $record.releaseVersion | Should -BeExactly '0.1.0-rc.9'
+            $record.releaseVersion | Should -BeExactly '0.1.0-rc.10'
             $record.deploymentIdentifier | Should -BeExactly $deploymentIdentifier
             (ConvertTo-PlatformCanonicalJson $record.resources) | Should -BeExactly $resources
             (ConvertTo-PlatformCanonicalJson $record.apps) | Should -BeExactly $apps
@@ -845,9 +903,13 @@ Describe 'GitHub bootstrap public interface' {
 
     It 'rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request' -Tag 'BootstrapUpgrade' -ForEach @(
         @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.5' }
-        @{ From = '0.1.0-rc.4'; To = '0.1.0-rc.9' }
+        @{ From = '0.1.0-rc.4'; To = '0.1.0-rc.10' }
         @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.8' }
-        @{ From = '0.1.0-rc.6'; To = '0.1.0-rc.9' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.9' }
+        @{ From = '0.1.0-rc.6'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-RC.5'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-RC.10' }
     ) {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
@@ -880,7 +942,7 @@ Describe 'GitHub bootstrap public interface' {
         $record.releaseVersion = '0.1.0-rc.5'
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
         $before = (Get-FileHash -LiteralPath $inventory).Hash
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $arguments.UpgradeInventory = $true
         $arguments.NoChanges = $true
         $cloud.writes.Clear()
@@ -898,12 +960,16 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
     }
 
-    It 'rejects an invalid main reference <ReferenceCase> before reading protected files' -Tag 'BootstrapUpgrade' -ForEach @(
+    It 'rejects an invalid main reference <ReferenceCase> before reading protected files' -Tag 'BootstrapUpgrade', 'TypedResponse' -ForEach @(
         @{ ReferenceCase = 'non-object'; Mutation = 'non-object' }
         @{ ReferenceCase = 'missing object'; Mutation = 'missing object' }
         @{ ReferenceCase = 'wrong object type'; Mutation = 'wrong object type' }
+        @{ ReferenceCase = 'object type casing'; Mutation = 'object type casing' }
+        @{ ReferenceCase = 'array object type'; Mutation = 'array object type' }
         @{ ReferenceCase = 'missing SHA'; Mutation = 'missing SHA' }
         @{ ReferenceCase = 'invalid SHA'; Mutation = 'invalid SHA' }
+        @{ ReferenceCase = 'numeric SHA'; Mutation = 'numeric SHA' }
+        @{ ReferenceCase = 'SHA newline'; Mutation = 'SHA newline' }
     ) {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
@@ -913,9 +979,10 @@ Describe 'GitHub bootstrap public interface' {
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
         $before = (Get-FileHash -LiteralPath $inventory).Hash
         $cloud.writes.Clear()
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $arguments.UpgradeInventory = $true
         $cloud.requiredContentRef = $upgradeMainSha
+        # Deliberately invalid reference fields isolate validation of the documented commit reference.
         switch ($Mutation) {
             'non-object' { $cloud.referenceInvalidCase = 'non-object' }
             'missing object' { $cloud.referenceInvalidCase = 'missing object' }
@@ -923,10 +990,26 @@ Describe 'GitHub bootstrap public interface' {
                 $cloud.referenceTypeOverrideEnabled = $true
                 $cloud.referenceTypeOverride = 'tree'
             }
+            'object type casing' {
+                $cloud.referenceTypeOverrideEnabled = $true
+                $cloud.referenceTypeOverride = 'Commit'
+            }
+            'array object type' {
+                $cloud.referenceTypeOverrideEnabled = $true
+                $cloud.referenceTypeOverride = @('commit')
+            }
             'missing SHA' { $cloud.referenceInvalidCase = 'missing SHA' }
             'invalid SHA' {
                 $cloud.referenceShaOverrideEnabled = $true
                 $cloud.referenceShaOverride = 'main'
+            }
+            'numeric SHA' {
+                $cloud.referenceShaOverrideEnabled = $true
+                $cloud.referenceShaOverride = [Numerics.BigInteger]::Parse('1234567890123456789012345678901234567890')
+            }
+            'SHA newline' {
+                $cloud.referenceShaOverrideEnabled = $true
+                $cloud.referenceShaOverride = "$upgradeMainSha`n"
             }
         }
         $operations = [Collections.Generic.List[object]]::new()
@@ -939,6 +1022,160 @@ Describe 'GitHub bootstrap public interface' {
         { & $bootstrap @arguments } | Should -Throw '*valid SHA*'
 
         @($operations | Where-Object Uri -Like '*/contents/*').Count | Should -Be 0
+        @($operations | Where-Object Kind -CEQ 'Reconcile').Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects a dereferenced symlink at <ProtectedPath> before reconciliation (NoChanges=<ReadOnly>)' -Tag 'BootstrapUpgrade', 'ProtectedTree' -ForEach @(
+        @{ ProtectedPath = 'instance.yaml'; ReadOnly = $false }
+        @{ ProtectedPath = '.platform-bootstrap.json'; ReadOnly = $false }
+        @{ ProtectedPath = 'instance.yaml'; ReadOnly = $true }
+        @{ ProtectedPath = '.platform-bootstrap.json'; ReadOnly = $true }
+    ) {
+        $arguments.ResourcesOnly = $false
+        $cloud.commitShaOverride = $upgradeMainSha
+        $null = & $bootstrap @arguments
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.1.0-rc.5'
+        $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
+        $arguments.UpgradeInventory = -not $ReadOnly
+        $arguments.NoChanges = $ReadOnly
+        $markerBlob = $cloud.tree | Where-Object path -CEQ '.platform-bootstrap.json'
+        $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
+        $marker.releaseVersion = $arguments.ReleaseVersion
+        $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
+        # Contents API dereferences a symlink to a regular file; only the Git tree exposes its mode.
+        ($cloud.tree | Where-Object path -CEQ $ProtectedPath).mode = '120000'
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[object]]::new()
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*regular file*'
+
+        @($operations | Where-Object Kind -CEQ 'Reconcile').Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'accepts regular protected files with mode <FileMode>' -Tag 'BootstrapUpgrade', 'ProtectedTree' -ForEach @(
+        @{ FileMode = '100644' }
+        @{ FileMode = '100755' }
+    ) {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
+        foreach ($entry in $cloud.tree | Where-Object { $_.path -cin @('instance.yaml', '.platform-bootstrap.json') }) {
+            $entry.mode = $FileMode
+        }
+
+        $result = & $bootstrap @arguments
+
+        $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'rejects pinned commit <CommitCase> before reconciliation' -Tag 'BootstrapUpgrade', 'ProtectedTree' -ForEach @(
+        @{ CommitCase = 'non-object' }
+        @{ CommitCase = 'wrong SHA' }
+        @{ CommitCase = 'SHA casing' }
+        @{ CommitCase = 'missing tree' }
+        @{ CommitCase = 'wrong tree shape' }
+        @{ CommitCase = 'numeric tree SHA' }
+        @{ CommitCase = 'missing tree SHA' }
+        @{ CommitCase = 'invalid tree SHA' }
+        @{ CommitCase = 'tree SHA newline' }
+    ) {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $cloud.protectedCommitMutation = $CommitCase
+        $operations = [Collections.Generic.List[object]]::new()
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*pinned commit and a valid tree SHA*'
+
+        @($operations | Where-Object Kind -CEQ 'Reconcile').Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects pinned tree <TreeCase> before reconciliation' -Tag 'BootstrapUpgrade', 'ProtectedTree' -ForEach @(
+        @{ TreeCase = 'non-object'; ExpectedError = '*complete pinned Git tree*' }
+        @{ TreeCase = 'wrong SHA'; ExpectedError = '*complete pinned Git tree*' }
+        @{ TreeCase = 'SHA casing'; ExpectedError = '*complete pinned Git tree*' }
+        @{ TreeCase = 'missing truncated'; ExpectedError = '*complete pinned Git tree*' }
+        @{ TreeCase = 'string truncated'; ExpectedError = '*complete pinned Git tree*' }
+        @{ TreeCase = 'truncated'; ExpectedError = '*complete pinned Git tree*' }
+        @{ TreeCase = 'missing entries'; ExpectedError = '*complete pinned Git tree*' }
+        @{ TreeCase = 'wrong entries shape'; ExpectedError = '*complete pinned Git tree*' }
+        @{ TreeCase = 'non-object entry'; ExpectedError = '*exactly one regular file*' }
+    ) {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $cloud.protectedTreeMutation = $TreeCase
+        $operations = [Collections.Generic.List[object]]::new()
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw $ExpectedError
+
+        @($operations | Where-Object Kind -CEQ 'Reconcile').Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
+    }
+
+    It 'rejects protected tree entry <EntryCase> at <ProtectedPath> before reconciliation' -Tag 'BootstrapUpgrade', 'ProtectedTree' -ForEach @(
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'missing' }
+        @{ ProtectedPath = '.platform-bootstrap.json'; EntryCase = 'missing' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'duplicate' }
+        @{ ProtectedPath = '.platform-bootstrap.json'; EntryCase = 'duplicate' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'path casing' }
+        @{ ProtectedPath = '.platform-bootstrap.json'; EntryCase = 'path casing' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'submodule' }
+        @{ ProtectedPath = '.platform-bootstrap.json'; EntryCase = 'submodule' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'directory' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'missing mode' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'unknown mode' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'wrong type' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'type casing' }
+        @{ ProtectedPath = 'instance.yaml'; EntryCase = 'array type' }
+    ) {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $entry = $cloud.tree | Where-Object path -CEQ $ProtectedPath
+        # Deliberately invalid modes, types and duplicate paths isolate each protected-entry condition.
+        switch ($EntryCase) {
+            'missing' { $cloud.tree = @($cloud.tree | Where-Object path -CNE $ProtectedPath) }
+            'duplicate' { $cloud.tree += @(@{} + $entry) }
+            'path casing' { $entry.path = $entry.path.ToUpperInvariant() }
+            'submodule' { $entry.mode = '160000' }
+            'directory' { $entry.mode = '040000' }
+            'missing mode' { $entry.Remove('mode') }
+            'unknown mode' { $entry.mode = '100664' }
+            'wrong type' { $entry.type = 'tree' }
+            'type casing' { $entry.type = 'Blob' }
+            'array type' { $entry.type = @('blob') }
+        }
+        $operations = [Collections.Generic.List[object]]::new()
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*regular file*'
+
         @($operations | Where-Object Kind -CEQ 'Reconcile').Count | Should -Be 0
         $cloud.writes.Count | Should -Be 0
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
@@ -959,7 +1196,7 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Clear()
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $arguments.UpgradeInventory = $true
         $cloud.requiredContentRef = $upgradeMainSha
         $cloud.contentVariant = $ContentVariant
@@ -981,9 +1218,15 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
     }
 
-    It 'rejects protected content <ContentCase> before reconciliation' -Tag 'BootstrapUpgrade' -ForEach @(
+    It 'rejects protected content <ContentCase> before reconciliation' -Tag 'BootstrapUpgrade', 'TypedResponse' -ForEach @(
         @{ ContentCase = 'with a wrong encoding'; Mutation = 'encoding'; ExpectedError = '*base64-encoded file*' }
+        @{ ContentCase = 'with encoding casing'; Mutation = 'encoding casing'; ExpectedError = '*base64-encoded file*' }
+        @{ ContentCase = 'with an array encoding'; Mutation = 'array encoding'; ExpectedError = '*base64-encoded file*' }
+        @{ ContentCase = 'with a wrong type'; Mutation = 'type'; ExpectedError = '*base64-encoded file*' }
+        @{ ContentCase = 'with type casing'; Mutation = 'type casing'; ExpectedError = '*base64-encoded file*' }
+        @{ ContentCase = 'with an array type'; Mutation = 'array type'; ExpectedError = '*base64-encoded file*' }
         @{ ContentCase = 'with missing content'; Mutation = 'missing'; ExpectedError = '*base64-encoded file*' }
+        @{ ContentCase = 'with numeric content'; Mutation = 'numeric'; ExpectedError = '*base64-encoded file*' }
         @{ ContentCase = 'with invalid base64'; Mutation = 'invalid'; ExpectedError = '*invalid base64*' }
     ) {
         $arguments.ResourcesOnly = $false
@@ -995,13 +1238,21 @@ Describe 'GitHub bootstrap public interface' {
         $before = (Get-FileHash -LiteralPath $inventory).Hash
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $arguments.UpgradeInventory = $true
         $cloud.requiredContentRef = $upgradeMainSha
-        $cloud.contentEncodingOverrideEnabled = $Mutation -ceq 'encoding'
-        $cloud.contentEncodingOverride = 'utf-8'
-        $cloud.contentValueOverrideEnabled = $Mutation -in @('missing', 'invalid')
-        $cloud.contentValueOverride = if ($Mutation -ceq 'missing') { $null } else { 'not-base64' }
+        # Deliberately invalid scalar types and casing leave the other documented file fields intact.
+        switch ($Mutation) {
+            'encoding' { $cloud.contentEncodingOverrideEnabled = $true; $cloud.contentEncodingOverride = 'utf-8' }
+            'encoding casing' { $cloud.contentEncodingOverrideEnabled = $true; $cloud.contentEncodingOverride = 'Base64' }
+            'array encoding' { $cloud.contentEncodingOverrideEnabled = $true; $cloud.contentEncodingOverride = @('base64') }
+            'type' { $cloud.contentTypeOverrideEnabled = $true; $cloud.contentTypeOverride = 'directory' }
+            'type casing' { $cloud.contentTypeOverrideEnabled = $true; $cloud.contentTypeOverride = 'File' }
+            'array type' { $cloud.contentTypeOverrideEnabled = $true; $cloud.contentTypeOverride = @('file') }
+            'missing' { $cloud.contentValueOverrideEnabled = $true; $cloud.contentValueOverride = $null }
+            'numeric' { $cloud.contentValueOverrideEnabled = $true; $cloud.contentValueOverride = 1234 }
+            'invalid' { $cloud.contentValueOverrideEnabled = $true; $cloud.contentValueOverride = 'not-base64' }
+        }
         $cloud.contentVariantPath = 'instance.yaml'
         $marker.releaseVersion = $arguments.ReleaseVersion
         $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
@@ -1029,7 +1280,7 @@ Describe 'GitHub bootstrap public interface' {
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $arguments.UpgradeInventory = $true
         $cloud.requiredContentRef = $upgradeMainSha
         $marker.releaseVersion = $arguments.ReleaseVersion
@@ -1052,6 +1303,27 @@ Describe 'GitHub bootstrap public interface' {
         (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -BeExactly '0.1.0-rc.5'
     }
 
+    It 'rejects case-only movement of protected main before reconciliation' -Tag 'BootstrapUpgrade', 'MainMovement' {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $movement = @{ ReferenceReads = 0; Sha = $upgradeMainSha.ToUpperInvariant() }
+        $arguments.RequestPolicy = {
+            param($Operation)
+            if ($Operation.Uri -like '*/git/ref/heads/main') {
+                $movement.ReferenceReads++
+                if ($movement.ReferenceReads -eq 2) {
+                    $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'].object.sha = $movement.Sha
+                }
+            }
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*Protected main changed during bootstrap upgrade*'
+
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
+    }
+
     It 'keeps the previous inventory version when protected main moves during provisioning' -Tag 'BootstrapUpgrade' {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
@@ -1062,7 +1334,7 @@ Describe 'GitHub bootstrap public interface' {
         $before = (Get-FileHash -LiteralPath $inventory).Hash
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $arguments.UpgradeInventory = $true
         $cloud.requiredContentRef = $upgradeMainSha
         $marker.releaseVersion = $arguments.ReleaseVersion
@@ -1100,7 +1372,7 @@ Describe 'GitHub bootstrap public interface' {
         $before = Get-FileHash -LiteralPath $inventory
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $cloud.requiredContentRef = $upgradeMainSha
         $marker.releaseVersion = if ($Drift -ceq 'release marker') { '0.1.0-rc.8' } else { $arguments.ReleaseVersion }
         $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
@@ -1126,6 +1398,98 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before.Hash
     }
 
+    It 'rejects ignorable marker character <CodePoint> (NoChanges=<ReadOnly>, Culture=<Culture>)' -Tag 'BootstrapUpgrade', 'OrdinalBootstrap' -ForEach @(
+        foreach ($culture in @('en-US', 'cs-CZ')) {
+            foreach ($codePoint in @(0x00ad, 0x200b)) {
+                foreach ($readOnly in @($false, $true)) {
+                    @{ Culture = $culture; CodePoint = $codePoint; ReadOnly = $readOnly }
+                }
+            }
+        }
+    ) {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $arguments.UpgradeInventory = -not $ReadOnly
+        $arguments.NoChanges = $ReadOnly
+        $markerBlob = $cloud.tree | Where-Object path -CEQ '.platform-bootstrap.json'
+        $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
+        $marker.releaseVersion = '0.1.0-' + [char] $CodePoint + 'rc.10'
+        $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
+        $operations = [Collections.Generic.List[object]]::new()
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation)
+            return $true
+        }.GetNewClosure()
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($Culture)
+
+            { & $bootstrap @arguments } | Should -Throw '*marker*release*'
+
+            @($operations | Where-Object Kind -CEQ 'Reconcile').Count | Should -Be 0
+            $cloud.writes.Count | Should -Be 0
+            (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
+    }
+
+    It 'rejects ignorable inventory version character <CodePoint> before any GitHub request under <Culture>' -Tag 'BootstrapUpgrade', 'OrdinalBootstrap' -ForEach @(
+        @{ CodePoint = 0x00ad; Culture = 'en-US' }
+        @{ CodePoint = 0x200b; Culture = 'en-US' }
+        @{ CodePoint = 0x00ad; Culture = 'cs-CZ' }
+        @{ CodePoint = 0x200b; Culture = 'cs-CZ' }
+    ) {
+        $arguments.ResourcesOnly = $false
+        $null = & $bootstrap @arguments
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '1.0.' + [char] $CodePoint + '0'
+        $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $arguments.NoChanges = $true
+        $cloud.writes.Clear()
+        $operations = [Collections.Generic.List[object]]::new()
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation)
+            return $true
+        }.GetNewClosure()
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($Culture)
+
+            { & $bootstrap @arguments } | Should -Throw '*Unsupported bootstrap inventory upgrade*'
+
+            $operations.Count | Should -Be 0
+            $cloud.writes.Count | Should -Be 0
+            (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
+    }
+
+    It 'rejects inventory identity <Field> with an ignorable character before any GitHub request' -Tag 'BootstrapUpgrade', 'OrdinalBootstrap' -ForEach @(
+        @{ Field = 'repository'; CodePoint = 0x00ad }
+        @{ Field = 'enterprise'; CodePoint = 0x200b }
+    ) {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record[$Field] += [char] $CodePoint
+        $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
+        $before = (Get-FileHash -LiteralPath $inventory).Hash
+        $operations = [Collections.Generic.List[object]]::new()
+        $arguments.RequestPolicy = {
+            param($Operation)
+            $operations.Add($Operation)
+            return $true
+        }.GetNewClosure()
+
+        { & $bootstrap @arguments } | Should -Throw '*inventory belongs to another instance*'
+
+        $operations.Count | Should -Be 0
+        $cloud.writes.Count | Should -Be 0
+        (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
+    }
+
     It 'keeps the previous inventory version until an authorized upgrade provisions successfully' -Tag 'BootstrapUpgrade' {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
@@ -1135,7 +1499,7 @@ Describe 'GitHub bootstrap public interface' {
         $record | ConvertTo-Json -Depth 100 | Set-Content $inventory
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $cloud.requiredContentRef = $upgradeMainSha
         $marker.releaseVersion = $arguments.ReleaseVersion
         $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
@@ -1149,8 +1513,8 @@ Describe 'GitHub bootstrap public interface' {
 
         $result = & $bootstrap @arguments
 
-        $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.9'
-        (Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -BeExactly '0.1.0-rc.9'
+        $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
+        (Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -BeExactly '0.1.0-rc.10'
     }
 
     It 'validates matching inventory without rewriting its version' -Tag 'NoChanges' {
@@ -1175,10 +1539,10 @@ Describe 'GitHub bootstrap public interface' {
         $result.CredentialsConfigured | Should -BeTrue
         @($operations | Where-Object { $_ -ceq 'TokenIssue' }).Count | Should -Be 1
         Should -Invoke Invoke-WebRequest -Exactly -Times 1 -ParameterFilter {
-            $Method -ceq 'GET' -and $Uri -like '*/contents/.platform-bootstrap.json?ref=commit-sha'
+            $Method -ceq 'GET' -and $Uri -like "*/contents/.platform-bootstrap.json?ref=$upgradeMainSha"
         }
         Should -Invoke Invoke-WebRequest -Exactly -Times 1 -ParameterFilter {
-            $Method -ceq 'GET' -and $Uri -like '*/contents/instance.yaml?ref=commit-sha'
+            $Method -ceq 'GET' -and $Uri -like "*/contents/instance.yaml?ref=$upgradeMainSha"
         }
         $cloud.writes.Count | Should -Be 0
         (Get-FileHash $inventory).Hash | Should -BeExactly $before
@@ -1192,7 +1556,7 @@ Describe 'GitHub bootstrap public interface' {
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.9'
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
         $marker.releaseVersion = $arguments.ReleaseVersion
         $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
         $before = (Get-FileHash -LiteralPath $inventory).Hash
@@ -1201,7 +1565,7 @@ Describe 'GitHub bootstrap public interface' {
 
         $result = & $bootstrap @arguments
 
-        $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.9'
+        $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
         $result.HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
@@ -2074,7 +2438,7 @@ Describe 'GitHub bootstrap public interface' {
 
         $result.CredentialsConfigured | Should -BeTrue
         $cloud.resources['/repos/demo-a1b2c3-platform/instance'].default_branch | Should -Be 'main'
-        $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'].object.sha | Should -Be 'commit-sha'
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main'].object.sha | Should -BeExactly $upgradeMainSha
         $cloud.writes.Clear()
         (& $bootstrap @arguments).HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
@@ -2352,7 +2716,7 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
             ConvertTo-Json -Depth 20 | Set-Content (Join-Path $casePath 'github-acceptance/setup-state.json')
         $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/deploy.yml'] = @{ state = 'active' }
         $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/runs/80'] = @{
-            id = 80; head_sha = 'commit-sha'; run_attempt = 1; status = 'completed'; conclusion = 'success'; event = 'workflow_dispatch'
+            id = 80; head_sha = $upgradeMainSha; run_attempt = 1; status = 'completed'; conclusion = 'success'; event = 'workflow_dispatch'
         }
         $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/workflows/bootstrap-acceptance.yml/runs'] = @{ workflow_runs = @() }
         $cloud.scheduledRuns = @()
@@ -2392,7 +2756,7 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
                     $checks = @{ organizationApisRead = $true; phaseIdentityVerified = $true; otherModuleStateDenied = $true
                         rulesetBypassRead = $true; wrongSubjectRejected = $true }
                     $alias = switch ($phase) { plan { 'reader' }; apply { 'writer' }; rulesetPlan { 'rulesets' }; default { 'authorization' } }
-                    @{ version = 1; phase = $phase; passed = $true; checks = $checks; revision = 'commit-sha'; runId = $runId
+                    @{ version = 1; phase = $phase; passed = $true; checks = $checks; revision = $upgradeMainSha; runId = $runId
                         runAttempt = '1'; keyFingerprint = $manifest[$alias].fingerprint
                         authorizationFingerprint = $manifest.authorization.fingerprint } |
                         ConvertTo-Json -Depth 10 | Set-Content (Join-Path $folder 'result.json')
@@ -2435,7 +2799,7 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         $replacement = [Security.Cryptography.RSA]::Create(2048)
         $replacement.ExportRSAPrivateKeyPem() | Set-Content (Join-Path $keyFolder 'probe-reader.pem')
         $replacement.Dispose()
-        $cloud.scheduledRuns = @(@{ id = 85; head_sha = 'commit-sha'; head_branch = 'main'; run_attempt = 1
+        $cloud.scheduledRuns = @(@{ id = 85; head_sha = $upgradeMainSha; head_branch = 'main'; run_attempt = 1
             status = 'completed'; conclusion = 'success'; event = 'schedule'; created_at = [DateTimeOffset]::UtcNow.ToString('o') })
         $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/runs/85/attempts/1/jobs'] = @{ jobs = @(
             @{ name = 'authorize'; conclusion = 'success' }, @{ name = 'probe-plan'; conclusion = 'success' }

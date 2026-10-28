@@ -95,7 +95,7 @@ $inventoryFile = Assert-GitHubBootstrapExternalPath -Path $InventoryPath
 $inventoryUpgradePending = $false
 $inventoryUpgradeMainSha = $null
 $supportedInventoryUpgrades = @(
-    @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.9' }
+    @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.10' }
 )
 # security-check: bootstrap-inventory-upgrade-pair
 function Assert-GitHubBootstrapInventoryUpgradePair {
@@ -106,7 +106,7 @@ function Assert-GitHubBootstrapInventoryUpgradePair {
     )
 
     $supportedPair = @($supportedInventoryUpgrades | Where-Object {
-        $_.From -ceq $From -and $_.To -ceq $To
+        [StringComparer]::Ordinal.Equals($_.From, $From) -and [StringComparer]::Ordinal.Equals($_.To, $To)
     }).Count -eq 1
     if (-not $supportedPair) {
         throw "Unsupported bootstrap inventory upgrade '$From' to '$To'."
@@ -120,13 +120,70 @@ function Assert-GitHubBootstrapMainCommitReference {
 
     if ($Reference -isnot [Collections.IDictionary] -or
         $Reference['object'] -isnot [Collections.IDictionary] -or
-        $Reference['object']['type'] -cne 'commit' -or
+        -not [StringComparer]::Ordinal.Equals($Reference['object']['type'], 'commit') -or
         $Reference['object']['sha'] -isnot [string] -or
-        $Reference['object']['sha'] -cnotmatch '^[0-9a-fA-F]{40}$') {
+        $Reference['object']['sha'] -notmatch '^[0-9a-fA-F]{40}\z') {
         throw 'Protected main did not return a commit reference with a valid SHA.'
     }
     $sha = [string] $Reference['object']['sha']
     return $sha
+}
+# security-check: bootstrap-main-commit-tree
+function Get-GitHubBootstrapCommitTreeSha {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowNull()][object] $Commit,
+        [Parameter(Mandatory)][string] $Sha
+    )
+
+    if ($Commit -isnot [Collections.IDictionary] -or
+        -not [StringComparer]::Ordinal.Equals($Commit['sha'], $Sha) -or
+        $Commit['tree'] -isnot [Collections.IDictionary] -or
+        $Commit['tree']['sha'] -isnot [string] -or
+        $Commit['tree']['sha'] -notmatch '^[0-9a-fA-F]{40}\z') {
+        throw 'Protected main did not return its pinned commit and a valid tree SHA.'
+    }
+    return $Commit['tree']['sha']
+}
+# security-check: bootstrap-main-protected-tree
+function Assert-GitHubBootstrapProtectedTree {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowNull()][object] $Tree,
+        [Parameter(Mandatory)][string] $Sha
+    )
+
+    if ($Tree -isnot [Collections.IDictionary] -or
+        -not [StringComparer]::Ordinal.Equals($Tree['sha'], $Sha) -or
+        $Tree['truncated'] -isnot [bool] -or $Tree['truncated'] -or
+        $Tree['tree'] -isnot [Collections.IList]) {
+        throw 'Protected main did not return a complete pinned Git tree.'
+    }
+    foreach ($path in @('instance.yaml', '.platform-bootstrap.json')) {
+        $entries = @($Tree['tree'] | Where-Object {
+            $_ -is [Collections.IDictionary] -and [StringComparer]::Ordinal.Equals($_['path'], $path)
+        })
+        if ($entries.Count -ne 1) {
+            throw "Protected main must contain exactly one regular file at '$path'."
+        }
+        $entry = $entries[0]
+        if (-not [StringComparer]::Ordinal.Equals($entry['type'], 'blob') -or
+            (-not [StringComparer]::Ordinal.Equals($entry['mode'], '100644') -and
+             -not [StringComparer]::Ordinal.Equals($entry['mode'], '100755'))) {
+            throw "Protected main requires a regular file at '$path'; symlinks, submodules and directories are not supported."
+        }
+    }
+}
+
+function Assert-GitHubBootstrapPinnedTree {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Sha)
+
+    $commit = Invoke-GitHubBootstrapApi -Path "/repos/$repository/git/commits/$Sha"
+    $treeSha = Get-GitHubBootstrapCommitTreeSha -Commit $commit -Sha $Sha
+    $tree = Invoke-GitHubBootstrapApi -Path "/repos/$repository/git/trees/$treeSha"
+    Assert-GitHubBootstrapProtectedTree -Tree $tree -Sha $treeSha
 }
 # security-check: bootstrap-main-content-file
 function Get-GitHubBootstrapContentFileText {
@@ -138,8 +195,8 @@ function Get-GitHubBootstrapContentFileText {
     )
 
     if ($Response -isnot [Collections.IDictionary] -or
-        $Response['type'] -cne 'file' -or
-        $Response['encoding'] -cne 'base64' -or
+        -not [StringComparer]::Ordinal.Equals($Response['type'], 'file') -or
+        -not [StringComparer]::Ordinal.Equals($Response['encoding'], 'base64') -or
         $Response['content'] -isnot [string]) {
         throw "GitHub content API did not return a base64-encoded file for '$Path'."
     }
@@ -170,7 +227,8 @@ if (Test-Path -LiteralPath $inventoryFile) {
         $organization = "$($instance['instance']['name'])-platform"
     }
     $repository = "$organization/instance"
-    if ($inventory['repository'] -cne $repository -or $inventory['enterprise'] -cne $connection['enterprise']) {
+    if (-not [StringComparer]::Ordinal.Equals($inventory['repository'], $repository) -or
+        -not [StringComparer]::Ordinal.Equals($inventory['enterprise'], $connection['enterprise'])) {
         throw 'The bootstrap inventory belongs to another instance.'
     }
     if (-not $inventory.Contains('releaseVersion') -or
@@ -185,10 +243,10 @@ if (Test-Path -LiteralPath $inventoryFile) {
         }
         $inventoryUpgradePending = $true
     }
-    elseif ($NoChanges -and $inventory['releaseVersion'] -cne $ReleaseVersion) {
+    elseif ($NoChanges -and -not [StringComparer]::Ordinal.Equals($inventory['releaseVersion'], $ReleaseVersion)) {
         Assert-GitHubBootstrapInventoryUpgradePair -From $inventory['releaseVersion'] -To $ReleaseVersion
     }
-    elseif ($inventory['releaseVersion'] -cne $ReleaseVersion) {
+    elseif (-not [StringComparer]::Ordinal.Equals($inventory['releaseVersion'], $ReleaseVersion)) {
         throw 'The bootstrap inventory belongs to another release. Use -UpgradeInventory only for a supported transition.'
     }
     if ($NoChanges -and ($inventory['initializationPending'] -isnot [bool] -or $inventory['initializationPending'])) {
@@ -302,7 +360,7 @@ function Assert-GitHubBootstrapUpgradeMainReference {
     param([Parameter(Mandatory)][AllowNull()][object] $Reference)
 
     $currentSha = Assert-GitHubBootstrapMainCommitReference -Reference $Reference
-    if ($currentSha -cne $inventoryUpgradeMainSha) {
+    if (-not [StringComparer]::Ordinal.Equals($currentSha, $inventoryUpgradeMainSha)) {
         throw 'Protected main changed during bootstrap upgrade; refusing to reconcile.'
     }
 }
@@ -581,6 +639,7 @@ if ($inventoryUpgradePending) {
         throw 'A bootstrap upgrade requires a current main branch with an approved release marker.'
     }
     $inventoryUpgradeMainSha = Assert-GitHubBootstrapMainCommitReference -Reference $upgradeMain
+    Assert-GitHubBootstrapPinnedTree -Sha $inventoryUpgradeMainSha
     $upgradeMarkerResponse = Invoke-GitHubBootstrapApi `
         -Path "/repos/$repository/contents/.platform-bootstrap.json?ref=$inventoryUpgradeMainSha" -AllowNotFound
     if (-not $upgradeMarkerResponse) {
@@ -588,7 +647,7 @@ if ($inventoryUpgradePending) {
     }
     $upgradeMarker = Get-GitHubBootstrapContentFileText -Response $upgradeMarkerResponse -Path '.platform-bootstrap.json' |
         ConvertFrom-Json -AsHashtable
-    if ((ConvertTo-PlatformCanonicalJson $upgradeMarker) -cne (ConvertTo-PlatformCanonicalJson $marker)) {
+    if (-not [StringComparer]::Ordinal.Equals((ConvertTo-PlatformCanonicalJson $upgradeMarker), (ConvertTo-PlatformCanonicalJson $marker))) {
         throw 'The protected main marker does not match the approved release; update it through a reviewed PR.'
     }
     $upgradeConfigurationResponse = Invoke-GitHubBootstrapApi `
@@ -717,7 +776,13 @@ if ($main) {
     if ($inventoryUpgradePending) {
         Assert-GitHubBootstrapUpgradeMainReference -Reference $main
     }
-    $contentRef = if ($NoChanges -or $inventoryUpgradePending) { $main['object']['sha'] } else { 'main' }
+    $contentRef = if ($NoChanges) {
+        $verifiedMainSha = Assert-GitHubBootstrapMainCommitReference -Reference $main
+        Assert-GitHubBootstrapPinnedTree -Sha $verifiedMainSha
+        $verifiedMainSha
+    }
+    elseif ($inventoryUpgradePending) { $inventoryUpgradeMainSha }
+    else { 'main' }
     $stored = Invoke-GitHubBootstrapApi -Path "/repos/$repository/contents/.platform-bootstrap.json?ref=$contentRef" -AllowNotFound
     if (-not $stored) {
         if (-not $inventory['initializationPending'] -or $main['object']['sha'] -cne $inventory['seedCommit']) {
@@ -728,7 +793,7 @@ if ($main) {
     else {
         $previous = Get-GitHubBootstrapContentFileText -Response $stored -Path '.platform-bootstrap.json' | ConvertFrom-Json -AsHashtable
         $markerMatches = if ($NoChanges -or $inventoryUpgradePending) {
-            (ConvertTo-PlatformCanonicalJson $previous) -ceq (ConvertTo-PlatformCanonicalJson $marker)
+            [StringComparer]::Ordinal.Equals((ConvertTo-PlatformCanonicalJson $previous), (ConvertTo-PlatformCanonicalJson $marker))
         } else { Test-GitHubBootstrapValue -Actual $previous -Desired $marker }
         if (-not $markerMatches) {
             throw 'Repository bootstrap marker differs from the running release. Use the approved release; updates require a PR.'

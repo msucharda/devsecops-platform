@@ -289,19 +289,19 @@ Opakovaný běh se stejným release, konfigurací a klíči neprovádí zápisy 
 
 #### Upgrade GitHub bootstrapu
 
-Jediný podporovaný přechod inventory je `0.1.0-rc.5` → `0.1.0-rc.9`. Vyžaduje inicializované inventory a výslovný příznak `-UpgradeInventory`. Ostatní dvojice verzí, včetně stejné verze, bootstrap odmítne před prvním požadavkem na GitHub API. Běžné opakování se stejnou verzí příznak nepoužívá.
+Jediný podporovaný přechod inventory je `0.1.0-rc.5` → `0.1.0-rc.10`. Vyžaduje inicializované inventory a výslovný příznak `-UpgradeInventory`. Ostatní dvojice verzí, včetně `0.1.0-rc.5` → `0.1.0-rc.9` a stejné verze, bootstrap odmítne před prvním požadavkem na GitHub API. Běžné opakování se stejnou verzí příznak nepoužívá.
 
-Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na release `0.1.0-rc.9`. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu. Pak spusť schválený release se stejným inventory:
+Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na release `0.1.0-rc.10`. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu. Pak spusť schválený release se stejným inventory:
 
 ```powershell
 .\tools\Invoke-GitHubBootstrap.ps1 @arguments -UpgradeInventory
 ```
 
-Před prvním reconcile requestem bootstrap ověří vazbu inventory na repozitář a enterprise, aktuální `main`, přesný marker schváleného release a konfiguraci shodnou s lokálním `instance.yaml`. Větev musí vrátit commit SHA o 40 hexadecimálních znacích. Bootstrap připne čtení markeru i konfigurace k této SHA.
+Před prvním reconcile requestem bootstrap ověří vazbu inventory na repozitář a enterprise, aktuální `main`, přesný marker schváleného release a konfiguraci shodnou s lokálním `instance.yaml`. Větev musí vrátit commit SHA o 40 hexadecimálních znacích. Bootstrap připne čtení markeru i konfigurace k této SHA. Přes Git commit načte kořenový Git tree a pro obě cesty vyžaduje právě jeden běžný soubor (`blob`, mode `100644` nebo `100755`). Neúplný tree odmítne. Samotné `type=file` z Contents API nestačí: API může vrátit obsah cíle symbolického odkazu.
 
 Před každým GitHub zápisem, Azure zápisem federated credential i potvrzením nové verze inventory bootstrap ověří, že `main` stále ukazuje na stejný commit. Obsah API musí mít typ `file` a kódování `base64`; bootstrap odmítne adresáře, symbolické odkazy i submoduly. Bootstrap odmítne chybějící větev `main`, nepodporovanou dvojici verzí, neplatnou SHA, nesoulad markeru, změnu konfigurace i pohyb větve během ověřování. Při chybě markeru nebo konfigurace nejdřív oprav stav přes review PR; nepoužívej přímý zápis bootstrapu do `main`.
 
-Po úspěšném provisioningu bootstrap zapíše novou `releaseVersion` do stejného inventory. Do té doby ponechá zaznamenanou verzi. Zachová identifikátor nasazení, záznamy prostředků, Apps, otisky klíčů, termíny rotace a historii klíčů. Pokud běh selže, oprav příčinu a spusť znovu bootstrap se stejným inventory a release. `-NoChanges` zůstává read-only: ověřuje starší inventory proti markeru a konfiguraci na `main`, ale inventory ani prostředky nemění.
+Po úspěšném provisioningu bootstrap zapíše novou `releaseVersion` do stejného inventory. Do té doby ponechá zaznamenanou verzi. Zachová identifikátor nasazení, záznamy prostředků, Apps, otisky klíčů, termíny rotace a historii klíčů. Pokud běh selže, oprav příčinu a spusť znovu bootstrap se stejným inventory a release. `-NoChanges` zůstává read-only: ověřuje inventory stejné verze nebo jediný podporovaný pár `0.1.0-rc.5` → `0.1.0-rc.10` proti markeru, Git tree a konfiguraci na `main`, ale inventory ani prostředky nemění. Chybějící, prázdnou či nepodporovanou verzi inventory odmítne před prvním GitHub API požadavkem.
 
 `-NoChanges` nelze kombinovat s `-UpgradeInventory`; slouží pouze k ověření bez zápisů.
 
