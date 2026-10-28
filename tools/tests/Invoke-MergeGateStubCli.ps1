@@ -20,12 +20,15 @@ function global:gh {
     $head = $global:MergeGateCliStub.PullRequest.headRefOid
     $move = $global:MergeGateCliAba -and $arguments[-1] -match '/pulls/\d+/files\?'
     if ($move) {
+        $files = $global:MergeGateCliStub.Files
+        if ($global:MergeGateCliStub.ContainsKey('AbaFiles')) { $global:MergeGateCliStub.Files = $global:MergeGateCliStub.AbaFiles }
         $global:MergeGateCliStub.PullRequest.headRefOid = 'c' * 40
         $global:MergeGateCliMoves.Add($global:MergeGateCliStub.PullRequest.headRefOid)
     }
     try { Invoke-MergeGateStub -Stub $global:MergeGateCliStub -Arguments $arguments }
     finally {
         if ($move) {
+            $global:MergeGateCliStub.Files = $files
             $global:MergeGateCliStub.PullRequest.headRefOid = $head
             $global:MergeGateCliMoves.Add($head)
         }

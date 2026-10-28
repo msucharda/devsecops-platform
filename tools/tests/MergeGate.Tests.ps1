@@ -21,6 +21,7 @@ BeforeAll {
 
         $state = @{}
         foreach ($key in @('Files', 'Trees', 'Contents', 'Responses', 'Failures', 'TreeRefs')) { $state[$key] = $Stub[$key] }
+        if ($Stub.ContainsKey('AbaFiles')) { $state['AbaFiles'] = $Stub.AbaFiles }
         $id = [guid]::NewGuid().ToString('N')
         $statePath = Join-Path $Directory "$id-state.json"
         $tracePath = Join-Path $Directory "$id-trace.json"
@@ -105,6 +106,34 @@ Describe 'Merge gate replay of real pull requests' {
             "repos/$repository/git/trees/$($stub.TreeRefs[$base])?recursive=1"
             "repos/$repository/git/trees/$($stub.TreeRefs[$head])?recursive=1"
         )
+    }
+
+    It 'G10 CLI rejects a copy disguised as a rename during an ABA force-push' -Tag G10AbaRegression {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $base = $stub.PullRequest.baseRefOid
+        $head = $stub.PullRequest.headRefOid
+        $oldName = '.github/workflows/A.yml'
+        $newName = '.github/workflows/B.yml'
+        $before = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$base]; 'tree.0.path' = $oldName }
+        $original = $before.tree[0]
+        $copy = $original.Clone()
+        $copy.path = $newName
+        $before.tree = @($original)
+        $after = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$head]; tree = @($original, $copy) }
+        $stub.Trees = @{ $base = $before; $head = $after }
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{
+            '0.filename' = $newName; '0.previous_filename' = $newName; '0.status' = 'added'
+        }
+        $stub.AbaFiles = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{
+            '0.filename' = $newName; '0.previous_filename' = $oldName; '0.status' = 'renamed'
+        }
+        $normal = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $raced = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -Aba
+        $normal.ExitCode | Should -Be 1
+        $raced.ExitCode | Should -Be 1
+        Get-ReasonCode $raced.Result | Should -Be @('fail:workflow-permissions-changed')
+        $raced.Result.details.github.sensitiveLines | Should -Be $normal.Result.details.github.sensitiveLines
+        $raced.Trace.moves | Should -Be @(('c' * 40), $head)
     }
 
     It 'passes #78: green checks, Copilot review on the head; behind base only warns' {
@@ -806,6 +835,37 @@ Describe 'Merge gate pinned G10' {
         $result.details.github.sensitiveLines.Count | Should -Be 1
     }
 
+    It 'G10 pinned trees validate rename topology: <Case>' -ForEach @(
+        @{ Case = 'a proven rename'; BaseOld = $true; HeadOld = $false; BaseNew = $false; HeadNew = $true; Expected = 'pass' }
+        @{ Case = 'the source remains in head'; BaseOld = $true; HeadOld = $true; BaseNew = $false; HeadNew = $true; Expected = 'fail' }
+        @{ Case = 'the destination existed in base'; BaseOld = $true; HeadOld = $false; BaseNew = $true; HeadNew = $true; Expected = 'fail' }
+        @{ Case = 'the source is absent from base'; BaseOld = $false; HeadOld = $false; BaseNew = $false; HeadNew = $true; Expected = 'fail' }
+        @{ Case = 'the destination is absent from head'; BaseOld = $true; HeadOld = $false; BaseNew = $false; HeadNew = $false; Expected = 'fail' }
+    ) {
+        $oldName = '.github/workflows/old.yml'
+        $newName = '.github/workflows/new.yml'
+        $old = (Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ 'tree.0.path' = $oldName }).tree[0]
+        $new = $old.Clone()
+        $new.path = $newName
+        $stub.Trees[$base].tree = @(if ($BaseOld) { $old }; if ($BaseNew) { $new })
+        $stub.Trees[$head].tree = @(if ($HeadOld) { $old }; if ($HeadNew) { $new })
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{
+            '0.filename' = $newName; '0.previous_filename' = $oldName; '0.status' = 'renamed'
+        }
+        # Stale metadata may claim a missing side. The contents stub still returns its documented file fixture;
+        # only the fixed trees prove whether this is a rename, addition or removal.
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.verdict | Should -Be $Expected
+        if ($Expected -eq 'pass') {
+            $result.details.github.workflowFiles | Should -Be @($newName)
+            @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+        }
+        else {
+            Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+            $result.details.github.sensitiveLines.Count | Should -Be 1
+        }
+    }
+
     It 'G10 pinned trees repair an incomplete PR files page instead of trusting its omission' {
         $stub.Responses['/pulls/78/files\?'] = '[]'
         $stub.Contents["$base/$name"] = 'permissions: {contents: read}'
@@ -855,6 +915,7 @@ Describe 'Merge gate pinned G10' {
     ) {
         # Unsupported entry kinds are not regular inline YAML, even if the contents endpoint returns a file.
         $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10'
+        $stub.Trees[$head].tree[0].sha = $stub.Trees[$base].tree[0].sha
         $stub.Trees[$head].tree[0][$Field] = $Value
         $result = Invoke-ScenarioGate -Stub $stub
         Get-ReasonCode $result | Should -Be @('fail:evaluation-error')

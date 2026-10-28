@@ -862,6 +862,11 @@ function Get-MergeGatePinnedFile {
         if ($file -isnot [System.Collections.IDictionary]) { throw 'A changed file has no filename.' }
         $name = $file['filename']
         $status = $file['status']
+        if ($status -eq 'renamed') {
+            $source = [string] $file['previous_filename']
+            if (-not $before.ContainsKey($source) -or $after.ContainsKey($source) -or
+                $before.ContainsKey([string] $name) -or -not $after.ContainsKey([string] $name)) { continue }
+        }
         # A PR-scoped entry covers only the fixed-SHA sides that the YAML comparison actually reads.
         if ($status -in @('modified', 'changed', 'unchanged', 'removed')) { $null = $reads.Add("base/$name") }
         if ($status -in @('renamed', 'copied')) { $null = $reads.Add("base/$($file['previous_filename'])") }
@@ -874,13 +879,13 @@ function Get-MergeGatePinnedFile {
         $hasBase = $before.ContainsKey($path)
         $hasHead = $after.ContainsKey($path)
         if ($hasBase -and $hasHead -and $before[$path]['sha'] -ceq $after[$path]['sha'] -and
-            $before[$path]['mode'] -ceq $after[$path]['mode'] -and $before[$path]['type'] -ceq $after[$path]['type']) { continue }
+            $before[$path]['mode'] -eq $after[$path]['mode'] -and $before[$path]['type'] -eq $after[$path]['type']) { continue }
         # Directory entries are covered by their recursively enumerated children.
         $sides = @(if ($hasBase) { $before[$path] }; if ($hasHead) { $after[$path] })
-        if (@($sides | Where-Object { $_['type'] -cne 'tree' }).Count -eq 0) { continue }
+        if (@($sides | Where-Object { $_['type'] -ne 'tree' }).Count -eq 0) { continue }
         if (Test-MergeGateWorkflowPath -Path $path) {
             foreach ($side in $sides) {
-                if ($side['type'] -cne 'blob' -or $side['mode'] -cnotin @('100644', '100755')) { throw "Git tree has an unsupported workflow tree entry '$path'." }
+                if ($side['type'] -ne 'blob' -or $side['mode'] -notin @('100644', '100755')) { throw "Git tree has an unsupported workflow tree entry '$path'." }
             }
         }
         if ((-not $hasBase -or $reads.Contains("base/$path")) -and (-not $hasHead -or $reads.Contains("head/$path"))) { continue }
