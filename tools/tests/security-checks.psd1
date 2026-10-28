@@ -24,7 +24,7 @@
         @{
             Name = 'workflow-checkout-revision'
             Tests = @(
-                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*changed HEAD*', '*accepts an actions organization*') }
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*changed HEAD*', '*revision with different casing*', '*accepts an actions organization*') }
             )
         }
         @{

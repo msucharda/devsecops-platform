@@ -84,6 +84,8 @@ jobs:
         @{ Case = 'Docker image'; Value = 'docker://alpine:3'; Error = '*unsupported uses*' }
         @{ Case = 'expression'; Value = '${{ inputs.action }}'; Error = '*unsupported uses*' }
         @{ Case = 'blank'; Value = ''; Error = '*unsupported uses*' }
+        @{ Case = 'empty string'; Value = "''"; Error = '*unsupported uses*' }
+        @{ Case = 'whitespace'; Value = "' '"; Error = '*unsupported uses*' }
         @{ Case = 'mapping'; Value = '{ repository: demo-actions/checkout }'; Error = '*unsupported uses*' }
     ) {
         $text = (Get-Content -LiteralPath $workflowPath -Raw) -replace 'demo-actions/checkout@[a-f0-9]{40}', $Value
@@ -234,6 +236,7 @@ jobs:
         @{ Case = 'missing action'; Reference = './missing'; Reusable = $false; Error = '*exactly one action.yml*' }
         @{ Case = 'missing reusable workflow'; Reference = './.github/workflows/missing.yml'; Reusable = $true; Error = '*regular file in HEAD*' }
         @{ Case = 'reusable outside workflows'; Reference = './other/build.yml'; Reusable = $true; Error = '*must be in .github/workflows*' }
+        @{ Case = 'reusable directory casing'; Reference = './.github/WORKFLOWS/build.yml'; Reusable = $true; Error = '*must be in .github/workflows*' }
     ) {
         $text = if ($Reusable) { "jobs:`n  reuse:`n    uses: $Reference" }
         else { "jobs:`n  local:`n    steps:`n      - uses: $Reference" }
@@ -262,6 +265,7 @@ jobs:
         @{ Case = 'sequence runtime'; Text = 'runs: { using: [composite], steps: [ { run: echo } ] }'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'Docker registry image'; Text = 'runs: { using: docker, image: docker://alpine:3 }'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'JavaScript main missing'; Text = 'runs: { using: node24 }'; Error = '*invalid JavaScript action*' }
+        @{ Case = 'JavaScript numeric main'; Text = 'runs: { using: node24, main: 42 }'; Error = '*invalid JavaScript action*' }
         @{ Case = 'JavaScript main empty'; Text = "runs: { using: node24, main: '' }"; Error = '*invalid JavaScript action*' }
         @{ Case = 'JavaScript steps'; Text = 'runs: { using: node24, main: index.js, steps: [] }'; Error = '*invalid JavaScript action*' }
         @{ Case = 'composite missing steps'; Text = 'runs: { using: composite }'; Error = '*steps sequence*' }
@@ -308,6 +312,7 @@ jobs:
     It 'rejects local Docker image <Case>' -Tag Docker -ForEach @(
         @{ Case = 'missing'; Image = ''; Error = '*unsupported action runtime or image*' }
         @{ Case = 'numeric'; Image = '42'; Error = '*unsupported action runtime or image*' }
+        @{ Case = 'sequence'; Image = '[Dockerfile]'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'parent escape'; Image = '../Dockerfile'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'different casing'; Image = 'dockerfile'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'uncommitted Dockerfile'; Image = 'Dockerfile'; Error = '*regular file in HEAD*' }
@@ -352,6 +357,16 @@ jobs:
         { Assert-PlatformWorkflowUses -RepositoryPath $workflowDirectory -ActionsOrganization demo-actions } | Should -Throw '*repository root*'
     }
 
+    It 'rejects a differently cased repository root reported by Git' {
+        # Intentionally changes only the native Git boundary's reported root casing.
+        Mock git -ModuleName WorkflowPreflight {
+            $global:LASTEXITCODE = 0
+            $repository.ToUpperInvariant()
+        } -ParameterFilter { '--show-toplevel' -in $args }
+        { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } |
+            Should -Throw '*repository root*'
+    }
+
     It 'rejects a missing Git repository' {
         { Assert-PlatformWorkflowUses -RepositoryPath (Join-Path $repository 'missing') -ActionsOrganization demo-actions } |
             Should -Throw '*cannot read Git revision*'
@@ -360,6 +375,15 @@ jobs:
     It 'rejects a changed HEAD before a state-changing operation' {
         $null = Save-WorkflowRevision
         { Assert-PlatformWorkflowRevision -RepositoryPath $repository -Revision $revision } | Should -Throw '*HEAD changed*'
+    }
+
+    It 'rejects an expected revision with different casing' {
+        Mock git -ModuleName WorkflowPreflight {
+            $global:LASTEXITCODE = 0
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        } -ParameterFilter { '--verify' -in $args }
+        { Assert-PlatformWorkflowRevision -RepositoryPath $repository -Revision 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' } |
+            Should -Throw '*HEAD changed*'
     }
 
     It 'rejects a non-SHA1 repository instead of accepting an unknown full HEAD SHA' {

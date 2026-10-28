@@ -75,7 +75,7 @@ function Get-WorkflowDocumentReference {
                 throw "Workflow preflight: unsupported action runtime or image in '$Path'; require a local Dockerfile."
             }
             $imagePath = if ($Path.Contains('/')) { "$($Path.Substring(0, $Path.LastIndexOf('/')))/$image" } else { $image }
-            if (-not $Files.ContainsKey($imagePath) -or $Files[$imagePath] -cnotin @('100644', '100755')) {
+            if (-not $Files.ContainsKey($imagePath) -or $Files[$imagePath] -notin @('100644', '100755')) {
                 throw "Workflow preflight: Dockerfile '$imagePath' must be a regular file in HEAD."
             }
         }
@@ -186,7 +186,7 @@ function Assert-PlatformWorkflowUses {
         $item = $pending.Dequeue()
         $path = $item.Path
         if (-not $visited.Add("$($item.Action):$path")) { continue }
-        if (-not $files.ContainsKey($path) -or $files[$path] -cnotin @('100644', '100755')) {
+        if (-not $files.ContainsKey($path) -or $files[$path] -notin @('100644', '100755')) {
             throw "Workflow preflight: '$path' must be a regular file in HEAD (no symlinks or submodules)."
         }
         $document = Read-WorkflowDocument $RepositoryPath $revision $path
