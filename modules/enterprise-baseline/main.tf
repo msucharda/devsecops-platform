@@ -50,7 +50,7 @@ resource "restapi_object" "organization_settings" {
 
     # Enterprise policy owns this field, but its effective value must remain readable.
     postcondition {
-      condition     = try(self.api_data["members_can_fork_private_repositories"], null) == "false"
+      condition     = try(jsondecode(self.api_response)["members_can_fork_private_repositories"], null) == false
       error_message = "Organization ${each.key} must report members_can_fork_private_repositories as false to verify the enterprise prerequisite privateInternalForksDisabled. A missing, null or other value is a failure. Enforce the enterprise forking policy and ensure the token can read it; the module never writes this field."
     }
 

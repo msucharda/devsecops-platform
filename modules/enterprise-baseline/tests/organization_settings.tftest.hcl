@@ -8,7 +8,7 @@ mock_provider "restapi" {
   mock_resource "restapi_object" {
     defaults = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -178,7 +178,7 @@ run "accepts_a_github_response_with_the_enforced_baseline" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         login                                    = "demo-platform"
@@ -202,7 +202,7 @@ run "rejects_a_github_response_that_keeps_read_as_base_permission" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "read"
@@ -227,7 +227,7 @@ run "rejects_a_github_response_that_allows_member_repository_creation" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -252,7 +252,7 @@ run "rejects_a_github_response_that_allows_private_repository_creation" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -277,7 +277,7 @@ run "rejects_a_github_response_that_allows_internal_repository_creation" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -301,8 +301,10 @@ run "rejects_a_github_response_that_allows_private_forks" {
     target          = restapi_object.organization_settings
     override_during = plan
     values = {
-      id              = "mock"
-      api_response    = "{}"
+      id = "mock"
+      api_response = jsonencode(merge(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body, {
+        members_can_fork_private_repositories = true
+      }))
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -327,7 +329,7 @@ run "rejects_a_github_response_without_default_repository_permission" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         members_can_create_repositories          = "false"
@@ -350,7 +352,7 @@ run "rejects_a_github_response_without_members_can_create_repositories" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -373,7 +375,7 @@ run "rejects_a_github_response_without_members_can_create_private_repositories" 
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -396,7 +398,7 @@ run "rejects_a_github_response_without_members_can_create_internal_repositories"
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission           = "none"
@@ -418,8 +420,11 @@ run "rejects_a_github_response_without_members_can_fork_private_repositories" {
     target          = restapi_object.organization_settings
     override_during = plan
     values = {
-      id              = "mock"
-      api_response    = "{}"
+      id = "mock"
+      api_response = jsonencode({
+        for field, value in jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body :
+        field => value if field != "members_can_fork_private_repositories"
+      })
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -442,7 +447,7 @@ run "rejects_a_github_response_that_lets_members_change_visibility" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -467,7 +472,7 @@ run "rejects_a_github_response_that_lets_members_delete_repositories" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -492,7 +497,7 @@ run "warns_when_github_does_not_return_the_enterprise_enforced_visibility_field"
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
@@ -515,7 +520,7 @@ run "warns_when_github_does_not_return_the_enterprise_enforced_deletion_field" {
     override_during = plan
     values = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
