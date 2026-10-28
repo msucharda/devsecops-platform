@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../../shared/scripts/GitHubRetry.ps1')
 
 # REST endpoints, API version 2026-03-10:
 # https://docs.github.com/en/enterprise-cloud@latest/rest/enterprise-admin/organization-installations
@@ -114,7 +115,7 @@ function Invoke-OrganizationsApi {
             $request.Body = ConvertTo-Json -InputObject $Body -Depth 20 -Compress
             $request.ContentType = 'application/json'
         }
-        $reply = Invoke-WebRequest @request
+        $reply = Invoke-GitHubRetryRequest -Request $request
         $status = [int] $reply.StatusCode
         if ($status -notin $AcceptStatus) { throw "GitHub returned HTTP $status for $operation." }
         $content = if ($reply.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($reply.Content) } else { [string] $reply.Content }

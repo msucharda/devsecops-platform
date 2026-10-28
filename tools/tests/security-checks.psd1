@@ -4,6 +4,18 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'github-token-revocation-status'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenRevocation.Tests.ps1'; FullName = 'Job installation token revocation retry*' })
+        }
+        @{
+            Name = 'github-retry-method'
+            Tests = @(@{ Path = 'tools/tests/GitHubRetry.Tests.ps1'; FullName = 'GitHub request retry policy*' })
+        }
+        @{
+            Name = 'github-retry-status'
+            Tests = @(@{ Path = 'tools/tests/GitHubRetry.Tests.ps1'; FullName = 'GitHub request retry policy*' })
+        }
+        @{
             Name = 'workflow-uses-reference'
             Tests = @(
                 @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*pinned references', '*rejects <Case> references', '*unsafe local*', '*follows a local composite*', '*repository root as a local action*') }

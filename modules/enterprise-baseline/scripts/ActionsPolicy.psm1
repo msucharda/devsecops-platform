@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../../shared/scripts/GitHubRetry.ps1')
 
 # Endpoints, API version 2026-03-10:
 # https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions#get-github-actions-permissions-for-an-organization
@@ -65,7 +66,7 @@ function Invoke-ActionsPolicyApi {
         $request.Body = ConvertTo-Json -InputObject $Body -Depth 5 -Compress
         $request.ContentType = 'application/json'
     }
-    $reply = Invoke-WebRequest @request
+    $reply = Invoke-GitHubRetryRequest -Request $request
     $status = [int] $reply.StatusCode
     if ($status -eq 409) {
         throw "GitHub returned HTTP 409 for $Method ${Path}: the enterprise policy prevents the organization setting. Align the enterprise GitHub Actions policy with the module or remove the enterprise restriction."
