@@ -6,4 +6,4 @@ Každý negativní případ změní nebo vynechá jedno pole tohoto compliant t�
 
 Assertions porovnávají oba atributy i při očekávaném selhání postcondition nebo checku. Kontrolují hodnoty i vynechaná pole. Jednostranná změna mocku musí způsobit selhání testu. Stringifikace odpovídá provideru `Mastercard/restapi` 3.0.0: boolean se mění na `"true"` nebo `"false"` a JSON `null` na `"<nil>"` ([implementace `GetApiData`](https://github.com/Mastercard/terraform-provider-restapi/blob/v3.0.0/internal/apiclient/object.go)).
 
-Původní případy nullable boolean a záměrně neplatného stringu `"false"` zůstávají v `tools/tests/EnterpriseBaseline.Tests.ps1`. Používají skutečný provider proti lokálnímu API stubu; nevyžadují GitHub credentials ani živé kroky.
+Terraform testy ověřují také dokumentovaný `null` u fork policy a záměrně neplatný string `"false"`. Kontrolují zachování JSON typu i konzistentní `api_data`. Původní případy v `tools/tests/EnterpriseBaseline.Tests.ps1` zůstávají beze změny. Používají skutečný provider proti lokálnímu API stubu; nevyžadují GitHub credentials ani živé kroky.

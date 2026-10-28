@@ -199,7 +199,7 @@ run "rejects_a_github_response_that_keeps_read_as_base_permission" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -237,7 +237,7 @@ run "rejects_a_github_response_that_allows_member_repository_creation" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -275,7 +275,7 @@ run "rejects_a_github_response_that_allows_private_repository_creation" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -313,7 +313,7 @@ run "rejects_a_github_response_that_allows_internal_repository_creation" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -351,7 +351,7 @@ run "rejects_a_github_response_that_allows_private_forks" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -367,6 +367,87 @@ run "rejects_a_github_response_that_allows_private_forks" {
       })
     ])
     error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
+  }
+
+  expect_failures = [restapi_object.organization_settings]
+}
+
+run "rejects_a_github_response_with_a_null_private_fork_policy" {
+  command = plan
+
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_fork_private_repositories = null },
+      )
+      ] : {
+      id              = "mock"
+      api_response    = jsonencode(response)
+      create_response = "{}"
+      api_data = {
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      }) &&
+      jsondecode(settings.api_response).members_can_fork_private_repositories == null &&
+      settings.api_data.members_can_fork_private_repositories == "<nil>"
+    ])
+    error_message = "The documented null fork policy must remain null in api_response and become <nil> in api_data."
+  }
+
+  expect_failures = [restapi_object.organization_settings]
+}
+
+run "rejects_a_github_response_with_a_string_false_private_fork_policy" {
+  command = plan
+
+  # Deliberately invalid API input: GET /orgs/{org} documents a nullable boolean, not a string.
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_fork_private_repositories = "false" },
+      )
+      ] : {
+      id              = "mock"
+      api_response    = jsonencode(response)
+      create_response = "{}"
+      api_data = {
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      }) &&
+      jsonencode(jsondecode(settings.api_response).members_can_fork_private_repositories) == jsonencode("false") &&
+      settings.api_data.members_can_fork_private_repositories == "false"
+    ])
+    error_message = "The invalid string false fork policy must retain its JSON type instead of becoming boolean false."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -390,7 +471,7 @@ run "rejects_a_github_response_without_default_repository_permission" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -428,7 +509,7 @@ run "rejects_a_github_response_without_members_can_create_repositories" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -466,7 +547,7 @@ run "rejects_a_github_response_without_members_can_create_private_repositories" 
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -504,7 +585,7 @@ run "rejects_a_github_response_without_members_can_create_internal_repositories"
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -542,7 +623,7 @@ run "rejects_a_github_response_without_members_can_fork_private_repositories" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -579,7 +660,7 @@ run "rejects_a_github_response_that_lets_members_change_visibility" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -617,7 +698,7 @@ run "rejects_a_github_response_that_lets_members_delete_repositories" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -656,7 +737,7 @@ run "warns_when_github_does_not_return_the_enterprise_enforced_visibility_field"
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]
@@ -694,7 +775,7 @@ run "warns_when_github_does_not_return_the_enterprise_enforced_deletion_field" {
       api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        for field, value in response : field => tostring(value)
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
         if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
     }][0]

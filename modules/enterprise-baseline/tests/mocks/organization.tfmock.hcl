@@ -11,7 +11,7 @@ mock_resource "restapi_object" {
     api_response    = jsonencode(response)
     create_response = "{}"
     api_data = {
-      for field, value in response : field => tostring(value)
+      for field, value in response : field => value == null ? "<nil>" : tostring(value)
       if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
     }
   }][0]
