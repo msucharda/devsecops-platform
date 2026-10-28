@@ -1,26 +1,10 @@
 # The code security scripts must not run in this file; code_security.tftest.hcl and the Pester stub tests cover them.
 mock_provider "external" {}
 
-# Plan runs see a compliant GitHub response; apply runs override it per case.
+# Runs see a compliant GitHub response unless the case overrides it.
 mock_provider "restapi" {
   override_during = plan
-
-  mock_resource "restapi_object" {
-    defaults = {
-      id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
-      create_response = "{}"
-      api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
-      }
-    }
-  }
+  source          = "./tests/mocks"
 }
 
 variables {
@@ -40,6 +24,18 @@ variables {
 
 run "manages_each_instance_organization_with_idempotent_patch" {
   command = plan
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
+  }
 
   assert {
     condition     = toset(keys(restapi_object.organization_settings)) == toset(["demo-platform", "demo-actions", "demo-workloads"])
@@ -173,24 +169,16 @@ run "accepts_a_github_response_with_the_enforced_baseline" {
     target = [restapi_object.organization_settings]
   }
 
-  override_resource {
-    target          = restapi_object.organization_settings
-    override_during = plan
-    values = {
-      id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
-      create_response = "{}"
-      api_data = {
-        login                                    = "demo-platform"
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
-      }
-    }
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 }
 
@@ -200,20 +188,33 @@ run "rejects_a_github_response_that_keeps_read_as_base_permission" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { default_repository_permission = "read" },
+      )
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "read"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -225,20 +226,33 @@ run "rejects_a_github_response_that_allows_member_repository_creation" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_create_repositories = true },
+      )
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "true"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -250,20 +264,33 @@ run "rejects_a_github_response_that_allows_private_repository_creation" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_create_private_repositories = true },
+      )
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "true"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -275,20 +302,33 @@ run "rejects_a_github_response_that_allows_internal_repository_creation" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_create_internal_repositories = true },
+      )
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "true"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -300,22 +340,114 @@ run "rejects_a_github_response_that_allows_private_forks" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
-      id = "mock"
-      api_response = jsonencode(merge(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body, {
-        members_can_fork_private_repositories = true
-      }))
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_fork_private_repositories = true },
+      )
+      ] : {
+      id              = "mock"
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "true"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
+  }
+
+  expect_failures = [restapi_object.organization_settings]
+}
+
+run "rejects_a_github_response_with_a_null_private_fork_policy" {
+  command = plan
+
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_fork_private_repositories = null },
+      )
+      ] : {
+      id              = "mock"
+      api_response    = jsonencode(response)
+      create_response = "{}"
+      api_data = {
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      }) &&
+      jsondecode(settings.api_response).members_can_fork_private_repositories == null &&
+      settings.api_data.members_can_fork_private_repositories == "<nil>"
+    ])
+    error_message = "The documented null fork policy must remain null in api_response and become <nil> in api_data."
+  }
+
+  expect_failures = [restapi_object.organization_settings]
+}
+
+run "rejects_a_github_response_with_a_string_false_private_fork_policy" {
+  command = plan
+
+  # Deliberately invalid API input: GET /orgs/{org} documents a nullable boolean, not a string.
+  override_resource {
+    target          = restapi_object.organization_settings
+    override_during = plan
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_fork_private_repositories = "false" },
+      )
+      ] : {
+      id              = "mock"
+      api_response    = jsonencode(response)
+      create_response = "{}"
+      api_data = {
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      }) &&
+      jsonencode(jsondecode(settings.api_response).members_can_fork_private_repositories) == jsonencode("false") &&
+      settings.api_data.members_can_fork_private_repositories == "false"
+    ])
+    error_message = "The invalid string false fork policy must retain its JSON type instead of becoming boolean false."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -327,19 +459,34 @@ run "rejects_a_github_response_without_default_repository_permission" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      {
+        for field, value in merge(
+          jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+          jsondecode(file("tests/fixtures/organization-settings.json")),
+        ) : field => value if field != "default_repository_permission"
+      }
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -350,19 +497,34 @@ run "rejects_a_github_response_without_members_can_create_repositories" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      {
+        for field, value in merge(
+          jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+          jsondecode(file("tests/fixtures/organization-settings.json")),
+        ) : field => value if field != "members_can_create_repositories"
+      }
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -373,19 +535,34 @@ run "rejects_a_github_response_without_members_can_create_private_repositories" 
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      {
+        for field, value in merge(
+          jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+          jsondecode(file("tests/fixtures/organization-settings.json")),
+        ) : field => value if field != "members_can_create_private_repositories"
+      }
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -396,19 +573,34 @@ run "rejects_a_github_response_without_members_can_create_internal_repositories"
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      {
+        for field, value in merge(
+          jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+          jsondecode(file("tests/fixtures/organization-settings.json")),
+        ) : field => value if field != "members_can_create_internal_repositories"
+      }
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission           = "none"
-        members_can_create_repositories         = "false"
-        members_can_create_private_repositories = "false"
-        members_can_fork_private_repositories   = "false"
-        members_can_change_repo_visibility      = "false"
-        members_can_delete_repositories         = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -419,22 +611,34 @@ run "rejects_a_github_response_without_members_can_fork_private_repositories" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
-      id = "mock"
-      api_response = jsonencode({
-        for field, value in jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body :
-        field => value if field != "members_can_fork_private_repositories"
-      })
+    values = [for response in [
+      {
+        for field, value in merge(
+          jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+          jsondecode(file("tests/fixtures/organization-settings.json")),
+        ) : field => value if field != "members_can_fork_private_repositories"
+      }
+      ] : {
+      id              = "mock"
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -445,20 +649,33 @@ run "rejects_a_github_response_that_lets_members_change_visibility" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_change_repo_visibility = true },
+      )
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "true"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -470,20 +687,33 @@ run "rejects_a_github_response_that_lets_members_delete_repositories" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      merge(
+        jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+        jsondecode(file("tests/fixtures/organization-settings.json")),
+        { members_can_delete_repositories = true },
+      )
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "true"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [restapi_object.organization_settings]
@@ -495,19 +725,34 @@ run "warns_when_github_does_not_return_the_enterprise_enforced_visibility_field"
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      {
+        for field, value in merge(
+          jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+          jsondecode(file("tests/fixtures/organization-settings.json")),
+        ) : field => value if field != "members_can_change_repo_visibility"
+      }
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_delete_repositories          = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [check.enterprise_repository_management_policies]
@@ -518,19 +763,34 @@ run "warns_when_github_does_not_return_the_enterprise_enforced_deletion_field" {
   override_resource {
     target          = restapi_object.organization_settings
     override_during = plan
-    values = {
+    values = [for response in [
+      {
+        for field, value in merge(
+          jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body,
+          jsondecode(file("tests/fixtures/organization-settings.json")),
+        ) : field => value if field != "members_can_delete_repositories"
+      }
+      ] : {
       id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
+      api_response    = jsonencode(response)
       create_response = "{}"
       api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
+        for field, value in response : field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
       }
-    }
+    }][0]
+  }
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
   }
 
   expect_failures = [check.enterprise_repository_management_policies]

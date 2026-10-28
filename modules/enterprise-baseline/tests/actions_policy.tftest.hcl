@@ -2,23 +2,7 @@
 # (tools/tests/EnterpriseBaseline.Tests.ps1); a plan defers the reader while the managed objects have pending changes.
 mock_provider "restapi" {
   override_during = plan
-
-  mock_resource "restapi_object" {
-    defaults = {
-      id              = "mock"
-      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
-      create_response = "{}"
-      api_data = {
-        default_repository_permission            = "none"
-        members_can_create_repositories          = "false"
-        members_can_create_private_repositories  = "false"
-        members_can_create_internal_repositories = "false"
-        members_can_fork_private_repositories    = "false"
-        members_can_change_repo_visibility       = "false"
-        members_can_delete_repositories          = "false"
-      }
-    }
-  }
+  source          = "./tests/mocks"
 }
 
 mock_provider "external" {}
@@ -40,6 +24,18 @@ variables {
 
 run "manages_the_policy_of_every_organization" {
   command = plan
+
+  assert {
+    condition = alltrue([
+      for settings in restapi_object.organization_settings :
+      settings.api_data == tomap({
+        for field, value in jsondecode(settings.api_response) :
+        field => value == null ? "<nil>" : tostring(value)
+        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
+      })
+    ])
+    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
+  }
 
   assert {
     condition = (
