@@ -21,6 +21,8 @@ foreach ($organization in $tokens.PSBase.Keys) {
             $request = @{
                 Uri     = "$($ApiUrl.TrimEnd('/'))/installation/token"
                 Method  = 'DELETE'
+                TimeoutSec = 60
+                MaximumRedirection = 0
                 Headers = @{
                     Authorization          = "Bearer $($tokens[$organization])"
                     Accept                 = 'application/vnd.github+json'

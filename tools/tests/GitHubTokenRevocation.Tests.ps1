@@ -24,13 +24,15 @@ Describe 'Job installation token revocation retry' {
         Should -Invoke Invoke-WebRequest -Times 2 -Exactly -ParameterFilter {
             $Method -ceq 'DELETE' -and $Uri -ceq 'https://api.example.test/installation/token' -and
             $Headers.Authorization -ceq 'Bearer job-token-secret' -and
-            $Headers['X-GitHub-Api-Version'] -ceq '2026-03-10' -and $MaximumRetryCount -eq 0
+            $Headers['X-GitHub-Api-Version'] -ceq '2026-03-10' -and $MaximumRetryCount -eq 0 -and
+            $TimeoutSec -eq 60 -and $MaximumRedirection -eq 0
         }
         Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 5 }
     }
 
     It 'rejects HTTP <HttpStatus> without treating it as confirmed revocation' -ForEach @(
         @{ HttpStatus = 200; Attempts = 1 }, @{ HttpStatus = 202; Attempts = 1 },
+        @{ HttpStatus = 302; Attempts = 1 },
         @{ HttpStatus = 401; Attempts = 1 }, @{ HttpStatus = 403; Attempts = 1 },
         @{ HttpStatus = 429; Attempts = 1 }, @{ HttpStatus = 500; Attempts = 1 },
         @{ HttpStatus = 503; Attempts = 3 }
