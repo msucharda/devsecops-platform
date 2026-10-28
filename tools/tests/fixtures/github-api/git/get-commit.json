@@ -1,0 +1,54 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/git/commits/{commit_sha}",
+    "operationId": "git/get-commit",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/commits#get-a-commit-object",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/c66e298030d4070b70a569dcd4268b3a041b5380/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/git-commit"
+  },
+  "required": {
+    "": ["sha", "node_id", "url", "html_url", "author", "committer", "tree", "message", "parents", "verification"],
+    "author": ["email", "name", "date"],
+    "committer": ["email", "name", "date"],
+    "tree": ["sha", "url"],
+    "parents.[]": ["sha", "url", "html_url"],
+    "verification": ["verified", "reason", "signature", "payload", "verified_at"]
+  },
+  "body": {
+    "sha": "7638417db6d59f3c431d3e1f261cc637155684cd",
+    "node_id": "MDY6Q29tbWl0NmRjYjA5YjViNTc4NzVmMzM0ZjYxYWViZWQ2OTVlMmU0MTkzZGI1ZQ==",
+    "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/7638417db6d59f3c431d3e1f261cc637155684cd",
+    "html_url": "https://github.com/octocat/Hello-World/commit/7638417db6d59f3c431d3e1f261cc637155684cd",
+    "author": {
+      "date": "2014-11-07T22:01:45Z",
+      "name": "Monalisa Octocat",
+      "email": "octocat@github.com"
+    },
+    "committer": {
+      "date": "2014-11-07T22:01:45Z",
+      "name": "Monalisa Octocat",
+      "email": "octocat@github.com"
+    },
+    "message": "added readme, because im a good github citizen",
+    "tree": {
+      "url": "https://api.github.com/repos/octocat/Hello-World/git/trees/691272480426f78a0138979dd3ce63b77f706feb",
+      "sha": "691272480426f78a0138979dd3ce63b77f706feb"
+    },
+    "parents": [
+      {
+        "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/1acc419d4d6a9ce985db7be48c6349a0475975b5",
+        "sha": "1acc419d4d6a9ce985db7be48c6349a0475975b5",
+        "html_url": "https://github.com/octocat/Hello-World/commit/7638417db6d59f3c431d3e1f261cc637155684cd"
+      }
+    ],
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  }
+}

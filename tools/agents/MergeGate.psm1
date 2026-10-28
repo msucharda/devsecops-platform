@@ -17,11 +17,13 @@ API contract (X-GitHub-Api-Version 2026-03-10; GraphQL schema github/docs src/gr
 - GET /repos/{owner}/{repo}/rules/branches/{branch}: https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-rules-for-a-branch
 - GET /repos/{owner}/{repo}/compare/{basehead}: https://docs.github.com/en/enterprise-cloud@latest/rest/commits/commits#compare-two-commits
 - GET /repos/{owner}/{repo}/pulls/{pull_number}/files: https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests-files
+- GET /repos/{owner}/{repo}/git/trees/{tree_sha}: https://docs.github.com/en/enterprise-cloud@latest/rest/git/trees#get-a-tree
+- GET /repos/{owner}/{repo}/git/commits/{commit_sha}: https://docs.github.com/en/enterprise-cloud@latest/rest/git/commits#get-a-commit-object
 - GET /repos/{owner}/{repo}/contents/{path}: https://docs.github.com/en/enterprise-cloud@latest/rest/repos/contents#get-repository-content
 - GET /repos/{owner}/{repo}/rulesets/rule-suites: https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rule-suites#list-repository-rule-suites
 #>
 
-$script:GateVersion = '1.1.0'
+$script:GateVersion = '1.1.1'
 $script:ApiVersion = '2026-03-10'
 $script:CopilotLogins = [string[]] @('copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]', 'Copilot')
 $script:CopilotCheckName = 'copilot-pull-request-reviewer'
@@ -811,6 +813,83 @@ function Get-MergeGateWorkflowContent {
     return [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
 }
 
+# security-check: merge-gate-workflow-tree
+function Get-MergeGateWorkflowTree {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable] $Target,
+        [Parameter(Mandatory)][string] $Sha
+    )
+
+    $commit = Invoke-MergeGateRest -Target $Target -Path "repos/$($Target.Slug)/git/commits/$Sha"
+    $commitSha = Get-MergeGateValue -Node $commit -Path 'sha'
+    if ($commitSha -isnot [string] -or $commitSha -cne $Sha) { throw "Git commit response does not match '$Sha'." }
+    $treeSha = Get-MergeGateValue -Node $commit -Path 'tree.sha'
+    if ($treeSha -isnot [string] -or $treeSha -cnotmatch '^[0-9a-f]{40}$') { throw "Git commit '$Sha' has no valid tree SHA." }
+    $tree = Invoke-MergeGateRest -Target $Target -Path "repos/$($Target.Slug)/git/trees/${treeSha}?recursive=1"
+    if ($tree -isnot [System.Collections.IDictionary]) { throw "Git tree '$Sha' is not an object." }
+    if ($tree['truncated'] -isnot [bool] -or $tree['truncated']) { throw "Git tree '$Sha' is truncated or has no completeness flag." }
+    if ($tree['sha'] -isnot [string] -or $tree['sha'] -cne $treeSha) { throw "Git tree response does not match '$treeSha'." }
+    $entries = Get-MergeGateList -Node $tree -Path 'tree'
+    $files = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    foreach ($entry in $entries) {
+        if ($entry -isnot [System.Collections.IDictionary]) { throw "Git tree '$Sha' contains a non-object entry." }
+        foreach ($field in @('path', 'mode', 'type', 'sha')) {
+            if ($entry[$field] -isnot [string] -or [string]::IsNullOrWhiteSpace($entry[$field])) { throw "Git tree '$Sha' entry has no valid '$field'." }
+        }
+        if ($entry['type'] -cnotin @('blob', 'tree', 'commit')) { throw "Git tree '$Sha' has an unsupported entry type." }
+        if (-not $files.TryAdd($entry['path'], $entry)) { throw "Git tree '$Sha' has a duplicate path '$($entry['path'])'." }
+    }
+    return , $files
+}
+
+# security-check: merge-gate-workflow-file-coverage
+function Get-MergeGatePinnedFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable] $Target,
+        [Parameter(Mandatory)][string] $BaseSha,
+        [Parameter(Mandatory)][string] $HeadSha,
+        [AllowEmptyCollection()][object[]] $Files = @()
+    )
+
+    $before = Get-MergeGateWorkflowTree -Target $Target -Sha $BaseSha
+    $after = Get-MergeGateWorkflowTree -Target $Target -Sha $HeadSha
+    $reads = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $result = [Collections.Generic.List[object]]::new()
+    foreach ($file in $Files) {
+        $result.Add($file)
+        if ($file -isnot [System.Collections.IDictionary]) { throw 'A changed file has no filename.' }
+        $name = $file['filename']
+        $status = $file['status']
+        # A PR-scoped entry covers only the fixed-SHA sides that the YAML comparison actually reads.
+        if ($status -in @('modified', 'changed', 'unchanged', 'removed')) { $null = $reads.Add("base/$name") }
+        if ($status -in @('renamed', 'copied')) { $null = $reads.Add("base/$($file['previous_filename'])") }
+        if ($status -in @('added', 'modified', 'changed', 'unchanged', 'renamed', 'copied')) { $null = $reads.Add("head/$name") }
+    }
+    $paths = [Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+    $paths.UnionWith([string[]] @($before.Keys))
+    $paths.UnionWith([string[]] @($after.Keys))
+    foreach ($path in $paths) {
+        $hasBase = $before.ContainsKey($path)
+        $hasHead = $after.ContainsKey($path)
+        if ($hasBase -and $hasHead -and $before[$path]['sha'] -ceq $after[$path]['sha'] -and
+            $before[$path]['mode'] -ceq $after[$path]['mode'] -and $before[$path]['type'] -ceq $after[$path]['type']) { continue }
+        # Directory entries are covered by their recursively enumerated children.
+        $sides = @(if ($hasBase) { $before[$path] }; if ($hasHead) { $after[$path] })
+        if (@($sides | Where-Object { $_['type'] -cne 'tree' }).Count -eq 0) { continue }
+        if (Test-MergeGateWorkflowPath -Path $path) {
+            foreach ($side in $sides) {
+                if ($side['type'] -cne 'blob' -or $side['mode'] -cnotin @('100644', '100755')) { throw "Git tree has an unsupported workflow tree entry '$path'." }
+            }
+        }
+        if ((-not $hasBase -or $reads.Contains("base/$path")) -and (-not $hasHead -or $reads.Contains("head/$path"))) { continue }
+        $status = if (-not $hasBase) { 'added' } elseif (-not $hasHead) { 'removed' } else { 'modified' }
+        $result.Add(@{ filename = $path; status = $status })
+    }
+    return , $result.ToArray()
+}
+
 # security-check: merge-gate-workflow-settings
 function Test-MergeGateSensitiveSetting {
     [CmdletBinding()]
@@ -1359,8 +1438,9 @@ function Complete-MergeGateEvaluation {
 
     # G10
     $files = Get-MergeGateRestList -Target $Target -Path "repos/$slug/pulls/$Number/files" -MaxPages $script:MaxFilePages
+    $files = Get-MergeGatePinnedFile -Target $Target -BaseSha $baseSha -HeadSha $head -Files $files
     $change = Get-MergeGateGitHubChange -Files $files -Target $Target -BaseSha $baseSha -HeadSha $head
-    # The file list is PR-scoped rather than SHA-scoped; reject a ref change across the read.
+    # Reject a lasting ref change as well; the pinned trees also cover a ref that moves away and back.
     $current = Get-MergeGatePullRequest -Target $Target -Number $Number
     if ($current['headRefOid'] -cne $head -or $current['baseRefOid'] -cne $baseSha) { throw 'The pull request head or base changed while reading workflow files.' }
     $workflowEvidence = @{ 'workflow-permissions-changed' = [ordered]@{ sensitiveLines = $change.SensitiveLines; acknowledgedFor = if ($AcknowledgedSha) { $AcknowledgedSha } else { $null } } }

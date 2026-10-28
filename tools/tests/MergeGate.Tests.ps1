@@ -12,6 +12,29 @@ BeforeAll {
         Invoke-MergeGate @arguments
     }
 
+    function Invoke-ScenarioCli {
+        param(
+            [Parameter(Mandatory)][hashtable] $Stub,
+            [Parameter(Mandatory)][string] $Directory,
+            [switch] $Aba
+        )
+
+        $state = @{}
+        foreach ($key in @('Files', 'Trees', 'Contents', 'Responses', 'Failures', 'TreeRefs')) { $state[$key] = $Stub[$key] }
+        $id = [guid]::NewGuid().ToString('N')
+        $statePath = Join-Path $Directory "$id-state.json"
+        $tracePath = Join-Path $Directory "$id-trace.json"
+        $state | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $statePath
+        $output = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Invoke-MergeGateStubCli.ps1') `
+            -StatePath $statePath -TracePath $tracePath -Aba:$Aba 2>$null
+        $code = $LASTEXITCODE
+        return @{
+            ExitCode = $code
+            Result = ($output -join "`n" | ConvertFrom-Json -AsHashtable)
+            Trace = (Get-Content -LiteralPath $tracePath -Raw | ConvertFrom-Json -AsHashtable)
+        }
+    }
+
     function Get-ReasonCode {
         param([Parameter(Mandatory)] $Result)
 
@@ -53,6 +76,34 @@ Describe 'Merge gate replay of real pull requests' {
         $reads | Should -Be @(
             "repos/$repository/contents/.github/workflows/ci.yml?ref=$($stub.PullRequest.baseRefOid)"
             "repos/$repository/contents/.github/workflows/ci.yml?ref=$($stub.PullRequest.headRefOid)"
+        )
+    }
+
+    It 'G10 CLI evaluates the same pinned workflow change through an ABA force-push' {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $base = $stub.PullRequest.baseRefOid
+        $head = $stub.PullRequest.headRefOid
+        $before = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$base]; 'tree.0.path' = '.github/workflows/ci.yml' }
+        $after = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$head]; 'tree.0.path' = '.github/workflows/ci.yml'; 'tree.0.sha' = 'a' * 40 }
+        $stub.Files = @()
+        $stub.Trees = @{ $base = $before; $head = $after }
+        $stub.Contents = @{
+            "$base/.github/workflows/ci.yml" = 'permissions: {contents: read}'
+            "$head/.github/workflows/ci.yml" = 'permissions: {contents: write}'
+        }
+        $baseline = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $raced = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -Aba
+        $baseline.ExitCode | Should -Be 1
+        $raced.ExitCode | Should -Be 1
+        $normal = $baseline.Result
+        $result = $raced.Result
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $result.details.github.sensitiveLines | Should -Be $normal.details.github.sensitiveLines
+        $trace = $raced.Trace
+        $trace.moves | Should -Be @(('c' * 40), $head)
+        @($trace.calls | Where-Object { $_[-1] -match '/git/trees/' } | ForEach-Object { $_[-1] }) | Should -Be @(
+            "repos/$repository/git/trees/$($stub.TreeRefs[$base])?recursive=1"
+            "repos/$repository/git/trees/$($stub.TreeRefs[$head])?recursive=1"
         )
     }
 
@@ -531,6 +582,283 @@ Describe 'Merge gate replay of real pull requests' {
 
         $result.verdict | Should -Be 'pass'
         $result.details.checks.checkRuns.Count | Should -Be 150
+    }
+}
+
+Describe 'Merge gate pinned G10' {
+    BeforeEach {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $base = $stub.PullRequest.baseRefOid
+        $head = $stub.PullRequest.headRefOid
+        $name = '.github/workflows/ci.yml'
+        $stub.Files = @()
+        $stub.Trees[$base] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$base]; 'tree.0.path' = $name }
+        $stub.Trees[$head] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$head]; 'tree.0.path' = $name; 'tree.0.sha' = 'a' * 40 }
+        Mock -ModuleName MergeGate Invoke-MergeGateGh { Invoke-MergeGateStub -Stub $stub -Arguments $Arguments }
+    }
+
+    It 'G10 CLI covers more than 300 changed files and a hidden workflow' {
+        $template = (Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10')[0]
+        $files = @(1..350 | ForEach-Object {
+            $entry = $template.Clone()
+            $entry.filename = "docs/file-$_.md"
+            $entry.previous_filename = $entry.filename
+            $entry
+        })
+        $stub.Files = $files
+        $treeTemplate = (Get-GitHubApiFixture -Name 'git/get-tree').tree[0]
+        foreach ($ref in @($base, $head)) {
+            $entries = @(foreach ($file in $files) {
+                $entry = $treeTemplate.Clone()
+                $entry.path = $file.filename
+                $entry.sha = if ($ref -ceq $base) { 'b' * 40 } else { 'a' * 40 }
+                $entry
+            })
+            $stub.Trees[$ref].tree = @($entries) + @($stub.Trees[$ref].tree)
+        }
+        $stub.Contents["$base/$name"] = 'permissions: {contents: read}'
+        $stub.Contents["$head/$name"] = 'permissions: {contents: write}'
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $result = $run.Result
+
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $result.details.github.workflowFiles | Should -Contain $name
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/files\?' }).Count | Should -Be 4
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/git/trees/' }).Count | Should -Be 2
+    }
+
+    It 'G10 CLI passes more than 300 benign changes with complete pagination' {
+        $template = (Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10')[0]
+        $stub.Files = @(1..351 | ForEach-Object {
+            $entry = $template.Clone()
+            $entry.filename = "docs/file-$_.md"
+            $entry.previous_filename = $entry.filename
+            $entry
+        })
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 0
+        $run.Result.verdict | Should -Be 'pass'
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/files\?' }).Count | Should -Be 4
+    }
+
+    It 'G10 CLI fails closed at the recursive tree API limit' {
+        $stub.Trees[$head].truncated = $true
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 5
+        Get-ReasonCode $run.Result | Should -Be @('fail:evaluation-error')
+        $run.Result.reasons[0].message | Should -Match 'truncated'
+    }
+
+    It 'G10 CLI rejects the existing 3000-file PR API limit without accepting a partial list' {
+        $template = (Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10')[0]
+        $stub.Files = @(1..3000 | ForEach-Object {
+            $entry = $template.Clone()
+            $entry.filename = "docs/file-$_.md"
+            $entry.previous_filename = $entry.filename
+            $entry
+        })
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 5
+        Get-ReasonCode $run.Result | Should -Be @('fail:evaluation-error')
+        $run.Result.reasons[0].message | Should -Match 'more than 30 pages'
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/files\?' }).Count | Should -Be 30
+    }
+
+    # Deliberately incomplete trees, mutated independently from the shared contract fixture.
+    It 'G10 pinned trees reject <Case> on <Side>' -ForEach @(
+        @{ Case = 'truncated base'; Side = 'base'; Field = 'truncated'; Value = $true; Error = 'truncated' }
+        @{ Case = 'truncated head'; Side = 'head'; Field = 'truncated'; Value = $true; Error = 'truncated' }
+        @{ Case = 'missing completeness'; Side = 'head'; Field = 'truncated'; Value = $null; Error = 'completeness' }
+        @{ Case = 'string completeness'; Side = 'head'; Field = 'truncated'; Value = 'false'; Error = 'completeness' }
+        @{ Case = 'missing tree'; Side = 'head'; Field = 'tree'; Value = $null; Error = "no list at 'tree'" }
+        @{ Case = 'object tree'; Side = 'head'; Field = 'tree'; Value = @{}; Error = "no list at 'tree'" }
+        @{ Case = 'missing SHA'; Side = 'head'; Field = 'sha'; Value = ''; Error = 'does not match' }
+    ) {
+        $ref = if ($Side -eq 'base') { $base } else { $head }
+        $stub.Trees[$ref][$Field] = $Value
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.exitCode | Should -Be 5
+        $result.reasons[0].message | Should -Match $Error
+    }
+
+    It 'G10 pinned trees reject a missing tree response' {
+        $stub.Failures['/git/trees/'] = 'HTTP 404'
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match 'HTTP 404'
+    }
+
+    # Deliberately invalid commit/tree identity fields, varied independently.
+    It 'G10 pinned trees reject <Case> identity' -ForEach @(
+        @{ Case = 'a different commit'; Field = 'sha'; Value = 'c' * 40; Error = 'commit response does not match' }
+        @{ Case = 'an upper-case commit'; Field = 'sha'; Value = 'AFD8BD70733C38487F50241CB44B2BCD10CCAB4C'; Error = 'commit response does not match' }
+        @{ Case = 'a missing commit'; Field = 'sha'; Value = $null; Error = 'commit response does not match' }
+        @{ Case = 'a list-valued commit'; Field = 'sha'; Value = @('afd8bd70733c38487f50241cb44b2bcd10ccab4c'); Error = 'commit response does not match' }
+        @{ Case = 'an empty tree ref'; Field = 'tree.sha'; Value = ''; Error = 'no valid tree SHA' }
+        @{ Case = 'a missing tree ref'; Field = 'tree.sha'; Value = $null; Error = 'no valid tree SHA' }
+        @{ Case = 'a non-string tree ref'; Field = 'tree.sha'; Value = 1; Error = 'no valid tree SHA' }
+        @{ Case = 'a branch-name tree ref'; Field = 'tree.sha'; Value = 'main'; Error = 'no valid tree SHA' }
+        @{ Case = 'an upper-case tree ref'; Field = 'tree.sha'; Value = 'D' * 40; Error = 'no valid tree SHA' }
+    ) {
+        $fields = @{ sha = $base; 'tree.sha' = $stub.TreeRefs[$base] }
+        $fields[$Field] = $Value
+        $response = Get-GitHubApiFixture -Name 'git/get-commit' -Set $fields
+        $stub.Responses["/git/commits/$base"] = ConvertTo-Json -InputObject $response -Depth 50
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match $Error
+    }
+
+    It 'G10 pinned trees reject <Case> tree response identity' -ForEach @(
+        @{ Case = 'a different'; Value = 'a' * 40 }
+        @{ Case = 'an upper-case'; Value = 'E' * 40 }
+        @{ Case = 'a list-valued'; Value = @(('e' * 40)) }
+    ) {
+        # Deliberately invalid: the response must identify the requested immutable tree.
+        $stub.Trees[$head].sha = $Value
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match 'tree response does not match'
+    }
+
+    It 'G10 pinned trees reject a non-object response' {
+        # Deliberately invalid: a tree endpoint answering with a list.
+        $stub.Responses['/git/trees/'] = '[]'
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match 'not an object'
+    }
+
+    It 'G10 pinned trees evaluate an empty repository snapshot' {
+        $stub.Trees[$base].tree = @()
+        $stub.Trees[$head].tree = @()
+        (Invoke-ScenarioGate -Stub $stub).verdict | Should -Be 'pass'
+    }
+
+    It 'G10 pinned trees resolve tree SHAs from both fixed commit objects' {
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.verdict | Should -Be 'pass'
+        @($stub.Calls | Where-Object { $_[-1] -match '/git/commits/' } | ForEach-Object { $_[-1] }) | Should -Be @(
+            "repos/$repository/git/commits/$base"
+            "repos/$repository/git/commits/$head"
+        )
+        @($stub.Calls | Where-Object { $_[-1] -match '/git/trees/' } | ForEach-Object { $_[-1] }) | Should -Be @(
+            "repos/$repository/git/trees/$($stub.TreeRefs[$base])?recursive=1"
+            "repos/$repository/git/trees/$($stub.TreeRefs[$head])?recursive=1"
+        )
+    }
+
+    # Deliberately invalid required fields, varied one at a time.
+    It 'G10 pinned trees reject a <Case> entry' -ForEach @(
+        @{ Case = 'non-object'; Field = ''; Value = $null; Error = 'non-object' }
+        @{ Case = 'missing path'; Field = 'path'; Value = $null; Error = "valid 'path'" }
+        @{ Case = 'empty path'; Field = 'path'; Value = ''; Error = "valid 'path'" }
+        @{ Case = 'non-string path'; Field = 'path'; Value = 1; Error = "valid 'path'" }
+        @{ Case = 'missing mode'; Field = 'mode'; Value = $null; Error = "valid 'mode'" }
+        @{ Case = 'empty mode'; Field = 'mode'; Value = ''; Error = "valid 'mode'" }
+        @{ Case = 'missing type'; Field = 'type'; Value = $null; Error = "valid 'type'" }
+        @{ Case = 'empty type'; Field = 'type'; Value = ''; Error = "valid 'type'" }
+        @{ Case = 'unknown type'; Field = 'type'; Value = 'unknown'; Error = 'unsupported entry type' }
+        @{ Case = 'upper-case type'; Field = 'type'; Value = 'Blob'; Error = 'unsupported entry type' }
+        @{ Case = 'missing SHA'; Field = 'sha'; Value = $null; Error = "valid 'sha'" }
+        @{ Case = 'empty SHA'; Field = 'sha'; Value = ''; Error = "valid 'sha'" }
+    ) {
+        if ($Field) { $stub.Trees[$head].tree[0][$Field] = $Value }
+        else { $stub.Trees[$head].tree[0] = $Value }
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match $Error
+    }
+
+    It 'G10 pinned trees reject duplicate paths' {
+        $stub.Trees[$head].tree += @($stub.Trees[$head].tree[0])
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match 'duplicate path'
+    }
+
+    It 'G10 pinned trees preserve case-distinct Git paths' {
+        $entry = (Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ 'tree.0.path' = '.github/workflows/CI.yml' }).tree[0]
+        $stub.Trees[$head].tree += @($entry)
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.details.github.workflowFiles | Should -Be @('.github/workflows/CI.yml', $name)
+    }
+
+    It 'G10 pinned trees reuse complete supplemental file coverage without duplicate comparisons' {
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10'
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.verdict | Should -Be 'pass'
+        $result.details.github.workflowFiles | Should -Be @($name)
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+    }
+
+    It 'G10 pinned trees repair a supplemental <Status> status that omits one fixed side' -ForEach @(
+        @{ Status = 'added'; Before = 'permissions: {contents: write}'; After = 'name: CI' }
+        @{ Status = 'removed'; Before = 'name: CI'; After = 'permissions: {contents: write}' }
+    ) {
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10' -Set @{ '0.status' = $Status }
+        $stub.Contents["$base/$name"] = $Before
+        $stub.Contents["$head/$name"] = $After
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $result.details.github.sensitiveLines.Count | Should -Be 1
+    }
+
+    It 'G10 pinned trees repair an incomplete PR files page instead of trusting its omission' {
+        $stub.Responses['/pulls/78/files\?'] = '[]'
+        $stub.Contents["$base/$name"] = 'permissions: {contents: read}'
+        $stub.Contents["$head/$name"] = 'permissions: {contents: write}'
+        Get-ReasonCode (Invoke-ScenarioGate -Stub $stub) | Should -Be @('fail:workflow-permissions-changed')
+    }
+
+    It 'G10 pinned trees ignore unchanged entries without reading content' {
+        $stub.Trees[$head] = $stub.Trees[$base].Clone()
+        $stub.Trees[$head].sha = $stub.TreeRefs[$head]
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.verdict | Should -Be 'pass'
+        $result.details.github.workflowFiles | Should -Be @()
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 0
+    }
+
+    It 'G10 pinned trees handle a changed directory through its children' {
+        foreach ($ref in @($base, $head)) { $stub.Trees[$ref].tree[1].path = '.github/actions/setup' }
+        $stub.Trees[$head].tree[1].sha = 'a' * 40
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.verdict | Should -Be 'pass'
+        $result.details.github.workflowFiles | Should -Be @($name)
+    }
+
+    It 'G10 pinned trees detect a changed <Field> even with an unchanged blob SHA' -ForEach @(
+        @{ Field = 'mode'; Value = '100755' }
+        @{ Field = 'sha'; Value = '44B4FC6D56897B048C772EB4087F854F46256132' }
+    ) {
+        $stub.Trees[$head].tree[0].sha = $stub.Trees[$base].tree[0].sha
+        $stub.Trees[$head].tree[0][$Field] = $Value
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.details.github.workflowFiles | Should -Be @($name)
+    }
+
+    It 'G10 pinned trees reject a non-object supplemental file' {
+        # Deliberately invalid: a list item must be a diff-entry object.
+        $stub.Files = @('not a file')
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match 'A changed file has no filename'
+    }
+
+    It 'G10 pinned trees reject an unsupported workflow <Case>' -ForEach @(
+        @{ Case = 'symlink even when contents dereferences its target'; Field = 'mode'; Value = '120000' }
+        @{ Case = 'submodule'; Field = 'type'; Value = 'commit' }
+        @{ Case = 'mode'; Field = 'mode'; Value = 'unknown' }
+    ) {
+        # Unsupported entry kinds are not regular inline YAML, even if the contents endpoint returns a file.
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10'
+        $stub.Trees[$head].tree[0][$Field] = $Value
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match 'unsupported workflow tree entry'
     }
 }
 

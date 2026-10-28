@@ -535,6 +535,18 @@
             )
         }
         @{
+            Name = 'merge-gate-workflow-tree'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 pinned trees*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-workflow-file-coverage'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 pinned trees*', '*G10 handles*') }
+            )
+        }
+        @{
             Name = 'merge-gate-workflow-settings'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 compares*', '*G10 ignores*') }

@@ -65,6 +65,8 @@ function Initialize-MergeGateStub {
         Failures = @{}
         Responses = @{}
         Contents = @{}
+        Trees = @{}
+        TreeRefs = @{ $pullRequest.baseRefOid = 'd' * 40; $pullRequest.headRefOid = 'e' * 40 }
         Merges = 0
     }
 }
@@ -147,6 +149,31 @@ function Invoke-MergeGateStub {
     $path = $Arguments[-1]
     $page = if ($path -match '[?&]page=(\d+)') { [int] $Matches[1] } else { 1 }
     switch -Regex ($path) {
+        '/git/commits/(?<ref>[0-9a-f]{40})$' {
+            $ref = $Matches['ref']
+            $response = Get-GitHubApiFixture -Name 'git/get-commit' -Set @{ sha = $ref; 'tree.sha' = $Stub.TreeRefs[$ref] }
+            return ConvertTo-Json -InputObject $response -Depth 50
+        }
+        '/git/trees/(?<ref>[0-9a-f]{40})\?recursive=1$' {
+            $treeRef = $Matches['ref']
+            $ref = @($Stub.TreeRefs.Keys | Where-Object { $Stub.TreeRefs[$_] -ceq $treeRef })[0]
+            if ($Stub.Trees.ContainsKey($ref)) {
+                return ConvertTo-Json -InputObject $Stub.Trees[$ref] -Depth 50
+            }
+            $template = (Get-GitHubApiFixture -Name 'git/get-tree').tree[0]
+            $entries = @(foreach ($file in $Stub.Files) {
+                $isBase = $ref -ceq $pullRequest.baseRefOid
+                if ($isBase -and $file.status -eq 'added') { continue }
+                if (-not $isBase -and $file.status -eq 'removed') { continue }
+                $name = if ($isBase -and $file.status -in @('renamed', 'copied') -and $file.previous_filename) { $file.previous_filename } else { $file.filename }
+                $entry = $template.Clone()
+                $entry.path = $name
+                $entry.sha = if ($isBase) { 'b' * 40 } else { 'a' * 40 }
+                $entry
+            })
+            $response = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ tree = $entries; sha = $treeRef }
+            return ConvertTo-Json -InputObject $response -Depth 50
+        }
         '/contents/(?<file>[^?]+)\?ref=(?<ref>[0-9a-f]{40})$' {
             $file = [uri]::UnescapeDataString($Matches['file'])
             $key = "$($Matches['ref'])/$file"
