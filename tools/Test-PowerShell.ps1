@@ -1,13 +1,21 @@
 #Requires -Version 7.4
 [CmdletBinding()]
-param()
+param([string[]] $Path)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
 Import-Module PSScriptAnalyzer -RequiredVersion $requirements.Development.PSScriptAnalyzer
-$files = Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File |
-    Where-Object { $_.Extension -in @('.ps1', '.psm1', '.psd1') }
+$files = if ($Path) {
+    foreach ($item in $Path) {
+        Get-Item -LiteralPath $item -ErrorAction Stop |
+            Where-Object { -not $_.PSIsContainer -and $_.Extension -in @('.ps1', '.psm1', '.psd1') }
+    }
+}
+else {
+    Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File |
+        Where-Object { $_.Extension -in @('.ps1', '.psm1', '.psd1') }
+}
 foreach ($file in $files) {
     $parseErrors = $null
     $null = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref] $null, [ref] $parseErrors)

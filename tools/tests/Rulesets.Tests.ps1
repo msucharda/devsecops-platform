@@ -1,4 +1,5 @@
 BeforeAll {
+    Get-Module -Name Rulesets -All | Remove-Module -Force
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $scripts = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/organization-rulesets/scripts'
     Import-Module (Join-Path $scripts 'Rulesets.psm1') -Force

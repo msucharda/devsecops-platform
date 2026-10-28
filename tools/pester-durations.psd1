@@ -1,4 +1,5 @@
 # Rounded file-suite seconds from Source CI run 40546699139 (2026-10-27).
+# LocalCiGate, LocalCiGate.Unit and LocalCiConcurrency measured in run 40606534079 (2026-10-28), rounded up.
 # Missing files receive a one-second estimate and are still selected automatically.
 @{
     'EnterpriseBaseline.Tests.ps1' = 220
@@ -6,6 +7,7 @@
     'RulesetsTerraform.Tests.ps1' = 138
     'OrganizationRolePrograms.Tests.ps1' = 105
     'RemoveBootstrap.Tests.ps1' = 45
+    'LocalCiGate.Tests.ps1' = 40
     'Bootstrap.Tests.ps1' = 25
     'VendoringPullRequest.Tests.ps1' = 24
     # Source CI run 40583010425: 22.597 seconds.
@@ -14,6 +16,7 @@
     'ModuleRunner.Tests.ps1' = 14
     'ActionsCatalog.Tests.ps1' = 14
     'LocalCi.Tests.ps1' = 9
+    'LocalCiConcurrency.Tests.ps1' = 10
     'InstanceConfiguration.Tests.ps1' = 8
     'GitHubAcceptanceProbe.Tests.ps1' = 7
     'OrganizationModule.Tests.ps1' = 7
@@ -41,4 +44,5 @@
     'CredentialContract.Tests.ps1' = 2
     'VendoringSource.Tests.ps1' = 2
     'ModuleSelection.Tests.ps1' = 2
+    'LocalCiGate.Unit.Tests.ps1' = 1
 }

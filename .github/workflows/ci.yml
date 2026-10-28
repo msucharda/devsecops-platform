@@ -57,6 +57,8 @@ jobs:
       - name: Check PowerShell
         shell: pwsh
         run: ./tools/Test-PowerShell.ps1
+      - name: Check external-program preflight helper
+        run: go vet -p=1 tools/probes/powershell-external.go
       - name: Validate module manifests
         shell: pwsh
         run: |
