@@ -163,8 +163,9 @@ if ($DeploymentPhase -and
     (-not $modules[$Module].Contains('phases') -or -not $modules[$Module]['phases'].Contains($DeploymentPhase))) {
     throw "Module '$Module' has no declared deployment phase '$DeploymentPhase'."
 }
-if ($Module -cnotin (Get-PlatformModuleSelection -Instance $instance -Modules $modules)) {
-    throw "Module '$Module' is not selected in $.modules or required by a selected module."
+$nodeName = if ($DeploymentPhase) { "${Module}:$DeploymentPhase" } else { $Module }
+if ($nodeName -cnotin (Get-PlatformModuleSelection -Instance $instance -Modules $modules -PhaseNodes)) {
+    throw "Module '$nodeName' is not selected in $.modules or required by a selected module."
 }
 $organizationScoped = $modules[$Module].Contains('organizationScoped') -and $modules[$Module]['organizationScoped']
 if ($Organization -and -not $organizationScoped) {

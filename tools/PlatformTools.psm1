@@ -622,27 +622,37 @@ function Get-PlatformModuleSelection {
     [OutputType([string[]])]
     param(
         [Parameter(Mandatory)][System.Collections.IDictionary] $Instance,
-        [Parameter(Mandatory)][System.Collections.IDictionary] $Modules
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Modules,
+        [switch] $PhaseNodes
     )
 
     $nodes = Get-PlatformModulePhaseGraph -Modules $Modules
     $pending = [System.Collections.Generic.Queue[string]]::new()
     foreach ($name in $Instance['modules'].PSBase.Keys) {
         $pending.Enqueue($name)
+        foreach ($node in $nodes.PSBase.Values) {
+            if ($node.Module -ceq $name -and $node.Phase) {
+                $pending.Enqueue($node.Name)
+            }
+        }
     }
     $selected = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     while ($pending.Count -gt 0) {
         $name = $pending.Dequeue()
         if ($selected.Add($name)) {
-            foreach ($node in $nodes.PSBase.Values |
-                Where-Object { $_.Module -ceq $name }) {
-                foreach ($prerequisite in $node.Prerequisites) {
-                    $pending.Enqueue($prerequisite.Split(':')[0])
-                }
+            foreach ($prerequisite in $nodes[$name].Prerequisites) {
+                $pending.Enqueue($prerequisite)
             }
         }
     }
-    [string[]] $names = @($selected)
+    if ($PhaseNodes) {
+        [string[]] $names = @($selected)
+    }
+    else {
+        $moduleNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($name in $selected) { $null = $moduleNames.Add($nodes[$name].Module) }
+        [string[]] $names = @($moduleNames)
+    }
     [System.Array]::Sort($names, [System.StringComparer]::Ordinal)
     return ,$names
 }

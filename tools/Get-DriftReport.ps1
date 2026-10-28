@@ -60,13 +60,13 @@ function Add-CodeSecurityCoverage {
             $status = $repository['status']
             $counts[$status]++
             if ($repository['security_status'] -ceq 'unverified') { $directUnverified++ }
+            if ($status -ceq 'unverified' -or $repository['security_status'] -ceq 'unverified') {
+                $incomplete.Add("Code Security of repository '$name' is unverified; configuration coverage does not prove enabled repository security.")
+            }
             if ($status -ceq 'drift') {
                 $drift.Add("- Code Security coverage: ``$name`` (missing/unsuccessful attachment, configuration without Code Security or CodeQL, or disabled repository security; direct state: $($repository['security_status'])).")
             }
-            elseif ($status -ceq 'unverified') {
-                $incomplete.Add("Code Security of repository '$name' is unverified; configuration coverage does not prove enabled repository security.")
-            }
-            elseif ($repository['security_status'] -cne 'enabled') {
+            elseif ($status -ceq 'compliant' -and $repository['security_status'] -cne 'enabled') {
                 $incomplete.Add("Code Security coverage incorrectly labels repository '$name' compliant without readable enabled security.")
             }
         }
@@ -124,6 +124,7 @@ if ($needs -isnot [System.Collections.IDictionary]) {
 }
 
 $revision = [string] (Get-NeedValue $needs 'authorize' 'revision')
+$selectedPhaseNodes = $null
 if ($needs) {
     if ((Get-NeedValue $needs 'authorize') -cne 'success' -or (Get-NeedValue $needs 'authorize' 'allowed') -cne 'true' -or
         $revision -cnotmatch '^[a-f0-9]{40}$') {
@@ -140,7 +141,10 @@ if ($needs) {
         }
         elseif ($instance) {
             $expected = Get-PlatformModuleSelection -Instance $instance -Modules $modules
-            [string[]] $expectedRulesets = @($expected | Where-Object { $modules[$_]['permissions']['githubApp'].Contains('rulesetPlan') })
+            $selectedPhaseNodes = Get-PlatformModuleSelection -Instance $instance -Modules $modules -PhaseNodes
+            [string[]] $expectedRulesets = @($expected | Where-Object {
+                $_ -cin $selectedPhaseNodes -and $modules[$_]['permissions']['githubApp'].Contains('rulesetPlan')
+            })
             if ((ConvertTo-Json -InputObject $selected -Compress) -cne (ConvertTo-Json -InputObject @($expected) -Compress) -or
                 (ConvertTo-Json -InputObject $rulesetModules -Compress) -cne (ConvertTo-Json -InputObject @($expectedRulesets) -Compress)) {
                 $incomplete.Add('The module selection differs from the trusted instance configuration and module manifests.')
@@ -156,9 +160,13 @@ if ($needs) {
                     }
                     catch { $incomplete.Add("Organization scope of '$module' could not be verified: $($_.Exception.Message)") }
                 }
-                $roots = @(@{ Job = 'module_' + $module.Replace('-', '_'); Label = 'Terraform plan' })
+                $roots = @()
+                if ($null -eq $selectedPhaseNodes -or $module -cin $selectedPhaseNodes) {
+                    $roots += @{ Job = 'module_' + $module.Replace('-', '_'); Label = 'Terraform plan' }
+                }
                 if ($modules -and $modules.Contains($module) -and $modules[$module].Contains('phases')) {
                     foreach ($phase in $modules[$module]['phases'].Keys) {
+                        if ($null -ne $selectedPhaseNodes -and "${module}:$phase" -cnotin $selectedPhaseNodes) { continue }
                         $roots += @{
                             Job = 'module_' + $module.Replace('-', '_') + '_' + $phase.Replace('-', '_')
                             Label = "phase $phase"

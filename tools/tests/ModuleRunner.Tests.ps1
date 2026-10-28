@@ -81,6 +81,28 @@ Describe 'Module runner with local Terraform' {
         (Get-Content -LiteralPath $early.OutputsPath -Raw | ConvertFrom-Json).message | Should -Be 'hello'
     }
 
+    It 'refuses a late root when only its early phase is a selected prerequisite' {
+        $phaseRoot = Join-Path $modules 'foundation/code-security'
+        New-Item -ItemType Directory -Path $phaseRoot | Out-Null
+        Copy-Item -LiteralPath (Join-Path $modules 'foundation/main.tf') -Destination $phaseRoot
+        $manifestPath = Join-Path $modules 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.phases = @{ 'code-security' = @{ prerequisites = @() } }
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $manifestPath = Join-Path $modules 'application/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.prerequisites = @('foundation:code-security')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $instance.modules = @{ application = @{} }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        function terraform { throw 'Selected early phase reached Terraform.' }
+        { & $runner -Module foundation -Action plan @arguments 6>$null } |
+            Should -Throw "*Module 'foundation' is not selected*"
+        { & $runner -Module foundation -DeploymentPhase code-security -Action plan @arguments 6>$null } |
+            Should -Throw '*Selected early phase reached Terraform*'
+    }
+
     It 'rejects undeclared phases and clears a stale phase artifact before invoking Terraform' {
         $stale = Join-Path $arguments.ArtifactsPath 'foundation.unknown.json'
         New-Item -ItemType Directory -Path $arguments.ArtifactsPath -Force | Out-Null

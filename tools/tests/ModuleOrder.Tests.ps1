@@ -69,6 +69,24 @@ Describe 'Released module order' {
         $teardown.jobs.destroy_enterprise_baseline.needs | Should -Not -Contain 'destroy_organization_rulesets'
     }
 
+    It 'continues drift plans after a Code Security coverage read fails, leaving coverage absent for the report' {
+        $deployPath = Join-Path $TestDrive 'coverage-deploy.yml'
+        $driftPath = Join-Path $TestDrive 'coverage-drift.yml'
+        & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $released -OutputPath $deployPath -DriftOutputPath $driftPath
+        $drift = ConvertFrom-Yaml (Get-Content -LiteralPath $driftPath -Raw)
+        $early = $drift.jobs.module_enterprise_baseline_code_security
+        $coverage = @($early.steps | Where-Object { $_.Contains('id') -and $_.id -eq 'code_security' })
+
+        $coverage.Count | Should -Be 1
+        $coverage[0]['continue-on-error'] | Should -BeTrue
+        $coverage[0].if | Should -Be '${{ !cancelled() && env.PLATFORM_GITHUB_TOKENS != '''' }}'
+        $early.outputs.codeSecurityCoverage | Should -Be '${{ steps.code_security.outputs.codeSecurityCoverage }}'
+        $drift.jobs.module_organization_rulesets.needs | Should -Contain 'module_enterprise_baseline_code_security'
+        $drift.jobs.module_organization_rulesets.if | Should -Match "needs.module_enterprise_baseline_code_security.result == 'success'"
+        $drift.jobs.module_actions_catalog.needs | Should -Contain 'module_organization_rulesets'
+        $drift.jobs.module_enterprise_baseline.needs | Should -Contain 'module_actions_catalog'
+    }
+
     It 'rejects a cycle introduced only by an early-phase dependency before writing workflows' {
         $modules = Join-Path $TestDrive 'phase-cycle-modules'
         Copy-Item -LiteralPath $released -Destination $modules -Recurse

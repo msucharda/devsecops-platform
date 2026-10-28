@@ -50,9 +50,10 @@ BeforeAll {
 }
 
 Describe 'Drift report evaluation' {
-    It 'reports early Code Security coverage as <Status> separately' -ForEach @(
+    It 'reports early Code Security coverage as <Status> with <Security> direct state' -ForEach @(
         @{ Status = 'compliant'; Security = 'enabled'; Publish = 'false'; Complete = 'true' }
         @{ Status = 'drift'; Security = 'disabled'; Publish = 'true'; Complete = 'true' }
+        @{ Status = 'drift'; Security = 'unverified'; Publish = 'true'; Complete = 'false' }
         @{ Status = 'unverified'; Security = 'unverified'; Publish = 'true'; Complete = 'false' }
     ) {
         $modulesPath = Join-Path $TestDrive ([guid]::NewGuid().ToString())
@@ -81,6 +82,12 @@ Describe 'Drift report evaluation' {
         $report | Should -Match 'Repository Code Security coverage'
         $report | Should -Match "$Status 1"
         if ($Status -cne 'compliant') { $report | Should -Match 'platform/app' }
+        if ($Status -ceq 'drift') { $report | Should -Match '### Drift detected' }
+        if ($Security -ceq 'unverified') {
+            $report | Should -Match 'direct state unverified 1'
+            $report | Should -Match "Code Security of repository 'platform/app' is unverified"
+            $report | Should -Match 'Drift detection INCOMPLETE'
+        }
     }
 
     It 'publishes no issue when every selected plan completed without changes' {
@@ -91,6 +98,33 @@ Describe 'Drift report evaluation' {
         $report | Should -Match '^<!-- platform-drift-report -->\n'
         $report | Should -Match 'No drift detected'
         [IO.File]::ReadAllText($summaryPath) | Should -Match 'Not covered by automatic drift detection'
+    }
+
+    It 'checks only selected phase roots when the phase plan is <Result>' -ForEach @(
+        @{ Result = 'success'; Complete = 'true'; Publish = 'false' }
+        @{ Result = 'failure'; Complete = 'false'; Publish = 'true' }
+    ) {
+        $modulesPath = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination $modulesPath -Recurse
+        $manifestPath = Join-Path $modulesPath 'observer/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest['phases'] = @{ prepare = @{ prerequisites = @(); manualPrerequisites = @() } }
+        New-Item -ItemType Directory -Path (Join-Path $modulesPath 'observer/prepare') | Out-Null
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $applicationPath = Join-Path $modulesPath 'application/module.yaml'
+        $application = ConvertFrom-Yaml (Get-Content -LiteralPath $applicationPath -Raw)
+        $application['prerequisites'] = @('foundation', 'observer:prepare')
+        ConvertTo-Yaml $application | Set-Content -LiteralPath $applicationPath
+        $needs = Get-DriftNeed
+        $needs.select.outputs.modules = '["application","enterprise-baseline","foundation","observer","service"]'
+        $needs['module_observer_prepare'] = @{ result = $Result; outputs = @{ changes = 'false' } }
+
+        Invoke-DriftReport -Needs $needs
+
+        $output.complete | Should -BeExactly $Complete
+        $output.report | Should -BeExactly $Publish
+        $report | Should -Not -Match 'Plan job module_observer did not complete'
+        if ($Result -cne 'success') { $report | Should -Match 'Plan job module_observer_prepare did not complete' }
     }
 
     It 'lists a module with drift in its <Root> root' -ForEach @(

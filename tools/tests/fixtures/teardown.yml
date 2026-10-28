@@ -21,6 +21,7 @@ jobs:
       contents: read
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
     steps:
@@ -41,7 +42,7 @@ jobs:
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
-        run: ./instance/platform/tools/Select-InstanceModules.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./instance/platform/tools/Select-InstanceModules.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT -DeploymentScope full
   approve_teardown_platform:
     name: Platform-team approval for the teardown
     needs: [select]
@@ -96,7 +97,7 @@ jobs:
     name: 'application (read outputs before teardown)'
     runs-on: ubuntu-latest
     needs: [select, enterprise_owner]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'application') }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['application'] }}
     permissions:
       contents: read
@@ -147,7 +148,7 @@ jobs:
     name: 'foundation (read outputs before teardown)'
     runs-on: ubuntu-latest
     needs: [select, enterprise_owner]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'foundation') }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['foundation'] }}
     permissions:
       contents: read
@@ -198,7 +199,7 @@ jobs:
     name: 'service (read outputs before teardown)'
     runs-on: ubuntu-latest
     needs: [select, enterprise_owner]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'service') }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['service'] }}
     permissions:
       contents: read
@@ -249,7 +250,7 @@ jobs:
     name: 'enterprise-baseline (destroy)'
     runs-on: ubuntu-latest
     needs: [select, approve_teardown, enterprise_owner, outputs_service]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.outputs_service.result == 'success' }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.outputs_service.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
     permissions:
       contents: read
@@ -343,7 +344,7 @@ jobs:
     name: 'observer (destroy)'
     runs-on: ubuntu-latest
     needs: [select, approve_teardown, enterprise_owner]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'observer') }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['observer'] }}
     permissions:
       contents: read
@@ -406,7 +407,7 @@ jobs:
     name: 'service (destroy)'
     runs-on: ubuntu-latest
     needs: [select, approve_teardown, enterprise_owner, outputs_application, outputs_foundation, destroy_enterprise_baseline]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'service') && needs.outputs_application.result == 'success' && needs.outputs_foundation.result == 'success' && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline'))) }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.outputs_application.result == 'success' && needs.outputs_foundation.result == 'success' && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline'))) }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['service'] }}
     permissions:
       contents: read
@@ -479,7 +480,7 @@ jobs:
     name: 'application (destroy)'
     runs-on: ubuntu-latest
     needs: [select, approve_teardown, enterprise_owner, outputs_foundation, destroy_service]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'application') && needs.outputs_foundation.result == 'success' && (needs.destroy_service.result == 'success' || (needs.destroy_service.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'service'))) }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.outputs_foundation.result == 'success' && (needs.destroy_service.result == 'success' || (needs.destroy_service.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'service'))) }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['application'] }}
     permissions:
       contents: read
@@ -547,7 +548,7 @@ jobs:
     name: 'foundation (destroy)'
     runs-on: ubuntu-latest
     needs: [select, approve_teardown, enterprise_owner, destroy_application, destroy_service]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'foundation') && (needs.destroy_application.result == 'success' || (needs.destroy_application.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'application'))) && (needs.destroy_service.result == 'success' || (needs.destroy_service.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'service'))) }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && (needs.destroy_application.result == 'success' || (needs.destroy_application.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'application'))) && (needs.destroy_service.result == 'success' || (needs.destroy_service.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'service'))) }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['foundation'] }}
     permissions:
       contents: read

@@ -39,6 +39,26 @@ Describe 'Phase-specific App credential contracts' {
         [IO.File]::ReadAllText($output) | Should -Match 'rulesetModules=\["enterprise-baseline"\]'
     }
 
+    It 'does not select the late ruleset plan when only the early baseline phase uses its module credentials' {
+        $modules = Join-Path $TestDrive 'credential-phase-modules'
+        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
+        $manifestPath = Join-Path $modules 'enterprise-baseline/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.phases = @{ 'code-security' = @{ prerequisites = @('foundation') } }
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        New-Item -ItemType Directory -Path (Join-Path $modules 'enterprise-baseline/code-security') | Out-Null
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
+        $output = Join-Path $TestDrive 'staged-credentials'
+
+        $null = & $selector -InstancePath $path -ModulesPath $modules -DeploymentScope code-security -GitHubOutputPath $output
+
+        $published = [IO.File]::ReadAllText($output)
+        $published | Should -Match 'modules=\["enterprise-baseline","foundation"\]'
+        $published | Should -Match 'phaseNodes=\["enterprise-baseline:code-security","foundation"\]'
+        $published | Should -Match 'rulesetEnvironments=\{"enterprise-baseline":"enterprise-baseline-ruleset-plan"\}'
+        $published | Should -Match 'rulesetModules=\[\]'
+    }
+
     It 'rejects mismatched target organizations rather than accepting a wider App identity' {
         $instance.githubApps.reader.resources.organizations += 'unrelated'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $path

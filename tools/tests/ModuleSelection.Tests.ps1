@@ -13,6 +13,63 @@ teams:
 }
 
 Describe 'Instance module selection' {
+    It 'keeps the early phase but not the late baseline when deploying rulesets or the catalog before workflow promotion' {
+        Import-Module powershell-yaml -RequiredVersion 0.4.12
+        $modules = Join-Path $TestDrive 'catalog-phase-modules'
+        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
+        $baselinePath = Join-Path $modules 'enterprise-baseline/module.yaml'
+        $baseline = ConvertFrom-Yaml (Get-Content -LiteralPath $baselinePath -Raw)
+        $baseline.prerequisites = @('actions-catalog')
+        $baseline.permissions.githubApp = @{}
+        $baseline.phases = @{ 'code-security' = @{ prerequisites = @('foundation') } }
+        ConvertTo-Yaml $baseline | Set-Content -LiteralPath $baselinePath
+        New-Item -ItemType Directory -Path (Join-Path $modules 'enterprise-baseline/code-security') | Out-Null
+        foreach ($name in @('organization-rulesets', 'actions-catalog')) {
+            Copy-Item -LiteralPath (Join-Path $fixtures 'observer') -Destination (Join-Path $modules $name) -Recurse
+            $manifestPath = Join-Path $modules "$name/module.yaml"
+            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+            $manifest.name = $name
+            $manifest.prerequisites = @('organization-rulesets')
+            if ($name -eq 'organization-rulesets') {
+                $manifest.prerequisites = @('enterprise-baseline:code-security')
+            }
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        }
+
+        foreach ($case in @(
+            @{ Module = 'organization-rulesets'; Nodes = @('enterprise-baseline:code-security', 'foundation', 'organization-rulesets') },
+            @{ Module = 'actions-catalog'; Nodes = @('actions-catalog', 'enterprise-baseline:code-security', 'foundation', 'organization-rulesets') }
+        )) {
+            $instance = Join-Path $TestDrive "$($case.Module)-instance.yaml"
+            $output = Join-Path $TestDrive "$($case.Module)-selection"
+            ($header + "modules: {$($case.Module): {}}") | Set-Content -LiteralPath $instance
+
+            $null = & $selector -ModulesPath $modules -InstancePath $instance -DeploymentScope full -GitHubOutputPath $output
+
+            $selection = @{}
+            foreach ($line in [IO.File]::ReadAllLines($output)) {
+                $key, $value = $line.Split('=', 2)
+                $selection[$key] = $value
+            }
+            @(ConvertFrom-Json $selection.phaseNodes) | Should -Be $case.Nodes
+            @(ConvertFrom-Json $selection.modules) | Should -Contain 'enterprise-baseline'
+            (ConvertFrom-Json -AsHashtable $selection.environments)['enterprise-baseline'] |
+                Should -Be 'enterprise-baseline-plan'
+            $selection.phaseNodes | Should -Not -Match '"enterprise-baseline"'
+        }
+    }
+
+    It 'rejects differently cased deployment scopes instead of selecting the full graph' {
+        $instance = Join-Path $TestDrive 'case-scope-instance.yaml'
+        ($header + 'modules: {application: {}}') | Set-Content -LiteralPath $instance
+        foreach ($scope in @('Code-Security', 'CODE-SECURITY', 'FULL')) {
+            $output = Join-Path $TestDrive "scope-$scope-output"
+            { & $selector -ModulesPath $fixtures -InstancePath $instance -DeploymentScope $scope -GitHubOutputPath $output } |
+                Should -Throw '*DeploymentScope*'
+            Test-Path -LiteralPath $output | Should -BeFalse
+        }
+    }
+
     It 'selects only the early Code Security node and its recursive prerequisites for staged deployment' {
         Import-Module powershell-yaml -RequiredVersion 0.4.12
         $modules = Join-Path $TestDrive 'phase-modules'

@@ -210,6 +210,7 @@ function Add-DeploymentJob {
       - name: Check repository Code Security coverage
         id: code_security
         if: ${{ !cancelled() && env.PLATFORM_GITHUB_TOKENS != '' }}
+        continue-on-error: true
         shell: pwsh
         run: ./trusted/platform/tools/Test-CodeSecurityCoverage.ps1 -GitHubOutputPath $env:GITHUB_OUTPUT
 '@

@@ -12,7 +12,7 @@ Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $phaseGraph = Get-PlatformModulePhaseGraph -Modules $modules
 $lines = [System.Collections.Generic.List[string]]::new()
-$modulesExpression = 'fromJSON(needs.select.outputs.modules)'
+$nodesExpression = 'fromJSON(needs.select.outputs.phaseNodes)'
 
 function Add-WorkflowBlock {
     [CmdletBinding()]
@@ -134,6 +134,7 @@ jobs:
       contents: read
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
     steps:
@@ -151,7 +152,7 @@ Add-WorkflowBlock @'
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
-        run: ./instance/platform/tools/Select-InstanceModules.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./instance/platform/tools/Select-InstanceModules.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT -DeploymentScope full
   approve_teardown_platform:
     name: Platform-team approval for the teardown
     needs: [select]
@@ -208,7 +209,7 @@ foreach ($node in $phaseGraph.PSBase.Values) {
     $suffix = $key.Replace('-', '_').Replace(':', '_')
     $phaseArgument = if ($node.Phase) { " -DeploymentPhase $($node.Phase)" } else { '' }
     Add-ModuleJobPreamble -Job "outputs_$suffix" -Title "$key (read outputs before teardown)" -Needs @('select', 'enterprise_owner') `
-        -Condition "!cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains($modulesExpression, '$name')" `
+        -Condition "!cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains($nodesExpression, '$key')" `
         -Environment "fromJSON(needs.select.outputs.environments)['$name']"
     Add-WorkflowBlock @"
       - name: Read public outputs from state without planning
@@ -252,14 +253,13 @@ foreach ($node in $reversed) {
     $needs = @('select', 'approve_teardown', 'enterprise_owner')
     $needs += @($node.Prerequisites | ForEach-Object { 'outputs_' + $_.Replace('-', '_').Replace(':', '_') })
     $needs += @($dependents | ForEach-Object { 'destroy_' + $_.Replace('-', '_').Replace(':', '_') })
-    $condition = "!cancelled() && $gateCondition && contains($modulesExpression, '$name')"
+    $condition = "!cancelled() && $gateCondition && contains($nodesExpression, '$key')"
     foreach ($prerequisite in $node.Prerequisites) {
         $condition += " && needs.outputs_$($prerequisite.Replace('-', '_').Replace(':', '_')).result == 'success'"
     }
     foreach ($dependent in $dependents) {
         $job = 'destroy_' + $dependent.Replace('-', '_').Replace(':', '_')
-        $dependentModule = $phaseGraph[$dependent].Module
-        $condition += " && (needs.$job.result == 'success' || (needs.$job.result == 'skipped' && !contains($modulesExpression, '$dependentModule')))"
+        $condition += " && (needs.$job.result == 'success' || (needs.$job.result == 'skipped' && !contains($nodesExpression, '$dependent')))"
     }
     Add-ModuleJobPreamble -Job "destroy_$suffix" -Title "$key (destroy)" -Needs $needs -Condition $condition `
         -Environment "fromJSON(needs.select.outputs.applyEnvironments)['$name']"

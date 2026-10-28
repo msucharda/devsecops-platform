@@ -47,6 +47,24 @@ Describe 'Teardown workflow generation' {
         $workflow.jobs.approve_teardown_platform.needs | Should -Be @('select')
     }
 
+    It 'destroys only selected phase roots when rulesets require the early baseline but not the late baseline' {
+        $realOutput = Join-Path $TestDrive 'teardown-selected-phases.yml'
+        & $generator -ModulesPath (Join-Path $repositoryRoot 'modules') -OutputPath $realOutput
+        $real = ConvertFrom-Yaml (Get-Content -LiteralPath $realOutput -Raw)
+
+        $real.jobs.select.outputs.phaseNodes | Should -Be '${{ steps.modules.outputs.phaseNodes }}'
+        ($real.jobs.select.steps | Where-Object { $_.Contains('run') -and $_.run -match 'Select-InstanceModules' }).run |
+            Should -Match '-DeploymentScope full'
+        $real.jobs.destroy_enterprise_baseline_code_security.if |
+            Should -Match ([regex]::Escape("contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security')"))
+        $real.jobs.destroy_enterprise_baseline.if |
+            Should -Match ([regex]::Escape("contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline')"))
+        $real.jobs.outputs_enterprise_baseline_code_security.if |
+            Should -Match ([regex]::Escape("contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security')"))
+        $real.jobs.destroy_enterprise_baseline_code_security.if |
+            Should -Match ([regex]::Escape("needs.destroy_organization_rulesets.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets')"))
+    }
+
     It 'requires platform approval and then security approval in the teardown environment' {
         $workflow.jobs.approve_teardown_platform.environment | Should -Be 'approve-teardown-platform'
         $workflow.jobs.approve_teardown_platform.if | Should -Be '${{ needs.select.result == ''success'' }}'
@@ -82,7 +100,7 @@ Describe 'Teardown workflow generation' {
         foreach ($dependent in $dependents) {
             $name = 'destroy_' + $dependent.Replace('-', '_')
             $job.needs | Should -Contain $name
-            $job.if | Should -Match ([regex]::Escape("(needs.$name.result == 'success' || (needs.$name.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), '$dependent')))"))
+            $job.if | Should -Match ([regex]::Escape("(needs.$name.result == 'success' || (needs.$name.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), '$dependent')))"))
         }
         $destroyNeeds = @($job.needs | Where-Object { $_ -like 'destroy_*' })
         $destroyNeeds.Count | Should -Be $dependents.Count
@@ -90,7 +108,7 @@ Describe 'Teardown workflow generation' {
             $job.needs | Should -Contain $required
             $job.if | Should -Match ([regex]::Escape("needs.$required.result == 'success'"))
         }
-        $job.if | Should -Match ([regex]::Escape("contains(fromJSON(needs.select.outputs.modules), '$Module')"))
+        $job.if | Should -Match ([regex]::Escape("contains(fromJSON(needs.select.outputs.phaseNodes), '$Module')"))
         $job.if | Should -Match '^\$\{\{ !cancelled\(\) && '
         $job.environment | Should -Be ('${{ fromJSON(needs.select.outputs.applyEnvironments)[''' + $Module + '''] }}')
     }
@@ -125,7 +143,9 @@ Describe 'Teardown workflow generation' {
             $targets.Count | Should -Be 1
             $module = $targets[0]
             $job.needs | Should -Contain $other
-            $job.if | Should -Match ([regex]::Escape("(needs.$other.result == 'success' || (needs.$other.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), '$module')))"))
+            $key = $other.Substring('destroy_'.Length).Replace('_', '-')
+            if ($other -eq 'destroy_enterprise_baseline_code_security') { $key = 'enterprise-baseline:code-security' }
+            $job.if | Should -Match ([regex]::Escape("(needs.$other.result == 'success' || (needs.$other.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), '$key')))"))
             $realText.IndexOf("  ${other}:") | Should -BeLessThan $realText.IndexOf('  destroy_emu_identity:')
         }
     }
