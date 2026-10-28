@@ -64,6 +64,7 @@ function Get-CatalogRepositoryName {
 }
 
 function Get-CatalogCodeOwners {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '', Justification = 'Established public function name for the CODEOWNERS file.')]
     [CmdletBinding()]
     [OutputType([string])]
     param([Parameter(Mandatory)][string] $Organization, [Parameter(Mandatory)][string] $SecurityTeam)
@@ -520,6 +521,7 @@ function New-CatalogReleaseTag {
     make main the reviewed branch that the release check relies on. Main is read once and read again before the tag, so a
     push between the check and the tag fails the run instead of tagging a commit that main no longer contains.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Called by Terraform, which owns confirmation and the operation lifecycle.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,

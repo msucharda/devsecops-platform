@@ -230,6 +230,7 @@ function New-EnterpriseOrganization {
     the deployment identifier; it covers a run interrupted after the mutation. A legacy name never adopts.
     Owners and the billing email apply only when the organization is created.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Called by Terraform, which owns confirmation and the operation lifecycle.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
@@ -569,10 +570,10 @@ function Get-OrganizationAppScopeViolation {
         foreach ($actual in @(Get-OrganizationAppInstallation -ApiUrl $ApiUrl -Enterprise $Enterprise -Organization $organization)) {
             if (@($Installation.Keys) -cnotcontains $actual.client_id) { continue }
             $desired = $Installation[$actual.client_id]
-            $matches = @($desired['organizations'] | Where-Object {
+            $matchingOrganizations = @($desired['organizations'] | Where-Object {
                     [string]::Equals($_, $organization, [StringComparison]::OrdinalIgnoreCase)
                 })
-            if ($matches.Count -eq 0) {
+            if ($matchingOrganizations.Count -eq 0) {
                 $violations.Add("App '$($actual.client_id)' is installed in unexpected organization '$organization'.")
             }
             else {

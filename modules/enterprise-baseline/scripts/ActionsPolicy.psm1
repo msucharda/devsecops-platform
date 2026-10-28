@@ -169,6 +169,7 @@ function Set-ActionsPolicy {
     converges. A write is skipped when the read value already matches; an enterprise policy that enforces the same value
     then cannot fail the run.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Called by Terraform, which owns confirmation and the operation lifecycle.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
