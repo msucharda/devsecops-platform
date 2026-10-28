@@ -39,6 +39,19 @@ BeforeAll {
             ConvertTo-Json $state | Set-Content -LiteralPath $statePath
         }
     }
+
+    function Invoke-ToyPutSequence {
+        param([int] $StepCount)
+
+        for ($stepIndex = 0; $stepIndex -lt $StepCount; $stepIndex++) {
+            $item = "item-$stepIndex"
+            $response = Invoke-InterruptionStep -Plan $plan -Request "PUT /items/$item" -Apply {
+                if (-not $remote.Items.Contains($item)) { $remote.Items.Add($item) }
+                [pscustomobject]@{ StatusCode = 200 }
+            } -Interrupt { [pscustomobject]@{ StatusCode = 503 } }
+            if ($response.StatusCode -ne 200) { throw "HTTP $($response.StatusCode)" }
+        }
+    }
 }
 
 Describe 'Interruption harness' {
@@ -75,5 +88,29 @@ Describe 'Interruption harness' {
         }
 
         $observed.State | Should -BeExactly '<none>'
+    }
+
+    It 'partitions all stop/kind cases exactly once: <StepCount> steps, interruption-based <ByInterruption>' -ForEach @(
+        @{ StepCount = 1; ByInterruption = $false; Counts = @(4, 0, 0, 0) }
+        @{ StepCount = 1; ByInterruption = $true; Counts = @(1, 1, 1, 1) }
+        @{ StepCount = 2; ByInterruption = $false; Counts = @(4, 4, 0, 0) }
+        @{ StepCount = 2; ByInterruption = $true; Counts = @(2, 2, 2, 2) }
+    ) {
+        $run = { Invoke-ToyPutSequence -StepCount $StepCount }
+        $reference = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal)
+        $combined = [Collections.Generic.List[object]]::new()
+        foreach ($shardIndex in 0..3) {
+            $selection = @{ ShardIndex = $shardIndex; ShardCount = 4 }
+            if ($ByInterruption) { $selection.ShardByInterruption = $true }
+            $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @selection)
+            $result.Count | Should -Be $Counts[$shardIndex]
+            foreach ($item in $result) { $combined.Add($item) }
+        }
+
+        $combined.Count | Should -Be ($StepCount * 4)
+        @($combined | Where-Object { -not $_.Passed }).Count | Should -Be 0
+        @($combined | Group-Object Step, Kind, Stop | Where-Object Count -NE 1).Count | Should -Be 0
+        $labels = { process { "$($_.Step):$($_.Kind):$($_.Stop)" } }
+        ($combined | & $labels | Sort-Object) -join ',' | Should -BeExactly (($reference | & $labels | Sort-Object) -join ',')
     }
 }

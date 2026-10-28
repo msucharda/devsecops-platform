@@ -183,7 +183,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $initialInventory = [IO.File]::ReadAllText($inventory)
         $run = { $null = & $bootstrap @arguments 3>$null 6>$null }
 
-        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
+        # Two writes have eight interruption cases; share their preflight cost across all four CI shards.
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -ShardByInterruption @shard)
 
         $report = Format-InterruptionResult -Name 'Invoke-GitHubBootstrap.ps1 (inventory upgrade)' -Result $result
         Write-Information $report -InformationAction Continue
