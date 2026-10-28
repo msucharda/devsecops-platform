@@ -139,10 +139,16 @@ jobs:
         shell: pwsh
         run: ./tools/Invoke-Tests.ps1 -Tag Interruption
 
-  mutation:
-    name: Security check mutation tests
+  mutation-shards:
+    name: Security check mutations (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      MUTATION_SHARD: ${{ matrix.shard }}/4
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install tool dependencies
@@ -150,7 +156,39 @@ jobs:
         run: ./tools/Install-ToolDependencies.ps1 -Development
       - name: Weaken every marked security check
         shell: pwsh
-        run: ./tools/Invoke-MutationTests.ps1 -ReportPath ./artifacts/mutation-report.json
+        run: ./tools/Invoke-MutationTests.ps1 -Shard $env:MUTATION_SHARD -ReportPath ./artifacts/mutation-report.json
+      - name: Upload mutation report
+        if: ${{ !cancelled() && hashFiles('artifacts/mutation-report.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mutation-report-${{ matrix.shard }}
+          path: artifacts/mutation-report.json
+          if-no-files-found: error
+
+  mutation:
+    name: Security check mutation tests
+    needs: mutation-shards
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every mutation shard
+        shell: pwsh
+        env:
+          MUTATION_RESULT: ${{ needs.mutation-shards.result }}
+        run: |
+          if ($env:MUTATION_RESULT -cne 'success') {
+            throw "Mutation shards did not pass: '$env:MUTATION_RESULT'."
+          }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Download mutation shards
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: mutation-report-*
+          path: artifacts/mutation-shards
+      - name: Verify the full mutation inventory
+        shell: pwsh
+        run: ./tools/Invoke-MutationTests.ps1 -MergeReport @(Get-ChildItem ./artifacts/mutation-shards -Recurse -Filter mutation-report.json | Select-Object -ExpandProperty FullName) -ShardCount 4 -ReportPath ./artifacts/mutation-report.json
       - name: Upload mutation report
         if: ${{ !cancelled() && hashFiles('artifacts/mutation-report.json') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
