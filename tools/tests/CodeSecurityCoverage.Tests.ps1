@@ -234,6 +234,20 @@ Describe 'Repository Code Security coverage' {
             Should -Throw '*mismatched identity*'
     }
 
+    It 'rejects an array response with an explicit identity error' {
+        # Deliberately invalid array root instead of the contract repository object.
+        $invalidRepositoryBody = @($repository)
+        Mock -ModuleName CodeSecurity Invoke-WebRequest {
+            [pscustomobject]@{
+                StatusCode = 200
+                Content = ConvertTo-Json -InputObject $invalidRepositoryBody -Depth 100 -Compress
+                Headers = @{}
+            }
+        } -ParameterFilter { ([Uri] $Uri).AbsolutePath -ceq '/repos/demo/app' }
+        { Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo } |
+            Should -Throw '*mismatched identity*'
+    }
+
     It 'publishes separate coverage counters and restores the caller token' {
         $checker = Join-Path (Split-Path $PSScriptRoot -Parent) 'Test-CodeSecurityCoverage.ps1'
         $output = Join-Path $TestDrive 'coverage.out'

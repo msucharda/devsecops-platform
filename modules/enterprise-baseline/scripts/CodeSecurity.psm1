@@ -570,13 +570,13 @@ function Get-CodeSecurityCoverage {
             $repository = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method GET -Path "/repos/$($entry.repository)" -AllowNotFound
         }
         catch {
-            if ($_.Exception.Message -cne "GitHub returned HTTP 403 for GET /repos/$($entry.repository).") { throw }
+            if ($_.Exception.Message -ne "GitHub returned HTTP 403 for GET /repos/$($entry.repository).") { throw }
         }
         $securityStatus = 'unverified'
         if ($null -ne $repository) {
             if ($repository -isnot [Collections.IDictionary] -or
                 ($repository['id'] -isnot [int] -and $repository['id'] -isnot [long]) -or
-                [string] $repository['id'] -cne $entry.id -or $repository['full_name'] -isnot [string] -or
+                [string] $repository['id'] -ne $entry.id -or $repository['full_name'] -isnot [string] -or
                 $repository['full_name'] -ine $entry.repository) {
                 throw "Repository security response of '$($entry.repository)' has mismatched identity."
             }
