@@ -4,6 +4,48 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'workflow-uses-reference'
+            Tests = @(
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*pinned references', '*rejects <Case> references', '*unsafe local*', '*follows a local composite*') }
+            )
+        }
+        @{
+            Name = 'workflow-document-shape'
+            Tests = @(
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*malformed document*', '*local action shape*', '*local JavaScript runtime*', '*accepts an actions organization*', '*traverses local reusable*') }
+            )
+        }
+        @{
+            Name = 'workflow-local-target'
+            Tests = @(
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*local target*', '*ambiguous local*', '*traverses local reusable*') }
+            )
+        }
+        @{
+            Name = 'workflow-checkout-revision'
+            Tests = @(
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*changed HEAD*', '*accepts an actions organization*') }
+            )
+        }
+        @{
+            Name = 'workflow-repository-root'
+            Tests = @(
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*repository root*', '*full HEAD SHA*', '*accepts an actions organization*') }
+            )
+        }
+        @{
+            Name = 'workflow-yaml-document'
+            Tests = @(
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*malformed document*', '*accepts an actions organization*') }
+            )
+        }
+        @{
+            Name = 'workflow-repository-snapshot'
+            Tests = @(
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*no live workflows*', '*regular file*', '*traverses local reusable*', '*accepts an actions organization*') }
+            )
+        }
+        @{
             Name = 'platform-ordinal-string'
             Tests = @(
                 @{ Path = 'tools/tests/CanonicalConfiguration.Tests.ps1'; FullName = @('Culture-independent configuration normalization*', 'Ordinal organization scope input boundary*') }

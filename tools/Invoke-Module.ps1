@@ -42,6 +42,9 @@ function Invoke-ModuleTerraform {
         [switch] $Json
     )
 
+    if ($null -ne $workflowPreflight -and $Arguments[0] -in @('plan', 'apply')) {
+        Assert-PlatformWorkflowRevision -RepositoryPath $instanceRepository -Revision $workflowPreflight.Revision
+    }
     $text = (& terraform "-chdir=$moduleRoot" @Arguments 2>&1 | Out-String)
     $code = $LASTEXITCODE
     if ($code -notin $AllowedExitCodes) {
@@ -194,6 +197,16 @@ if ($modules[$Module].Contains('manualPrerequisites')) {
 }
 if ($declaredPrerequisites.Count -gt 0 -and $Action -notin @('destroy', 'state')) {
     Assert-PlatformManualPrerequisite -Instance $instance -Name $declaredPrerequisites -Subject "Module '$Module'"
+}
+$workflowPreflight = $null
+if ($Module -ceq 'enterprise-baseline' -and $Action -in @('plan', 'apply')) {
+    if ($null -eq $organizations) {
+        throw 'Workflow preflight for enterprise-baseline requires PlatformOrganization to derive the actions organization.'
+    }
+    Import-Module (Join-Path $PSScriptRoot 'WorkflowPreflight.psm1')
+    $instanceRepository = Split-Path ([IO.Path]::GetFullPath($InstancePath)) -Parent
+    $workflowPreflight = Assert-PlatformWorkflowUses -RepositoryPath $instanceRepository -ActionsOrganization $organizations.actions
+    Write-Information "Workflow uses preflight verified $($workflowPreflight.Workflows) workflows and $($workflowPreflight.References) references at $($workflowPreflight.Revision)." -InformationAction Continue
 }
 $manualStates = [System.Collections.Generic.List[object]]::new()
 $prerequisiteStates = [System.Collections.Generic.List[object]]::new()
