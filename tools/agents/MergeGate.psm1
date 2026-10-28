@@ -790,6 +790,15 @@ function Test-MergeGateWorkflowPath {
     return $Path -match '^\.github/(workflows|actions)/'
 }
 
+# security-check: merge-gate-workflow-direct-path
+function Test-MergeGateDirectWorkflowPath {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([AllowEmptyString()][string] $Path)
+
+    return $Path -cmatch '\A\.github/workflows/[^/]+\.ya?ml\z'
+}
+
 # security-check: merge-gate-workflow-content
 function Get-MergeGateWorkflowContent {
     [CmdletBinding()]
@@ -845,6 +854,24 @@ function Get-MergeGateWorkflowTree {
     return , $files
 }
 
+# security-check: merge-gate-workflow-merge-base
+function Get-MergeGateWorkflowBase {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] $Comparison,
+        [Parameter(Mandatory)][string] $BaseSha
+    )
+
+    $base = Get-MergeGateValue -Node $Comparison -Path 'base_commit.sha'
+    if ($base -isnot [string] -or $base -cne $BaseSha) { throw 'The comparison base commit does not match the pinned base.' }
+    $status = Get-MergeGateValue -Node $Comparison -Path 'status'
+    if ($status -isnot [string] -or $status -cnotin @('ahead', 'identical', 'diverged')) { throw 'The comparison has no supported status for the workflow merge base.' }
+    $mergeBase = Get-MergeGateValue -Node $Comparison -Path 'merge_base_commit.sha'
+    if ($mergeBase -isnot [string] -or $mergeBase -cnotmatch '\A[0-9a-f]{40}\z') { throw 'The comparison has no valid workflow merge-base SHA.' }
+    return $mergeBase
+}
+
 # security-check: merge-gate-workflow-file-coverage
 function Get-MergeGatePinnedFile {
     [CmdletBinding()]
@@ -885,9 +912,8 @@ function Get-MergeGatePinnedFile {
     }
 
     # Infer benign workflow renames only from fixed content, not the mutable PR diff's pairing or status.
-    $direct = '^\.github/workflows/[^/]+\.ya?ml$'
-    $removed = @($paths | Where-Object { $result.ContainsKey($_) -and $result[$_]['status'] -eq 'removed' -and $_ -match $direct })
-    $added = @($paths | Where-Object { $result.ContainsKey($_) -and $result[$_]['status'] -eq 'added' -and $_ -match $direct })
+    $removed = @($paths | Where-Object { $result.ContainsKey($_) -and $result[$_]['status'] -eq 'removed' -and (Test-MergeGateDirectWorkflowPath -Path $_) })
+    $added = @($paths | Where-Object { $result.ContainsKey($_) -and $result[$_]['status'] -eq 'added' -and (Test-MergeGateDirectWorkflowPath -Path $_) })
     $sources = [Collections.Generic.Dictionary[string, Collections.Generic.Queue[string]]]::new([StringComparer]::Ordinal)
     if ($removed.Count -gt 0 -and $added.Count -gt 0) {
         foreach ($path in @($removed) + @($added)) {
@@ -1037,9 +1063,8 @@ function Get-MergeGateSensitiveChange {
             $previous = [string] $File['previous_filename']
         }
         # A copy or activation/deactivation can change execution even when the YAML settings stay identical.
-        $direct = '^\.github/workflows/[^/]+\.ya?ml$'
         if ($File['status'] -eq 'copied' -or
-            ($File['status'] -eq 'renamed' -and -not ($previous -match $direct -and $name -match $direct))) {
+            ($File['status'] -eq 'renamed' -and -not ((Test-MergeGateDirectWorkflowPath -Path $previous) -and (Test-MergeGateDirectWorkflowPath -Path $name)))) {
             "${name}: $($File['status']) from $previous"
         }
         $before = @()
@@ -1470,9 +1495,11 @@ function Complete-MergeGateEvaluation {
     }
 
     # G10
+    $workflowBaseSha = Get-MergeGateWorkflowBase -Comparison $comparison -BaseSha $baseSha
+    $Result.details['base']['mergeBaseSha'] = $workflowBaseSha
     $files = Get-MergeGateRestList -Target $Target -Path "repos/$slug/pulls/$Number/files" -MaxPages $script:MaxFilePages
-    $files = Get-MergeGatePinnedFile -Target $Target -BaseSha $baseSha -HeadSha $head -Files $files
-    $change = Get-MergeGateGitHubChange -Files $files -Target $Target -BaseSha $baseSha -HeadSha $head
+    $files = Get-MergeGatePinnedFile -Target $Target -BaseSha $workflowBaseSha -HeadSha $head -Files $files
+    $change = Get-MergeGateGitHubChange -Files $files -Target $Target -BaseSha $workflowBaseSha -HeadSha $head
     # Reject a lasting ref change as well; the pinned trees also cover a ref that moves away and back.
     $current = Get-MergeGatePullRequest -Target $Target -Number $Number
     if ($current['headRefOid'] -cne $head -or $current['baseRefOid'] -cne $baseSha) { throw 'The pull request head or base changed while reading workflow files.' }

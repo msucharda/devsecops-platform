@@ -24,6 +24,12 @@
       "behind_by",
       "total_commits",
       "commits"
+    ],
+    "base_commit": [
+      "sha"
+    ],
+    "merge_base_commit": [
+      "sha"
     ]
   },
   "body": {

@@ -541,6 +541,12 @@
             )
         }
         @{
+            Name = 'merge-gate-workflow-direct-path'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 pinned trees through CLI reject a rename with*', '*G10 CLI derives a benign rename*', '*G10 handles*') }
+            )
+        }
+        @{
             Name = 'merge-gate-workflow-content'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 rejects*content*', '*G10 rejects*API*', '*G10 ignores*') }
@@ -550,6 +556,12 @@
             Name = 'merge-gate-workflow-tree'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 pinned trees*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-workflow-merge-base'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 merge base*', '*G10 pinned trees through CLI do not use a base-only*', '*G10 pinned trees through CLI ignore a base-only*') }
             )
         }
         @{

@@ -45,7 +45,11 @@ function Initialize-MergeGateStub {
     $graphql = Get-GitHubApiFixture -Name "graphql/pull-request-merge-gate.$Scenario"
     $pullRequest = $graphql.data.repository.pullRequest
     # Behind is the behind_by of the real pull request at the moment, from the replay of issue #85.
-    $compare = Get-GitHubApiFixture -Name 'repos/compare-commits.merge-gate' -Set @{ behind_by = $definition.Behind }
+    $compare = Get-GitHubApiFixture -Name 'repos/compare-commits.merge-gate' -Set @{
+        behind_by = $definition.Behind
+        'base_commit.sha' = $pullRequest.baseRefOid
+        'merge_base_commit.sha' = $pullRequest.baseRefOid
+    }
     return @{
         Scenario = $Scenario
         Number = $definition.Number

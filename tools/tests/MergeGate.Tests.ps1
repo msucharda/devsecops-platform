@@ -20,7 +20,7 @@ BeforeAll {
         )
 
         $state = @{}
-        foreach ($key in @('Files', 'Trees', 'Contents', 'Responses', 'Failures', 'TreeRefs')) { $state[$key] = $Stub[$key] }
+        foreach ($key in @('Files', 'Trees', 'Contents', 'Responses', 'Failures', 'TreeRefs', 'Compare')) { $state[$key] = $Stub[$key] }
         if ($Stub.ContainsKey('AbaFiles')) { $state['AbaFiles'] = $Stub.AbaFiles }
         $id = [guid]::NewGuid().ToString('N')
         $statePath = Join-Path $Directory "$id-state.json"
@@ -928,6 +928,125 @@ Describe 'Merge gate pinned G10' {
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
         ($result.details.github.sensitiveLines -join "`n") | Should -Match 'comparison unavailable:.*HTTP 502'
         @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+    }
+
+    It 'G10 pinned trees through CLI reject a rename with <Case>' -Tag G10AbaRegression -ForEach @(
+        @{ Case = 'an upper-case source directory'; OldName = '.github/WORKFLOWS/old.yml'; NewName = '.github/workflows/new.yml' }
+        @{ Case = 'a trailing newline in the source'; OldName = ".github/workflows/old.yml`n"; NewName = '.github/workflows/new.yml' }
+        @{ Case = 'an upper-case source extension'; OldName = '.github/workflows/old.YML'; NewName = '.github/workflows/new.yml' }
+        @{ Case = 'an upper-case destination directory'; OldName = '.github/workflows/old.yml'; NewName = '.github/WORKFLOWS/new.yml' }
+        @{ Case = 'a trailing newline in the destination'; OldName = '.github/workflows/old.yml'; NewName = ".github/workflows/new.yml`n" }
+        @{ Case = 'an upper-case destination extension'; OldName = '.github/workflows/old.yml'; NewName = '.github/workflows/new.YML' }
+    ) {
+        $stub.Trees[$base].tree[0].path = $OldName
+        $stub.Trees[$head].tree[0].path = $NewName
+        $content = "on: push`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$base/$OldName"] = $content
+        $stub.Contents["$head/$NewName"] = $content
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
+        $run.Result.details.github.sensitiveLines.Count | Should -Be 2
+    }
+
+    It 'G10 pinned trees through CLI do not use a base-only workflow as a rename source' -Tag G10AbaRegression,G10MergeBaseRegression {
+        $ancestor = 'f' * 40
+        $stub.Compare.merge_base_commit.sha = $ancestor
+        $stub.TreeRefs[$ancestor] = '9' * 40
+        $stub.Trees[$ancestor] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ sha = $stub.TreeRefs[$ancestor]; tree = @() }
+        $oldName = '.github/workflows/main-only.yml'
+        $newName = '.github/workflows/pr-only.yml'
+        $stub.Trees[$base].tree[0].path = $oldName
+        $stub.Trees[$head].tree[0].path = $newName
+        $content = "on: push`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$base/$oldName"] = $content
+        $stub.Contents["$head/$newName"] = $content
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 1
+        Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
+        $run.Result.details.github.workflowFiles | Should -Be @($newName)
+        $run.Result.details.github.sensitiveLines | Should -Be @("${newName}: sensitive YAML settings changed")
+    }
+
+    It 'G10 pinned trees through CLI ignore a base-only sensitive modification' -Tag G10AbaRegression,G10MergeBaseRegression {
+        $ancestor = 'f' * 40
+        $stub.Compare.merge_base_commit.sha = $ancestor
+        $stub.TreeRefs[$ancestor] = '9' * 40
+        $stub.Trees[$ancestor] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{
+            sha = $stub.TreeRefs[$ancestor]; 'tree.0.path' = $name; 'tree.0.sha' = 'a' * 40
+        }
+        $stub.Contents["$base/$name"] = 'permissions: {contents: write}'
+        $stub.Contents["$head/$name"] = 'permissions: {contents: read}'
+        $stub.Contents["$ancestor/$name"] = 'permissions: {contents: read}'
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 0
+        $run.Result.details.github.workflowFiles | Should -Be @()
+        $run.Result.details.github.sensitiveLines | Should -Be @()
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 0
+    }
+
+    It 'G10 merge base reads before-content from the common ancestor through CLI' -Tag G10AbaRegression,G10MergeBaseRegression {
+        $ancestor = 'f' * 40
+        $stub.Compare.merge_base_commit.sha = $ancestor
+        $stub.TreeRefs[$ancestor] = '9' * 40
+        $stub.Trees[$ancestor] = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{
+            sha = $stub.TreeRefs[$ancestor]; 'tree.0.path' = $name; 'tree.0.sha' = 'c' * 40
+        }
+        $stub.Contents["$base/$name"] = 'permissions: {contents: write}'
+        $stub.Contents["$ancestor/$name"] = "name: Old`npermissions: {contents: read}"
+        $stub.Contents["$head/$name"] = "name: New`npermissions: {contents: read}"
+        $run = Invoke-ScenarioCli -Stub $stub -Directory $TestDrive
+        $run.ExitCode | Should -Be 0
+        $run.Result.details.base.mergeBaseSha | Should -Be $ancestor
+        $run.Result.details.github.workflowFiles | Should -Be @($name)
+        $run.Result.details.github.sensitiveLines | Should -Be @()
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' } | ForEach-Object { $_[-1] }) | Should -Be @(
+            "repos/$repository/contents/${name}?ref=$ancestor"
+            "repos/$repository/contents/${name}?ref=$head"
+        )
+    }
+
+    It 'G10 merge base accepts a pinned <Status> comparison' -ForEach @(
+        @{ Status = 'ahead' }
+        @{ Status = 'identical' }
+        @{ Status = 'diverged' }
+    ) {
+        $stub.Compare.status = $Status
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.verdict | Should -Be 'pass'
+        $result.details.base.mergeBaseSha | Should -Be $base
+        @($stub.Calls | Where-Object { $_[-1] -match '/compare/' } | ForEach-Object { $_[-1] }) | Should -Be @(
+            "repos/$repository/compare/$base...${head}?per_page=1"
+        )
+    }
+
+    # Deliberately invalid comparison identity, status and merge-base fields, varied independently.
+    It 'G10 merge base rejects <Case>' -ForEach @(
+        @{ Case = 'a different comparison base'; Field = 'base_commit'; Value = 'c' * 40; Error = 'base commit does not match' }
+        @{ Case = 'a missing comparison base'; Field = 'base_commit'; Value = $null; Error = 'base commit does not match' }
+        @{ Case = 'an array comparison base'; Field = 'base_commit'; Value = @('afd8bd70733c38487f50241cb44b2bcd10ccab4c'); Error = 'base commit does not match' }
+        @{ Case = 'a missing merge base'; Field = 'merge_base_commit'; Value = $null; Error = 'no valid workflow merge-base SHA' }
+        @{ Case = 'an empty merge base'; Field = 'merge_base_commit'; Value = ''; Error = 'no valid workflow merge-base SHA' }
+        @{ Case = 'a numeric merge base'; Field = 'merge_base_commit'; Value = 1; Error = 'no valid workflow merge-base SHA' }
+        @{ Case = 'an array merge base'; Field = 'merge_base_commit'; Value = @(('f' * 40)); Error = 'no valid workflow merge-base SHA' }
+        @{ Case = 'a short merge base'; Field = 'merge_base_commit'; Value = 'f' * 39; Error = 'no valid workflow merge-base SHA' }
+        @{ Case = 'a nonhex merge base'; Field = 'merge_base_commit'; Value = 'g' * 40; Error = 'no valid workflow merge-base SHA' }
+        @{ Case = 'an upper-case merge base'; Field = 'merge_base_commit'; Value = 'F' * 40; Error = 'no valid workflow merge-base SHA' }
+        @{ Case = 'a newline after the merge base'; Field = 'merge_base_commit'; Value = ('f' * 40) + "`n"; Error = 'no valid workflow merge-base SHA' }
+        @{ Case = 'a missing status'; Field = 'status'; Value = $null; Error = 'no supported status' }
+        @{ Case = 'an empty status'; Field = 'status'; Value = ''; Error = 'no supported status' }
+        @{ Case = 'a behind status'; Field = 'status'; Value = 'behind'; Error = 'no supported status' }
+        @{ Case = 'an unknown status'; Field = 'status'; Value = 'unknown'; Error = 'no supported status' }
+        @{ Case = 'an upper-case status'; Field = 'status'; Value = 'Ahead'; Error = 'no supported status' }
+        @{ Case = 'an array status'; Field = 'status'; Value = @('ahead'); Error = 'no supported status' }
+    ) {
+        if ($Field -eq 'status') { $stub.Compare.status = $Value }
+        else { $stub.Compare[$Field].sha = $Value }
+        $result = Invoke-ScenarioGate -Stub $stub
+        $result.exitCode | Should -Be 5
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match $Error
+        @($stub.Calls | Where-Object { $_[-1] -match '/git/(commits|trees)/' }).Count | Should -Be 0
     }
 
     It 'G10 CLI evaluates a copied <Case> only by its pinned sensitive projection' -Tag G10AbaRegression -ForEach @(
