@@ -119,7 +119,11 @@ Describe 'Teardown workflow generation' {
         $others | Should -Not -BeNullOrEmpty
         $job = $real.jobs.destroy_emu_identity
         foreach ($other in $others) {
-            $module = $other.Substring('destroy_'.Length).Replace('_', '-')
+            $runs = @($real.jobs[$other].steps | Where-Object { $_.Contains('run') } | ForEach-Object { $_.run })
+            $targets = @([regex]::Matches(($runs -join "`n"), "Invoke-Module\.ps1 -Module '([^']+)' -Action destroy") |
+                ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+            $targets.Count | Should -Be 1
+            $module = $targets[0]
             $job.needs | Should -Contain $other
             $job.if | Should -Match ([regex]::Escape("(needs.$other.result == 'success' || (needs.$other.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), '$module')))"))
             $realText.IndexOf("  ${other}:") | Should -BeLessThan $realText.IndexOf('  destroy_emu_identity:')
