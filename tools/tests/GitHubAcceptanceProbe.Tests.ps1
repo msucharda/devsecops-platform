@@ -56,9 +56,11 @@ Describe 'Live bootstrap acceptance probe public interface' {
     }
 
     It 'records the actual phase identity and key only after all live checks succeed for <Phase>' -TestCases @(
-        @{ Phase = 'plan' }, @{ Phase = 'apply' }, @{ Phase = 'rulesetPlan' }
+        @{ Phase = 'plan'; Module = 'enterprise-baseline' }
+        @{ Phase = 'apply'; Module = 'enterprise-baseline' }
+        @{ Phase = 'rulesetPlan'; Module = 'organization-rulesets' }
     ) {
-        param($Phase)
+        param($Phase, $Module)
         $env:AZURE_CLIENT_ID = '44444444-4444-4444-4444-444444444444'
         $env:PLATFORM_STATE_STORAGE_ACCOUNT = 'stdemotfstate'
         $env:GITHUB_SHA = 'approved-main'; $env:GITHUB_RUN_ID = '80'; $env:GITHUB_RUN_ATTEMPT = '2'
@@ -94,6 +96,9 @@ Describe 'Live bootstrap acceptance probe public interface' {
         $record.keyFingerprint | Should -Be $fingerprint
         $record.runAttempt | Should -Be '2'
         $record.checks.otherModuleStateDenied | Should -BeTrue
+        Should -Invoke az -Times 1 -Exactly -ParameterFilter {
+            $args -contains '--container-name' -and $args -contains $Module
+        }
         Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.Authorization -eq 'Bearer trial-token' }
 
         Mock az { $global:LASTEXITCODE = 1; 'NameResolutionError' } -ParameterFilter {
@@ -102,6 +107,13 @@ Describe 'Live bootstrap acceptance probe public interface' {
         Mock Invoke-WebRequest { throw 'NameResolutionError' }
         { & $probe -InstancePath $path -Phase $Phase -ApiUrl 'https://api.example.ghe.com' -ResultPath $output } |
             Should -Throw '*state*'
+        Test-Path $output | Should -BeFalse
+
+        Mock az { $global:LASTEXITCODE = 1; 'AuthorizationPermissionMismatch' } -ParameterFilter {
+            $args -contains '--container-name' -and $args -contains $Module
+        }
+        { & $probe -InstancePath $path -Phase $Phase -ApiUrl 'https://api.example.ghe.com' -ResultPath $output } |
+            Should -Throw "*cannot read its own $Module state container*"
         Test-Path $output | Should -BeFalse
     }
 

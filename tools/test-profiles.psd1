@@ -24,6 +24,7 @@
         'AcceptanceRunEvidence.Tests.ps1'
         'ActionImport.Tests.ps1'
         'ActionsCatalog.Tests.ps1'
+        'ActionsCatalogTerraform.Tests.ps1'
         'ActionsPolicy.Tests.ps1'
         'AppInstallationContract.Tests.ps1'
         'Bootstrap.Tests.ps1'
