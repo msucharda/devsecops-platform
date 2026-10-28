@@ -1021,8 +1021,9 @@ Describe 'Merge gate pinned G10' {
     }
 
     # Deliberately invalid comparison identity, status and merge-base fields, varied independently.
-    It 'G10 merge base rejects <Case>' -ForEach @(
+    It 'G10 merge base rejects <Case>' -Tag G10MergeBaseValidation -ForEach @(
         @{ Case = 'a different comparison base'; Field = 'base_commit'; Value = 'c' * 40; Error = 'base commit does not match' }
+        @{ Case = 'an upper-case comparison base'; Field = 'base_commit'; Value = 'AFD8BD70733C38487F50241CB44B2BCD10CCAB4C'; Error = 'base commit does not match' }
         @{ Case = 'a missing comparison base'; Field = 'base_commit'; Value = $null; Error = 'base commit does not match' }
         @{ Case = 'an array comparison base'; Field = 'base_commit'; Value = @('afd8bd70733c38487f50241cb44b2bcd10ccab4c'); Error = 'base commit does not match' }
         @{ Case = 'a missing merge base'; Field = 'merge_base_commit'; Value = $null; Error = 'no valid workflow merge-base SHA' }
