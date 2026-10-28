@@ -83,10 +83,10 @@ jobs:
         @{ Case = 'other owner'; Value = 'other-actions/checkout@0123456789abcdef0123456789abcdef01234567'; Error = '*uses owner*' }
         @{ Case = 'Docker image'; Value = 'docker://alpine:3'; Error = '*unsupported uses*' }
         @{ Case = 'expression'; Value = '${{ inputs.action }}'; Error = '*unsupported uses*' }
-        @{ Case = 'blank'; Value = ''; Error = '*unsupported uses*' }
-        @{ Case = 'empty string'; Value = "''"; Error = '*unsupported uses*' }
-        @{ Case = 'whitespace'; Value = "' '"; Error = '*unsupported uses*' }
-        @{ Case = 'mapping'; Value = '{ repository: demo-actions/checkout }'; Error = '*unsupported uses*' }
+        @{ Case = 'blank'; Value = ''; Error = '*require a nonempty string*' }
+        @{ Case = 'empty string'; Value = "''"; Error = '*require a nonempty string*' }
+        @{ Case = 'whitespace'; Value = "' '"; Error = '*require a nonempty string*' }
+        @{ Case = 'mapping'; Value = '{ repository: demo-actions/checkout }'; Error = '*require a nonempty string*' }
     ) {
         $text = (Get-Content -LiteralPath $workflowPath -Raw) -replace 'demo-actions/checkout@[a-f0-9]{40}', $Value
         Set-Content -LiteralPath $workflowPath -Value $text
