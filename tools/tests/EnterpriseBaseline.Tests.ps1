@@ -27,7 +27,7 @@ Describe 'enterprise-baseline organization settings contract' {
     It 'manages the documented baseline fields' {
         @($managed.Keys) | Should -Be @(
             'default_repository_permission', 'members_can_create_repositories', 'members_can_create_private_repositories',
-            'members_can_create_internal_repositories', 'members_can_fork_private_repositories')
+            'members_can_create_internal_repositories')
         @($enterpriseEnforced.Keys) | Should -Be @('members_can_change_repo_visibility', 'members_can_delete_repositories')
         @($defaults.Keys) | Should -Be @($managed.Keys)
     }
@@ -53,6 +53,13 @@ Describe 'enterprise-baseline organization settings contract' {
             $update.requestProperties | Should -Not -Contain $field -Because 'the module cannot enforce it, so it is a manual prerequisite'
         }
     }
+
+    It 'reads the nullable fork policy but never sends it even though PATCH documents it' {
+        $organization['members_can_fork_private_repositories'] | Should -BeOfType [bool]
+        $update.requestProperties | Should -Contain 'members_can_fork_private_repositories'
+        @($managed.Keys) | Should -Not -Contain 'members_can_fork_private_repositories'
+        @($defaults.Keys) | Should -Not -Contain 'members_can_fork_private_repositories'
+    }
 }
 
 Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' {
@@ -60,7 +67,7 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline'
         $baselineOrganizationLogin = 'demo'
         $baselineReviewerId = 42
-        $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); CodeSecurity = $null; ActionsPolicy = $null })
+        $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); OrganizationPatches = [Collections.Generic.List[hashtable]]::new(); CodeSecurity = $null; ActionsPolicy = $null })
         $codeSecurityStub = Join-Path $PSScriptRoot 'CodeSecurityStub.psm1'
         Import-Module $codeSecurityStub -Force
         $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -123,16 +130,26 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
                     }
                     else {
                         $state.Requests.Add("$method $path")
+                        $status = '200 OK'
                         if ($method -eq 'PATCH') {
                             $changes = ([string]::new($buffer)) | ConvertFrom-Json -AsHashtable
-                            foreach ($key in $changes.Keys) { $state.Organization[$key] = $changes[$key] }
-                            if ($state.DropNextPatch) {
-                                $state.DropNextPatch = $false
-                                continue
+                            $state.OrganizationPatches.Add($changes)
+                            # Issue #147: enterprise policy rejects even an unchanged fork setting.
+                            if ($changes.ContainsKey('members_can_fork_private_repositories')) {
+                                $status = '422 Unprocessable Entity'
+                                $body = '{"message":"Validation Failed","errors":"Forking policy has been set by enterprise administrators."}'
+                            }
+                            else {
+                                foreach ($key in $changes.Keys) { $state.Organization[$key] = $changes[$key] }
+                                if ($state.DropNextPatch) {
+                                    $state.DropNextPatch = $false
+                                    continue
+                                }
                             }
                         }
-                        $status = '200 OK'
-                        $body = ConvertTo-Json -InputObject $state.Organization -Depth 20 -Compress
+                        if ($status -ceq '200 OK') {
+                            $body = ConvertTo-Json -InputObject $state.Organization -Depth 20 -Compress
+                        }
                     }
                     $bytes = [Text.Encoding]::UTF8.GetBytes($body)
                     $linkHeader = if ($link) { "Link: $link`r`n" } else { '' }
@@ -224,26 +241,94 @@ data "external" "actions_policy_state" {
         $stubState.ActionsPolicy.Actions.Remove('selected_actions_url')
         $stubState.DropNextPatch = $false
         $stubState.Requests.Clear()
+        $stubState.OrganizationPatches.Clear()
         $managed = @{
             default_repository_permission            = 'none'
             members_can_create_repositories          = $false
             members_can_create_private_repositories  = $false
             members_can_create_internal_repositories = $false
-            members_can_fork_private_repositories    = $false
         }
         $defaults = @{
             default_repository_permission            = 'read'
             members_can_create_repositories          = $true
             members_can_create_private_repositories  = $true
             members_can_create_internal_repositories = $true
-            members_can_fork_private_repositories    = $false
         }
         $unmanaged = @{
             description = $stubState.Organization['description']
             members_can_create_pages = $stubState.Organization['members_can_create_pages']
+            members_can_fork_private_repositories = $stubState.Organization['members_can_fork_private_repositories']
         }
         $init = Invoke-StubTerraform init -input=false
         $init.ExitCode | Should -Be 0 -Because $init.Output
+    }
+
+    It 'omits enterprise-controlled fields from create, update and destroy PATCH requests: <Case>' -Tag 'ForkPolicy' -ForEach @(
+        @{ Case = 'uninterrupted'; LoseUpdateResponse = $false }
+        @{ Case = 'update response lost'; LoseUpdateResponse = $true }
+    ) {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve '-target=restapi_object.organization_settings'
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        $stubState.OrganizationPatches.Count | Should -Be 1
+        $stubState.OrganizationPatches[0].default_repository_permission | Should -BeExactly 'none'
+
+        # Change a managed value to force the provider's update path, not another create.
+        Add-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @'
+locals {
+  organization_settings = {
+    default_repository_permission            = "write"
+    members_can_create_repositories          = false
+    members_can_create_private_repositories  = false
+    members_can_create_internal_repositories = false
+  }
+}
+'@
+        $stubState.DropNextPatch = $LoseUpdateResponse
+        $update = Invoke-StubTerraform apply -input=false -auto-approve '-target=restapi_object.organization_settings'
+        if ($LoseUpdateResponse) {
+            $update.ExitCode | Should -Not -Be 0
+            $stubState.DropNextPatch | Should -BeFalse -Because 'the stub must have applied the update and lost its response'
+            $stubState.Organization.default_repository_permission | Should -BeExactly 'write'
+            $update = Invoke-StubTerraform apply -input=false -auto-approve '-target=restapi_object.organization_settings'
+        }
+        $update.ExitCode | Should -Be 0 -Because $update.Output
+        $patchesBeforeDestroy = $stubState.OrganizationPatches.Count
+        $patchesBeforeDestroy | Should -BeGreaterOrEqual 2
+        $stubState.OrganizationPatches[1].default_repository_permission | Should -BeExactly 'write'
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode '-target=restapi_object.organization_settings'
+        $plan.ExitCode | Should -Be 0 -Because $plan.Output
+
+        $destroy = Invoke-StubTerraform destroy -input=false -auto-approve '-target=restapi_object.organization_settings'
+        $destroy.ExitCode | Should -Be 0 -Because $destroy.Output
+        $stubState.OrganizationPatches.Count | Should -Be ($patchesBeforeDestroy + 1)
+        $stubState.OrganizationPatches[-1].default_repository_permission | Should -BeExactly 'read'
+        foreach ($patch in $stubState.OrganizationPatches) {
+            @($patch.Keys) | Should -Not -Contain 'members_can_fork_private_repositories'
+            @($patch.Keys) | Should -Not -Contain 'members_can_change_repo_visibility'
+            @($patch.Keys) | Should -Not -Contain 'members_can_delete_repositories'
+        }
+        $stubState.Organization.members_can_fork_private_repositories | Should -BeFalse
+    }
+
+    It 'fails the plan on an unreadable or noncompliant enterprise fork policy: <Case>' -Tag 'ForkPolicy' -ForEach @(
+        @{ Case = 'forks enabled'; Value = $true }
+        @{ Case = 'field omitted'; Value = $false }
+        @{ Case = 'documented null'; Value = $null }
+        # Deliberately invalid API values; only the documented boolean false is compliant.
+        @{ Case = 'boolean-shaped string'; Value = 'false' }
+        @{ Case = 'empty string'; Value = '' }
+        @{ Case = 'wrong case'; Value = 'False' }
+    ) {
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve '-target=restapi_object.organization_settings'
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        $stubState.Organization['members_can_fork_private_repositories'] = $Value
+        if ($Case -ceq 'field omitted') { $stubState.Organization.Remove('members_can_fork_private_repositories') }
+
+        $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode '-target=restapi_object.organization_settings'
+
+        $plan.ExitCode | Should -Be 1 -Because $plan.Output
+        ($plan.Output -replace '\s+', ' ') | Should -Match 'members_can_fork_private_repositories.*privateInternalForksDisabled'
+        $stubState.OrganizationPatches.Count | Should -Be 1 -Because 'plan must not write to the organization'
     }
 
     It 'converges, detects drift and tears down the baseline in <BaselineOrganizationLogin> with its local reviewers' -ForEach @(

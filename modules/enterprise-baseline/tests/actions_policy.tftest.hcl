@@ -6,7 +6,7 @@ mock_provider "restapi" {
   mock_resource "restapi_object" {
     defaults = {
       id              = "mock"
-      api_response    = "{}"
+      api_response    = jsonencode(jsondecode(file("../../tools/tests/fixtures/github-api/orgs/get.json")).body)
       create_response = "{}"
       api_data = {
         default_repository_permission            = "none"
