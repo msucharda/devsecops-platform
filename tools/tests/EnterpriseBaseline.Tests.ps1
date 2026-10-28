@@ -167,8 +167,11 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
     }
 
     BeforeEach {
-        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-        New-Item -ItemType Directory -Path $root | Out-Null
+        $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        $modules = Join-Path $parent 'modules'
+        $root = Join-Path $modules 'enterprise-baseline'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $moduleRoot '../shared') -Destination $modules -Recurse
         Copy-Item -Path (Join-Path $moduleRoot '*.tf'), (Join-Path $moduleRoot '.terraform.lock.hcl') -Destination $root
         Copy-Item -Path (Join-Path $moduleRoot 'scripts') -Destination $root -Recurse
         Set-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @"

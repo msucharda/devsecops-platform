@@ -334,11 +334,13 @@ Describe 'Organization role Terraform programs' {
             $env:TF_PLUGIN_CACHE_DIR = Join-Path $TestDrive 'role-provider-cache'
             New-Item -ItemType Directory -Path $env:TF_PLUGIN_CACHE_DIR -Force | Out-Null
             $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-            $root = Join-Path $parent 'organization-roles'
-            New-Item -ItemType Directory -Path $root | Out-Null
+            $modules = Join-Path $parent 'modules'
+            $root = Join-Path $modules 'organization-roles'
+            New-Item -ItemType Directory -Path $root -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $moduleRoot '../shared') -Destination $modules -Recurse
             Copy-Item -Path (Join-Path $moduleRoot '*.tf'), (Join-Path $moduleRoot '.terraform.lock.hcl') -Destination $root
             Copy-Item -LiteralPath (Join-Path $moduleRoot 'scripts') -Destination $root -Recurse
-            $organizations = Join-Path $parent 'organizations'
+            $organizations = Join-Path $modules 'organizations'
             New-Item -ItemType Directory -Path $organizations | Out-Null
             Copy-Item -LiteralPath (Join-Path $moduleRoot '..\organizations\scripts') -Destination $organizations -Recurse
             Set-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @"

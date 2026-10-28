@@ -67,16 +67,19 @@ AfterAll {
 Describe 'Ruleset Terraform root against the documented and observed API' -Tag Terraform {
     AfterEach {
         # Restore-RulesetState imports the fixture copy into this process.
-        Get-Module -Name Rulesets | Where-Object { $_.Path -eq (Join-Path $parent 'scripts/Rulesets.psm1') } |
+        Get-Module -Name Rulesets | Where-Object { $_.Path -eq (Join-Path $modules 'organization-rulesets/scripts/Rulesets.psm1') } |
             Remove-Module -Force
     }
 
     BeforeEach {
         $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-        $root = Join-Path $parent 'rulesets'
-        New-Item -ItemType Directory -Path $root | Out-Null
+        $modules = Join-Path $parent 'modules'
+        $module = Join-Path $modules 'organization-rulesets'
+        $root = Join-Path $module 'rulesets'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $moduleRoot '../shared') -Destination $modules -Recurse
         Copy-Item -Path (Join-Path $moduleRoot 'rulesets/*.tf'), (Join-Path $moduleRoot 'rulesets/.terraform.lock.hcl') -Destination $root
-        Copy-Item -LiteralPath (Join-Path $moduleRoot 'scripts') -Destination $parent -Recurse
+        Copy-Item -LiteralPath (Join-Path $moduleRoot 'scripts') -Destination $module -Recurse
         Set-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @"
 terraform {
   backend "local" {}
