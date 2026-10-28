@@ -12,7 +12,7 @@
         @{
             Name = 'workflow-document-shape'
             Tests = @(
-                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*malformed document*', '*local action shape*', '*local JavaScript runtime*', '*local Docker*', '*accepts an actions organization*', '*traverses local reusable*', '*job named Values*') }
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*malformed document*', '*local action shape*', '*local JavaScript runtime*', '*local Docker*', '*Docker image name*', '*regular file*', '*accepts an actions organization*', '*traverses local reusable*', '*job named Values*') }
             )
         }
         @{

@@ -71,7 +71,7 @@ function Get-WorkflowDocumentReference {
         }
         elseif ($runs['using'] -ceq 'docker') {
             $image = $runs['image']
-            if ($image -isnot [string] -or $image -notmatch '^[A-Za-z0-9_-][A-Za-z0-9_.-]*\z') {
+            if ($image -isnot [string] -or $image -cne 'Dockerfile') {
                 throw "Workflow preflight: unsupported action runtime or image in '$Path'; require a local Dockerfile."
             }
             $imagePath = if ($Path.Contains('/')) { "$($Path.Substring(0, $Path.LastIndexOf('/')))/$image" } else { $image }

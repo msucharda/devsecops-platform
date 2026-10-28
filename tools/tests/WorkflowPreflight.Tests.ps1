@@ -7,6 +7,36 @@ BeforeAll {
         if ($LASTEXITCODE -ne 0) { throw 'Cannot commit workflow fixture.' }
         (& git -C $repository rev-parse HEAD).Trim()
     }
+
+    function New-WorkflowRunnerFixture([string] $RepositoryPath) {
+        $modulesPath = Join-Path $RepositoryPath 'platform/modules'
+        $null = New-Item -ItemType Directory -Path $modulesPath -Force
+        $moduleRoot = Join-Path $modulesPath 'enterprise-baseline'
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/runner-modules/foundation') -Destination $moduleRoot -Recurse
+        $manifestPath = Join-Path $moduleRoot 'module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.name = 'enterprise-baseline'
+        $manifest.manualPrerequisites = @('liveWorkflowsPromoted')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
+        $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{} } }
+        $instancePath = Join-Path $RepositoryPath 'instance.yaml'
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        @{
+            Instance = $instance
+            Arguments = @{
+                Module = 'enterprise-baseline'
+                Action = 'plan'
+                InstancePath = $instancePath
+                ModulesPath = $modulesPath
+                PlatformOrganization = 'demo-platform'
+                Backend = 'local'
+                StatePath = Join-Path $RepositoryPath 'state'
+                ArtifactsPath = Join-Path $RepositoryPath 'artifacts'
+                JobSummaryPath = Join-Path $RepositoryPath 'summary.md'
+            }
+        }
+    }
 }
 
 Describe 'Workflow uses preflight' {
@@ -279,6 +309,7 @@ jobs:
         @{ Case = 'missing'; Image = ''; Error = '*unsupported action runtime or image*' }
         @{ Case = 'numeric'; Image = '42'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'parent escape'; Image = '../Dockerfile'; Error = '*unsupported action runtime or image*' }
+        @{ Case = 'different casing'; Image = 'dockerfile'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'uncommitted Dockerfile'; Image = 'Dockerfile'; Error = '*regular file in HEAD*' }
     ) {
         $local = Join-Path $repository 'action'
@@ -288,6 +319,17 @@ jobs:
         $null = Save-WorkflowRevision
         'FROM scratch' | Set-Content -LiteralPath (Join-Path $local 'Dockerfile')
         { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } | Should -Throw $Error
+    }
+
+    It 'rejects a Docker image name even when a same-named file exists' -Tag DockerName {
+        $local = Join-Path $repository 'action'
+        $null = New-Item -ItemType Directory -Path $local
+        'runs: { using: docker, image: alpine }' | Set-Content -LiteralPath (Join-Path $local 'action.yml')
+        'FROM scratch' | Set-Content -LiteralPath (Join-Path $local 'alpine')
+        'jobs: { local: { steps: [ { uses: ./action } ] } }' | Set-Content -LiteralPath $workflowPath
+        $null = Save-WorkflowRevision
+        { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } |
+            Should -Throw '*unsupported action runtime or image*'
     }
 
     It 'rejects a repository with no live workflows' {
@@ -331,11 +373,15 @@ jobs:
     It 'requires a regular file for a <Case>' -ForEach @(
         @{ Case = 'workflow'; Target = '.github/workflows/deploy.yml' }
         @{ Case = 'local action'; Target = 'action/action.yml' }
+        @{ Case = 'Dockerfile'; Target = 'action/Dockerfile' }
     ) {
-        if ($Case -eq 'local action') {
+        if ($Case -ne 'workflow') {
             $local = Join-Path $repository 'action'
             $null = New-Item -ItemType Directory -Path $local
-            'runs: { using: composite, steps: [ { run: echo } ] }' | Set-Content -LiteralPath (Join-Path $local 'action.yml')
+            $metadata = if ($Case -eq 'Dockerfile') { 'runs: { using: docker, image: Dockerfile }' }
+            else { 'runs: { using: composite, steps: [ { run: echo } ] }' }
+            $metadata | Set-Content -LiteralPath (Join-Path $local 'action.yml')
+            'FROM scratch' | Set-Content -LiteralPath (Join-Path $local 'Dockerfile')
             'jobs: { local: { steps: [ { uses: ./action } ] } }' | Set-Content -LiteralPath $workflowPath
             $null = Save-WorkflowRevision
         }
@@ -344,51 +390,33 @@ jobs:
         & git -C $repository -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet -m symlink
         if ($LASTEXITCODE -ne 0) { throw 'Cannot commit symlink fixture.' }
 
-        { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } | Should -Throw '*regular file in HEAD*'
+        $errorPattern = if ($Case -eq 'Dockerfile') { "*Dockerfile 'action/Dockerfile' must be a regular file in HEAD*" } else { '*regular file in HEAD*' }
+        { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } | Should -Throw $errorPattern
     }
 
     It 'blocks enterprise-baseline <Action> before Terraform for an upstream uses' -ForEach @(
         @{ Action = 'plan' }
         @{ Action = 'apply' }
     ) {
-        $modulesPath = Join-Path $repository 'platform/modules'
-        $null = New-Item -ItemType Directory -Path $modulesPath -Force
-        $moduleRoot = Join-Path $modulesPath 'enterprise-baseline'
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/runner-modules/foundation') -Destination $moduleRoot -Recurse
-        $manifestPath = Join-Path $moduleRoot 'module.yaml'
-        (Get-Content -LiteralPath $manifestPath -Raw).Replace('name: foundation', 'name: enterprise-baseline') |
-            Set-Content -LiteralPath $manifestPath
-        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
-        $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{} } }
-        $instancePath = Join-Path $repository 'instance.yaml'
-        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $fixture = New-WorkflowRunnerFixture $repository
+        $runnerArguments = $fixture.Arguments
+        $runnerArguments.Action = $Action
         (Get-Content -LiteralPath $workflowPath -Raw).Replace('demo-actions/checkout', 'actions/checkout') |
             Set-Content -LiteralPath $workflowPath
         $null = Save-WorkflowRevision
         function terraform { throw 'Terraform must not run before workflow preflight.' }
 
-        { & (Join-Path $PSScriptRoot '../Invoke-Module.ps1') -Module enterprise-baseline -Action $Action `
-                -InstancePath $instancePath -ModulesPath $modulesPath -PlatformOrganization demo-platform `
-                -ArtifactsPath (Join-Path $repository 'artifacts') } | Should -Throw '*uses owner*'
+        { & (Join-Path $PSScriptRoot '../Invoke-Module.ps1') @runnerArguments } | Should -Throw '*uses owner*'
     }
 }
 
 Describe 'Enterprise workflow preflight boundary' {
     BeforeEach {
         $repository = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
-        $modulesPath = Join-Path $repository 'platform/modules'
-        $null = New-Item -ItemType Directory -Path $modulesPath -Force
-        $moduleRoot = Join-Path $modulesPath 'enterprise-baseline'
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/runner-modules/foundation') -Destination $moduleRoot -Recurse
-        $manifestPath = Join-Path $moduleRoot 'module.yaml'
-        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
-        $manifest.name = 'enterprise-baseline'
-        $manifest.manualPrerequisites = @('liveWorkflowsPromoted')
-        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
-        $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
-        $instance.modules = @{ 'enterprise-baseline' = @{ parameters = @{} } }
-        $instancePath = Join-Path $repository 'instance.yaml'
-        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $fixture = New-WorkflowRunnerFixture $repository
+        $instance = $fixture.Instance
+        $runnerArguments = $fixture.Arguments
+        $instancePath = $runnerArguments.InstancePath
         $workflowDirectory = Join-Path $repository '.github/workflows'
         $null = New-Item -ItemType Directory -Path $workflowDirectory -Force
         'jobs: { local: { steps: [ { uses: demo-actions/checkout@0123456789abcdef0123456789abcdef01234567 } ] } }' |
@@ -396,16 +424,6 @@ Describe 'Enterprise workflow preflight boundary' {
         & git -c init.defaultBranch=main init --quiet $repository
         & git -C $repository config core.autocrlf false
         $revision = Save-WorkflowRevision
-        $runnerArguments = @{
-            Module = 'enterprise-baseline'
-            Action = 'plan'
-            InstancePath = $instancePath
-            ModulesPath = $modulesPath
-            PlatformOrganization = 'demo-platform'
-            Backend = 'local'
-            StatePath = Join-Path $repository 'state'
-            ArtifactsPath = Join-Path $repository 'artifacts'
-        }
         $runner = Join-Path $PSScriptRoot '../Invoke-Module.ps1'
     }
 
