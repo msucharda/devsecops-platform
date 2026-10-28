@@ -30,12 +30,41 @@ else {
     else {
         $rulesetModules = @(ConvertFrom-Json -InputObject $needs['select']['outputs']['rulesetModules'])
     }
-    foreach ($module in $selected) {
-        $suffix = $module.Replace('-', '_')
-        foreach ($job in @("module_$suffix", "ruleset_plan_$suffix")) {
-            if ($job.StartsWith('ruleset_plan_') -and $module -cnotin $rulesetModules) { continue }
-            if (-not $needs.Contains($job) -or $needs[$job]['result'] -cne 'success') { $failed.Add($job) }
+    $jobNames = [Collections.Generic.List[string]]::new()
+    if ($needs['select']['outputs'].Contains('phaseNodes')) {
+        $selectedNodes = $null
+        try {
+            $selectedNodes = ConvertFrom-Json -InputObject $needs['select']['outputs']['phaseNodes'] -NoEnumerate -ErrorAction Stop
         }
+        catch { $selectedNodes = $null }
+        if ($selectedNodes -isnot [array] -or
+            @($selectedNodes | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[a-z][a-z0-9-]*(:[a-z][a-z0-9-]*)?$' }).Count -gt 0 -or
+            ($selected.Count -gt 0 -and $selectedNodes.Count -eq 0)) {
+            $failed.Add('invalid selected deployment phases')
+        }
+        else {
+            foreach ($node in $selectedNodes) {
+                $jobNames.Add('module_' + $node.Replace('-', '_').Replace(':', '_'))
+            }
+            foreach ($module in $rulesetModules) {
+                if ($module -cnotin $selected -or $module -cnotin $selectedNodes) {
+                    $failed.Add('invalid selected ruleset phase')
+                }
+                else {
+                    $jobNames.Add('ruleset_plan_' + $module.Replace('-', '_'))
+                }
+            }
+        }
+    }
+    else {
+        foreach ($module in $selected) {
+            $suffix = $module.Replace('-', '_')
+            $jobNames.Add("module_$suffix")
+            if ($module -cin $rulesetModules) { $jobNames.Add("ruleset_plan_$suffix") }
+        }
+    }
+    foreach ($job in $jobNames) {
+            if (-not $needs.Contains($job) -or $needs[$job]['result'] -cne 'success') { $failed.Add($job) }
     }
     if ($failed.Count) {
         $text = "Cloud plan INCOMPLETE: $($failed -join ', '). Apply is blocked."

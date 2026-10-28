@@ -52,6 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
       rulesetModules: ${{ steps.modules.outputs.rulesetModules }}
@@ -74,12 +75,12 @@ jobs:
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
-        run: ./trusted/platform/tools/Select-InstanceModules.ps1 -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./trusted/platform/tools/Select-InstanceModules.ps1 -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT -DeploymentScope full
   module_application:
     name: 'application'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'application') && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.module_foundation.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['application']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -158,7 +159,7 @@ jobs:
     name: 'enterprise-baseline'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_service]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.module_service.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_service.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['enterprise-baseline']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -237,7 +238,7 @@ jobs:
     name: 'enterprise-baseline (rulesetPlan)'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_service, module_enterprise_baseline]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.rulesetEnvironments)['enterprise-baseline']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -323,7 +324,7 @@ jobs:
     name: 'foundation'
     runs-on: ubuntu-latest
     needs: [authorize, select]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'foundation') }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['foundation']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -397,7 +398,7 @@ jobs:
     name: 'observer'
     runs-on: ubuntu-latest
     needs: [authorize, select]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'observer') }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['observer']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -471,7 +472,7 @@ jobs:
     name: 'service'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_application, module_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'service') && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['service']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}

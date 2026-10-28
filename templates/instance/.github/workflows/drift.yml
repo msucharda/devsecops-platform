@@ -52,6 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
       rulesetModules: ${{ steps.modules.outputs.rulesetModules }}
@@ -74,12 +75,12 @@ jobs:
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
-        run: ./trusted/platform/tools/Select-InstanceModules.ps1 -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./trusted/platform/tools/Select-InstanceModules.ps1 -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT -DeploymentScope full
   module_actions_catalog:
     name: 'actions-catalog'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_organization_rulesets, module_organizations, ruleset_plan_organization_rulesets]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'actions-catalog') && needs.module_organization_rulesets.result == 'success' && needs.module_organizations.result == 'success' && needs.ruleset_plan_organization_rulesets.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && needs.module_organization_rulesets.result == 'success' && needs.module_organizations.result == 'success' && needs.ruleset_plan_organization_rulesets.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['actions-catalog']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -163,7 +164,7 @@ jobs:
     name: 'emu-identity'
     runs-on: ubuntu-latest
     needs: [authorize, select]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'emu-identity') }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['emu-identity']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -237,7 +238,7 @@ jobs:
     name: 'enterprise-baseline / code-security'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_organizations]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && needs.module_organizations.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['enterprise-baseline']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -323,7 +324,7 @@ jobs:
     name: 'enterprise-baseline'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_actions_catalog, module_organizations]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.module_actions_catalog.result == 'success' && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_actions_catalog.result == 'success' && needs.module_organizations.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['enterprise-baseline']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -408,7 +409,7 @@ jobs:
     name: 'organization-roles'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_organizations]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-roles') && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && needs.module_organizations.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['organization-roles']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -488,7 +489,7 @@ jobs:
     name: 'organization-rulesets'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_enterprise_baseline_code_security, module_organizations]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-rulesets') && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['organization-rulesets']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -573,7 +574,7 @@ jobs:
     name: 'organization-rulesets (rulesetPlan)'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_enterprise_baseline_code_security, module_organizations, module_organization_rulesets]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-rulesets') && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' && needs.module_organization_rulesets.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' && needs.module_organization_rulesets.result == 'success' }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.rulesetEnvironments)['organization-rulesets']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -665,7 +666,7 @@ jobs:
     name: 'organizations'
     runs-on: ubuntu-latest
     needs: [authorize, select]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organizations') }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') }}
     environment: ${{ format('{0}-drift', fromJSON(needs.select.outputs.environments)['organizations']) }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}

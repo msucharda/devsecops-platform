@@ -42,8 +42,13 @@ variable "target_organizations" {
   type        = list(string)
 
   validation {
-    condition     = length(var.target_organizations) == 1
-    error_message = "The organization-scoped runner must supply exactly one target organization."
+    condition     = length(var.target_organizations) > 0
+    error_message = "At least one target organization is required."
+  }
+
+  validation {
+    condition     = length(distinct(var.target_organizations)) == length(var.target_organizations)
+    error_message = "Target organizations must be unique."
   }
 
   validation {

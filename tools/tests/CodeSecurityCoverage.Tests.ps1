@@ -8,6 +8,7 @@ Describe 'Repository Code Security coverage' {
     BeforeEach {
         $previousBearer = $env:REST_API_BEARER
         $env:REST_API_BEARER = 'stub-token'
+        Mock -ModuleName CodeSecurity Start-Sleep {}
         $inventory = Get-GitHubApiFixture -Name apps/list-repos-accessible-to-installation -Set @{
             total_count = 1; 'repositories.0.id' = 101; 'repositories.0.full_name' = 'demo/app'; 'repositories.0.owner.login' = 'demo'
         }
@@ -60,34 +61,60 @@ Describe 'Repository Code Security coverage' {
             foreach ($product in @('enabled', 'code_security')) { @{ Status = $status; Product = $product } }
         }
 
-        It 'reads the dedicated Code Security product when available' {
-            $repository = Get-GitHubApiFixture -Name repos/get -Set @{
-                id = 101; full_name = 'demo/app'; 'security_and_analysis.code_security.status' = 'enabled'
-            }
-            $repository['security_and_analysis'].Remove('advanced_security')
-            (Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo).repositories[0].status |
-                Should -BeExactly 'compliant'
-        }
-
-        It 'does not let legacy security override a disabled dedicated Code Security product' {
-            $repository = Get-GitHubApiFixture -Name repos/get -Set @{
-                id = 101; full_name = 'demo/app'; 'security_and_analysis.code_security.status' = 'disabled'
-            }
-            (Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo).repositories[0].status |
-                Should -BeExactly 'drift'
-        }
-
-        It 'does not let legacy security hide an unreadable dedicated product status' {
-            $repository = Get-GitHubApiFixture -Name repos/get -Set @{ id = 101; full_name = 'demo/app' }
-            $repository['security_and_analysis']['code_security'].Remove('status')
-            (Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo).repositories[0].status |
-                Should -BeExactly 'unverified'
-        }
     ) {
         $attachments[0]['status'] = $Status
         $configuration['advanced_security'] = $Product
         (Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo).repositories[0].status |
             Should -BeExactly 'compliant'
+    }
+
+    It 'reads the dedicated Code Security product when available' {
+        $repository = Get-GitHubApiFixture -Name repos/get -Set @{
+            id = 101; full_name = 'demo/app'; 'security_and_analysis.code_security.status' = 'enabled'
+        }
+        $repository['security_and_analysis'].Remove('advanced_security')
+        (Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo).repositories[0].status |
+            Should -BeExactly 'compliant'
+    }
+
+    It 'does not let legacy security override a disabled dedicated Code Security product' {
+        $repository = Get-GitHubApiFixture -Name repos/get -Set @{
+            id = 101; full_name = 'demo/app'; 'security_and_analysis.code_security.status' = 'disabled'
+        }
+        (Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo).repositories[0].status |
+            Should -BeExactly 'drift'
+    }
+
+    It 'does not let legacy security hide an unreadable dedicated product status' {
+        $repository = Get-GitHubApiFixture -Name repos/get -Set @{ id = 101; full_name = 'demo/app' }
+        $repository['security_and_analysis']['code_security'].Remove('status')
+        (Get-CodeSecurityCoverage -ApiUrl 'https://api.example.ghe.com' -Organization demo).repositories[0].status |
+            Should -BeExactly 'unverified'
+    }
+
+    It 'rejects differently cased internal binding <Case>' -ForEach @(
+        @{ Case = 'attachment status'; AttachmentStatus = 'Attached'; SecurityStatus = 'enabled'; Expected = 'drift' }
+        @{ Case = 'security status'; AttachmentStatus = 'attached'; SecurityStatus = 'Enabled'; Expected = 'unverified' }
+    ) {
+        # Deliberately invalid enum in the internal binding built from the contract configuration.
+        $actual = InModuleScope CodeSecurity -Parameters @{
+            Configuration = $configuration; AttachmentStatus = $AttachmentStatus; SecurityStatus = $SecurityStatus
+        } {
+            param($Configuration, $AttachmentStatus, $SecurityStatus)
+            Get-CodeSecurityCoverageStatus -Attachments @(@{
+                configuration = $Configuration; status = $AttachmentStatus
+            }) -SecurityStatus $SecurityStatus
+        }
+        $actual | Should -BeExactly $Expected
+    }
+
+    It 'does not call ambiguous multiple configuration attachments compliant' {
+        $actual = InModuleScope CodeSecurity -Parameters @{ Configuration = $configuration } {
+            param($Configuration)
+            $binding = @{ configuration = $Configuration; status = 'attached' }
+            Get-CodeSecurityCoverageStatus -Attachments @($binding, $binding.Clone()) -SecurityStatus enabled
+        }
+        $actual | Should -BeExactly 'drift'
     }
 
     It 'names the repository with <Case> as drift' -ForEach @(
@@ -99,8 +126,10 @@ Describe 'Repository Code Security coverage' {
         @{ Case = 'a removed configuration'; Change = { $attachments[0]['status'] = 'removed' } }
         @{ Case = 'enterprise removal'; Change = { $attachments[0]['status'] = 'removed_by_enterprise' } }
         @{ Case = 'disabled configuration security'; Change = { $configuration['advanced_security'] = 'disabled' } }
+        @{ Case = 'differently cased configuration security'; Change = { $configuration['advanced_security'] = 'Enabled' } }
         @{ Case = 'secret protection without Code Security'; Change = { $configuration['advanced_security'] = 'secret_protection' } }
         @{ Case = 'disabled configuration CodeQL'; Change = { $configuration['code_scanning_default_setup'] = 'disabled' } }
+        @{ Case = 'differently cased configuration CodeQL'; Change = { $configuration['code_scanning_default_setup'] = 'Enabled' } }
         @{ Case = 'unset configuration CodeQL'; Change = { $configuration['code_scanning_default_setup'] = 'not_set' } }
         @{ Case = 'disabled repository security'; Change = { $repository['security_and_analysis']['advanced_security']['status'] = 'disabled' } }
     ) {

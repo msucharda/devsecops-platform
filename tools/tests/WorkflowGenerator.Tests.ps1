@@ -88,6 +88,7 @@ BeforeAll {
         }
         $needs.authorize.outputs.allowed = 'true'
         $needs.select.outputs.modules = '["emu-identity","organizations"]'
+        $needs.select.outputs.phaseNodes = '["emu-identity","organizations"]'
         return @{
             cancelled = $false
             github = @{ ref = 'refs/heads/main'; event_name = 'push' }
@@ -109,6 +110,38 @@ BeforeAll {
 }
 
 Describe 'Deployment workflow generation' {
+    It 'rejects invalid dispatch scope in the first credential-free job without shell interpolation' -Tag 'CodeSecurityDispatch' {
+        $output = Join-Path $TestDrive 'dispatch-scope.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        $workflow.on.workflow_dispatch.inputs.deployment.type | Should -Be 'choice'
+        $workflow.on.workflow_dispatch.inputs.deployment.default | Should -Be 'full'
+        @($workflow.on.workflow_dispatch.inputs.deployment.options) | Should -Be @('full', 'code-security')
+        (Get-Content -LiteralPath $output -Raw) | Should -Match '(?m)^jobs:\r?\n  validate_scope:'
+        $workflow.jobs.authorize.needs | Should -Be 'validate_scope'
+        $workflow.jobs.validate_scope.Contains('environment') | Should -BeFalse
+        $workflow.jobs.validate_scope.env.DEPLOYMENT_SCOPE | Should -Be '${{ inputs.deployment }}'
+        $run = $workflow.jobs.validate_scope.steps[0].run
+        $run | Should -Not -Match '\$\{\{'
+        $previousEvent = $env:GITHUB_EVENT_NAME
+        $previousScope = $env:DEPLOYMENT_SCOPE
+        try {
+            $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
+            foreach ($value in @('full', 'code-security')) {
+                $env:DEPLOYMENT_SCOPE = $value
+                { & ([scriptblock]::Create($run)) } | Should -Not -Throw
+            }
+            foreach ($value in @('', 'unexpected', 'FULL')) {
+                $env:DEPLOYMENT_SCOPE = $value
+                { & ([scriptblock]::Create($run)) } | Should -Throw '*Unsupported deployment scope*'
+            }
+        }
+        finally {
+            $env:GITHUB_EVENT_NAME = $previousEvent
+            $env:DEPLOYMENT_SCOPE = $previousScope
+        }
+    }
+
     It 'derives per-organization drift outputs from an arbitrary organization-scoped module manifest' {
         $modules = New-ModuleGraphFixture -ModuleName foundation -Change {
             param($manifest)
@@ -181,14 +214,14 @@ Describe 'Deployment workflow generation' {
         Test-Path -LiteralPath (Join-Path $released 'enterprise-baseline/rulesets') | Should -BeFalse
     }
 
-    It 'loads the released organization-rulesets manifest with a separate ruleset plan after organizations' {
+    It 'loads the released organization-rulesets manifest with a separate ruleset plan after organizations' -Tag 'CodeSecurityDispatch' {
         Import-Module (Join-Path $toolsPath 'PlatformTools.psm1') -Force
         $released = Join-Path (Split-Path $toolsPath -Parent) 'modules'
 
         $graph = Get-PlatformModuleGraph -ModulesPath $released
         $manifest = $graph['organization-rulesets']
 
-        @($manifest.prerequisites) | Should -Be @('organizations')
+        @($manifest.prerequisites) | Should -Be @('enterprise-baseline:code-security', 'organizations')
         @($graph['actions-catalog'].prerequisites) | Should -Contain 'organization-rulesets'
         $manifest.permissions.githubApp.plan.permissions.Keys | Should -Be @('organization_administration')
         $manifest.permissions.githubApp.plan.permissions.organization_administration | Should -Be 'read'
@@ -253,9 +286,9 @@ Describe 'Deployment workflow generation' {
 
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
         $workflow.jobs.plan_complete.needs | Should -Contain 'module_enterprise_baseline'
-        $workflow.jobs.module_enterprise_baseline.if | Should -Match "contains\(fromJSON\(needs.select.outputs.modules\), 'enterprise-baseline'\)"
+        $workflow.jobs.module_enterprise_baseline.if | Should -Match "contains\(fromJSON\(needs.select.outputs.phaseNodes\), 'enterprise-baseline'\)"
         $workflow.jobs.approve_apply.needs | Should -Be @('authorize', 'select', 'plan_complete')
-        $workflow.jobs.approve_apply.if | Should -Be '${{ !cancelled() && needs.authorize.result == ''success'' && needs.select.result == ''success'' && needs.plan_complete.result == ''success'' && github.ref == ''refs/heads/main'' && github.event_name != ''pull_request_target'' && needs.authorize.outputs.allowed == ''true'' && needs.select.outputs.modules != ''[]'' }}'
+        $workflow.jobs.approve_apply.if | Should -Be '${{ !cancelled() && needs.authorize.result == ''success'' && needs.select.result == ''success'' && needs.plan_complete.result == ''success'' && github.ref == ''refs/heads/main'' && github.event_name != ''pull_request_target'' && needs.authorize.outputs.allowed == ''true'' && needs.select.outputs.phaseNodes != ''[]'' }}'
     }
 
     It 'requires successful approval and the own plan for every apply job in <Graph>' -ForEach @(
@@ -318,7 +351,7 @@ Describe 'Deployment workflow generation' {
             foreach ($allowed in @('false', '', '__missing__', $null)) {
                 @{ Case = "authorization [$allowed]"; Path = 'needs.authorize.outputs.allowed'; Value = $allowed; RejectedBy = "needs.authorize.outputs.allowed == 'true'" }
             }
-            @{ Case = 'an empty module selection'; Path = 'needs.select.outputs.modules'; Value = '[]'; RejectedBy = "needs.select.outputs.modules != '[]'" }
+            @{ Case = 'an empty phase selection'; Path = 'needs.select.outputs.phaseNodes'; Value = '[]'; RejectedBy = "needs.select.outputs.phaseNodes != '[]'" }
         ) {
             $context = Get-SubsetWorkflowContext $subsetWorkflow
             Set-WorkflowConditionValue $context $Path $Value
@@ -342,7 +375,7 @@ Describe 'Deployment workflow generation' {
                     @{ Job = $job; Case = "authorization [$allowed]"; Path = 'needs.authorize.outputs.allowed'; Value = $allowed; RejectedBy = "needs.authorize.outputs.allowed == 'true'" }
                 }
                 $name = $suffix.Replace('_', '-')
-                @{ Job = $job; Case = 'an unselected module'; Path = 'needs.select.outputs.modules'; Value = '[]'; RejectedBy = "contains(fromJSON(needs.select.outputs.modules), '$name')" }
+                @{ Job = $job; Case = 'an unselected module'; Path = 'needs.select.outputs.phaseNodes'; Value = '[]'; RejectedBy = "contains(fromJSON(needs.select.outputs.phaseNodes), '$name')" }
             }
         ) {
             $context = Get-SubsetWorkflowContext $subsetWorkflow
@@ -408,12 +441,15 @@ Describe 'Deployment workflow generation' {
 
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
         $workflow.jobs.select.outputs.modules | Should -Be '${{ steps.modules.outputs.modules }}'
+        $workflow.jobs.select.outputs.phaseNodes | Should -Be '${{ steps.modules.outputs.phaseNodes }}'
         $workflow.jobs.module_application.needs | Should -Be @('authorize', 'select', 'module_foundation')
         $workflow.jobs.module_observer.needs | Should -Be @('authorize', 'select')
-        $workflow.jobs.module_application.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.modules), ''application'') && needs.module_foundation.result == ''success'' }}'
-        $workflow.jobs.module_observer.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.modules), ''observer'') }}'
+        $workflow.jobs.module_application.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''application'') && needs.module_foundation.result == ''success'' }}'
+        $workflow.jobs.module_observer.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''observer'') }}'
         $workflow.jobs.select.steps[-1].run | Should -Match 'trusted/platform/tools/Select-InstanceModules\.ps1 @arguments'
         $workflow.jobs.select.steps[-1].run | Should -Match 'TrustedInstancePath'
+        $workflow.jobs.select.steps[-1].run | Should -Not -Match '\$\{\{'
+        $workflow.jobs.select.steps[-1].env.DEPLOYMENT_SCOPE | Should -Be '${{ inputs.deployment }}'
     }
 
     It 'produces identical bytes despite directory creation order and prerequisite ordering' {
@@ -537,7 +573,7 @@ Describe 'Deployment workflow generation' {
         & $generator -ModulesPath $modules -OutputPath $output
 
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
-        @($workflow.jobs.Keys | Sort-Object) | Should -Be @('approve_apply', 'authorize', 'plan_complete', 'select', 'validate')
+        @($workflow.jobs.Keys | Sort-Object) | Should -Be @('approve_apply', 'authorize', 'plan_complete', 'select', 'validate', 'validate_scope')
     }
 
     It 'supports module names matching dictionary members or the selection job: <Name>' -ForEach @(

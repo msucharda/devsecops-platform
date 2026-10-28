@@ -176,28 +176,13 @@ Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. P
 
 ### Nový živý krok: časná Code Security fáze před prvním úplným deploy
 
-Rozhodnutí koordinátora: Při prvním nasazení musí platformní tým po úspěšném apply `organizations` spustit samostatně standardní `Invoke-Module.ps1 -Module enterprise-baseline -DeploymentPhase code-security`. Spustí nejdřív plan s původním `enterprise-baseline` plan environmentem a pak apply s původním apply environmentem a schválením. Fáze používá stávající plan/apply App, Azure identity a tokenová oprávnění. Nesmí přidat credential binding, instance config ani nový typ tokenu.
+Rozhodnutí koordinátora: Při prvním nasazení otevři v repozitáři instance **Actions → Deploy instance → Run workflow** na chráněné větvi `main` a vyber `deployment: code-security`. Jde o nový živý uživatelský krok. Výchozí volba `full` spouští běžný deploy; `push` a PR dál používají úplný graf. Nepodporovanou nebo prázdnou hodnotu dispatch odmítne první job bez credentials ještě před autorizací.
 
-Tento krok **mění živý stav**. Před spuštěním musí platformní tým použít neměnný commit z chráněné `main` s publikovaným release markerem `.platform-bootstrap.json`, ověřit jeho soulad s vendorovaným release a provést běžnou validaci `Test-InstanceConfiguration.ps1` i výběr `Select-InstanceModules.ps1`. Runner při zadání `-DeploymentPhase` provádí stejnou validaci manifestu, instance, vybraného modulu a organizačního scope jako při běžném běhu. Samotný přímý CLI běh však neověřuje release marker ani nevyžaduje schválení GitHub environmentu: tyto dvě podmínky musí zajistit schválené prostředí spuštění, nikoli parametr runneru. Pokud nelze ověřit marker a schválení, krok se nesmí spustit.
+Staged běh vybere pouze `enterprise-baseline:code-security` a jeho skutečné předpoklady, včetně `organizations`. Nespouští pozdní `enterprise-baseline`, `organization-rulesets` ani `actions-catalog`. Autorizační preflight, validace instance z publikovaného release, plan všech vybraných rootů, společná brána `approve_apply` a původní plan/apply environmenty zůstávají stejné. Job používá standardní `Invoke-Module.ps1 -DeploymentPhase code-security`, stávající App, Azure identity a tokenová oprávnění. Nevzniká další credential binding ani instance config. Artifact `organizations.json` přebírá plan i apply z odpovídajícího úspěšného jobu stejného běhu; navržený Terraform state není důkaz vzdáleného stavu.
 
-Předej planu skutečný artifact `organizations.json` z planu organizací a apply skutečný artifact z apply organizací **téhož nasazení** přes `-PrerequisiteOutputsPath`. Nepředávej navržený state ani výstup z jiného běhu. Volání `-Action plan` a `-Action apply` používají stále běžné oddělené tokeny a stejné entry pointy jako ostatní moduly. Po úspěchu musí být `platform-baseline` výchozí pro nové repozitáře ve všech organizacích a připojená ke všem existujícím repozitářům včetně `instance`. Teprve pak spusť celý `deploy.yml` z chráněné `main`. Jeho společná brána `approve_apply` se nemění. Ruleset plan na čerstvé instanci bez vzdálené konfigurace musí selhat, i když časná fáze vytvořila plan.
+Po úspěšném apply musí být `platform-baseline` výchozí pro nové repozitáře ve všech organizacích a připojená ke všem existujícím repozitářům včetně `instance`. Potom spusť **Actions → Deploy instance → Run workflow** na `main` s `deployment: full`. Společná brána schválení se nemění. Ruleset plan bez vzdálené konfigurace musí selhat, i když existuje plan časné fáze.
 
-V již schváleném prostředí spusť ze stejného neměnného checkoutu instance tyto entry pointy. Nahraď cesty skutečnými artifacty a odvozenou organizací platformy; tokeny vydávej a odvolávej stejným postupem jako pro běžný plan a apply modul. Bez schválení apply environmentu ani bez ověřeného release markeru tyto příkazy nespouštěj.
-
-```powershell
-.\platform\tools\Test-InstanceConfiguration.ps1 -InstancePath .\instance.yaml -ModulesPath .\platform\modules
-.\platform\tools\Select-InstanceModules.ps1 -InstancePath .\instance.yaml -ModulesPath .\platform\modules
-$phase = @{
-    Module = 'enterprise-baseline'
-    DeploymentPhase = 'code-security'
-    InstancePath = '.\instance.yaml'
-    ModulesPath = '.\platform\modules'
-    PlatformOrganization = '<organizace-platformy>'
-}
-.\platform\tools\Invoke-Module.ps1 @phase -Action plan -PrerequisiteOutputsPath '<plan-outputs-organizations>'
-# After the existing apply environment approval, switch to its apply identity and token.
-.\platform\tools\Invoke-Module.ps1 @phase -Action apply -PrerequisiteOutputsPath '<apply-outputs-organizations>'
-```
+Pokud starý state modulu `enterprise-baseline` ještě eviduje Code Security objekty, staged běh je převezme podle názvu do samostatného state. Následující `full` běh čtyři původní adresy ve starém state pouze zapomene pomocí deklarací `removed` s `destroy = false`. Nesmí spustit staré destroy provisionery ani odstranit konfiguraci nebo custom patterns. Při přerušení mezi oběma běhy zopakuj `deployment: code-security` a pak `deployment: full`; skripty dohledají již převzaté objekty. Tento konkrétní nedestruktivní přechod nepovoluje jiné migrace RC state.
 
 Vlož metadata do `githubApps` a vazby do `credentials` v pracovní kopii konfigurace. Autorizační alias, například `authorization`, patří také do `githubApps`; skriptu ho předáš přes `-AuthorizationApp`. Privátní klíče a jejich lokální manifest **nesmějí** ležet v release ani ve zdrojovém repozitáři.
 

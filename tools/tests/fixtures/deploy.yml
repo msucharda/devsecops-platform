@@ -7,15 +7,39 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deployment:
+        description: Deployment scope
+        required: true
+        type: choice
+        default: full
+        options: [full, code-security]
 permissions:
   contents: read
 concurrency:
   group: deploy-instance-${{ github.event.pull_request.number || 'main' }}
   cancel-in-progress: false
 jobs:
+  validate_scope:
+    name: Reject unsupported deployment scope before authorization
+    runs-on: ubuntu-latest
+    env:
+      DEPLOYMENT_SCOPE: ${{ inputs.deployment }}
+    steps:
+      - name: Validate workflow input without loading credentials
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            if ($env:DEPLOYMENT_SCOPE -cnotin @('full', 'code-security')) {
+              throw 'Unsupported deployment scope.'
+            }
+          } elseif (-not [string]::IsNullOrEmpty($env:DEPLOYMENT_SCOPE)) {
+            throw 'Unexpected deployment scope outside workflow_dispatch.'
+          }
   authorize:
     name: Authorize deployment from trusted main
     runs-on: ubuntu-latest
+    needs: validate_scope
     environment: pr-authorization
     outputs:
       allowed: ${{ steps.authorize.outputs.allowed }}
@@ -78,6 +102,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
@@ -101,11 +126,14 @@ jobs:
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
+        env:
+          DEPLOYMENT_SCOPE: ${{ inputs.deployment }}
         run: |
           $arguments = @{
             InstancePath = './candidate/instance.yaml'
             ModulesPath = './candidate/platform/modules'
             GitHubOutputPath = $env:GITHUB_OUTPUT
+            DeploymentScope = if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { $env:DEPLOYMENT_SCOPE } else { 'full' }
           }
           if ($env:GITHUB_EVENT_NAME -eq 'pull_request_target') {
             $arguments.TrustedInstancePath = './trusted/instance.yaml'
@@ -115,7 +143,7 @@ jobs:
     name: 'application'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'application') && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.module_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['application'] }}
     permissions:
       contents: read
@@ -191,7 +219,7 @@ jobs:
     name: 'enterprise-baseline'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_service]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.module_service.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_service.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
     permissions:
       contents: read
@@ -267,7 +295,7 @@ jobs:
     name: 'enterprise-baseline (rulesetPlan)'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_service, module_enterprise_baseline]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.rulesetEnvironments)['enterprise-baseline'] }}
     permissions:
       contents: read
@@ -343,7 +371,7 @@ jobs:
     name: 'foundation'
     runs-on: ubuntu-latest
     needs: [authorize, select]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'foundation') }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['foundation'] }}
     permissions:
       contents: read
@@ -414,7 +442,7 @@ jobs:
     name: 'observer'
     runs-on: ubuntu-latest
     needs: [authorize, select]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'observer') }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['observer'] }}
     permissions:
       contents: read
@@ -485,7 +513,7 @@ jobs:
     name: 'service'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_application, module_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'service') && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['service'] }}
     permissions:
       contents: read
@@ -564,7 +592,7 @@ jobs:
         run: ./trusted/platform/tools/Remove-PlatformGitHubToken.ps1
   plan_complete:
     name: Report complete or explicitly unperformed cloud plan
-    needs: [authorize, validate, select, module_application, module_enterprise_baseline, ruleset_plan_enterprise_baseline, module_foundation, module_observer, module_service]
+    needs: [validate_scope, authorize, validate, select, module_application, module_enterprise_baseline, ruleset_plan_enterprise_baseline, module_foundation, module_observer, module_service]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -582,7 +610,7 @@ jobs:
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
+    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.phaseNodes != '[]' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:
@@ -593,7 +621,7 @@ jobs:
     name: 'application (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_application, apply_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'application') && needs.approve_apply.result == 'success' && needs.module_application.result == 'success' && needs.apply_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.approve_apply.result == 'success' && needs.module_application.result == 'success' && needs.apply_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['application'] }}
     permissions:
       contents: read
@@ -669,7 +697,7 @@ jobs:
     name: 'enterprise-baseline (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_enterprise_baseline, apply_service]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_service.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_service.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
     permissions:
       contents: read
@@ -750,7 +778,7 @@ jobs:
     name: 'foundation (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'foundation') && needs.approve_apply.result == 'success' && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && needs.approve_apply.result == 'success' && needs.module_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['foundation'] }}
     permissions:
       contents: read
@@ -821,7 +849,7 @@ jobs:
     name: 'observer (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_observer]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'observer') && needs.approve_apply.result == 'success' && needs.module_observer.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') && needs.approve_apply.result == 'success' && needs.module_observer.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['observer'] }}
     permissions:
       contents: read
@@ -892,7 +920,7 @@ jobs:
     name: 'service (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_service, apply_application, apply_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'service') && needs.approve_apply.result == 'success' && needs.module_service.result == 'success' && needs.apply_application.result == 'success' && needs.apply_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.approve_apply.result == 'success' && needs.module_service.result == 'success' && needs.apply_application.result == 'success' && needs.apply_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['service'] }}
     permissions:
       contents: read

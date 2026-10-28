@@ -220,7 +220,7 @@ function Assert-RulesetCodeSecurityPrerequisite {
             throw "Code Security defaults of '$Organization' have no configuration object. $remedy"
         }
         $id = $configuration['id']
-        if (($id -isnot [int] -and $id -isnot [long]) -or [string] $id -cnotmatch '^[1-9][0-9]{0,17}$') {
+        if (($id -isnot [int] -and $id -isnot [long]) -or $id -le 0) {
             throw "Code Security defaults of '$Organization' have no valid configuration ID. $remedy"
         }
         if ($null -ne $configurationId -and $id -ne $configurationId) {

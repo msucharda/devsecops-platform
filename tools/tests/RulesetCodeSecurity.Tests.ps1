@@ -20,6 +20,7 @@ Describe 'Ruleset Code Security prerequisite' {
     BeforeEach {
         $previousTokens = $env:PLATFORM_GITHUB_TOKENS
         $env:PLATFORM_GITHUB_TOKENS = '{"demo":"stub-token"}'
+        Mock -ModuleName Rulesets Start-Sleep {}
         $defaults = Get-TestSecurityDefaults
         Mock -ModuleName Rulesets Invoke-WebRequest {
             $Uri | Should -BeExactly 'https://api.example.ghe.com/orgs/demo/code-security/configurations/defaults'
@@ -36,6 +37,11 @@ Describe 'Ruleset Code Security prerequisite' {
     AfterEach { $env:PLATFORM_GITHUB_TOKENS = $previousTokens }
 
     It 'accepts the enforced platform baseline for all new repositories' {
+        { Assert-RulesetCodeSecurityPrerequisite -ApiUrl 'https://api.example.ghe.com' -Organization demo } | Should -Not -Throw
+    }
+
+    It 'accepts positive 64-bit configuration IDs without a decimal-length restriction' {
+        $defaults[0]['configuration']['id'] = [long]::MaxValue
         { Assert-RulesetCodeSecurityPrerequisite -ApiUrl 'https://api.example.ghe.com' -Organization demo } | Should -Not -Throw
     }
 

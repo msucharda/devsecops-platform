@@ -76,7 +76,7 @@ function Add-DeploymentJob {
         $needs += $prerequisiteRulesetJobs
     }
     if ($Phase -eq 'rulesetPlan') { $needs += "module_$suffix" }
-    $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), '$name')"
+    $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), '$key')"
     if ($Phase -eq 'apply') { $condition += " && needs.approve_apply.result == 'success' && needs.module_$suffix.result == 'success'" }
     foreach ($prerequisite in $Node.Prerequisites) {
         $condition += " && needs.$prerequisitePrefix$($prerequisite.Replace('-', '_').Replace(':', '_')).result == 'success'"
@@ -232,15 +232,39 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deployment:
+        description: Deployment scope
+        required: true
+        type: choice
+        default: full
+        options: [full, code-security]
 permissions:
   contents: read
 concurrency:
   group: deploy-instance-${{ github.event.pull_request.number || 'main' }}
   cancel-in-progress: false
 jobs:
+  validate_scope:
+    name: Reject unsupported deployment scope before authorization
+    runs-on: ubuntu-latest
+    env:
+      DEPLOYMENT_SCOPE: ${{ inputs.deployment }}
+    steps:
+      - name: Validate workflow input without loading credentials
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            if ($env:DEPLOYMENT_SCOPE -cnotin @('full', 'code-security')) {
+              throw 'Unsupported deployment scope.'
+            }
+          } elseif (-not [string]::IsNullOrEmpty($env:DEPLOYMENT_SCOPE)) {
+            throw 'Unexpected deployment scope outside workflow_dispatch.'
+          }
   authorize:
     name: Authorize deployment from trusted main
     runs-on: ubuntu-latest
+    needs: validate_scope
     environment: pr-authorization
     outputs:
       allowed: ${{ steps.authorize.outputs.allowed }}
@@ -297,6 +321,7 @@ Add-WorkflowBlock @'
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
@@ -312,11 +337,14 @@ Add-WorkflowBlock @'
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
+        env:
+          DEPLOYMENT_SCOPE: ${{ inputs.deployment }}
         run: |
           $arguments = @{
             InstancePath = './candidate/instance.yaml'
             ModulesPath = './candidate/platform/modules'
             GitHubOutputPath = $env:GITHUB_OUTPUT
+            DeploymentScope = if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { $env:DEPLOYMENT_SCOPE } else { 'full' }
           }
           if ($env:GITHUB_EVENT_NAME -eq 'pull_request_target') {
             $arguments.TrustedInstancePath = './trusted/instance.yaml'
@@ -329,7 +357,7 @@ foreach ($node in $phaseGraph.PSBase.Values) {
         Add-DeploymentJob -Node $node -Phase rulesetPlan
     }
 }
-$planNeeds = @('authorize', 'validate', 'select')
+$planNeeds = @('validate_scope', 'authorize', 'validate', 'select')
 foreach ($node in $phaseGraph.PSBase.Values) {
     $planNeeds += 'module_' + $node.Name.Replace('-', '_').Replace(':', '_')
     if (-not $node.Phase -and $node.Manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
@@ -356,7 +384,7 @@ Add-WorkflowBlock @'
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
+    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.phaseNodes != '[]' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:
@@ -417,6 +445,7 @@ Add-WorkflowBlock @'
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
       rulesetModules: ${{ steps.modules.outputs.rulesetModules }}
@@ -431,7 +460,7 @@ Add-WorkflowBlock @'
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
-        run: ./trusted/platform/tools/Select-InstanceModules.ps1 -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./trusted/platform/tools/Select-InstanceModules.ps1 -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT -DeploymentScope full
 '@
 foreach ($node in $phaseGraph.PSBase.Values) {
     Add-DeploymentJob -Node $node -Phase plan -Drift
@@ -439,10 +468,11 @@ foreach ($node in $phaseGraph.PSBase.Values) {
         Add-DeploymentJob -Node $node -Phase rulesetPlan -Drift
     }
 }
+$driftPlanNeeds = @($planNeeds | Where-Object { $_ -cne 'validate_scope' })
 Add-WorkflowBlock @"
   report_drift:
     name: Open or update the drift issue
-    needs: [$($planNeeds -join ', ')]
+    needs: [$($driftPlanNeeds -join ', ')]
 "@
 Add-WorkflowBlock @'
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}

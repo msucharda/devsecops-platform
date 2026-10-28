@@ -13,6 +13,45 @@ teams:
 }
 
 Describe 'Instance module selection' {
+    It 'selects only the early Code Security node and its recursive prerequisites for staged deployment' {
+        Import-Module powershell-yaml -RequiredVersion 0.4.12
+        $modules = Join-Path $TestDrive 'phase-modules'
+        Copy-Item -LiteralPath $fixtures -Destination $modules -Recurse
+        $baselinePath = Join-Path $modules 'enterprise-baseline/module.yaml'
+        $baseline = ConvertFrom-Yaml (Get-Content -LiteralPath $baselinePath -Raw)
+        $baseline.prerequisites = @('service')
+        $baseline.permissions.githubApp = @{}
+        $baseline.phases = @{ 'code-security' = @{ prerequisites = @('application') } }
+        ConvertTo-Yaml $baseline | Set-Content -LiteralPath $baselinePath
+        New-Item -ItemType Directory -Path (Join-Path $modules 'enterprise-baseline/code-security') | Out-Null
+        $instance = Join-Path $TestDrive 'phase-instance.yaml'
+        ($header + 'modules: {enterprise-baseline: {}}') | Set-Content -LiteralPath $instance
+        $stageOutput = Join-Path $TestDrive 'stage-output'
+        $fullOutput = Join-Path $TestDrive 'full-output'
+
+        $stage = & $selector -ModulesPath $modules -InstancePath $instance -DeploymentScope code-security -GitHubOutputPath $stageOutput
+        $full = & $selector -ModulesPath $modules -InstancePath $instance -DeploymentScope full -GitHubOutputPath $fullOutput
+
+        $stage | Should -Be '["application","enterprise-baseline","foundation"]'
+        ([IO.File]::ReadAllText($stageOutput)) | Should -Match 'phaseNodes=\["application","enterprise-baseline:code-security","foundation"\]'
+        ([IO.File]::ReadAllText($stageOutput)) | Should -Not -Match 'phaseNodes=.*"enterprise-baseline",'
+        ([IO.File]::ReadAllText($stageOutput)) | Should -Match 'rulesetModules=\[\]'
+        $full | Should -Be '["application","enterprise-baseline","foundation","service"]'
+        ([IO.File]::ReadAllText($fullOutput)) | Should -Match 'phaseNodes=\["application","enterprise-baseline","enterprise-baseline:code-security","foundation","service"\]'
+    }
+
+    It 'rejects an invalid or unconfigured staged deployment before publishing selection' {
+        $instance = Join-Path $TestDrive 'invalid-stage.yaml'
+        ($header + 'modules: {observer: {}}') | Set-Content -LiteralPath $instance
+        $output = Join-Path $TestDrive 'invalid-stage-output'
+
+        { & $selector -ModulesPath $fixtures -InstancePath $instance -DeploymentScope code-security -GitHubOutputPath $output } |
+            Should -Throw '*requires a configured enterprise-baseline*'
+        { & $selector -ModulesPath $fixtures -InstancePath $instance -DeploymentScope unexpected -GitHubOutputPath $output } |
+            Should -Throw
+        Test-Path -LiteralPath $output | Should -BeFalse
+    }
+
     It 'adds transitive prerequisites once and excludes unrelated modules' {
         $instance = Join-Path $TestDrive 'instance.yaml'
         $header + @'
