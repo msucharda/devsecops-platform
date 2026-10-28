@@ -14,7 +14,7 @@
       "tree",
       "truncated"
     ],
-    "tree": [
+    "tree.[]": [
       "path",
       "mode",
       "type",
