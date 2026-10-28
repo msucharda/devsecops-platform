@@ -35,6 +35,14 @@ Modul pro každou organizaci z `target_organizations` volá `PATCH /orgs/{org}` 
 - Další postcondition odmítne odpověď, ve které `members_can_change_repo_visibility` nebo `members_can_delete_repositories` má jinou hodnotu než `false`. API organizace tato pole nenastaví; vynucuje je předpoklad `repositoryManagementPoliciesEnforced`. Ruční potvrzení předpokladu nepřebije opačný důkaz z API.
 - Check `enterprise_repository_management_policies` hlásí jako varování, že GitHub některé z těchto dvou polí nevrátil. Installation token je nemusí dostat; jediným důkazem pak zůstává ručně potvrzený předpoklad.
 
+### Offline kontrakt zapisovaných polí
+
+Soubor [`organization-patch-allowlist.json`](organization-patch-allowlist.json) obsahuje explicitní allow-list polí `PATCH /orgs/{org}` a důvod zápisu každého pole. Zachovává čtyři spravovaná pole uvedená výše. U každého uvádí omezení: enterprise musí správu delegovat organizaci. Soubor také zaznamenává pět vynechaných kandidátů enterprise policy: public creation, private forks, organization Projects, repository Projects a deploy keys.
+
+Terraform test [`organization_patch_contract.tftest.hcl`](tests/organization_patch_contract.tftest.hcl) porovná skutečné `data`, efektivní update payload a `destroy_data` každého organizačního prostředku s allow-listem. Provider [`Mastercard/restapi` 3.0.0](https://github.com/Mastercard/terraform-provider-restapi/blob/v3.0.0/docs/resources/object.md) při update použije `update_data`, pokud je nastavené; jinak použije `data`. Neznámé pole, prázdný payload, chybějící důvod, prázdný důvod, `null` nebo jiný typ důvodu než string zastaví test. Stringové důvody musí mít i vynechaní kandidáti. Pester ověřuje dokumentovaná pole a dispozici všech devíti kandidátů z [#148](https://github.com/msucharda/devsecops-platform/issues/148). Mutační případy přidají dokumentované, ale nepovolené pole zvlášť do create, update a destroy payloadu v izolované kopii modulu; stejný Terraform test musí selhat. Existující integrační test navíc ověřuje allow-list nad každým skutečným PATCH tělem zachyceným lokálním API stubem.
+
+Jde o offline kontrolu v Source CI, nikoli o preflight zapisovatelnosti při nasazení. Kontrola nemění payload, manifest permissions ani postconditions efektivních hodnot z #147. Neschválený nový zápis odhalí před vydáním, ale nezjistí aktuální enterprise policy. I povolené pole může při apply vrátit `422`. Varianta A z #148, read-only čtení GraphQL `ownerInfo`, zůstává otevřeným živým kritériem a vyžaduje samostatné rozhodnutí uživatele. Tato změna nepovoluje živé kroky ani obnovení kroku 6.23.
+
 ## Ruční enterprise předpoklady
 
 Manifest deklaruje `manualPrerequisites`. Runner před plan a apply vyžaduje `true` pro každý příznak v `instance.yaml`; chybějící nebo nepravdivá hodnota ho zastaví před Terraformem. Destroy potvrzení nevyžaduje. Souhrn jobu označí potvrzení jako ruční deklaraci, ne ověření.
