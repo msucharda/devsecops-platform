@@ -911,7 +911,7 @@ function Get-MergeGatePinnedFile {
         $hasBase = $before.ContainsKey($path)
         $hasHead = $after.ContainsKey($path)
         if ($hasBase -and $hasHead -and $before[$path]['sha'] -ceq $after[$path]['sha'] -and
-            $before[$path]['mode'] -eq $after[$path]['mode'] -and $before[$path]['type'] -eq $after[$path]['type']) { continue }
+            $before[$path]['mode'] -eq $after[$path]['mode']) { continue }
         # Directory entries are covered by their recursively enumerated children.
         $sides = @(if ($hasBase) { $before[$path] }; if ($hasHead) { $after[$path] })
         if (@($sides | Where-Object { $_['type'] -ne 'tree' }).Count -eq 0) { continue }

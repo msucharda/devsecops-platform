@@ -5,7 +5,8 @@
 @{
     'EnterpriseBaseline.Tests.ps1' = 280
     'EnterpriseBaselinePatchContract.Tests.ps1' = 5
-    'GitHubBootstrap.Tests.ps1' = 151
+    # Source CI run 40771671425: 543.7233 seconds, rounded up.
+    'GitHubBootstrap.Tests.ps1' = 544
     'RulesetsTerraform.Tests.ps1' = 138
     'OrganizationRolePrograms.Tests.ps1' = 105
     'RemoveBootstrap.Tests.ps1' = 45
@@ -15,8 +16,8 @@
     # Source CI run 40583010425: 22.597 seconds.
     'MutationRunner.Tests.ps1' = 23
     'Organizations.Tests.ps1' = 18
-    # Source CI run 40780082244: 59.103 seconds.
-    'MergeGate.Tests.ps1' = 59
+    # Source CI run 40785638540: 77.2658 seconds, rounded up.
+    'MergeGate.Tests.ps1' = 78
     # Source CI run 40661148420: 14.539 seconds.
     'WorkflowPreflight.Tests.ps1' = 15
     'ModuleRunner.Tests.ps1' = 14
