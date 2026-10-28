@@ -66,6 +66,8 @@ variable "target_organizations" {
   }
 }
 
+# The module input contract is shared with the early Code Security phase.
+# tflint-ignore: terraform_unused_declarations
 variable "secret_scanning_bypass_reviewers" {
   description = "Teams or organization roles that review requests to bypass push protection, by GitHub ID. reviewer_type is TEAM or ROLE."
   type = list(object({
