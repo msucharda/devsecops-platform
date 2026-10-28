@@ -1,27 +1,32 @@
 #Requires -Version 7.4
 [CmdletBinding()]
-param([ValidateSet('TFLint')][string] $Name = 'TFLint')
+param(
+    [ValidateSet('TFLint', 'Actionlint', 'Terraform')][string] $Name = 'TFLint',
+    [switch] $Local
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
-if (-not $IsLinux -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.InteropServices.Architecture]::X64) {
-    throw 'CI binary installation supports Linux amd64 only.'
-}
-$requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
-$pin = $requirements.Binaries[$Name]
-$directory = Join-Path $env:RUNNER_TEMP "platform-tflint-$([guid]::NewGuid().ToString('N'))"
+$package = Get-ToolBinaryPackage -Name $Name
+$parent = if ($Local) { Split-Path $package.CachePath -Parent } else { $env:RUNNER_TEMP }
+$null = New-Item -ItemType Directory -Path $parent -Force
+$directory = Join-Path $parent "platform-$($Name.ToLowerInvariant())-$([guid]::NewGuid().ToString('N'))"
 $null = New-Item -ItemType Directory -Path $directory
 $published = $false
 try {
-    $archive = Join-Path $directory 'tflint_linux_amd64.zip'
-    Invoke-WebRequest -Uri "https://github.com/terraform-linters/tflint/releases/download/v$($pin.Version)/tflint_linux_amd64.zip" -OutFile $archive -ErrorAction Stop
-    Assert-ToolPackage -Path $archive -Sha256 $pin.LinuxAmd64ArchiveSha256 -Name $Name
-    [IO.Compression.ZipFile]::ExtractToDirectory($archive, $directory)
-    $executable = Join-Path $directory 'tflint'
-    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw 'TFLint archive does not contain tflint.' }
-    & chmod '+x' $executable
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot mark TFLint executable.' }
+    if ($Local -and (Test-Path -LiteralPath $package.CachePath -PathType Leaf)) {
+        Assert-ToolPackage -Path $package.CachePath -Sha256 $package.Sha256 -Name $Name
+        return
+    }
+    $archive = Join-Path $directory $package.Archive
+    Invoke-WebRequest -Uri $package.Uri -OutFile $archive -ErrorAction Stop
+    Assert-ToolPackage -Path $archive -Sha256 $package.Sha256 -Name $Name
+    if ($Local) {
+        [IO.File]::Move($archive, $package.CachePath, $true)
+        return
+    }
+    $null = Expand-ToolBinary -Package $package -ArchivePath $archive -DestinationPath $directory
     Add-Content -LiteralPath $env:GITHUB_PATH -Value $directory
     $published = $true
 }

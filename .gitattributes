@@ -5,6 +5,5 @@
 *.yml text eol=lf
 *.json text eol=lf
 *.tf text eol=lf
-*.go text eol=lf
 .githooks/* text eol=lf
 tools/vendor/** -text -whitespace

@@ -2,6 +2,8 @@
 [CmdletBinding()]
 param(
     [switch] $Development,
+    [ValidateSet('Actionlint', 'Terraform', 'TFLint')]
+    [string[]] $Binary = @(),
     [ValidateRange('Positive')]
     [int] $MaxAttempts = 4,
     [ValidateRange('NonNegative')]
@@ -38,6 +40,9 @@ function Invoke-DependencyTransfer {
 $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
 foreach ($name in $requirements.Runtime.Keys) {
     $null = Get-ToolDependencyPath -Name $name
+}
+foreach ($name in $Binary) {
+    & (Join-Path $PSScriptRoot 'Install-CiBinary.ps1') -Name $name -Local
 }
 if (-not $Development) { return }
 

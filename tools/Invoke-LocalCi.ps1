@@ -167,7 +167,7 @@ $testProfile = Get-LocalCiProfile -RepositoryRoot $repo -PesterPath $selection.P
     $selection.AllPester -or @($changedFiles | Where-Object { $_ -in @(
         'tools/Invoke-LocalCi.ps1', 'tools/LocalCi.psm1', 'tools/LocalCiGate.psm1', 'tools/LocalCiConcurrency.psm1',
         'tools/test-profiles.psd1', 'tools/Test-PowerShell.ps1', 'tools/Test-LocalCiResult.ps1',
-        'tools/probes/powershell-external.go', '.githooks/pre-push', '.github/workflows/ci.yml'
+        '.githooks/pre-push', '.github/workflows/ci.yml'
     ) }).Count -gt 0)
 $staticPaths = @($changedFiles | Where-Object {
     $_ -match '\.(ps1|psm1|psd1)$' -and (Test-Path -LiteralPath (Join-Path $repo $_) -PathType Leaf)
@@ -220,7 +220,7 @@ if ($Plan) { exit 0 }
 $savedEnvironment = @{}
 # A nested or concurrent run would empty the per-worktree TEMP of the outer run.
 if ($env:INVOKE_LOCAL_CI_ACTIVE) { Exit-Usage 'Another Invoke-LocalCi run is active in this process tree; nested runs are refused.' }
-foreach ($name in 'TEMP', 'TMP', 'TMPDIR', 'TF_IN_AUTOMATION', 'INTERRUPTION_SHARD', 'PESTER_SHARD', 'INVOKE_LOCAL_CI_ACTIVE', 'LOCAL_CI_WORKER_BUDGET') {
+foreach ($name in 'TEMP', 'TMP', 'TMPDIR', 'TF_IN_AUTOMATION', 'INTERRUPTION_SHARD', 'PESTER_SHARD', 'INVOKE_LOCAL_CI_ACTIVE', 'LOCAL_CI_WORKER_BUDGET', 'PATH') {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 $results = [System.Collections.Generic.List[object]]::new()
@@ -354,17 +354,27 @@ try {
 
     # 1. Preflight
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    try { $null = Test-LocalCiRuntime -TempPath $temp }
+    if ($mode -eq 'Full' -and $selection.TerraformRoot.Count -gt 0) {
+        try {
+            $terraformPackage = Get-ToolBinaryPackage -Name Terraform
+            if (Test-Path -LiteralPath $terraformPackage.CachePath -PathType Leaf) {
+                $terraformPath = Get-ToolBinaryPath -Name Terraform -DestinationPath (Join-Path $temp 'terraform-bin')
+                $env:PATH = (Split-Path $terraformPath -Parent) + [IO.Path]::PathSeparator + $env:PATH
+            }
+            $null = Test-LocalCiRuntime -TempPath $temp
+        }
+        catch { Exit-Usage $_.Exception.Message }
+    }
+    try { $actionlintPath = Get-ToolBinaryPath -Name Actionlint -DestinationPath (Join-Path $temp 'actionlint-bin') }
     catch { Exit-Usage $_.Exception.Message }
     $toolProbe = {
         param($tool)
-        if (-not (Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
+        if ($tool -ne 'actionlint' -and -not (Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
         $text = switch ($tool) {
             'terraform' { (& terraform version -json 2>$null | ConvertFrom-Json).terraform_version }
             'tflint' { (& tflint --version 2>$null | Select-Object -First 1) -replace '^TFLint version ', '' }
             'trivy' { (& trivy --version 2>$null | Where-Object { $_ -like 'Version:*' } | Select-Object -First 1) -replace '^Version:\s*', '' }
-            'actionlint' { (& actionlint -version 2>$null | Select-Object -First 1) }
-            'go' { (& go version 2>$null) }
+            'actionlint' { (& $actionlintPath -version 2>$null | Select-Object -First 1) }
         }
         return ([string] $text).Trim().TrimStart('v')
     }
@@ -377,8 +387,6 @@ try {
         exit 2
     }
     Add-Result -Name 'Preflight' -Status 'PASS' -Seconds $watch.Elapsed.TotalSeconds
-    [string[]] $actionlint = if ((& $toolProbe 'actionlint') -ceq $setting.ActionlintVersion) { @('actionlint') }
-    else { @('go', 'run', "github.com/rhysd/actionlint/cmd/actionlint@v$($setting.ActionlintVersion)") }
 
     # 2.-5. pwsh steps, in full and unchanged from ci.yml
     foreach ($name in 'Check PowerShell', 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {
@@ -390,15 +398,9 @@ try {
         Invoke-Step -Name $name -Body { Invoke-PwshScript -Script $stepScript }
     }
 
-    if ($Full -or $changedFiles -contains 'tools/probes/powershell-external.go') {
-        Invoke-Step -Name 'Check external-program preflight helper' -Body {
-            Invoke-Native -FilePath 'go' -Arguments @('vet', '-p=1', 'tools/probes/powershell-external.go')
-        }
-    }
-
     # 6.-7. actionlint
     Invoke-Step -Name 'Validate deployment workflow syntax' -Body {
-        Invoke-Native -FilePath $actionlint[0] -Arguments (@($actionlint | Select-Object -Skip 1) + $setting.ActionlintArguments)
+        Invoke-Native -FilePath $actionlintPath -Arguments $setting.ActionlintArguments
     }
     Invoke-Step -Name 'Validate instance workflows that call local reusable workflows' -Body {
         $project = Join-Path $temp "actionlint-$([guid]::NewGuid().ToString('N'))"
@@ -406,7 +408,7 @@ try {
         $null = New-Item -ItemType Directory -Force -Path $workflows
         foreach ($file in $setting.InstanceWorkflowFiles) { Copy-Item -LiteralPath (Join-Path $repo $file) -Destination $workflows }
         Invoke-Native -FilePath 'git' -Arguments @('init', '-q', $project)
-        Invoke-Native -FilePath $actionlint[0] -Arguments (@($actionlint | Select-Object -Skip 1) + $setting.InstanceActionlintArguments) -WorkingDirectory $project
+        Invoke-Native -FilePath $actionlintPath -Arguments $setting.InstanceActionlintArguments -WorkingDirectory $project
     }
 
     # 8. Terraform
