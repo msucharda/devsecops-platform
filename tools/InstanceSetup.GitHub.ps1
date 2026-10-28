@@ -109,14 +109,15 @@ function Invoke-StepAcceptanceApp {
     if (-not $state.Contains('apps')) { $state['apps'] = @{} }
     $organization = Get-SetupAcceptanceOrganization -Setup $Setup
     $config['modules']['enterprise-baseline']['parameters'] = @{ target_organizations = @($organization) }
+    $config['modules']['organization-rulesets']['parameters'] = @{ target_organizations = @($organization) }
     $appSetup = $Setup.Clone()
     $appSetup.WorkPath = $directory
     $null = [IO.Directory]::CreateDirectory((Join-Path $directory 'keys'))
     $contracts = @(
         @{ alias = 'authorization'; permissions = @{ members = 'read' }; phase = '' }
-        @{ alias = 'reader'; permissions = @{ organization_administration = 'read' }; phase = 'plan' }
-        @{ alias = 'writer'; permissions = @{ organization_administration = 'write' }; phase = 'apply' }
-        @{ alias = 'rulesets'; permissions = @{ organization_administration = 'write' }; phase = 'rulesetPlan' }
+        @{ alias = 'reader'; permissions = @{ organization_administration = 'read' }; phase = 'plan'; modules = @('enterprise-baseline', 'organization-rulesets') }
+        @{ alias = 'writer'; permissions = @{ organization_administration = 'write' }; phase = 'apply'; modules = @('enterprise-baseline', 'organization-rulesets') }
+        @{ alias = 'rulesets'; permissions = @{ organization_administration = 'write' }; phase = 'rulesetPlan'; modules = @('organization-rulesets') }
     )
     foreach ($contract in $contracts) {
         $alias = $contract.alias
@@ -129,7 +130,9 @@ function Invoke-StepAcceptanceApp {
             appId = $app.AppId; installationId = $app.InstallationId; enterprise = $Setup.Settings['enterprise']
             permissions = $contract.permissions; resources = $resources
         }
-        if ($contract.phase) { $config['credentials']['enterprise-baseline'][$contract.phase]['githubApp'] = $alias }
+        if ($contract.phase) {
+            foreach ($module in $contract.modules) { $config['credentials'][$module][$contract.phase]['githubApp'] = $alias }
+        }
         [IO.File]::WriteAllText($Setup.InstancePath, (ConvertTo-Yaml $config).Replace("`r", ''), [Text.UTF8Encoding]::new($false))
         $rsa = [Security.Cryptography.RSA]::Create()
         try {
@@ -558,12 +561,19 @@ function Invoke-StepAcceptanceRelease {
     if (-not (Test-Path $Setup.InstancePath)) {
         $config = Copy-SetupData $acceptance['sourceConfiguration']
         # G5 adds target_organizations after G4 records the platform organization name in the inventory.
-        $config['modules'] = @{ 'enterprise-baseline' = @{ parameters = @{} } }
+        $config['modules'] = @{
+            'enterprise-baseline' = @{ parameters = @{} }
+            'organization-rulesets' = @{ parameters = @{} }
+        }
         $config['credentials'] = @{
             'enterprise-baseline' = @{
                 plan = @{ environment = 'enterprise-baseline-plan' }
                 apply = @{ environment = 'enterprise-baseline-apply' }
-                rulesetPlan = @{ environment = 'enterprise-baseline-ruleset-plan' }
+            }
+            'organization-rulesets' = @{
+                plan = @{ environment = 'organization-rulesets-plan' }
+                apply = @{ environment = 'organization-rulesets-apply' }
+                rulesetPlan = @{ environment = 'organization-rulesets-ruleset-plan' }
             }
         }
         $config['githubApps'] = @{}

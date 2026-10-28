@@ -83,6 +83,19 @@ Describe 'GitHub acceptance through the public setup wizard' {
             ($result.Stages | Where-Object Id -eq $id).Status | Should -Be 'Skipped'
         }
         Test-Path (Join-Path $work 'github-acceptance/release/modules/enterprise-baseline/module.yaml') | Should -BeTrue
+        $rulesetManifest = Join-Path $work 'github-acceptance/release/modules/organization-rulesets/module.yaml'
+        Test-Path $rulesetManifest | Should -BeTrue
+        $rulesets = ConvertFrom-Yaml (Get-Content $rulesetManifest -Raw)
+        $rulesets.name | Should -Be 'organization-rulesets'
+        $rulesets.permissions.githubApp.rulesetPlan.permissions.organization_administration | Should -Be 'write'
+        $rulesets.permissions.githubApp.rulesetPlan.resources.organizations | Should -Be 'target_organizations'
+        $rulesets.permissions.githubApp.rulesetPlan.purpose | Should -Be 'organization-rulesets-full-read'
+        $baseline = ConvertFrom-Yaml (Get-Content (Join-Path $work 'github-acceptance/release/modules/enterprise-baseline/module.yaml') -Raw)
+        $baseline.permissions.githubApp.Contains('rulesetPlan') | Should -BeFalse
+        $acceptance = ConvertFrom-Yaml (Get-Content (Join-Path $work 'github-acceptance/instance.yaml') -Raw)
+        $acceptance.modules.Contains('organization-rulesets') | Should -BeTrue
+        $acceptance.credentials['organization-rulesets'].rulesetPlan.environment | Should -Be 'organization-rulesets-ruleset-plan'
+        $acceptance.credentials['enterprise-baseline'].Contains('rulesetPlan') | Should -BeFalse
         Test-Path (Join-Path $work 'github-acceptance/release/templates/instance/.github/workflows/bootstrap-acceptance.yml') | Should -BeTrue
         Test-Path (Join-Path $work 'github-acceptance/release/tools/.dependencies') | Should -BeFalse
         (Get-Content (Join-Path $work 'instance.yaml') -Raw).TrimEnd() | Should -Be $sourceConfig.TrimEnd()
@@ -95,6 +108,7 @@ Describe 'GitHub acceptance through the public setup wizard' {
             $global:LASTEXITCODE = 0
             '{"tenant":"11111111-1111-1111-1111-111111111111","accessToken":"test-azure"}'
         }
+
         Mock Start-Sleep -ModuleName InstanceSetup {}
         Mock Invoke-WebRequest -ModuleName InstanceSetup { throw 'Injected API stop after provisional configuration validation' }
         $prepared = & $wizard -WorkPath $work -GitHubAcceptance -ReleasePath $source -ReleaseVersion '0.0.0-bootstrap.11' -PassThru
@@ -107,5 +121,22 @@ Describe 'GitHub acceptance through the public setup wizard' {
         ($resumed.Stages | Where-Object Id -eq 'acceptance-release').Status | Should -Be 'Error'
         ($resumed.Stages | Where-Object Id -eq 'acceptance-azure').Status | Should -Be 'Skipped'
         Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 1 -Exactly
+    }
+}
+
+Describe 'Acceptance workflow module contracts' {
+    It 'uses the matching module and environment for each read phase' {
+        Import-Module powershell-yaml -RequiredVersion 0.4.12
+        $workflow = ConvertFrom-Yaml (Get-Content (Join-Path $root 'tools/acceptance/github/bootstrap-acceptance.yml') -Raw)
+        $job = @($workflow.jobs.Values | Where-Object { $_.Contains('strategy') })[0]
+        $rows = $job.strategy.matrix.include
+        ($rows | Where-Object phase -eq 'plan').module | Should -Be 'enterprise-baseline'
+        ($rows | Where-Object phase -eq 'plan').environment | Should -Be 'enterprise-baseline-plan'
+        ($rows | Where-Object phase -eq 'rulesetPlan').module | Should -Be 'organization-rulesets'
+        ($rows | Where-Object phase -eq 'rulesetPlan').environment | Should -Be 'organization-rulesets-ruleset-plan'
+        $token = @($job.steps | Where-Object { $_.Contains('run') -and $_.run -like '*New-PlatformGitHubToken.ps1*' })
+        $token.Count | Should -Be 1
+        $token[0].env.ACCEPTANCE_MODULE | Should -Be '${{ matrix.module }}'
+        $token[0].run | Should -Match '\-Module \$env:ACCEPTANCE_MODULE'
     }
 }

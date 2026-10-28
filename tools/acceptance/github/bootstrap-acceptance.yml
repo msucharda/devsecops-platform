@@ -75,9 +75,11 @@ jobs:
       matrix:
         include:
           - phase: plan
+            module: enterprise-baseline
             environment: enterprise-baseline-plan
           - phase: rulesetPlan
-            environment: enterprise-baseline-ruleset-plan
+            module: organization-rulesets
+            environment: organization-rulesets-ruleset-plan
     runs-on: ubuntu-latest
     environment: ${{ github.event_name == 'schedule' && format('{0}-drift', matrix.environment) || matrix.environment }}
     permissions:
@@ -102,7 +104,8 @@ jobs:
           PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
           ACCEPTANCE_PHASE: ${{ matrix.phase }}
-        run: ./platform/tools/New-PlatformGitHubToken.ps1 -Module enterprise-baseline -Phase $env:ACCEPTANCE_PHASE -InstancePath ./instance.yaml
+          ACCEPTANCE_MODULE: ${{ matrix.module }}
+        run: ./platform/tools/New-PlatformGitHubToken.ps1 -Module $env:ACCEPTANCE_MODULE -Phase $env:ACCEPTANCE_PHASE -InstancePath ./instance.yaml
       - shell: pwsh
         env:
           AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}

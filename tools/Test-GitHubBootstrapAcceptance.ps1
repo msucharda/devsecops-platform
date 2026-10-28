@@ -139,9 +139,10 @@ else {
     if ($claims['appid'] -cne $env:AZURE_CLIENT_ID -or $claims['tid'] -cne $instance['bootstrap']['tenantId']) {
         throw 'Azure authenticated another client or tenant, not this protected phase identity.'
     }
-    $null = & az storage blob list --account-name $env:PLATFORM_STATE_STORAGE_ACCOUNT --container-name enterprise-baseline `
+    $module = if ($Phase -eq 'rulesetPlan') { 'organization-rulesets' } else { 'enterprise-baseline' }
+    $null = & az storage blob list --account-name $env:PLATFORM_STATE_STORAGE_ACCOUNT --container-name $module `
         --auth-mode login --output json --only-show-errors 2>&1
-    if ($LASTEXITCODE -ne 0) { throw 'The phase identity cannot read its own enterprise-baseline state container.' }
+    if ($LASTEXITCODE -ne 0) { throw "The phase identity cannot read its own $module state container." }
     $diagnostic = [ordered]@{
         version = 1; phase = $Phase; outcome = 'UnrecognizedFailure'
         nativeExitCode = $null; httpStatus = $null; errorCode = 'not-observed'
