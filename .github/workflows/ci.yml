@@ -237,6 +237,10 @@ jobs:
         run: |
           terraform -chdir="$TF_ROOT" init -backend=false -input=false
           terraform -chdir="$TF_ROOT" validate
+      - name: Verify Terraform external-program preflight
+        if: ${{ matrix.root == 'modules/organizations' }}
+        shell: pwsh
+        run: ./tools/Test-LocalCiRuntimeProbe.ps1 -ProviderDirectory ./modules/organizations/.terraform/providers -TempPath $env:RUNNER_TEMP
       - name: Terraform test
         run: |
           if [ -d "$TF_ROOT/tests" ]; then

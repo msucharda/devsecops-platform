@@ -63,6 +63,44 @@ Describe 'CI binary integrity before execution' {
         Get-Content $binary | Should -BeExactly 'verified tar executable'
     }
 
+    It 'rejects a correctly hashed archive with <Case>' -ForEach @(
+        @{ Case = 'a missing ZIP executable'; Kind = 'Zip'; Names = @('other'); Link = $false; Message = '*exactly one actionlint*' }
+        @{ Case = 'duplicate ZIP executables'; Kind = 'Zip'; Names = @('actionlint', 'actionlint'); Link = $false; Message = '*exactly one actionlint*' }
+        @{ Case = 'a missing TAR executable'; Kind = 'Tar'; Names = @('other'); Link = $false; Message = '*does not contain actionlint*' }
+        @{ Case = 'duplicate TAR executables'; Kind = 'Tar'; Names = @('actionlint', 'actionlint'); Link = $false; Message = '*exactly one regular actionlint*' }
+        @{ Case = 'a symbolic-link TAR executable'; Kind = 'Tar'; Names = @('actionlint'); Link = $true; Message = '*exactly one regular actionlint*' }
+    ) {
+        Import-Module (Join-Path $tools 'ToolDependencies.psm1') -Force
+        $archivePath = Join-Path $TestDrive ("bad-$([guid]::NewGuid().ToString('N'))." + $(if ($Kind -eq 'Zip') { 'zip' } else { 'tar.gz' }))
+        $file = [IO.File]::Create($archivePath)
+        if ($Kind -eq 'Zip') {
+            $archive = [IO.Compression.ZipArchive]::new($file, [IO.Compression.ZipArchiveMode]::Create)
+            try { foreach ($name in $Names) { $null = $archive.CreateEntry($name) } }
+            finally { $archive.Dispose(); $file.Dispose() }
+        }
+        else {
+            $gzip = [IO.Compression.GZipStream]::new($file, [IO.Compression.CompressionMode]::Compress)
+            $writer = [System.Formats.Tar.TarWriter]::new($gzip)
+            try {
+                foreach ($name in $Names) {
+                    $type = if ($Link) { [System.Formats.Tar.TarEntryType]::SymbolicLink } else { [System.Formats.Tar.TarEntryType]::RegularFile }
+                    $entry = [System.Formats.Tar.PaxTarEntry]::new($type, $name)
+                    if ($Link) { $entry.LinkName = 'other' }
+                    else { $entry.DataStream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes('executable fixture')) }
+                    try { $writer.WriteEntry($entry) }
+                    finally { if ($null -ne $entry.DataStream) { $entry.DataStream.Dispose() } }
+                }
+            }
+            finally { $writer.Dispose(); $gzip.Dispose(); $file.Dispose() }
+        }
+        # Deliberately invalid archive contents, with a matching hash so the structural guard is exercised.
+        $package = [pscustomobject]@{
+            Name = 'Actionlint'; Archive = [IO.Path]::GetFileName($archivePath); Executable = 'actionlint'; Sha256 = (Get-FileHash $archivePath).Hash
+        }
+        { Expand-ToolBinary -Package $package -ArchivePath $archivePath -DestinationPath (Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))) } |
+            Should -Throw $Message
+    }
+
     It 'rejects a mismatched actionlint archive before extraction or PATH publication' {
         $oldTemp = $env:RUNNER_TEMP
         $oldGitHubPath = $env:GITHUB_PATH

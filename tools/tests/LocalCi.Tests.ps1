@@ -57,6 +57,16 @@ Describe 'Local CI reads ci.yml' {
         $setting.TrivyVersion | Should -Match '^\d+\.\d+\.\d+$'
     }
 
+    It 'runs the offline real-Terraform probe only after organizations provider initialization' {
+        $steps = @($workflow.jobs.terraform.steps)
+        $smoke = @($steps | Where-Object { $_['name'] -eq 'Verify Terraform external-program preflight' })
+        $smoke.Count | Should -Be 1
+        $smoke[0]['if'] | Should -BeExactly '${{ matrix.root == ''modules/organizations'' }}'
+        $smoke[0].shell | Should -BeExactly 'pwsh'
+        $smoke[0].run | Should -BeExactly './tools/Test-LocalCiRuntimeProbe.ps1 -ProviderDirectory ./modules/organizations/.terraform/providers -TempPath $env:RUNNER_TEMP'
+        [array]::IndexOf($steps, $smoke[0]) | Should -BeGreaterThan ([array]::IndexOf($steps, @($steps | Where-Object { $_['name'] -eq 'Terraform validate' })[0]))
+    }
+
     It 'runs the same Terraform commands as the <Name> CI step' -ForEach @(
         @{ Name = 'Terraform format' }, @{ Name = 'Terraform validate' }, @{ Name = 'Terraform test' }, @{ Name = 'TFLint' }, @{ Name = 'Trivy' }
     ) {

@@ -1,0 +1,25 @@
+{
+  "source": {
+    "operation": "terraform show -json probe.tfplan",
+    "documentation": "https://developer.hashicorp.com/terraform/internals/json-format",
+    "terraformVersion": "1.16.5",
+    "formatVersion": "1.2",
+    "note": "Documented plan representation and output-value shape; runtime is a map(string) from hashicorp/external 2.4.2."
+  },
+  "body": {
+    "format_version": "1.2",
+    "terraform_version": "1.16.5",
+    "planned_values": {
+      "outputs": {
+        "runtime": {
+          "sensitive": false,
+          "type": ["map", "string"],
+          "value": {
+            "probe": "local-ci",
+            "version": "7.4.0"
+          }
+        }
+      }
+    }
+  }
+}

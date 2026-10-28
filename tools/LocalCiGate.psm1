@@ -260,6 +260,9 @@ if ($query['probe'] -cne 'local-ci') { throw 'Invalid preflight input' }
         $null = Invoke-LocalCiTerraform -Directory $directory -Arguments @('init', '-backend=false', '-input=false', '-lockfile=readonly', '-no-color')
         $null = Invoke-LocalCiTerraform -Directory $directory -Arguments @('plan', '-input=false', '-no-color', '-lock=false', '-out=probe.tfplan')
         $plan = Invoke-LocalCiTerraform -Directory $directory -Arguments @('show', '-json', 'probe.tfplan') | ConvertFrom-Json -AsHashtable
+        if ($plan -isnot [hashtable] -or $plan['format_version'] -isnot [string] -or $plan['format_version'] -cnotmatch '^1\.[0-9]+$') {
+            throw 'Unsupported Terraform plan format_version; expected major version 1.'
+        }
         $response = $plan.planned_values.outputs.runtime.value
         $runtimeVersion = $null
         if ($response -isnot [hashtable] -or $response.Count -ne 2 -or $response['probe'] -isnot [string] -or $response['probe'] -cne 'local-ci' -or

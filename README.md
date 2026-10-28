@@ -287,6 +287,8 @@ Před lokálním gate obnov moduly a ověřený actionlint do worktree cache:
 
 `-Changed` nevyžaduje Go ani Terraform. `-Full` s vybranými Terraform rooty nejdřív ověří spuštění `pwsh` přes skutečný Terraform external provider. Sonda používá soukromý TEMP a verzi i hashe provideru z `modules/organizations/.terraform.lock.hcl`. Nefunkční alias Microsoft Store ukončí gate s exit 2; nastav procesový PATH na funkční PowerShell. Actionlint používá pinované archivy pro Windows a Linux amd64; globální instalace není nutná.
 
+CI spouští skutečnou pozitivní a negativní sondu jen v Terraform jobu pro `modules/organizations`. `tools/Test-LocalCiRuntimeProbe.ps1` sestaví offline filesystem mirror z provideru, který už nainstaloval `terraform init`. Sonda provider znovu nestahuje; Pester zůstává offline.
+
 Workflow `Source CI` spouští Pester, syntaktickou a statickou kontrolu PowerShellu, validaci Module manifest a kontrolu aktuálnosti obou commitnutých workflow. `Get-TerraformRoots.ps1` vyhledá v repozitáři každý adresář se soubory `.tf` nebo `.tf.json`, včetně fixture; vynechá `.git`, `.terraform` a symbolické adresáře. CI na každém nalezeném rootu spustí `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`, tflint a Trivy. Nález Trivy úrovně `HIGH` nebo `CRITICAL` způsobí chybu CI. Pokud repozitář nemá žádný Terraform root, CI tuto část přeskočí.
 
 Stejné kontroly Terraformu můžeš spustit lokálně s nainstalovanými nástroji `terraform`, `tflint` a `trivy`:

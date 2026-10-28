@@ -189,9 +189,11 @@ Describe 'Local CI content-bound result' {
 Describe 'Local CI external-program preflight' -Tag LocalCiRuntime {
     InModuleScope LocalCiGate {
         BeforeEach {
+            $fixturePath = Join-Path (Split-Path (Get-Module LocalCiGate).Path -Parent) 'tests/fixtures/terraform/plan-runtime.json'
+            $script:runtimePlan = (Get-Content -LiteralPath $fixturePath -Raw | ConvertFrom-Json -AsHashtable).body
             Mock Invoke-LocalCiTerraform {
                 if ($Arguments[0] -eq 'show') {
-                    '{"planned_values":{"outputs":{"runtime":{"value":{"probe":"local-ci","version":"7.4.0"}}}}}'
+                    $script:runtimePlan | ConvertTo-Json -Depth 10
                 }
             }
         }
@@ -207,7 +209,7 @@ Describe 'Local CI external-program preflight' -Tag LocalCiRuntime {
                     Get-Content (Join-Path $Directory '.terraform.lock.hcl') -Raw | Should -Match 'zh:0b51793'
                 }
                 if ($Arguments[0] -eq 'show') {
-                    '{"planned_values":{"outputs":{"runtime":{"value":{"probe":"local-ci","version":"7.4.0"}}}}}'
+                    $script:runtimePlan | ConvertTo-Json -Depth 10
                 }
             }
             Test-LocalCiRuntime -TempPath $TestDrive -Executable 'probe-pwsh' | Should -BeTrue
@@ -216,8 +218,8 @@ Describe 'Local CI external-program preflight' -Tag LocalCiRuntime {
         }
 
         It 'rejects <Case> and removes the interrupted probe directory' -ForEach @(
-            @{ Case = 'a missing executable'; Detail = 'exec: pwsh not found' }
-            @{ Case = 'a non-launchable Store alias'; Detail = 'fork/exec pwsh.exe: The file cannot be accessed by the system.' }
+            @{ Case = 'a missing executable'; Detail = 'External Program Lookup Failed: exec: "pwsh": executable file not found' }
+            @{ Case = 'a non-launchable Store alias'; Detail = 'External Program Execution Failed: fork/exec pwsh.exe: The file cannot be accessed by the system.' }
             @{ Case = 'a failed provider initialization'; Detail = 'Provider checksum mismatch' }
         ) {
             Mock Invoke-LocalCiTerraform { throw $Detail }
@@ -235,9 +237,33 @@ Describe 'Local CI external-program preflight' -Tag LocalCiRuntime {
             @{ Case = 'an array'; Value = '[]' }
         ) {
             Mock Invoke-LocalCiTerraform {
-                if ($Arguments[0] -eq 'show') { '{"planned_values":{"outputs":{"runtime":{"value":' + $Value + '}}}}' }
+                if ($Arguments[0] -eq 'show') {
+                    $script:runtimePlan.planned_values.outputs.runtime.value = $Value | ConvertFrom-Json -AsHashtable -NoEnumerate
+                    $script:runtimePlan | ConvertTo-Json -Depth 10
+                }
             }
             { Test-LocalCiRuntime -TempPath $TestDrive } | Should -Throw '*expected external-program string map*'
+        }
+
+        It 'rejects plan format_version <Case>' -ForEach @(
+            @{ Case = 'unsupported major'; Format = '2.0' }
+            @{ Case = 'empty'; Format = '' }
+            @{ Case = 'null'; Format = $null }
+            @{ Case = 'non-string'; Format = 1.2 }
+            @{ Case = 'array'; Format = @('1.2') }
+        ) {
+            $script:runtimePlan.format_version = $Format
+            { Test-LocalCiRuntime -TempPath $TestDrive } | Should -Throw '*Unsupported Terraform plan format_version*'
+        }
+
+        It 'rejects a missing plan format_version' {
+            $script:runtimePlan.Remove('format_version')
+            { Test-LocalCiRuntime -TempPath $TestDrive } | Should -Throw '*Unsupported Terraform plan format_version*'
+        }
+
+        It 'accepts a newer minor plan format version' {
+            $script:runtimePlan.format_version = '1.99'
+            Test-LocalCiRuntime -TempPath $TestDrive | Should -BeTrue
         }
     }
 

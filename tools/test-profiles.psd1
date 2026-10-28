@@ -5,6 +5,7 @@
         'DeploymentIdentifier.Tests.ps1'
         'DeploymentSummary.Tests.ps1'
         'LocalCiGate.Unit.Tests.ps1'
+        'LocalCiRuntimeProbe.Tests.ps1'
         'ModuleOrder.Tests.ps1'
         'ModuleSelection.Tests.ps1'
         'OrganizationScope.Tests.ps1'
