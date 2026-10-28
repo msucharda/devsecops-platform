@@ -73,10 +73,9 @@ run "sets_the_managed_baseline" {
         members_can_create_repositories          = false
         members_can_create_private_repositories  = false
         members_can_create_internal_repositories = false
-        members_can_fork_private_repositories    = false
       }
     ])
-    error_message = "The baseline must remove the base repository permission, member repository creation and private forks."
+    error_message = "The create/update PATCH must manage base repository permission and member repository creation without sending enterprise-controlled fields."
   }
 }
 
@@ -91,7 +90,6 @@ run "restores_github_defaults_only_for_managed_fields_on_destroy" {
         members_can_create_repositories          = true
         members_can_create_private_repositories  = true
         members_can_create_internal_repositories = true
-        members_can_fork_private_repositories    = false
       }
     ])
     error_message = "Destroy must restore the GitHub defaults of exactly the managed fields."

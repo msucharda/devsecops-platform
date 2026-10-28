@@ -6,7 +6,6 @@ locals {
     members_can_create_repositories          = false
     members_can_create_private_repositories  = false
     members_can_create_internal_repositories = false
-    members_can_fork_private_repositories    = false
   }
 
   # GitHub defaults of the managed fields; destroy restores only these.
@@ -15,7 +14,6 @@ locals {
     members_can_create_repositories          = true
     members_can_create_private_repositories  = true
     members_can_create_internal_repositories = true
-    members_can_fork_private_repositories    = false
   }
 
   # Enterprise policies enforce these; the organization API reads but cannot set them.
@@ -48,6 +46,12 @@ resource "restapi_object" "organization_settings" {
         try(self.api_data[field], null) == tostring(value)
       ])
       error_message = "Organization ${each.key} does not match the managed baseline, or GitHub did not return a managed field. A missing field means the token cannot read it and is a failure. The provider does not repair drift of these fields automatically; restore the managed values in the organization before the next apply."
+    }
+
+    # Enterprise policy owns this field, but its effective value must remain readable.
+    postcondition {
+      condition     = try(self.api_data["members_can_fork_private_repositories"], null) == "false"
+      error_message = "Organization ${each.key} must report members_can_fork_private_repositories as false to verify the enterprise prerequisite privateInternalForksDisabled. A missing, null or other value is a failure. Enforce the enterprise forking policy and ensure the token can read it; the module never writes this field."
     }
 
     # The manual enterprise prerequisite cannot override contrary evidence from the API.

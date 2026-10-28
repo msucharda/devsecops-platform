@@ -18,7 +18,6 @@ Modul pro každou organizaci z `target_organizations` volá `PATCH /orgs/{org}` 
 | `members_can_create_repositories` | `false` | `true` |
 | `members_can_create_private_repositories` | `false` | `true` |
 | `members_can_create_internal_repositories` | `false` | `true` |
-| `members_can_fork_private_repositories` | `false` | `false` |
 
 - Modul nespravuje zakládání public repozitářů. EMU organizace public repozitáře nemají.
 - Modul používá provider `Mastercard/restapi`, ne `github_organization_settings` providera `integrations/github`. Ten vyžaduje `billing_email`, posílá všechna pole organizace a potřebuje provider pro každou organizaci.
@@ -27,8 +26,10 @@ Modul pro každou organizaci z `target_organizations` volá `PATCH /orgs/{org}` 
 - Každá organizace má v kontejneru `enterprise-baseline` vlastní state `organizations/<login>/terraform.tfstate`. Login je lowercase. Runner nepoužije starý společný state ani ho nemigruje; upgrade mezi RC release není podporovaný. Výstupní artifact vznikne až po úspěchu všech organizací. Obsahuje úplný seznam `organizations` a veřejné výstupy v mapě `organization_outputs`.
 - Create, update i destroy jsou `PATCH` existující organizace. Přerušený běh proto další apply bezpečně zopakuje.
 - Postcondition po čtení `GET /orgs/{org}` ([dokumentace](https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/orgs#get-an-organization)) vyžaduje spravované hodnoty. Chybějící pole je chyba, ne shoda. Plan tak zachytí drift spravovaných polí.
+- `members_can_fork_private_repositories` řídí enterprise politika, ne modul. Create, update ani destroy toto pole neposílají. Samostatná postcondition vyžaduje přesně `false` z API; `true`, `null`, chybějící pole nebo neplatná hodnota zastaví plan i apply s odkazem na předpoklad `privateInternalForksDisabled`. Teardown enterprise politiku zachová.
+- Plan čte stav, ale neposílá zkušební `PATCH`. Dokumentace tohoto endpointu neuvádí dry-run; úspěšný plan proto nedokazuje, že API přijme zápis. Enterprise politika forků odmítá i zápis nezměněné hodnoty (`422`, [#147](https://github.com/msucharda/devsecops-platform/issues/147)).
 - Omezení: provider `Mastercard/restapi` 3.0.0 s `ignore_server_additions` drift spravovaných polí neopraví. `Read` ponechá v state konfigurovaná data, a plan proto nenaplánuje opravný `PATCH` ([Mastercard/terraform-provider-restapi#348](https://github.com/Mastercard/terraform-provider-restapi/issues/348)). Drift proto zastaví plan i apply chybou postcondition. Operátor obnoví spravované hodnoty v organizaci ručně. Automatická oprava driftu je otevřené rozhodnutí.
-- Druhá postcondition odmítne odpověď, ve které `members_can_change_repo_visibility` nebo `members_can_delete_repositories` má jinou hodnotu než `false`. API organizace tato pole nenastaví; vynucuje je předpoklad `repositoryManagementPoliciesEnforced`. Ruční potvrzení předpokladu nepřebije opačný důkaz z API.
+- Další postcondition odmítne odpověď, ve které `members_can_change_repo_visibility` nebo `members_can_delete_repositories` má jinou hodnotu než `false`. API organizace tato pole nenastaví; vynucuje je předpoklad `repositoryManagementPoliciesEnforced`. Ruční potvrzení předpokladu nepřebije opačný důkaz z API.
 - Check `enterprise_repository_management_policies` hlásí jako varování, že GitHub některé z těchto dvou polí nevrátil. Installation token je nemusí dostat; jediným důkazem pak zůstává ručně potvrzený předpoklad.
 
 ## Ruční enterprise předpoklady
@@ -37,7 +38,7 @@ Manifest deklaruje `manualPrerequisites`. Runner před plan a apply vyžaduje `t
 
 | Příznak | Kontrola |
 |---|---|
-| `privateInternalForksDisabled` | Forky privátních a internal repozitářů jsou zakázané. |
+| `privateInternalForksDisabled` | Enterprise politika zakazuje forky privátních a internal repozitářů. Modul ji nemění; přes `GET /orgs/{org}` navíc vyžaduje `members_can_fork_private_repositories = false`. Ruční potvrzení nenahradí chybějící nebo nevyhovující hodnotu z API. |
 | `repositoryManagementPoliciesEnforced` | Členové nesmí zakládat repozitáře, měnit jejich viditelnost ani je mazat nebo přenášet. |
 | `emuUserNamespacesRestricted` | EMU user namespaces nesmějí obsahovat repozitáře, které obejdou organizační kontroly. |
 | `fineGrainedPatApprovalRequired` | Fine-grained PAT vyžaduje schválení. |
