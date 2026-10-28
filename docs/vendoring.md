@@ -140,6 +140,8 @@ Po review release platformní tým připraví samostatný PR s povýšením schv
 
 Po mergi povýšení platformní tým nastaví v `instance.yaml` příznak `manualPrerequisites.liveWorkflowsPromoted: true`. Bez příznaku runner zastaví plan a apply modulu `enterprise-baseline`, protože jeho politika akcí by zablokovala workflow s upstream akcemi.
 
+Příznak nenahrazuje automatický [preflight živých workflow](../modules/enterprise-baseline/README.md#preflight-živých-workflow). Runner navíc ověří `uses:` živých workflow a dosažitelných lokálních composite akcí na HEAD SHA checkoutu instance. Povolí jen lokální reference a Actions organization (organizace akcí) s plným SHA. Nečitelný nebo neznámý vstup plan i apply zastaví. Nepovýšené šablony v `platform/` ani nedosažitelné testovací fixtures nejsou důkazem živého workflow.
+
 ## Nedostupný privátní zdroj: Manual step (ruční krok)
 
 Pokud enterprise-owned App nemůže zdroj číst, automatický import skončí konkrétní chybou. Workflow nesmí použít osobní PAT, OAuth token ani širší App scope. Platformní tým provede deklarovaný ruční import do zpřístupnění zdroje:

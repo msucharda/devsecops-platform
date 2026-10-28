@@ -90,9 +90,11 @@ Runner před plan i apply čte Git objekty na pevném HEAD SHA checkoutu repozit
 
 Preflight projde všechna živá `.github/workflows/*.yml` a `*.yaml`, job-level reusable workflow references a step-level `uses:`. Z lokálních odkazů rekurzivně projde dosažitelné workflow a composite akce. Navštívená množina ukončí cykly. Nedosažitelné testovací fixtures ani nepovýšené šablony nepovažuje za živé akce.
 
-Povolí jen lokální reference `./…` v témže Git stromu a reference z odvozené Actions organization (organizace akcí) s plným 40znakovým commit SHA. Množina výjimek je prázdná. Tag, větev, krátké SHA, jiný owner, výraz nebo `docker://` kontrolu zastaví. Lokální akce musí mít právě jeden `action.yml` nebo `action.yaml`; chybějící objekt, symbolický odkaz, cesta mimo kořen, nečitelný YAML a neznámý tvar jsou chyby. YAML anchors a aliases musíš před povýšením rozbalit. Lokální JavaScript akce podporují `node20` a `node24`; nepodporovaný runtime nebo image kontrola odmítne.
+Povolí jen lokální reference `./…` v témže Git stromu a reference z odvozené Actions organization (organizace akcí) s plným 40znakovým commit SHA. Množina výjimek je prázdná. Tag, větev, krátké SHA, jiný owner, výraz nebo `docker://` kontrolu zastaví. Lokální akce musí mít právě jeden `action.yml` nebo `action.yaml`; chybějící objekt, symbolický odkaz, cesta mimo kořen, nečitelný YAML a neznámý tvar jsou chyby. YAML anchors a aliases musíš před povýšením rozbalit. Lokální JavaScript akce podporují `node20` a `node24`. Docker akce musí odkazovat na lokální Dockerfile ve stejném adresáři, uložený jako běžný soubor na daném SHA; kontrola neověřuje instrukce Dockerfile ani jeho základní image. Nepodporovaný runtime nebo externí image kontrola odmítne.
 
-Úspěch dokazuje jen tvar a původ referencí na uvedeném SHA. Nedokazuje dostupnost vzdálené akce, její obsah ani živou konfiguraci GitHubu. Modul nespravuje `sha_pinning_required`.
+Úspěch dokazuje jen tvar referencí v Git stromu na ověřeném HEAD SHA. Netvrdí nic o původu souborů v runtime workspace (pracovním prostoru běhu). Step-level `./…` GitHub [načítá z workspace](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsuses), které může změnit checkout jiného repozitáře či refu nebo krok `run`. Lokální job-level reusable workflow se naopak váže na commit volajícího workflow. Toto omezení přijal koordinátor 28. 10. 2026: preflight hlídá pořadí nasazení, runtime hranici vynucuje politika akcí na GitHubu.
+
+Preflight nedokazuje dostupnost vzdálené akce, její obsah ani živou konfiguraci GitHubu. Modul nespravuje `sha_pinning_required`.
 
 ## Organizační rulesety
 

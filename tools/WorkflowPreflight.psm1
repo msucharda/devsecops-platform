@@ -19,7 +19,7 @@ function Get-WorkflowRevision {
         throw 'Workflow preflight requires the instance repository root.'
     }
     $revision = Invoke-WorkflowGit $RepositoryPath @('rev-parse', '--verify', 'HEAD')
-    if ($revision -cnotmatch '^[a-f0-9]{40}\z') { throw 'Workflow preflight requires a full HEAD SHA.' }
+    if ($revision -notmatch '^[a-f0-9]{40}\z') { throw 'Workflow preflight requires a full HEAD SHA.' }
     return $revision
 }
 
@@ -31,14 +31,15 @@ function Assert-WorkflowReference {
         throw "Workflow preflight: unsupported uses in ${Location}; require a nonempty string."
     }
     if ($Value.StartsWith('./', [StringComparison]::Ordinal)) {
+        if ($Value -ceq './') { return '.' }
         $local = $Value.Substring(2)
-        if ($local -cnotmatch '^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\z' -or
+        if ($local -notmatch '^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\z' -or
             @($local.Split('/') | Where-Object { $_ -in @('.', '..') }).Count -gt 0) {
             throw "Workflow preflight: unsafe local uses '$Value' in ${Location}."
         }
         return $local
     }
-    if ($Value -cnotmatch '^([A-Za-z0-9-]+)/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[a-fA-F0-9]{40}\z') {
+    if ($Value -notmatch '^([A-Za-z0-9-]+)/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[a-fA-F0-9]{40}\z') {
         throw "Workflow preflight: unsupported uses in ${Location}: '$Value'; require an actions organization reference with a full SHA."
     }
     if ($Matches[1] -ine $ActionsOrganization) {
@@ -57,6 +58,9 @@ function Get-WorkflowDocumentReference {
     if ($Action) {
         $runs = $Document['runs']
         if ($runs -isnot [Collections.IDictionary]) { throw "Workflow preflight: missing runs mapping in '$Path'." }
+        if ($runs['using'] -isnot [string]) {
+            throw "Workflow preflight: unsupported action runtime or image in '$Path'; require a runtime string."
+        }
         if ($runs['using'] -ceq 'composite') {
             $steps.Add($runs['steps'])
         }
@@ -67,10 +71,10 @@ function Get-WorkflowDocumentReference {
         }
         elseif ($runs['using'] -ceq 'docker') {
             $image = $runs['image']
-            if ($image -isnot [string] -or $image -cnotmatch '^[A-Za-z0-9_-][A-Za-z0-9_.-]*\z') {
+            if ($image -isnot [string] -or $image -notmatch '^[A-Za-z0-9_-][A-Za-z0-9_.-]*\z') {
                 throw "Workflow preflight: unsupported action runtime or image in '$Path'; require a local Dockerfile."
             }
-            $imagePath = "$($Path.Substring(0, $Path.LastIndexOf('/')))/$image"
+            $imagePath = if ($Path.Contains('/')) { "$($Path.Substring(0, $Path.LastIndexOf('/')))/$image" } else { $image }
             if (-not $Files.ContainsKey($imagePath) -or $Files[$imagePath] -cnotin @('100644', '100755')) {
                 throw "Workflow preflight: Dockerfile '$imagePath' must be a regular file in HEAD."
             }
@@ -81,10 +85,10 @@ function Get-WorkflowDocumentReference {
     }
     else {
         $jobs = $Document['jobs']
-        if ($jobs -isnot [Collections.IDictionary] -or $jobs.Count -eq 0) {
+        if ($jobs -isnot [Collections.IDictionary] -or $jobs.PSBase.Count -eq 0) {
             throw "Workflow preflight: expected nonempty jobs mapping in '$Path'."
         }
-        foreach ($job in $jobs.Values) {
+        foreach ($job in $jobs.PSBase.Values) {
             if ($job -isnot [Collections.IDictionary]) { throw "Workflow preflight: invalid job in '$Path'." }
             if ($job.Contains('uses')) {
                 if ($job.Contains('steps')) { throw "Workflow preflight: reusable workflow job also has steps in '$Path'." }
@@ -120,7 +124,8 @@ function Get-WorkflowLocalTarget {
         }
         return $Local
     }
-    $manifests = @('action.yml', 'action.yaml' | ForEach-Object { "$Local/$_" } | Where-Object { $Files.ContainsKey($_) })
+    $prefix = if ($Local -ceq '.') { '' } else { "$Local/" }
+    $manifests = @('action.yml', 'action.yaml' | ForEach-Object { "$prefix$_" } | Where-Object { $Files.ContainsKey($_) })
     if ($manifests.Count -ne 1) {
         throw "Workflow preflight: local action '$Local' must contain exactly one action.yml or action.yaml in HEAD."
     }
@@ -166,7 +171,7 @@ function Assert-PlatformWorkflowUses {
     $revision = Get-WorkflowRevision $RepositoryPath
     $files = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
     foreach ($entry in (Invoke-WorkflowGit $RepositoryPath @('ls-tree', '-r', '-z', $revision)).Split([char] 0, [StringSplitOptions]::RemoveEmptyEntries)) {
-        if ($entry -cnotmatch '^([0-9]{6}) (?:blob|commit) [a-f0-9]{40}\t(.+)\z') {
+        if ($entry -notmatch '^([0-9]{6}) (?:blob|commit) [a-f0-9]{40}\t(.+)\z') {
             throw 'Workflow preflight cannot read the Git tree.'
         }
         $files[$Matches[2]] = $Matches[1]
@@ -180,7 +185,7 @@ function Assert-PlatformWorkflowUses {
     while ($pending.Count -gt 0) {
         $item = $pending.Dequeue()
         $path = $item.Path
-        if (-not $visited.Add($path)) { continue }
+        if (-not $visited.Add("$($item.Action):$path")) { continue }
         if (-not $files.ContainsKey($path) -or $files[$path] -cnotin @('100644', '100755')) {
             throw "Workflow preflight: '$path' must be a regular file in HEAD (no symlinks or submodules)."
         }

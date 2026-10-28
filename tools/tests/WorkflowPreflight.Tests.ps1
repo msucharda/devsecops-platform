@@ -135,10 +135,43 @@ runs:
         @{ Case = 'empty document'; Text = ''; Error = '*' }
         @{ Case = 'invalid syntax'; Text = 'jobs: ['; Error = '*' }
         @{ Case = 'anchor'; Text = 'jobs: { deploy: { steps: [ &step { run: echo } ] } }'; Error = '*anchors and aliases*' }
+        @{ Case = 'alias'; Text = 'jobs: { deploy: { steps: [ *unknown ] } }'; Error = '*anchors and aliases*' }
     ) {
         Set-Content -LiteralPath $workflowPath -Value $Text
         $null = Save-WorkflowRevision
         { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } | Should -Throw $Error
+    }
+
+    It 'does not let a job named Values hide another job' -Tag Shape {
+        @'
+jobs:
+  Values:
+    steps:
+      - run: echo harmless
+  deploy:
+    steps:
+      - uses: actions/checkout@v4
+'@ | Set-Content -LiteralPath $workflowPath
+        $null = Save-WorkflowRevision
+        { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } |
+            Should -Throw '*unsupported uses*'
+    }
+
+    It 'checks a document independently as workflow and local action' -Tag Shape {
+        @'
+jobs:
+  harmless:
+    steps:
+      - run: echo harmless
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+'@ | Set-Content -LiteralPath (Join-Path $workflowDirectory 'action.yml')
+        'jobs: { deploy: { steps: [ { uses: ./.github/workflows } ] } }' | Set-Content -LiteralPath $workflowPath
+        $null = Save-WorkflowRevision
+        { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } |
+            Should -Throw '*unsupported uses*'
     }
 
     It 'traverses local reusable workflow and a composite cycle exactly once' {
@@ -192,10 +225,11 @@ jobs:
             Should -Throw '*exactly one action.yml*'
     }
 
-    It 'rejects local action shape <Case>' -ForEach @(
+    It 'rejects local action shape <Case>' -Tag Runtime -ForEach @(
         @{ Case = 'missing runs'; Text = 'name: Missing'; Error = '*missing runs mapping*' }
         @{ Case = 'scalar runs'; Text = 'runs: unknown'; Error = '*missing runs mapping*' }
         @{ Case = 'unknown runtime'; Text = 'runs: { using: unknown }'; Error = '*unsupported action runtime or image*' }
+        @{ Case = 'sequence runtime'; Text = 'runs: { using: [composite], steps: [ { run: echo } ] }'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'Docker registry image'; Text = 'runs: { using: docker, image: docker://alpine:3 }'; Error = '*unsupported action runtime or image*' }
         @{ Case = 'JavaScript main missing'; Text = 'runs: { using: node24 }'; Error = '*invalid JavaScript action*' }
         @{ Case = 'JavaScript main empty'; Text = "runs: { using: node24, main: '' }"; Error = '*invalid JavaScript action*' }
@@ -234,6 +268,13 @@ jobs:
         (Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions).References | Should -Be 1
     }
 
+    It 'accepts the repository root as a local action' -Tag RootAction {
+        'runs: { using: composite, steps: [ { run: echo } ] }' | Set-Content -LiteralPath (Join-Path $repository 'action.yml')
+        'jobs: { local: { steps: [ { uses: ./ } ] } }' | Set-Content -LiteralPath $workflowPath
+        $null = Save-WorkflowRevision
+        (Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions).References | Should -Be 1
+    }
+
     It 'rejects local Docker image <Case>' -Tag Docker -ForEach @(
         @{ Case = 'missing'; Image = ''; Error = '*unsupported action runtime or image*' }
         @{ Case = 'numeric'; Image = '42'; Error = '*unsupported action runtime or image*' }
@@ -253,6 +294,16 @@ jobs:
         Remove-Item -LiteralPath $workflowPath
         $null = Save-WorkflowRevision
         { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } | Should -Throw '*no live workflows*'
+    }
+
+    It 'rejects unreadable Git tree output' {
+        Mock git -ModuleName WorkflowPreflight {
+            $global:LASTEXITCODE = 0
+            'unreadable'
+        } -ParameterFilter { 'ls-tree' -in $args }
+
+        { Assert-PlatformWorkflowUses -RepositoryPath $repository -ActionsOrganization demo-actions } |
+            Should -Throw '*cannot read the Git tree*'
     }
 
     It 'rejects an instance configuration below the repository root' {
@@ -379,13 +430,17 @@ Describe 'Enterprise workflow preflight boundary' {
         { & $runner @runnerArguments } | Should -Throw '*Reached Terraform after preflight*'
     }
 
-    It 'stops after interruption and a HEAD change before Terraform <Operation>' -ForEach @(
+    It 'stops after interruption and a HEAD change before Terraform <Operation>' -Tag Boundary -ForEach @(
         @{ Operation = 'plan'; Boundary = 'init' }
         @{ Operation = 'apply'; Boundary = 'show' }
     ) {
         $runnerArguments.Action = $Operation
         function terraform {
             $global:LASTEXITCODE = 0
+            if ($args[1] -eq 'init') {
+                $null = New-Item -ItemType Directory -Path $env:TF_DATA_DIR -Force
+                '{"backend":{"type":"local"}}' | Set-Content -LiteralPath (Join-Path $env:TF_DATA_DIR 'terraform.tfstate')
+            }
             if ($args[1] -eq $Boundary) {
                 & git -C $repository -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet --allow-empty -m changed
                 $global:LASTEXITCODE = 0

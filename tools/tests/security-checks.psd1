@@ -6,19 +6,19 @@
         @{
             Name = 'workflow-uses-reference'
             Tests = @(
-                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*pinned references', '*rejects <Case> references', '*unsafe local*', '*follows a local composite*') }
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*pinned references', '*rejects <Case> references', '*unsafe local*', '*follows a local composite*', '*repository root as a local action*') }
             )
         }
         @{
             Name = 'workflow-document-shape'
             Tests = @(
-                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*malformed document*', '*local action shape*', '*local JavaScript runtime*', '*accepts an actions organization*', '*traverses local reusable*') }
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*malformed document*', '*local action shape*', '*local JavaScript runtime*', '*local Docker*', '*accepts an actions organization*', '*traverses local reusable*', '*job named Values*') }
             )
         }
         @{
             Name = 'workflow-local-target'
             Tests = @(
-                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*local target*', '*ambiguous local*', '*traverses local reusable*') }
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*local target*', '*ambiguous local*', '*traverses local reusable*', '*repository root as a local action*') }
             )
         }
         @{
@@ -42,7 +42,7 @@
         @{
             Name = 'workflow-repository-snapshot'
             Tests = @(
-                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*no live workflows*', '*regular file*', '*traverses local reusable*', '*accepts an actions organization*') }
+                @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*no live workflows*', '*regular file*', '*traverses local reusable*', '*accepts an actions organization*', '*unreadable Git tree*', '*independently as workflow and local action*') }
             )
         }
         @{
