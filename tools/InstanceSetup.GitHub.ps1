@@ -483,7 +483,8 @@ function Invoke-StepAcceptanceRelease {
     }
     $sourceFiles = @(Get-ChildItem -LiteralPath $source -Recurse -Force -File | Where-Object {
         $relative = [IO.Path]::GetRelativePath($source, $_.FullName)
-        $relative -notmatch '^(\.git|modules|artifacts|node_modules|\.terraform)([\\/]|$)' -and
+        $relative -notmatch '^(\.git|artifacts|node_modules|\.terraform)([\\/]|$)' -and
+        ($relative -notmatch '^modules([\\/]|$)' -or $relative -match '^modules[\\/]shared[\\/]') -and
         (Test-PlatformReleaseFile -RelativePath $relative)
     })
     $hashes = [ordered]@{}

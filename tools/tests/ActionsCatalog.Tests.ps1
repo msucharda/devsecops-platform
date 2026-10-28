@@ -821,7 +821,7 @@ Describe 'Actions catalog module against the documented GitHub API' {
                 throw 'Injected lost second tag response.'
             }.GetNewClosure()
             { New-CatalogReleaseTag @target -Tag v5.0.0 -Commit $nextRelease } |
-                Should -Throw '*Injected lost second tag response*'
+                Should -Throw '*POST /repos/demo-a1b2c3-actions/actions-checkout/git/refs status=none attempt=1*'
             $stub.Override.Remove('createRef')
 
             New-CatalogReleaseTag @target -Tag v5.0.0 -Commit $nextRelease

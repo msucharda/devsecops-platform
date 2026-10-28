@@ -32,6 +32,12 @@ Nástroje vyžadují PowerShell 7.4 nebo novější. Verze modulů PowerShellu u
 
 Parser YAML patří do releasu a nástroje ho načítají z `tools/vendor/` bez PSGallery. Bez `-Development` skript pouze ověří přibalené runtime závislosti. S `-Development` stáhne vývojové moduly do `tools/.dependencies/`, ověří SHA256 balíčků podle pinu a porovná obsah `Save-Module` s ověřeným archivem. Podrobnosti a postup aktualizace uvádí [provenience závislostí](tools/vendor/PROVENANCE.md).
 
+### Retry volání GitHub REST API
+
+External programy modulů `actions-catalog`, `enterprise-baseline`, `organization-rulesets` a `organizations` opakují GET nejvýše dvakrát: celkem provedou 3 pokusy s prodlevami 5 a 10 s. Stejná politika platí pro DELETE revokace job tokenu v `tools/Remove-PlatformGitHubToken.ps1`. Retry zpracuje jen HTTP 502, 503, 504 a chybu spojení, TLS nebo timeout. HTTP 4xx včetně 429, ostatní chyby a POST, PATCH, PUT ani jiné DELETE neopakuje. Každá stránka výpisu má vlastní limit pokusů.
+
+Sdílený helper `modules/shared/scripts/GitHubRetry.ps1` patří do releasu vedle modulů, včetně akceptačního kandidáta a jeho schválených hashů. Log retry zapisuje na stderr, aby stdout external programu obsahoval jen JSON. Log obsahuje jen metodu, cestu bez query, status a číslo neúspěšného pokusu; neobsahuje token, hlavičky ani text chyby transportu. Vyčerpání pokusů neznamená úspěch. Každý pokus revokace má timeout 60 s a nenásleduje přesměrování. Revokace vyžaduje HTTP 204 podle [kontraktu DELETE /installation/token](https://docs.github.com/en/rest/apps/installations?apiVersion=2026-03-10#revoke-an-installation-access-token), verze API `2026-03-10`. Pokud server token odvolá, ale odpověď se ztratí, opakovaný DELETE může vrátit 401. Skript takový výsledek hlásí jako nepotvrzenou revokaci, nikoli jako úspěch; token dál nepoužívej. Ostatní revokační a akceptační nástroje tato politika nemění.
+
 ### Instance configuration (konfigurace instance)
 
 `schemas/instance.schema.json` popisuje soubor `instance.yaml`. Výchozí příklad je v `templates/instance/instance.yaml`. Validátor, výběr modulů i runner používají stejné schéma. Chyba uvádí cestu k položce, například `$.instance.name` nebo `$.credentials.organizations.plan.githubApp`.

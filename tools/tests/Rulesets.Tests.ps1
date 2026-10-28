@@ -167,7 +167,7 @@ Describe 'Organization ruleset detail contract' {
             $env:REST_API_BEARER = 'previous-bearer'
             Mock -ModuleName Rulesets Invoke-WebRequest { throw 'Connection lost' }
             { Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch } |
-                Should -Throw '*Connection lost*'
+                Should -Throw '*GET /orgs/demo/rulesets status=none attempt=1*'
             $env:REST_API_BEARER | Should -Be 'previous-bearer'
             Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
                 $Headers['Authorization'] -eq 'Bearer installation-token'
