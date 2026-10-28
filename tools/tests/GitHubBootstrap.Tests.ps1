@@ -121,7 +121,7 @@ BeforeAll {
         ConvertTo-Json -InputObject $keys -Depth 10 | Set-Content -LiteralPath $KeysPath
     }
 
-    function Set-TestUpgradeProtection {
+    function Initialize-TestUpgradeProtectionCase {
         param($Cloud, [string] $ProtectionCase)
 
         $rule = Get-GitHubApiFixture -Name repos/get-repo-ruleset.bootstrap-main
@@ -168,7 +168,7 @@ BeforeAll {
         }
     }
 
-    function Set-TestUpgradeTeam {
+    function Initialize-TestUpgradeTeamCase {
         param($Cloud, [string] $TeamCase)
 
         $path = '/orgs/demo-a1b2c3-platform/teams/security'
@@ -1427,7 +1427,7 @@ Describe 'GitHub bootstrap public interface' {
 
     It 'rejects upgrade protection <ProtectionCase> before saving inventory or reconciling' -Tag 'BootstrapUpgrade', 'UpgradeProtection' -ForEach $upgradeProtectionCases {
         Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
-        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase $ProtectionCase
+        Initialize-TestUpgradeProtectionCase -Cloud $cloud -ProtectionCase $ProtectionCase
         $before = (Get-FileHash -LiteralPath $inventory).Hash
         $operations = [Collections.Generic.List[object]]::new()
         $arguments.RequestPolicy = {
@@ -1458,7 +1458,7 @@ Describe 'GitHub bootstrap public interface' {
 
     It 'rejects upgrade security team <TeamCase> before saving inventory or reconciling' -Tag 'BootstrapUpgrade', 'UpgradeProtection' -ForEach $upgradeTeamCases {
         Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap
-        Set-TestUpgradeTeam -Cloud $cloud -TeamCase $TeamCase
+        Initialize-TestUpgradeTeamCase -Cloud $cloud -TeamCase $TeamCase
         $before = (Get-FileHash -LiteralPath $inventory).Hash
         { & $bootstrap @arguments } | Should -Throw '*upgrade requires the existing bootstrap-owned security team*'
         $cloud.writes.Count | Should -Be 0
@@ -3211,7 +3211,12 @@ Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
         }
         function Invoke-GitHubBootstrapApi {
             param([string] $Path, [switch] $AllowNotFound)
-            if ($Path -ceq "/orgs/$organization/teams/security") { return $cloud.resources[$Path] }
+            if ($Path -ceq "/orgs/$organization/teams/security") {
+                if (-not $AllowNotFound -and -not $cloud.resources.ContainsKey($Path)) {
+                    throw "Isolated bootstrap team not found at '$Path'."
+                }
+                return $cloud.resources[$Path]
+            }
             if ($Path -ceq "/repos/$repository/rulesets/60") { return $cloud.rulesetDetailOverride }
             throw "Unexpected isolated bootstrap API path '$Path'."
         }
@@ -3233,7 +3238,7 @@ Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
             'organization.login' = $organization
         }
         $cloud = @{ resources = @{ "/orgs/$organization/teams/security" = $team } }
-        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase valid
+        Initialize-TestUpgradeProtectionCase -Cloud $cloud -ProtectionCase valid
     }
 
     It 'accepts the documented main protection fixture' {
@@ -3241,12 +3246,12 @@ Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
     }
 
     It 'rejects isolated protection <ProtectionCase>' -ForEach $upgradeProtectionCases {
-        Set-TestUpgradeProtection -Cloud $cloud -ProtectionCase $ProtectionCase
+        Initialize-TestUpgradeProtectionCase -Cloud $cloud -ProtectionCase $ProtectionCase
         { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Throw $ExpectedError
     }
 
     It 'rejects isolated team <TeamCase>' -ForEach $upgradeTeamCases {
-        Set-TestUpgradeTeam -Cloud $cloud -TeamCase $TeamCase
+        Initialize-TestUpgradeTeamCase -Cloud $cloud -TeamCase $TeamCase
         { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Throw '*upgrade requires the existing bootstrap-owned security team*'
     }
 
