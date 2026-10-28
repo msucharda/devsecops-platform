@@ -786,6 +786,7 @@ Describe 'Merge gate pinned G10' {
         @{ Case = 'an empty tree ref'; Field = 'tree.sha'; Value = ''; Error = 'no valid tree SHA' }
         @{ Case = 'a missing tree ref'; Field = 'tree.sha'; Value = $null; Error = 'no valid tree SHA' }
         @{ Case = 'a non-string tree ref'; Field = 'tree.sha'; Value = 1; Error = 'no valid tree SHA' }
+        @{ Case = 'a list-valued tree ref'; Field = 'tree.sha'; Value = @(('d' * 40)); Error = 'no valid tree SHA' }
         @{ Case = 'a branch-name tree ref'; Field = 'tree.sha'; Value = 'main'; Error = 'no valid tree SHA' }
         @{ Case = 'an upper-case tree ref'; Field = 'tree.sha'; Value = 'D' * 40; Error = 'no valid tree SHA' }
     ) {
