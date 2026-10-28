@@ -259,11 +259,12 @@ data "external" "ruleset_plan_state" {
         $plan.Code | Should -Be 0 -Because $plan.Text
     }
 
-    It 'recovers interruption after the remote write but before its ID is captured in state' {
+    It 'recovers interruption after the remote write but before its ID is captured in state' -Tag 'RulesetRecovery' {
         $server.State.FailNext = '^GET /orgs/demo/rulesets/[0-9]+$'
         $interrupted = Invoke-RulesetTerraform apply -input=false -auto-approve
         $server.State.FailNext | Should -BeNullOrEmpty
         $interrupted.Code | Should -Not -Be 0
+        $interrupted.Text | Should -Match 'HTTP 500'
         $server.State.Items.Count | Should -Be 1
         $resumed = Invoke-RulesetTerraform apply -input=false -auto-approve
         $resumed.Code | Should -Be 0 -Because $resumed.Text
