@@ -366,7 +366,7 @@ try {
         catch { Exit-Usage $_.Exception.Message }
     }
     try { $actionlintPath = Get-ToolBinaryPath -Name Actionlint -DestinationPath (Join-Path $temp 'actionlint-bin') }
-    catch { Exit-Usage "$($_.Exception.Message) Run ./tools/Install-ToolDependencies.ps1 -Binary Actionlint." }
+    catch { Exit-Usage $_.Exception.Message }
     $toolProbe = {
         param($tool)
         if ($tool -ne 'actionlint' -and -not (Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue)) { return $null }

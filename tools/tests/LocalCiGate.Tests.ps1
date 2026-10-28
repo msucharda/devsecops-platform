@@ -247,13 +247,13 @@ Describe 'Local CI external-program preflight' -Tag LocalCiRuntime {
     }
 }
 
-Describe 'Local CI process guards' {
+Describe 'Local CI process guards' -Tag LocalCiProcess {
     It 'rejects <Case> without publishing a result' -ForEach @(
         @{ Case = 'a HEAD change while loading workflow settings'; Command = 'Get-CiWorkflowSetting'; RuntimeFailure = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
         @{ Case = 'a HEAD change during test selection'; Command = 'Get-LocalCiProfile'; RuntimeFailure = $false; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'Source changed during test selection \(Head\)' }
         @{ Case = 'missing pwsh in Full with preflight exit code 2'; Command = 'Test-LocalCiRuntime'; RuntimeFailure = $true; InvalidFile = $false; ExpectedExit = 2; ExpectedError = 'pwsh not found.*working PowerShell' }
-        @{ Case = 'Changed reaching actionlint without a Terraform probe'; Command = 'Clear-LocalCiTemp'; RuntimeFailure = $false; InvalidFile = $false; ProbeSkipped = $true; ExpectedExit = 2; ExpectedError = 'Reached actionlint without Terraform' }
-        @{ Case = 'Full without roots reaching actionlint without a Terraform probe'; Command = 'Clear-LocalCiTemp'; RuntimeFailure = $false; InvalidFile = $false; ProbeSkipped = $true; NoRoots = $true; ExpectedExit = 2; ExpectedError = 'Reached actionlint without Terraform' }
+        @{ Case = 'Changed reaching actionlint without a Terraform probe'; Command = 'Clear-LocalCiTemp'; RuntimeFailure = $false; InvalidFile = $false; ProbeSkipped = $true; ExpectedExit = 2; ExpectedError = 'Actionlint.*archive is missing' }
+        @{ Case = 'Full without roots reaching actionlint without a Terraform probe'; Command = 'Clear-LocalCiTemp'; RuntimeFailure = $false; InvalidFile = $false; ProbeSkipped = $true; NoRoots = $true; ExpectedExit = 2; ExpectedError = 'Actionlint.*archive is missing' }
         @{ Case = 'a parser error in a non-ASCII filename'; Command = ''; RuntimeFailure = $false; InvalidFile = $true; ExpectedExit = 1; ExpectedError = 'syntax errors' }
         @{ Case = 'an intermediate TEMP directory writable by another identity'; Command = ''; RuntimeFailure = $false; InvalidFile = $false; UnsafeTemp = 'Writable'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
         @{ Case = 'an intermediate TEMP junction'; Command = ''; RuntimeFailure = $false; InvalidFile = $false; UnsafeTemp = 'Junction'; ExpectedExit = 1; ExpectedError = 'Unsafe CI TEMP' }
@@ -362,10 +362,7 @@ Describe 'Local CI process guards' {
             elseif ($ProbeSkipped) {
                 @'
     & (Get-Module LocalCiGate) {
-        function script:Test-LocalCiRuntime { throw 'Unexpected Terraform probe' }
-    }
-    & (Get-Module ToolDependencies) {
-        function script:Get-ToolBinaryPath { throw 'Reached actionlint without Terraform' }
+        function script:Invoke-LocalCiTerraform { throw 'Unexpected Terraform probe' }
     }
 '@
             }
@@ -386,9 +383,12 @@ $action
             if ($RuntimeFailure -or $NoRoots) { $tempArgument += ' -Full' }
             $parserStub = if ($InvalidFile) {
                 @"
-Set-PSBreakpoint -Command Clear-LocalCiTemp -Action {
-    & (Get-Module ToolDependencies) {
-        function script:Get-ToolBinaryPath { '$escaped/fake-actionlint.ps1' }
+Set-PSBreakpoint -Command Get-ToolBinaryPath -Action {
+    `$package = Get-ToolBinaryPackage -Name Actionlint
+    New-Item -ItemType Directory -Force -Path (Split-Path `$package.CachePath -Parent) | Out-Null
+    'offline archive stub' | Set-Content `$package.CachePath
+    Get-Module -All ToolDependencies | ForEach-Object {
+        & `$_ { function script:Expand-ToolBinary { '$escaped/fake-actionlint.ps1' } }
     }
     Get-PSBreakpoint | Remove-PSBreakpoint
 } | Out-Null
