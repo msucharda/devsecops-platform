@@ -388,7 +388,7 @@ Describe 'Merge gate replay of real pull requests' {
 
         $result.verdict | Should -Be 'fail'
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
-        ($result.reasons[0].evidence.sensitiveLines -join "`n") | Should -Match 'release\.yml: sensitive YAML settings changed'
+        ($result.reasons[0].evidence.sensitiveLines -join "`n") | Should -Match 'release\.yml: comparison unavailable: Workflow sensitive YAML expressions require acknowledgement\.'
         $result.details.github.workflowFiles | Should -Contain '.github/workflows/release.yml'
     }
 
@@ -564,6 +564,7 @@ Describe 'Merge gate structural G10' {
         @{ Case = 'a hosted runner'; Before = 'jobs: {build: {runs-on: ubuntu-latest}}'; After = 'jobs: {build: {runs-on: windows-latest}}' }
         @{ Case = 'runner labels'; Before = 'jobs: {build: {runs-on: [self-hosted, linux]}}'; After = 'jobs: {build: {runs-on: [self-hosted, windows]}}' }
         @{ Case = 'runner groups'; Before = 'jobs: {build: {runs-on: {group: old}}}'; After = 'jobs: {build: {runs-on: {group: new}}}' }
+        @{ Case = 'a self-hosted matrix value'; Before = 'jobs: {build: {strategy: {matrix: {os: [ubuntu-latest]}}}}'; After = 'jobs: {build: {strategy: {matrix: {os: [self-hosted]}}}}' }
         @{ Case = 'a runner expression'; Before = 'jobs: {build: {runs-on: "${{ inputs.runner }}"}}'; After = 'jobs: {build: {runs-on: "${{ inputs.other }}"}}' }
         @{ Case = 'inherited secrets'; Before = 'jobs: {build: {secrets: {}}}'; After = 'jobs: {build: {secrets: inherit}}' }
         @{ Case = 'a quoted secrets key'; Before = '"secrets": {}'; After = '"secrets": inherit' }
@@ -580,9 +581,12 @@ Describe 'Merge gate structural G10' {
         @{ Case = 'a dynamic github context lookup'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ github[inputs.key] }}"}' }
         @{ Case = 'a github wildcard filter'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ toJSON(github.*) }}"}' }
         @{ Case = 'trigger-filter ordering'; Before = 'on: {push: {paths: ["src/**", "!src/private/**"]}}'; After = 'on: {push: {paths: ["!src/private/**", "src/**"]}}' }
-        @{ Case = 'sensitive-step ordering'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "${{ secrets.TWO }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.TWO }}"}, {run: "${{ secrets.ONE }}"}]}}' }
-        @{ Case = 'an added sensitive step'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "${{ secrets.TWO }}"}]}}' }
-        @{ Case = 'a removed sensitive step'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "${{ secrets.TWO }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}]}}' }
+        @{ Case = 'sensitive-step ordering'; Before = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}, {run: "deploy $GITHUB_TOKEN"}]}}'; After = 'jobs: {build: {steps: [{run: "deploy $GITHUB_TOKEN"}, {run: "echo $GITHUB_TOKEN"}]}}' }
+        @{ Case = 'an added sensitive step'; Before = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}]}}'; After = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}, {run: "deploy $GITHUB_TOKEN"}]}}' }
+        @{ Case = 'a removed sensitive step'; Before = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}, {run: "deploy $GITHUB_TOKEN"}]}}'; After = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}]}}' }
+        @{ Case = 'a token binding moved between existing steps'; Before = 'jobs: {build: {steps: [{id: audit, run: "echo audit", env: {GITHUB_TOKEN: fixture-placeholder}}, {id: publish, run: "echo publish"}]}}'; After = 'jobs: {build: {steps: [{id: audit, run: "echo audit"}, {id: publish, run: "echo publish", env: {GITHUB_TOKEN: fixture-placeholder}}]}}' }
+        @{ Case = 'a changed token execution target'; Before = 'jobs: {build: {steps: [{id: worker, run: "echo audit", env: {GITHUB_TOKEN: fixture-placeholder}}]}}'; After = 'jobs: {build: {steps: [{id: worker, run: "echo publish", env: {GITHUB_TOKEN: fixture-placeholder}}]}}' }
+        @{ Case = 'an implicit token condition'; Before = 'jobs: {build: {steps: [{if: "github.token != null", run: "echo test"}]}}'; After = 'jobs: {build: {steps: [{if: "github.token == null", run: "echo test"}]}}' }
     ) {
         $stub.Contents[$baseKey] = $Before
         $stub.Contents[$headKey] = $After
@@ -590,19 +594,22 @@ Describe 'Merge gate structural G10' {
         $result = Invoke-ScenarioGate -Stub $stub
 
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
-        $result.details.github.sensitiveLines | Should -Be @("$($file.filename): sensitive YAML settings changed")
+        $result.details.github.sensitiveLines.Count | Should -Be 1
+        $result.details.github.sensitiveLines[0] | Should -Match "^$([regex]::Escape($file.filename)): (sensitive YAML settings changed|comparison unavailable: Workflow sensitive YAML expressions require acknowledgement\.)$"
     }
 
     It 'G10 ignores <Case> when sensitive settings stay unchanged' -ForEach @(
         @{ Case = 'comments and mapping order'; Before = "on: push`npermissions: {contents: read, issues: none}"; After = "# comment`npermissions: {issues: none, contents: read}`non: push" }
         @{ Case = 'block/flow syntax and quoting'; Before = "on: push`npermissions:`n  contents: read"; After = "'permissions': {'contents': 'read'}`n'on': 'push'" }
         @{ Case = 'unrelated step text'; Before = "jobs:`n  build:`n    runs-on: ubuntu-latest`n    steps: [{run: 'echo old'}]"; After = "jobs:`n  build:`n    runs-on: ubuntu-latest`n    steps: [{run: 'echo new'}]" }
-        @{ Case = 'an unchanged secret reference'; Before = "name: Old`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}"; After = "name: New`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}" }
-        @{ Case = 'an unrelated step inserted before a secret'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.TOKEN }}"}]}}'; After = 'jobs: {build: {steps: [{run: "echo setup"}, {run: "${{ secrets.TOKEN }}"}]}}' }
-        @{ Case = 'an unrelated step inserted between secrets'; Before = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "${{ secrets.TWO }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.ONE }}"}, {run: "echo setup"}, {run: "${{ secrets.TWO }}"}]}}' }
-        @{ Case = 'an unrelated step removed before a secret'; Before = 'jobs: {build: {steps: [{run: "echo setup"}, {run: "${{ secrets.TOKEN }}"}]}}'; After = 'jobs: {build: {steps: [{run: "${{ secrets.TOKEN }}"}]}}' }
+        @{ Case = 'an unrelated step inserted before a token'; Before = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}]}}'; After = 'jobs: {build: {steps: [{run: "echo setup"}, {run: "echo $GITHUB_TOKEN"}]}}' }
+        @{ Case = 'an unrelated step inserted between tokens'; Before = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}, {run: "deploy $GITHUB_TOKEN"}]}}'; After = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}, {run: "echo setup"}, {run: "deploy $GITHUB_TOKEN"}]}}' }
+        @{ Case = 'an unrelated step removed before a token'; Before = 'jobs: {build: {steps: [{run: "echo setup"}, {run: "echo $GITHUB_TOKEN"}]}}'; After = 'jobs: {build: {steps: [{run: "echo $GITHUB_TOKEN"}]}}' }
         @{ Case = 'empty settings'; Before = '{}'; After = 'name: CI' }
         @{ Case = 'ordinary github context properties'; Before = 'env: {REF: "${{ github.ref }}"}'; After = 'env: {REF: "${{ github.sha }}"}' }
+        @{ Case = 'literal GitHub step names'; Before = 'jobs: {build: {steps: [{name: "Build on GitHub", run: "echo test"}]}}'; After = 'jobs: {build: {steps: [{name: "Test on GitHub", run: "echo test"}]}}' }
+        @{ Case = 'literal secrets documentation'; Before = 'name: Read secrets documentation'; After = 'name: Update secrets documentation' }
+        @{ Case = 'ordinary implicit github conditions'; Before = 'jobs: {build: {steps: [{if: "github.ref != null", run: "echo test"}]}}'; After = 'jobs: {build: {steps: [{if: "github.sha != null", run: "echo test"}]}}' }
         @{ Case = 'exactly 100 nesting levels'; Before = 'permissions: ' + ('{x: ' * 99) + 'read' + ('}' * 99); After = 'permissions: ' + ('{x: ' * 99) + 'read' + ('}' * 99) }
     ) {
         $stub.Contents[$baseKey] = $Before
@@ -612,6 +619,26 @@ Describe 'Merge gate structural G10' {
 
         $result.verdict | Should -Be 'pass'
         $result.details.github.sensitiveLines | Should -Be @()
+    }
+
+    It 'G10 fails closed for dynamic sensitive <Case>' -ForEach @(
+        @{ Case = 'runner matrix labels'; Before = 'jobs: {build: {strategy: {matrix: {os: [ubuntu-latest]}}, runs-on: "${{ matrix.os }}"}}'; After = 'jobs: {build: {strategy: {matrix: {os: [windows-latest]}}, runs-on: "${{ matrix.os }}"}}' }
+        @{ Case = 'runner matrix self-hosted labels'; Before = 'jobs: {build: {strategy: {matrix: {os: [ubuntu-latest]}}, runs-on: "${{ matrix.os }}"}}'; After = 'jobs: {build: {strategy: {matrix: {os: [self-hosted]}}, runs-on: "${{ matrix.os }}"}}' }
+        @{ Case = 'secret matrix keys'; Before = 'jobs: {build: {strategy: {matrix: {name: [OLD]}}, env: {TOKEN: "${{ secrets[matrix.name] }}"}}}'; After = 'jobs: {build: {strategy: {matrix: {name: [NEW]}}, env: {TOKEN: "${{ secrets[matrix.name] }}"}}}' }
+        @{ Case = 'runner outputs with another step changed'; Before = 'jobs: {build: {runs-on: "${{ needs.setup.outputs.runner }}", steps: [{run: "echo old"}]}}'; After = 'jobs: {build: {runs-on: "${{ needs.setup.outputs.runner }}", steps: [{run: "echo new"}]}}' }
+        @{ Case = 'an unchanged secret reference'; Before = "name: Old`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}"; After = "name: New`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}" }
+        @{ Case = 'only a comment changed'; Before = 'jobs: {build: {runs-on: "${{ matrix.os }}"}}'; After = "# comment`njobs: {build: {runs-on: `"`${{ matrix.os }}`"}}" }
+        @{ Case = 'an expression only in base'; Before = 'jobs: {build: {runs-on: "${{ matrix.os }}"}}'; After = 'jobs: {build: {runs-on: ubuntu-latest}}' }
+        @{ Case = 'an expression only in head'; Before = 'jobs: {build: {runs-on: ubuntu-latest}}'; After = 'jobs: {build: {runs-on: "${{ matrix.os }}"}}' }
+        @{ Case = 'a secret moved between existing steps'; Before = 'jobs: {build: {steps: [{id: audit, run: "echo audit", env: {TOKEN: "${{ secrets.DEPLOY_TOKEN }}"}}, {id: publish, run: "echo publish"}]}}'; After = 'jobs: {build: {steps: [{id: audit, run: "echo audit"}, {id: publish, run: "echo publish", env: {TOKEN: "${{ secrets.DEPLOY_TOKEN }}"}}]}}' }
+    ) {
+        $stub.Contents[$baseKey] = $Before
+        $stub.Contents[$headKey] = $After
+
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $result.details.github.sensitiveLines | Should -Be @("$($file.filename): comparison unavailable: Workflow sensitive YAML expressions require acknowledgement.")
     }
 
     # Deliberately malformed or unsupported YAML must never prove unchanged settings.
@@ -759,7 +786,7 @@ Describe 'Merge gate structural G10' {
         $stub.Contents["$($stub.PullRequest.headRefOid)/$($file.filename)"] = 'runs: {using: composite, steps: [{env: {TOKEN: "${{ secrets.NEW }}"}}]}'
         $result = Invoke-ScenarioGate -Stub $stub
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
-        $result.details.github.sensitiveLines | Should -Be @("$($file.filename): sensitive YAML settings changed")
+        $result.details.github.sensitiveLines | Should -Be @("$($file.filename): comparison unavailable: Workflow sensitive YAML expressions require acknowledgement.")
     }
 }
 

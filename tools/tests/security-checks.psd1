@@ -547,6 +547,12 @@
             )
         }
         @{
+            Name = 'merge-gate-workflow-projection'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('Merge gate structural G10*') }
+            )
+        }
+        @{
             Name = 'merge-gate-workflow-comparison'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 compares*', '*G10 ignores*', '*G10 handles*', '*G10 rejects*file list*') }

@@ -815,14 +815,22 @@ function Get-MergeGateWorkflowContent {
 function Test-MergeGateSensitiveSetting {
     [CmdletBinding()]
     [OutputType([bool])]
-    param([AllowEmptyString()][string] $Key, [AllowEmptyString()][string] $Value)
+    param(
+        [AllowEmptyString()][string] $Key,
+        [AllowEmptyString()][string] $Value,
+        [switch] $ImplicitExpression
+    )
 
     if ($Key -eq 'on') { return $true }
     if ($Key -eq 'runs-on') { return $true }
     if ($Key -in @('permissions', 'secrets', 'GITHUB_TOKEN')) { return $true }
-    return $Value -match '\bsecrets\b|\bGITHUB_TOKEN\b|\bgithub\s*(\.\s*(token\b|\*)|\[)|\bgithub\b(?!\s*(\.|\[))'
+    return $Value -match '\bGITHUB_TOKEN\b|\bself-hosted\b' -or (
+        ($ImplicitExpression -or $Value -match '\$\{\{') -and
+        $Value -match '\bsecrets\b|\bgithub\s*(\.\s*(token\b|\*)|\[)|\bgithub\b(?!\s*(\.|\[))'
+    )
 }
 
+# security-check: merge-gate-workflow-projection
 function Get-MergeGateYamlSetting {
     [CmdletBinding()]
     [OutputType([string])]
@@ -830,13 +838,14 @@ function Get-MergeGateYamlSetting {
         [Parameter(Mandatory)] $Node,
         [string] $Path = '$',
         [switch] $Selected,
-        [int] $Depth = 0
+        [int] $Depth = 0,
+        [switch] $ImplicitExpression
     )
 
     if ($Depth -gt 100) { throw 'Workflow YAML nesting exceeds 100 levels.' }
     if ($Selected) { "${Path}: $($Node.NodeType)" }
     if ($Node -is [YamlDotNet.RepresentationModel.YamlScalarNode]) {
-        if ($Selected -or (Test-MergeGateSensitiveSetting -Value $Node.Value)) {
+        if ($Selected -or (Test-MergeGateSensitiveSetting -Value $Node.Value -ImplicitExpression:$ImplicitExpression)) {
             # Non-specific tags differ for quoted/plain strings; explicit tags still remain part of the comparison.
             $tag = $Node.Tag.ToString()
             if ($tag -in @('?', '!', 'tag:yaml.org,2002:str')) { $tag = '' }
@@ -849,16 +858,17 @@ function Get-MergeGateYamlSetting {
             $key = $entry.Key.Value
             $childPath = "$Path[$(ConvertTo-Json -InputObject $key -Compress)]"
             $select = $Selected -or (Test-MergeGateSensitiveSetting -Key $key -Value $key)
-            Get-MergeGateYamlSetting -Node $entry.Value -Path $childPath -Selected:$select -Depth ($Depth + 1)
+            Get-MergeGateYamlSetting -Node $entry.Value -Path $childPath -Selected:$select -Depth ($Depth + 1) -ImplicitExpression:($key -eq 'if')
         }
     }
     elseif ($Node -is [YamlDotNet.RepresentationModel.YamlSequenceNode]) {
         $index = 0
         foreach ($child in $Node.Children) {
             # Unselected siblings must not shift sensitive paths; selected sequences retain every child.
-            $childSettings = @(Get-MergeGateYamlSetting -Node $child -Path "$Path[$index]" -Selected:$Selected -Depth ($Depth + 1))
+            $childSettings = @(Get-MergeGateYamlSetting -Node $child -Path "$Path[$index]" -Selected:$Selected -Depth ($Depth + 1) -ImplicitExpression:$ImplicitExpression)
             if ($childSettings.Count -gt 0) {
-                $childSettings
+                if ($Selected) { $childSettings }
+                else { Get-MergeGateYamlSetting -Node $child -Path "$Path[$index]" -Selected -Depth ($Depth + 1) }
                 $index++
             }
         }
@@ -889,6 +899,9 @@ function Get-MergeGateWorkflowSnapshot {
     }
     $settings = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
     foreach ($setting in @(Get-MergeGateYamlSetting -Node $yaml.Documents[0].RootNode)) { $null = $settings.Add($setting) }
+    if (($settings -join "`n") -match '\$\{\{') {
+        throw 'Workflow sensitive YAML expressions require acknowledgement.'
+    }
     return , @($settings)
 }
 
