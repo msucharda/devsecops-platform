@@ -64,6 +64,7 @@ function Initialize-MergeGateStub {
         Calls = [System.Collections.Generic.List[string[]]]::new()
         Failures = @{}
         Responses = @{}
+        Contents = @{}
         Merges = 0
     }
 }
@@ -146,6 +147,22 @@ function Invoke-MergeGateStub {
     $path = $Arguments[-1]
     $page = if ($path -match '[?&]page=(\d+)') { [int] $Matches[1] } else { 1 }
     switch -Regex ($path) {
+        '/contents/(?<file>[^?]+)\?ref=(?<ref>[0-9a-f]{40})$' {
+            $file = [uri]::UnescapeDataString($Matches['file'])
+            $key = "$($Matches['ref'])/$file"
+            # Synthetic YAML for unchanged settings; individual G10 cases supply their own base/head documents.
+            $content = if ($Stub.Contents.ContainsKey($key)) { $Stub.Contents[$key] } else { "name: CI`non: push`njobs: {build: {runs-on: ubuntu-latest}}" }
+            if ($Stub.Scenario -eq 'pr-70' -and $file -eq '.github/workflows/release.yml') {
+                $content = (@($Stub.Files | Where-Object { $_.filename -eq $file })[0].patch -split "`n" |
+                    Where-Object { $_.StartsWith('+') -and -not $_.StartsWith('+++') } |
+                    ForEach-Object { $_.Substring(1) }) -join "`n"
+            }
+            $response = Get-GitHubApiFixture -Name 'repos/get-content.file' -Set @{
+                path = $file; content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($content))
+                size = [Text.Encoding]::UTF8.GetByteCount($content)
+            }
+            return ConvertTo-Json -InputObject $response -Depth 50
+        }
         '/rules/branches/' { return ConvertTo-Json -InputObject (Get-MergeGateStubPage -Items $Stub.Rules -Page $page) -Depth 50 }
         '/actions/runs\?' {
             $runs = @($Stub.WorkflowRuns.workflow_runs)

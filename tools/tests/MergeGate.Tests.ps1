@@ -38,6 +38,24 @@ Describe 'Merge gate replay of real pull requests' {
         Mock -ModuleName MergeGate Invoke-MergeGateGh { Invoke-MergeGateStub -Stub $stub -Arguments $Arguments }
     }
 
+    It 'G10 requires acknowledgement for a GitHub-hosted runner change read at fixed SHAs' {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $file = (Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10')[0]
+        $file['patch'] = "@@ -1 +1 @@`n-runs-on: ubuntu-latest`n+runs-on: windows-latest"
+        $stub.Files = @($file)
+        $stub.Contents["$($stub.PullRequest.baseRefOid)/$($file.filename)"] = "on: push`njobs: {build: {runs-on: ubuntu-latest}}"
+        $stub.Contents["$($stub.PullRequest.headRefOid)/$($file.filename)"] = "on: push`njobs: {build: {runs-on: windows-latest}}"
+
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $reads = @($stub.Calls | Where-Object { $_[-1] -match '/contents/' } | ForEach-Object { $_[-1] })
+        $reads | Should -Be @(
+            "repos/$repository/contents/.github/workflows/ci.yml?ref=$($stub.PullRequest.baseRefOid)"
+            "repos/$repository/contents/.github/workflows/ci.yml?ref=$($stub.PullRequest.headRefOid)"
+        )
+    }
+
     It 'passes #78: green checks, Copilot review on the head; behind base only warns' {
         $stub = Initialize-MergeGateStub -Scenario pr-78
         $result = Invoke-ScenarioGate -Stub $stub
@@ -370,7 +388,7 @@ Describe 'Merge gate replay of real pull requests' {
 
         $result.verdict | Should -Be 'fail'
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
-        ($result.reasons[0].evidence.sensitiveLines -join "`n") | Should -Match 'release\.yml: \+.*id-token: write'
+        ($result.reasons[0].evidence.sensitiveLines -join "`n") | Should -Match 'release\.yml: sensitive YAML settings changed'
         $result.details.github.workflowFiles | Should -Contain '.github/workflows/release.yml'
     }
 
@@ -513,6 +531,218 @@ Describe 'Merge gate replay of real pull requests' {
 
         $result.verdict | Should -Be 'pass'
         $result.details.checks.checkRuns.Count | Should -Be 150
+    }
+}
+
+Describe 'Merge gate structural G10' {
+    BeforeEach {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $stub.Files = Get-GitHubApiFixture -Name 'pulls/list-files.workflow-g10'
+        $file = $stub.Files[0]
+        $baseKey = "$($stub.PullRequest.baseRefOid)/$($file.filename)"
+        $headKey = "$($stub.PullRequest.headRefOid)/$($file.filename)"
+        Mock -ModuleName MergeGate Invoke-MergeGateGh { Invoke-MergeGateStub -Stub $stub -Arguments $Arguments }
+    }
+
+    It 'G10 compares <Case> structurally without a patch' -ForEach @(
+        @{ Case = 'block permissions'; Before = "permissions:`n  contents: read"; After = "permissions:`n  contents: write" }
+        @{ Case = 'flow permissions'; Before = 'permissions: {contents: read}'; After = 'permissions: {contents: write}' }
+        @{ Case = 'multiline flow permissions'; Before = "permissions: {`n contents:`n read`n}"; After = "permissions: {`n contents:`n write`n}" }
+        @{ Case = 'quoted permission keys and values'; Before = "'permissions': {'contents': 'read'}"; After = '"permissions": {"contents": "write"}' }
+        @{ Case = 'a permission scalar on another line'; Before = "permissions:`n  contents:`n    read"; After = "permissions:`n  contents:`n    write" }
+        @{ Case = 'scalar permissions'; Before = 'permissions: read-all'; After = 'permissions: write-all' }
+        @{ Case = 'removed permissions'; Before = 'permissions: {}'; After = 'name: CI' }
+        @{ Case = 'job permissions'; Before = 'jobs: {build: {permissions: {id-token: none}}}'; After = 'jobs: {build: {permissions: {id-token: write}}}' }
+        @{ Case = 'ordinary triggers'; Before = 'on: push'; After = 'on: pull_request' }
+        @{ Case = 'a privileged trigger'; Before = 'on: pull_request'; After = 'on: pull_request_target' }
+        @{ Case = 'trigger branches'; Before = 'on: {push: {branches: [main]}}'; After = 'on: {push: {branches: [release]}}' }
+        @{ Case = 'trigger branch case'; Before = 'on: {push: {branches: [main]}}'; After = 'on: {push: {branches: [MAIN]}}' }
+        @{ Case = 'trigger paths'; Before = "on:`n  push:`n    paths: ['src/**']"; After = "on:`n  push:`n    paths: ['**']" }
+        @{ Case = 'a workflow_run filter'; Before = 'on: {workflow_run: {workflows: [Build]}}'; After = 'on: {workflow_run: {workflows: [Deploy]}}' }
+        @{ Case = 'a scheduled trigger'; Before = "on: {schedule: [{cron: '0 1 * * *'}]}"; After = "on: {schedule: [{cron: '0 2 * * *'}]}" }
+        @{ Case = 'a trigger sequence'; Before = 'on: [push]'; After = 'on: [push, pull_request]' }
+        @{ Case = 'a hosted runner'; Before = 'jobs: {build: {runs-on: ubuntu-latest}}'; After = 'jobs: {build: {runs-on: windows-latest}}' }
+        @{ Case = 'runner labels'; Before = 'jobs: {build: {runs-on: [self-hosted, linux]}}'; After = 'jobs: {build: {runs-on: [self-hosted, windows]}}' }
+        @{ Case = 'runner groups'; Before = 'jobs: {build: {runs-on: {group: old}}}'; After = 'jobs: {build: {runs-on: {group: new}}}' }
+        @{ Case = 'a runner expression'; Before = 'jobs: {build: {runs-on: "${{ inputs.runner }}"}}'; After = 'jobs: {build: {runs-on: "${{ inputs.other }}"}}' }
+        @{ Case = 'inherited secrets'; Before = 'jobs: {build: {secrets: {}}}'; After = 'jobs: {build: {secrets: inherit}}' }
+        @{ Case = 'a quoted secrets key'; Before = '"secrets": {}'; After = '"secrets": inherit' }
+        @{ Case = 'a secret reference'; Before = 'env: {TOKEN: "${{ secrets.OLD }}"}'; After = 'env: {TOKEN: "${{ secrets.NEW }}"}' }
+        @{ Case = 'an indexed secret'; Before = "env: {TOKEN: `"`${{ secrets['OLD'] }}`"}"; After = "env: {TOKEN: `"`${{ secrets['NEW'] }}`"}" }
+        @{ Case = 'a removed secret reference'; Before = 'env: {TOKEN: "${{ secrets.TOKEN }}"}'; After = 'env: {TOKEN: literal}' }
+        @{ Case = 'the whole secrets context'; Before = 'env: {TOKEN: literal}'; After = 'env: {TOKEN: "${{ toJSON(secrets) }}"}' }
+        @{ Case = 'GITHUB_TOKEN binding'; Before = 'env: {GITHUB_TOKEN: "${{ github.token }}"}'; After = 'env: {GITHUB_TOKEN: literal}' }
+        @{ Case = 'GITHUB_TOKEN usage'; Before = "run: 'echo `$GITHUB_TOKEN'"; After = "run: 'upload `$GITHUB_TOKEN'" }
+    ) {
+        $stub.Contents[$baseKey] = $Before
+        $stub.Contents[$headKey] = $After
+
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $result.details.github.sensitiveLines | Should -Be @("$($file.filename): sensitive YAML settings changed")
+    }
+
+    It 'G10 ignores <Case> when sensitive settings stay unchanged' -ForEach @(
+        @{ Case = 'comments and mapping order'; Before = "on: push`npermissions: {contents: read, issues: none}"; After = "# comment`npermissions: {issues: none, contents: read}`non: push" }
+        @{ Case = 'block/flow syntax and quoting'; Before = "on: push`npermissions:`n  contents: read"; After = "'permissions': {'contents': 'read'}`n'on': 'push'" }
+        @{ Case = 'unrelated step text'; Before = "jobs:`n  build:`n    runs-on: ubuntu-latest`n    steps: [{run: 'echo old'}]"; After = "jobs:`n  build:`n    runs-on: ubuntu-latest`n    steps: [{run: 'echo new'}]" }
+        @{ Case = 'an unchanged secret reference'; Before = "name: Old`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}"; After = "name: New`nenv: {TOKEN: `"`${{ secrets.TOKEN }}`"}" }
+        @{ Case = 'empty settings'; Before = '{}'; After = 'name: CI' }
+    ) {
+        $stub.Contents[$baseKey] = $Before
+        $stub.Contents[$headKey] = $After
+
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        $result.verdict | Should -Be 'pass'
+        $result.details.github.sensitiveLines | Should -Be @()
+    }
+
+    # Deliberately malformed or unsupported YAML must never prove unchanged settings.
+    It 'G10 fails closed for <Case> on <Side>' -ForEach @(
+        foreach ($side in @('base', 'head')) {
+            @{ Case = 'malformed flow YAML'; Side = $side; Content = 'permissions: {'; Error = 'comparison unavailable' }
+            @{ Case = 'duplicate keys'; Side = $side; Content = "permissions: read-all`npermissions: write-all"; Error = 'comparison unavailable' }
+            @{ Case = 'multiple documents'; Side = $side; Content = "permissions: read-all`n---`npermissions: write-all"; Error = 'exactly one document' }
+            @{ Case = 'a scalar root'; Side = $side; Content = 'not-a-mapping'; Error = 'mapping root' }
+            @{ Case = 'an empty document'; Side = $side; Content = ''; Error = 'exactly one document' }
+            @{ Case = 'an anchor'; Side = $side; Content = 'permissions: &p {contents: write}'; Error = 'anchors' }
+            @{ Case = 'an alias'; Side = $side; Content = 'permissions: *p'; Error = 'aliases' }
+            @{ Case = 'a merge key'; Side = $side; Content = "defaults: &p {contents: write}`npermissions: {<<: *p}"; Error = 'anchors' }
+        }
+    ) {
+        $stub.Contents[$baseKey] = 'permissions: read-all'
+        $stub.Contents[$headKey] = 'permissions: read-all'
+        $key = if ($Side -eq 'base') { $baseKey } else { $headKey }
+        $stub.Contents[$key] = $Content
+
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        ($result.details.github.sensitiveLines -join "`n") | Should -Match $Error
+    }
+
+    It 'G10 rejects the documented unsupported content variant <Variant>' -ForEach @(
+        @{ Variant = 'directory' }
+        @{ Variant = 'symlink' }
+        @{ Variant = 'submodule' }
+    ) {
+        $response = Get-GitHubApiFixture -Name "repos/get-content.$Variant"
+        $stub.Responses['/contents/'] = ConvertTo-Json -InputObject $response -Depth 50
+
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        ($result.details.github.sensitiveLines -join "`n") | Should -Match 'not a file object|not an inline base64 file'
+    }
+
+    It 'G10 rejects <Case> from the content API' -ForEach @(
+        @{ Case = 'an unavailable large file'; Set = @{ encoding = 'none'; content = '' }; Error = 'not an inline base64 file' }
+        @{ Case = 'another path'; Set = @{ path = 'README.md' }; Error = 'Content path does not match' }
+        # Deliberately invalid API data: each case changes one field of a documented file response.
+        @{ Case = 'unknown type'; Set = @{ type = 'unknown' }; Error = 'not an inline base64 file' }
+        @{ Case = 'type in another case'; Set = @{ type = 'FILE' }; Error = 'not an inline base64 file' }
+        @{ Case = 'encoding in another case'; Set = @{ encoding = 'BASE64' }; Error = 'not an inline base64 file' }
+        @{ Case = 'path in another case'; Set = @{ path = '.github/WORKFLOWS/ci.yml' }; Error = 'Content path does not match' }
+        @{ Case = 'missing encoding'; Set = @{ encoding = $null }; Error = 'not an inline base64 file' }
+        @{ Case = 'missing content'; Set = @{ content = $null }; Error = 'not an inline base64 file' }
+        @{ Case = 'invalid base64'; Set = @{ content = '***' }; Error = 'comparison unavailable' }
+        @{ Case = 'invalid UTF-8'; Set = @{ content = '/w==' }; Error = 'comparison unavailable' }
+    ) {
+        $setValues = @{ path = $file.filename; content = 'e30=' }
+        foreach ($key in $Set.Keys) { $setValues[$key] = $Set[$key] }
+        $response = Get-GitHubApiFixture -Name 'repos/get-content.file' -Set $setValues
+        $stub.Responses['/contents/'] = ConvertTo-Json -InputObject $response -Depth 50
+
+        $result = Invoke-ScenarioGate -Stub $stub
+
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        ($result.details.github.sensitiveLines -join "`n") | Should -Match $Error
+    }
+
+    It 'G10 fails closed when the contents API is unreadable' {
+        $stub.Failures['/contents/'] = 'HTTP 403'
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        ($result.details.github.sensitiveLines -join "`n") | Should -Match 'HTTP 403'
+    }
+
+    It 'G10 rejects the optional content API field <Field>' -ForEach @(
+        @{ Field = 'target'; Fixture = 'repos/get-content.symlink' }
+        @{ Field = 'submodule_git_url'; Fixture = 'repos/get-content.submodule' }
+    ) {
+        $response = Get-GitHubApiFixture -Name 'repos/get-content.file' -Set @{ path = $file.filename; content = 'e30=' }
+        # content-file documents these optional fields as well as the separate symlink/submodule variants.
+        $response[$Field] = (Get-GitHubApiFixture -Name $Fixture)[$Field]
+        $stub.Responses['/contents/'] = ConvertTo-Json -InputObject $response -Depth 50
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        ($result.details.github.sensitiveLines -join "`n") | Should -Match 'submodule or symlink'
+    }
+
+    It 'G10 handles <Case> without trusting an absent patch' -ForEach @(
+        @{ Case = 'an added workflow'; Status = 'added'; Previous = '.github/workflows/ci.yml'; Name = '.github/workflows/ci.yml'; Expected = $true; Reads = 1 }
+        @{ Case = 'a removed workflow'; Status = 'removed'; Previous = '.github/workflows/ci.yml'; Name = '.github/workflows/ci.yml'; Expected = $true; Reads = 1 }
+        @{ Case = 'a modified workflow'; Status = 'modified'; Previous = '.github/workflows/ci.yml'; Name = '.github/workflows/ci.yml'; Expected = $false; Reads = 2 }
+        @{ Case = 'a changed workflow'; Status = 'changed'; Previous = '.github/workflows/ci.yml'; Name = '.github/workflows/ci.yml'; Expected = $false; Reads = 2 }
+        @{ Case = 'an unchanged workflow'; Status = 'unchanged'; Previous = '.github/workflows/ci.yml'; Name = '.github/workflows/ci.yml'; Expected = $false; Reads = 2 }
+        @{ Case = 'a rename inside workflows'; Status = 'renamed'; Previous = '.github/workflows/old.yaml'; Name = '.github/workflows/ci.yml'; Expected = $false; Reads = 2 }
+        @{ Case = 'activation by rename'; Status = 'renamed'; Previous = 'docs/ci.yml'; Name = '.github/workflows/ci.yml'; Expected = $true; Reads = 2 }
+        @{ Case = 'deactivation by rename'; Status = 'renamed'; Previous = '.github/workflows/ci.yml'; Name = 'docs/ci.yml'; Expected = $true; Reads = 2 }
+        @{ Case = 'a rename from an inactive extension'; Status = 'renamed'; Previous = '.github/workflows/ci.txt'; Name = '.github/workflows/ci.yml'; Expected = $true; Reads = 2 }
+        @{ Case = 'a rename to an inactive extension'; Status = 'renamed'; Previous = '.github/workflows/ci.yml'; Name = '.github/workflows/ci.txt'; Expected = $true; Reads = 2 }
+        @{ Case = 'a rename from an action'; Status = 'renamed'; Previous = '.github/actions/setup/action.yml'; Name = '.github/workflows/ci.yml'; Expected = $true; Reads = 2 }
+        @{ Case = 'a copied workflow'; Status = 'copied'; Previous = '.github/workflows/old.yml'; Name = '.github/workflows/ci.yml'; Expected = $true; Reads = 2 }
+    ) {
+        $file.status = $Status
+        $file.previous_filename = $Previous
+        $file.filename = $Name
+        $result = Invoke-ScenarioGate -Stub $stub
+        $codes = @(Get-ReasonCode $result)
+        if ($Expected) { $codes | Should -Be @('fail:workflow-permissions-changed') }
+        else { $codes | Should -Be @() }
+        $requests = @($stub.Calls | Where-Object { $_[-1] -match '/contents/' } | ForEach-Object { $_[-1] })
+        $requests.Count | Should -Be $Reads
+        if ($Status -ne 'added') { $requests[0] | Should -Be "repos/$repository/contents/${Previous}?ref=$($stub.PullRequest.baseRefOid)" }
+        if ($Status -ne 'removed') { $requests[-1] | Should -Be "repos/$repository/contents/${Name}?ref=$($stub.PullRequest.headRefOid)" }
+    }
+
+    # Deliberately invalid diff-entry fields, changed independently from the shared contract fixture.
+    It 'G10 rejects <Case> in the file list' -ForEach @(
+        @{ Case = 'an unknown status'; Status = 'unknown'; Previous = '.github/workflows/ci.yml'; Error = 'Unsupported file status' }
+        @{ Case = 'a missing status'; Status = $null; Previous = '.github/workflows/ci.yml'; Error = 'Unsupported file status' }
+        @{ Case = 'a rename without a source'; Status = 'renamed'; Previous = ''; Error = 'no previous filename' }
+        @{ Case = 'a copy without a source'; Status = 'copied'; Previous = $null; Error = 'no previous filename' }
+    ) {
+        $file.status = $Status
+        $file.previous_filename = $Previous
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        ($result.details.github.sensitiveLines -join "`n") | Should -Match $Error
+    }
+
+    It 'G10 rejects a moving <Ref> across the SHA-pinned content reads' -ForEach @(
+        @{ Ref = 'headRefOid' }
+        @{ Ref = 'baseRefOid' }
+    ) {
+        Mock -ModuleName MergeGate Invoke-MergeGateGh {
+            $response = Invoke-MergeGateStub -Stub $stub -Arguments $Arguments
+            if ($Arguments[-1] -match '/contents/') { $stub.PullRequest[$Ref] = 'a' * 40 }
+            return $response
+        }
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
+        $result.reasons[0].message | Should -Match 'head or base changed'
+    }
+
+    It 'G10 detects changed settings in an action document' {
+        $file.filename = '.github/actions/setup/action.yml'
+        $stub.Contents["$($stub.PullRequest.baseRefOid)/$($file.filename)"] = 'runs: {using: composite, steps: [{env: {TOKEN: "${{ secrets.OLD }}"}}]}'
+        $stub.Contents["$($stub.PullRequest.headRefOid)/$($file.filename)"] = 'runs: {using: composite, steps: [{env: {TOKEN: "${{ secrets.NEW }}"}}]}'
+        $result = Invoke-ScenarioGate -Stub $stub
+        Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
+        $result.details.github.sensitiveLines | Should -Be @("$($file.filename): sensitive YAML settings changed")
     }
 }
 
@@ -937,33 +1167,6 @@ Describe 'Merge gate check functions' {
         InModuleScope MergeGate -Parameters $_ { Test-MergeGateWorkflowPath -Path $Path | Should -Be $Expected }
     }
 
-    It 'G10 sensitive lines of <Case>' -ForEach @(
-        @{ Case = 'an added permission'; File = @{ filename = '.github/workflows/release.yml'; patch = "@@ -1,2 +1,3 @@`n on: push`n+permissions:`n+  id-token: write" }; Expected = @('.github/workflows/release.yml: +permissions:', '.github/workflows/release.yml: +  id-token: write') }
-        @{ Case = 'a removed trigger'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,1 @@`n-on: pull_request_target`n jobs:" }; Expected = @('.github/workflows/ci.yml: -on: pull_request_target') }
-        @{ Case = 'unchanged context lines'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,3 @@`n permissions:`n   contents: read`n+      - run: echo" }; Expected = @() }
-        @{ Case = 'a scope change inside an unchanged permissions block'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,3 +1,3 @@`n permissions:`n-  actions: read`n+  actions: write" }; Expected = @('.github/workflows/ci.yml: -  actions: read', '.github/workflows/ci.yml: +  actions: write') }
-        @{ Case = 'a security-events write'; File = @{ filename = '.github/workflows/scan.yml'; patch = "@@ -1,1 +1,2 @@`n jobs:`n+    security-events: write" }; Expected = @('.github/workflows/scan.yml: +    security-events: write') }
-        @{ Case = 'a privileged trigger'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,3 @@`n on:`n   push:`n+  workflow_run:" }; Expected = @('.github/workflows/ci.yml: +  workflow_run:') }
-        @{ Case = 'a self-hosted runner'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,1 @@`n-    runs-on: ubuntu-latest`n+    runs-on: [self-hosted, linux]" }; Expected = @('.github/workflows/ci.yml: +    runs-on: [self-hosted, linux]') }
-        @{ Case = 'inherited secrets'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,2 @@`n     uses: ./.github/workflows/deploy.yml`n+    secrets: inherit" }; Expected = @('.github/workflows/ci.yml: +    secrets: inherit') }
-        @{ Case = 'a GitHub-hosted runner change'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,1 @@`n-    runs-on: ubuntu-latest`n+    runs-on: windows-latest" }; Expected = @() }
-        @{ Case = 'quoted permission values'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,2 @@`n permissions:`n-  contents: `"read`"`n+  contents: `"write`"" }; Expected = @('.github/workflows/ci.yml: -  contents: "read"', '.github/workflows/ci.yml: +  contents: "write"') }
-        @{ Case = 'quoted permission keys'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,2 +1,2 @@`n permissions:`n-  'contents': 'read'`n+  'contents': 'write'" }; Expected = @(".github/workflows/ci.yml: -  'contents': 'read'", ".github/workflows/ci.yml: +  'contents': 'write'") }
-        @{ Case = 'an indexed secret'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,2 @@`n     env:`n+      TOKEN: `${{ secrets['DEPLOY_TOKEN'] }}" }; Expected = @(".github/workflows/ci.yml: +      TOKEN: `${{ secrets['DEPLOY_TOKEN'] }}") }
-        @{ Case = 'a rename into the workflow directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = 'docs/publish.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.yml: renamed from docs/publish.yml') }
-        @{ Case = 'a rename from an action directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = '.github/actions/archive/publish.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.yml: renamed from .github/actions/archive/publish.yml') }
-        @{ Case = 'a rename from an inactive file name'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = '.github/workflows/publish.txt'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.yml: renamed from .github/workflows/publish.txt') }
-        @{ Case = 'a rename to an inactive file name'; File = @{ filename = '.github/workflows/publish.txt'; previous_filename = '.github/workflows/publish.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @('.github/workflows/publish.txt: renamed from .github/workflows/publish.yml') }
-        @{ Case = 'a copy of a workflow'; File = @{ filename = '.github/workflows/publish.yaml'; previous_filename = '.github/workflows/release.yml'; status = 'copied'; patch = "@@ -1,1 +1,1 @@`n-name: release`n+name: publish" }; Expected = @('.github/workflows/publish.yaml: copied from .github/workflows/release.yml') }
-        @{ Case = 'a rename inside the workflow directory'; File = @{ filename = '.github/workflows/publish.yml'; previous_filename = '.github/workflows/release.yml'; status = 'renamed'; patch = "@@ -1,1 +1,1 @@`n-name: draft`n+name: publish" }; Expected = @() }
-        @{ Case = 'a scalar permission on the next line'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,3 +1,3 @@`n permissions:`n   contents:`n-    read`n+    write" }; Expected = @('.github/workflows/ci.yml: -    read', '.github/workflows/ci.yml: +    write') }
-        @{ Case = 'a quoted secrets key'; File = @{ filename = '.github/workflows/ci.yml'; patch = "@@ -1,1 +1,2 @@`n     uses: ./.github/workflows/deploy.yml`n+    `"secrets`": inherit" }; Expected = @('.github/workflows/ci.yml: +    "secrets": inherit') }
-        @{ Case = 'a missing patch'; File = @{ filename = '.github/workflows/big.yml' }; Expected = @('.github/workflows/big.yml: patch unavailable') }
-        @{ Case = 'an empty patch'; File = @{ filename = '.github/workflows/renamed.yml'; patch = '' }; Expected = @('.github/workflows/renamed.yml: patch unavailable') }
-    ) {
-        InModuleScope MergeGate -Parameters $_ { @(Get-MergeGateSensitiveLine -File $File) | Should -Be $Expected }
-    }
-
     It 'G10 finding <Case>' -ForEach @(
         @{ Case = 'without sensitive lines'; Lines = @(); Ack = ''; Expected = @() }
         @{ Case = 'without acknowledgement'; Lines = @('x: +permissions:'); Ack = ''; Expected = @('fail:workflow-permissions-changed') }
@@ -975,13 +1178,14 @@ Describe 'Merge gate check functions' {
 
     It 'G10 classifies renamed and other .github files' {
         InModuleScope MergeGate {
+            Mock Get-MergeGateWorkflowContent { 'name: CI' }
             $change = Get-MergeGateGitHubChange -Files @(
                 @{ filename = 'docs/ci.yml'; previous_filename = '.github/workflows/ci.yml'; status = 'renamed' }
                 @{ filename = '.github/agents/ci-runner.agent.md'; patch = '+permissions: x' }
                 @{ filename = 'templates/instance/.github/workflows/deploy.yml'; patch = '+permissions: write-all' }
-            )
+            ) -Target (ConvertTo-MergeGateTarget -Repository 'owner/repo') -BaseSha ('b' * 40) -HeadSha ('a' * 40)
             $change.WorkflowFiles | Should -Be @('docs/ci.yml')
-            $change.SensitiveLines | Should -Be @('docs/ci.yml: renamed from .github/workflows/ci.yml', 'docs/ci.yml: patch unavailable')
+            $change.SensitiveLines[0] | Should -Be 'docs/ci.yml: renamed from .github/workflows/ci.yml'
             $change.OtherGitHubFiles | Should -Be @('.github/agents/ci-runner.agent.md')
             $change.TemplateWorkflowFiles | Should -Be @('templates/instance/.github/workflows/deploy.yml')
         }
@@ -1118,7 +1322,7 @@ Describe 'Invoke-GatedMerge' {
         $result.reason | Should -Match '^merge-refused'
         $result.exitCode | Should -Be 1
         @($stub.Calls | Where-Object { $_[0] -eq 'pr' }).Count | Should -Be 1
-        @($stub.Calls | Where-Object { $_[1] -eq 'graphql' }).Count | Should -Be 2
+        @($stub.Calls | Where-Object { $_[1] -eq 'graphql' }).Count | Should -Be 4
     }
 
     It 'fails the post-merge verification (exit 5) when the merge bypassed the rules' {

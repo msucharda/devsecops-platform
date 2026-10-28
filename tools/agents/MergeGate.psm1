@@ -17,19 +17,17 @@ API contract (X-GitHub-Api-Version 2026-03-10; GraphQL schema github/docs src/gr
 - GET /repos/{owner}/{repo}/rules/branches/{branch}: https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-rules-for-a-branch
 - GET /repos/{owner}/{repo}/compare/{basehead}: https://docs.github.com/en/enterprise-cloud@latest/rest/commits/commits#compare-two-commits
 - GET /repos/{owner}/{repo}/pulls/{pull_number}/files: https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests-files
+- GET /repos/{owner}/{repo}/contents/{path}: https://docs.github.com/en/enterprise-cloud@latest/rest/repos/contents#get-repository-content
 - GET /repos/{owner}/{repo}/rulesets/rule-suites: https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rule-suites#list-repository-rule-suites
 #>
 
-$script:GateVersion = '1.0.0'
+$script:GateVersion = '1.1.0'
 $script:ApiVersion = '2026-03-10'
 $script:CopilotLogins = [string[]] @('copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]', 'Copilot')
 $script:CopilotCheckName = 'copilot-pull-request-reviewer'
 $script:CopilotWorkflowName = 'Running Copilot Code Review'
 $script:PendingStatuses = [string[]] @('queued', 'in_progress', 'waiting', 'requested', 'pending')
 $script:SuccessConclusions = [string[]] @('success', 'skipped', 'neutral')
-# Changed lines that touch token permissions (any scope, also inside an unchanged permissions block), privileged triggers,
-# secrets or self-hosted runners (issue #85, G10).
-$script:SensitivePattern = 'permissions|\b(actions|attestations|checks|contents|deployments|discussions|id-token|issues|models|packages|pages|pull-requests|repository-projects|security-events|statuses)\b[''"]?\s*:\s*[''"]?(read|write|none)\b|:\s*[''"]?write\b|write-all|read-all|id-token|attestations|pull_request_target|workflow_run|secrets[''"]?\s*(\.|\[|:)|^[+-]\s*[''"]?(read|write|none|read-all|write-all)[''"]?\s*$|GITHUB_TOKEN|self-hosted'
 $script:OpenQuestionsHeading = '(?im)^#{1,6}[ \t]*(Otev\u0159en\u00E9 ot\u00E1zky|Open questions)\b.*$'
 $script:DecisionsHeading = '(?im)^#{1,6}[ \t]*(Rozhodnut\u00ED (pro )?u\u017Eivatele)\b.*$'
 $script:DecisionsAcceptedMarker = '<!--\s*merge-gate:\s*decisions-accepted\s+(?<login>[A-Za-z0-9-]+(\[bot\])?)\s+(?<date>\d{4}-\d{2}-\d{2})\s*-->'
@@ -790,30 +788,144 @@ function Test-MergeGateWorkflowPath {
     return $Path -match '^\.github/(workflows|actions)/'
 }
 
-# security-check: merge-gate-workflow-lines
-function Get-MergeGateSensitiveLine {
-    <#
-    .SYNOPSIS
-    Returns the added or removed lines of a workflow or action change that touch permissions, triggers, secrets or runners.
-    A file without a patch (too large, binary or renamed without changes) cannot be checked and is reported.
-    #>
+# security-check: merge-gate-workflow-content
+function Get-MergeGateWorkflowContent {
     [CmdletBinding()]
     [OutputType([string])]
-    param([Parameter(Mandatory)][System.Collections.IDictionary] $File)
+    param(
+        [Parameter(Mandatory)][hashtable] $Target,
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][string] $Sha
+    )
 
-    # A copy, or a rename other than between two workflow files, can activate content that the patch does not show.
-    $direct = '^\.github/workflows/[^/]+\.ya?ml$'
-    if ($File['status'] -ceq 'copied' -or
-        ($File['status'] -ceq 'renamed' -and -not ([string] $File['previous_filename'] -match $direct -and [string] $File['filename'] -match $direct))) {
-        "$($File['filename']): $($File['status']) from $($File['previous_filename'])"
+    $encoded = ($Path.Split('/') | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
+    $file = Invoke-MergeGateRest -Target $Target -Path "repos/$($Target.Slug)/contents/${encoded}?ref=$Sha"
+    # The contents endpoint also returns directories, symlinks, submodules and files without inline content.
+    if ($file -isnot [System.Collections.IDictionary]) { throw "Content at '$Path' is not a file object." }
+    if ($file['type'] -cne 'file' -or $file['encoding'] -cne 'base64' -or $file['content'] -isnot [string]) {
+        throw "Content at '$Path' is not an inline base64 file."
     }
-    $patch = $File['patch']
-    if ($patch -isnot [string] -or $patch -eq '') {
-        "$($File['filename']): patch unavailable"
-        return
+    if ($file['path'] -cne $Path) { throw "Content path does not match '$Path'." }
+    if ($file.Contains('submodule_git_url') -or $file.Contains('target')) { throw "Content at '$Path' is a submodule or symlink." }
+    $bytes = [Convert]::FromBase64String($file['content'])
+    return [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+}
+
+# security-check: merge-gate-workflow-settings
+function Test-MergeGateSensitiveSetting {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([AllowEmptyString()][string] $Key, [AllowEmptyString()][string] $Value)
+
+    if ($Key -eq 'on' -or $Key -eq 'runs-on' -or $Key -in @('permissions', 'secrets', 'GITHUB_TOKEN')) { return $true }
+    return $Value -match '\bsecrets\b|\bGITHUB_TOKEN\b'
+}
+
+function Get-MergeGateYamlSetting {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] $Node,
+        [string] $Path = '$',
+        [switch] $Selected,
+        [int] $Depth = 0
+    )
+
+    if ($Depth -gt 100) { throw 'Workflow YAML nesting exceeds 100 levels.' }
+    if ($Selected) { "${Path}: $($Node.NodeType)" }
+    if ($Node -is [YamlDotNet.RepresentationModel.YamlScalarNode]) {
+        if ($Selected -or (Test-MergeGateSensitiveSetting -Value $Node.Value)) {
+            # Non-specific tags differ for quoted/plain strings; explicit tags still remain part of the comparison.
+            $tag = $Node.Tag.ToString()
+            if ($tag -in @('?', '!', 'tag:yaml.org,2002:str')) { $tag = '' }
+            "${Path}: $tag $(ConvertTo-Json -InputObject $Node.Value -Compress)"
+        }
     }
-    foreach ($line in ($patch -split '\r?\n')) {
-        if ($line -match '^[+-]' -and $line -match $script:SensitivePattern) { "$($File['filename']): $line" }
+    elseif ($Node -is [YamlDotNet.RepresentationModel.YamlMappingNode]) {
+        foreach ($entry in $Node.Children.GetEnumerator()) {
+            if ($entry.Key -isnot [YamlDotNet.RepresentationModel.YamlScalarNode]) { throw 'Workflow YAML contains a non-scalar mapping key.' }
+            $key = $entry.Key.Value
+            $childPath = "$Path[$(ConvertTo-Json -InputObject $key -Compress)]"
+            $select = $Selected -or (Test-MergeGateSensitiveSetting -Key $key -Value $key)
+            Get-MergeGateYamlSetting -Node $entry.Value -Path $childPath -Selected:$select -Depth ($Depth + 1)
+        }
+    }
+    elseif ($Node -is [YamlDotNet.RepresentationModel.YamlSequenceNode]) {
+        for ($index = 0; $index -lt $Node.Children.Count; $index++) {
+            Get-MergeGateYamlSetting -Node $Node.Children[$index] -Path "$Path[$index]" -Selected:$Selected -Depth ($Depth + 1)
+        }
+    }
+    else { throw 'Workflow YAML contains an unsupported node.' }
+}
+
+# security-check: merge-gate-workflow-yaml
+function Get-MergeGateWorkflowSnapshot {
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string] $Content)
+
+    Import-Module (Join-Path $PSScriptRoot '../ToolDependencies.psm1') -ErrorAction Stop
+    Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded) -ErrorAction Stop
+    $parser = [YamlDotNet.Core.Parser]::new([IO.StringReader]::new($Content))
+    while ($parser.MoveNext()) {
+        if ($parser.Current -is [YamlDotNet.Core.Events.AnchorAlias]) { throw 'Workflow YAML aliases are not supported.' }
+        if ($parser.Current -is [YamlDotNet.Core.Events.NodeEvent] -and -not $parser.Current.Anchor.IsEmpty) {
+            throw 'Workflow YAML anchors are not supported.'
+        }
+    }
+    $yaml = [YamlDotNet.RepresentationModel.YamlStream]::new()
+    $yaml.Load([IO.StringReader]::new($Content))
+    if ($yaml.Documents.Count -ne 1) { throw 'Workflow YAML must contain exactly one document.' }
+    if ($yaml.Documents[0].RootNode -isnot [YamlDotNet.RepresentationModel.YamlMappingNode]) {
+        throw 'Workflow YAML must have a mapping root.'
+    }
+    $settings = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($setting in @(Get-MergeGateYamlSetting -Node $yaml.Documents[0].RootNode)) { $null = $settings.Add($setting) }
+    return , @($settings)
+}
+
+# security-check: merge-gate-workflow-comparison
+function Get-MergeGateSensitiveChange {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $File,
+        [Parameter(Mandatory)][hashtable] $Target,
+        [Parameter(Mandatory)][string] $BaseSha,
+        [Parameter(Mandatory)][string] $HeadSha
+    )
+
+    $name = [string] $File['filename']
+    try {
+        if ($File['status'] -notin @('added', 'removed', 'modified', 'changed', 'renamed', 'copied', 'unchanged')) {
+            throw "Unsupported file status '$($File['status'])'."
+        }
+        $previous = $name
+        if ($File['status'] -in @('renamed', 'copied')) {
+            if ([string]::IsNullOrEmpty($File['previous_filename'])) { throw 'A renamed or copied file has no previous filename.' }
+            $previous = [string] $File['previous_filename']
+        }
+        # A copy or activation/deactivation can change execution even when the YAML settings stay identical.
+        $direct = '^\.github/workflows/[^/]+\.ya?ml$'
+        if ($File['status'] -eq 'copied' -or
+            ($File['status'] -eq 'renamed' -and -not ($previous -match $direct -and $name -match $direct))) {
+            "${name}: $($File['status']) from $previous"
+        }
+        $before = @()
+        $after = @()
+        if ($File['status'] -ne 'added') {
+            $before = Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $previous -Sha $BaseSha)
+        }
+        if ($File['status'] -ne 'removed') {
+            $after = Get-MergeGateWorkflowSnapshot -Content (Get-MergeGateWorkflowContent -Target $Target -Path $name -Sha $HeadSha)
+        }
+        if (($before -join "`n") -cne ($after -join "`n")) {
+            "${name}: sensitive YAML settings changed"
+        }
+    }
+    catch {
+        # An unreadable side cannot prove unchanged settings; keep the diagnostic in the G10 evidence.
+        "${name}: comparison unavailable: $($_.Exception.Message)"
     }
 }
 
@@ -833,7 +945,12 @@ function Get-MergeGateWorkflowFinding {
 function Get-MergeGateGitHubChange {
     [CmdletBinding()]
     [OutputType([hashtable])]
-    param([AllowEmptyCollection()][object[]] $Files = @())
+    param(
+        [AllowEmptyCollection()][object[]] $Files = @(),
+        [Parameter(Mandatory)][hashtable] $Target,
+        [Parameter(Mandatory)][string] $BaseSha,
+        [Parameter(Mandatory)][string] $HeadSha
+    )
 
     $workflowFiles = [System.Collections.Generic.List[string]]::new()
     $otherFiles = [System.Collections.Generic.List[string]]::new()
@@ -845,7 +962,7 @@ function Get-MergeGateGitHubChange {
         $paths = @(@($name, $file['previous_filename']) | Where-Object { $_ -is [string] -and $_ -ne '' })
         if (@($paths | Where-Object { Test-MergeGateWorkflowPath -Path $_ }).Count -gt 0) {
             $workflowFiles.Add($name)
-            foreach ($line in @(Get-MergeGateSensitiveLine -File $file)) { $sensitive.Add($line) }
+            foreach ($line in @(Get-MergeGateSensitiveChange -File $file -Target $Target -BaseSha $BaseSha -HeadSha $HeadSha)) { $sensitive.Add($line) }
         }
         elseif (@($paths | Where-Object { $_ -match '^\.github/' }).Count -gt 0) { $otherFiles.Add($name) }
         if (@($paths | Where-Object { $_ -match '^templates/(.+/)?\.github/workflows/' }).Count -gt 0) { $templateFiles.Add($name) }
@@ -1221,7 +1338,10 @@ function Complete-MergeGateEvaluation {
 
     # G10
     $files = Get-MergeGateRestList -Target $Target -Path "repos/$slug/pulls/$Number/files" -MaxPages $script:MaxFilePages
-    $change = Get-MergeGateGitHubChange -Files $files
+    $change = Get-MergeGateGitHubChange -Files $files -Target $Target -BaseSha $baseSha -HeadSha $head
+    # The file list is PR-scoped rather than SHA-scoped; reject a ref change across the read.
+    $current = Get-MergeGatePullRequest -Target $Target -Number $Number
+    if ($current['headRefOid'] -cne $head -or $current['baseRefOid'] -cne $baseSha) { throw 'The pull request head or base changed while reading workflow files.' }
     $workflowEvidence = @{ 'workflow-permissions-changed' = [ordered]@{ sensitiveLines = $change.SensitiveLines; acknowledgedFor = if ($AcknowledgedSha) { $AcknowledgedSha } else { $null } } }
     $workflowFinding = @(Get-MergeGateWorkflowFinding -SensitiveLines $change.SensitiveLines -HeadSha $head -AcknowledgedSha $AcknowledgedSha)
     foreach ($reason in @(ConvertTo-MergeGateReason -Check 'github-changes' -Finding $workflowFinding -Evidence $workflowEvidence)) { $reasons.Add($reason) }

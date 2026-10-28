@@ -7,8 +7,10 @@ Evaluates whether an agent may merge a pull request. Read-only: the script never
 Runs the checks G1-G11 of the merge gate (issue #85) and writes one JSON object to stdout. Diagnostics go to stderr.
 Exit codes: 0 pass, 1 fail, 2 pending, 3 already-merged, 4 invalid input, 5 evaluation error (the JSON then has verdict fail).
 
-The coordinator runs the copy from origin/main, so that a branch cannot weaken its own gate:
-  git show origin/main:tools/agents/MergeGate.psm1 > MergeGate.psm1; git show origin/main:tools/agents/Test-MergeGate.ps1 > Test-MergeGate.ps1
+The coordinator extracts tools/ from origin/main into a trusted temporary directory, preserving the layout:
+  git archive origin/main tools | tar -xf - -C <trusted-directory>
+Run <trusted-directory>/tools/agents/Test-MergeGate.ps1 there. G10 uses the bundled, hash-verified YAML parser;
+copying only the gate scripts omits that runtime. Never load dependencies from the pull request branch.
 
 .EXAMPLE
 ./tools/agents/Test-MergeGate.ps1 -Repository msucharda/devsecops-platform -Pr 85 -ExpectedHeadSha <sha>

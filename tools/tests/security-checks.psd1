@@ -529,9 +529,27 @@
             )
         }
         @{
-            Name = 'merge-gate-workflow-lines'
+            Name = 'merge-gate-workflow-content'
             Tests = @(
-                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 sensitive lines*') }
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 rejects*content*', '*G10 rejects*API*', '*G10 ignores*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-workflow-settings'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 compares*', '*G10 ignores*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-workflow-yaml'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 fails closed for*', '*G10 ignores*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-workflow-comparison'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 compares*', '*G10 ignores*', '*G10 handles*', '*G10 rejects*file list*') }
             )
         }
         @{
