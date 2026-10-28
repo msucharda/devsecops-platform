@@ -100,19 +100,19 @@ function Get-CiWorkflowSetting {
     $workflow = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $WorkflowPath -Raw) -Ordered
     $pwshSteps = [ordered]@{}
     foreach ($name in 'Check PowerShell', 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {
-        $step = Get-CiWorkflowStep -Workflow $workflow -Job platform -Name $name
+        $step = Get-CiWorkflowStep -Workflow $workflow -Job platform-checks -Name $name
         if ($step['shell'] -cne 'pwsh' -or [string]::IsNullOrWhiteSpace($step['run'])) {
             throw "ci.yml step '$name' must be a pwsh run step. Update tools/LocalCi.psm1."
         }
         $pwshSteps[$name] = [string] $step['run']
     }
 
-    $syntax = Get-CiWorkflowStep -Workflow $workflow -Job platform -Name 'Validate deployment workflow syntax'
+    $syntax = Get-CiWorkflowStep -Workflow $workflow -Job platform-checks -Name 'Validate deployment workflow syntax'
     $syntaxLines = @(([string] $syntax['run']).Split("`n") | Where-Object { $_.Trim() })
     if ($syntaxLines.Count -ne 1) { throw "ci.yml step 'Validate deployment workflow syntax' must run one command. Update tools/LocalCi.psm1." }
     $actionlint = ConvertFrom-ActionlintCommand -Line $syntaxLines[0]
 
-    $instance = Get-CiWorkflowStep -Workflow $workflow -Job platform -Name 'Validate instance workflows that call local reusable workflows'
+    $instance = Get-CiWorkflowStep -Workflow $workflow -Job platform-checks -Name 'Validate instance workflows that call local reusable workflows'
     $instanceLines = @(([string] $instance['run']).Split("`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $copy = @($instanceLines | Where-Object { $_ -cmatch '^cp (?<files>.+) "\$project/\.github/workflows/"$' })
     $lint = @($instanceLines | Where-Object { $_.StartsWith('go run ', [StringComparison]::Ordinal) })
@@ -145,13 +145,13 @@ function Get-CiWorkflowSetting {
         InstanceWorkflowFiles = $instanceFiles
         InstanceActionlintArguments = $instanceLint.Arguments
         TerraformVersion = Get-CiActionInput -Workflow $workflow -Job terraform -Action 'hashicorp/setup-terraform' -InputName terraform_version
-        PlatformTerraformVersion = Get-CiActionInput -Workflow $workflow -Job platform -Action 'hashicorp/setup-terraform' -InputName terraform_version
+        PlatformTerraformVersion = Get-CiActionInput -Workflow $workflow -Job pester -Action 'hashicorp/setup-terraform' -InputName terraform_version
         TflintVersion = (Get-CiActionInput -Workflow $workflow -Job terraform -Action 'terraform-linters/setup-tflint' -InputName tflint_version).TrimStart('v')
         TrivyVersion = (Get-CiActionInput -Workflow $workflow -Job terraform -Action 'aquasecurity/setup-trivy' -InputName version).TrimStart('v')
         TerraformRunCommands = $terraformCommands
         TerraformFingerprint = ConvertTo-Json -Compress -Depth 20 -InputObject @(
             $workflow['jobs']['terraform'],
-            @($workflow['jobs']['platform']['steps'] | Where-Object { $_ -is [System.Collections.IDictionary] -and $_['uses'] -is [string] -and $_['uses'].StartsWith('hashicorp/setup-terraform@', [StringComparison]::Ordinal) }))
+            @($workflow['jobs']['pester']['steps'] | Where-Object { $_ -is [System.Collections.IDictionary] -and $_['uses'] -is [string] -and $_['uses'].StartsWith('hashicorp/setup-terraform@', [StringComparison]::Ordinal) }))
     }
 }
 
