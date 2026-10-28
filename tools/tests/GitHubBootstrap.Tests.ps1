@@ -1839,7 +1839,7 @@ Describe 'GitHub bootstrap public interface' {
     It 'drives the public acceptance wizard through publication and real-run evidence without accepting missing nightly or rotation checks' {
         $sourceRoot = Split-Path $tools -Parent
         Copy-Item (Join-Path $tools 'acceptance') -Destination (Join-Path $release 'tools') -Recurse
-        foreach ($name in @('bootstrap-probe', 'enterprise-baseline')) {
+        foreach ($name in @('bootstrap-probe', 'enterprise-baseline', 'organization-rulesets')) {
             $module = @{ Name = $name }
             foreach ($phase in @('plan', 'apply')) {
                 $module[$phase] = @{ ResourceId = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg-demo-bootstrap/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-demo-$name-$phase"
@@ -1939,6 +1939,11 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         ($result.Stages | Where-Object Id -eq 'acceptance-witnesses').Status | Should -Not -Be 'Ok'
         $result.AcceptancePassed | Should -BeFalse
         $acceptanceInstance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $casePath 'github-acceptance/instance.yaml') -Raw)
+        @($acceptanceInstance.modules['organization-rulesets'].parameters.target_organizations) |
+            Should -Be @('demo-a1b2c3-platform')
+        $acceptanceInstance.credentials['organization-rulesets'].rulesetPlan.githubApp | Should -Be 'rulesets'
+        $acceptanceInstance.credentials['organization-rulesets'].rulesetPlan.environment | Should -Be 'organization-rulesets-ruleset-plan'
+        $acceptanceInstance.credentials['enterprise-baseline'].Contains('rulesetPlan') | Should -BeFalse
         foreach ($alias in @('authorization', 'reader', 'writer', 'rulesets')) {
             $acceptanceInstance.githubApps[$alias].resources.repositories.Count | Should -Be 0
         }
