@@ -55,6 +55,16 @@ Describe 'Sample controls' {
 
 AfterAll { $env:LOCAL_CI_WORKER_BUDGET = $savedWorkerBudget }
 
+Describe 'Mutation runner verified runtime boundary' -Tag Integration {
+    It 'keeps YAML imports usable across different baseline suites in one worker' {
+        $path = Join-Path $TestDrive 'runtime-boundary.json'
+        & $runner -ThrottleLimit 1 -Check @('bootstrap-request-policy', 'platform-app-manifest-scope') -ReportPath $path 6>$null
+        $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        @($report.problems).Count | Should -Be 0
+        $report.mutants.Status | Select-Object -Unique | Should -BeExactly 'Killed'
+    }
+}
+
 Describe 'Mutation runner public interface' {
     BeforeAll {
         $shardPaths = @(0..1 | ForEach-Object { Join-Path $TestDrive "shard-$_.json" })

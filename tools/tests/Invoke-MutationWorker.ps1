@@ -22,6 +22,8 @@ $toolsPath = Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $toolsPath 'ToolDependencies.psm1')
 Import-Module (Get-ToolDependencyPath -Name Pester -ToolsPath $toolsPath)
 $env:PSModulePath = "$(Join-Path $toolsPath 'vendor')$([IO.Path]::PathSeparator)$env:PSModulePath"
+# Initialize aliases outside Pester scopes so successive suites reuse the same verified module.
+Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ToolsPath $toolsPath -ReuseLoaded)
 
 $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 $prefix = $RepoPath.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
