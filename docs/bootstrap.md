@@ -174,6 +174,31 @@ Instalace navazujících modulů připrav podle [checklistu odvozeného z manife
 
 Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. Pak připrav konfiguraci druhé etapy, ručně nainstaluj její Apps, doplň bindings a znovu ověř bootstrap. Změnu `githubApps` nebo `credentials` existující instance předlož přes PR podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Pro `organization-roles` navíc vytvoř a propoj security týmy podle [README modulu](../modules/organization-roles/README.md#nasazení-ve-dvou-etapách). Modul instalace, týmy ani SCIM linky nevytváří.
 
+### Nový živý krok: časná Code Security fáze před prvním úplným deploy
+
+Rozhodnutí koordinátora: Při prvním nasazení musí platformní tým po úspěšném apply `organizations` spustit samostatně standardní `Invoke-Module.ps1 -Module enterprise-baseline -DeploymentPhase code-security`. Spustí nejdřív plan s původním `enterprise-baseline` plan environmentem a pak apply s původním apply environmentem a schválením. Fáze používá stávající plan/apply App, Azure identity a tokenová oprávnění. Nesmí přidat credential binding, instance config ani nový typ tokenu.
+
+Tento krok **mění živý stav**. Před spuštěním musí platformní tým použít neměnný commit z chráněné `main` s publikovaným release markerem `.platform-bootstrap.json`, ověřit jeho soulad s vendorovaným release a provést běžnou validaci `Test-InstanceConfiguration.ps1` i výběr `Select-InstanceModules.ps1`. Runner při zadání `-DeploymentPhase` provádí stejnou validaci manifestu, instance, vybraného modulu a organizačního scope jako při běžném běhu. Samotný přímý CLI běh však neověřuje release marker ani nevyžaduje schválení GitHub environmentu: tyto dvě podmínky musí zajistit schválené prostředí spuštění, nikoli parametr runneru. Pokud nelze ověřit marker a schválení, krok se nesmí spustit.
+
+Předej planu skutečný artifact `organizations.json` z planu organizací a apply skutečný artifact z apply organizací **téhož nasazení** přes `-PrerequisiteOutputsPath`. Nepředávej navržený state ani výstup z jiného běhu. Volání `-Action plan` a `-Action apply` používají stále běžné oddělené tokeny a stejné entry pointy jako ostatní moduly. Po úspěchu musí být `platform-baseline` výchozí pro nové repozitáře ve všech organizacích a připojená ke všem existujícím repozitářům včetně `instance`. Teprve pak spusť celý `deploy.yml` z chráněné `main`. Jeho společná brána `approve_apply` se nemění. Ruleset plan na čerstvé instanci bez vzdálené konfigurace musí selhat, i když časná fáze vytvořila plan.
+
+V již schváleném prostředí spusť ze stejného neměnného checkoutu instance tyto entry pointy. Nahraď cesty skutečnými artifacty a odvozenou organizací platformy; tokeny vydávej a odvolávej stejným postupem jako pro běžný plan a apply modul. Bez schválení apply environmentu ani bez ověřeného release markeru tyto příkazy nespouštěj.
+
+```powershell
+.\platform\tools\Test-InstanceConfiguration.ps1 -InstancePath .\instance.yaml -ModulesPath .\platform\modules
+.\platform\tools\Select-InstanceModules.ps1 -InstancePath .\instance.yaml -ModulesPath .\platform\modules
+$phase = @{
+    Module = 'enterprise-baseline'
+    DeploymentPhase = 'code-security'
+    InstancePath = '.\instance.yaml'
+    ModulesPath = '.\platform\modules'
+    PlatformOrganization = '<organizace-platformy>'
+}
+.\platform\tools\Invoke-Module.ps1 @phase -Action plan -PrerequisiteOutputsPath '<plan-outputs-organizations>'
+# After the existing apply environment approval, switch to its apply identity and token.
+.\platform\tools\Invoke-Module.ps1 @phase -Action apply -PrerequisiteOutputsPath '<apply-outputs-organizations>'
+```
+
 Vlož metadata do `githubApps` a vazby do `credentials` v pracovní kopii konfigurace. Autorizační alias, například `authorization`, patří také do `githubApps`; skriptu ho předáš přes `-AuthorizationApp`. Privátní klíče a jejich lokální manifest **nesmějí** ležet v release ani ve zdrojovém repozitáři.
 
 Lokální `keys.json` obsahuje položku pro každý používaný alias. `createdAt` musí odpovídat skutečnému vytvoření klíče, nikoli dni spuštění bootstrapu:

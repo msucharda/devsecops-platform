@@ -4,6 +4,18 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'code-security-repository-coverage'
+            Tests = @(
+                @{ Path = 'tools/tests/CodeSecurityCoverage.Tests.ps1'; FullName = @('Repository Code Security coverage*') }
+            )
+        }
+        @{
+            Name = 'ruleset-code-security-prerequisite'
+            Tests = @(
+                @{ Path = 'tools/tests/RulesetCodeSecurity.Tests.ps1'; FullName = @('Ruleset Code Security prerequisite*') }
+            )
+        }
+        @{
             Name = 'workflow-uses-reference'
             Tests = @(
                 @{ Path = 'tools/tests/WorkflowPreflight.Tests.ps1'; FullName = @('*pinned references', '*rejects <Case> references', '*unsafe local*', '*follows a local composite*', '*repository root as a local action*') }

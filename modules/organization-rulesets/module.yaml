@@ -3,6 +3,7 @@ description: Organization rulesets of the instance in an isolated rulesets root;
 organizationScoped: true
 prerequisites:
   - organizations
+  - enterprise-baseline:code-security
 manualSteps: []
 permissions:
   azure: []

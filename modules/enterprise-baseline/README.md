@@ -2,7 +2,9 @@
 
 Modul nastaví automatizované kontroly v organizacích instance podle ADR 0016. Název modulu zachováváme. Enterprise kontroly, které App-only automatizace nepokrývá, jsou povinné ruční předpoklady, ne Terraform prostředky modulu.
 
-Předpoklady: `organizations` a `actions-catalog`. Manifest deklaruje oba moduly. Graf modulů proto spustí plan a apply tohoto modulu až po úspěšných modulech `organizations` a `actions-catalog`. Teardown ho odstraní před destroy obou modulů. Politika akcí tak začne platit až po importu vendorovaných akcí a při teardownu skončí dřív, než katalog zmizí. Pořadí nezávisí na názvech modulů. Modul výstupy předpokladů nečte. Výběr modulu `enterprise-baseline` vybere i `actions-catalog` včetně jeho ručních kroků.
+Manifest dělí modul na časnou fázi `code-security` a pozdní hlavní root. Časná fáze vyžaduje pouze `organizations` a používá stávající plan/apply credentials modulu. Nepožaduje `liveWorkflowsPromoted` ani preflight katalogových workflow. Hlavní root stále vyžaduje `organizations` a `actions-catalog` a zachovává jejich ruční předpoklady. Graf spustí časnou fázi před `organization-rulesets`, katalog po rulesetech a hlavní root po katalogu. Teardown probíhá v opačném pořadí. Každý root má vlastní state a výstupní artifact; výstupy předpokladů pocházejí z odpovídajícího planu nebo apply stejného běhu.
+
+Na čerstvé instanci ruleset plan před prvním apply správně odmítne chybějící vzdálenou výchozí konfiguraci. Schválený první živý krok proto samostatně aplikuje časnou fázi po `organizations`; [postup bootstrapu](../../docs/bootstrap.md#nový-živý-krok-časná-code-security-fáze-před-prvním-úplným-deploy) určuje kontrolu release, prostředí a výstupů. Celý deploy následuje až po tomto kroku.
 
 ## Stav implementace
 
@@ -23,7 +25,7 @@ Modul pro každou organizaci z `target_organizations` volá `PATCH /orgs/{org}` 
 - Modul používá provider `Mastercard/restapi`, ne `github_organization_settings` providera `integrations/github`. Ten vyžaduje `billing_email`, posílá všechna pole organizace a potřebuje provider pro každou organizaci.
 - Manifest deklaruje `organizationScoped: true`. `target_organizations` musí obsahovat přesně všechny organizace instance: platformní, akcí a workloadů, odvozené přes `-PlatformOrganization`. Runner podmnožinu i nadmnožinu odmítne.
 - Provider přijímá jeden bearer token na proces. Společný runner proto pro každou organizaci spustí samostatný Terraform proces se singleton `target_organizations` a tokenem dané organizace v `REST_API_BEARER`, `GITHUB_TOKEN` a tokenových mapách. Původní environment po běhu obnoví.
-- Každá organizace má v kontejneru `enterprise-baseline` vlastní state `organizations/<login>/terraform.tfstate`. Login je lowercase. Runner nepoužije starý společný state ani ho nemigruje; upgrade mezi RC release není podporovaný. Výstupní artifact vznikne až po úspěchu všech organizací. Obsahuje úplný seznam `organizations` a veřejné výstupy v mapě `organization_outputs`.
+- Každá organizace má v kontejneru `enterprise-baseline` vlastní state `organizations/<login>/terraform.tfstate` pro pozdní root a `organizations/<login>/terraform.code-security.tfstate` pro časnou fázi. Login je lowercase. Runner nemigruje dřívější RC state s Code Security v hlavním rootu; upgrade mezi RC release není podporovaný. Výstupní artifact vznikne až po úspěchu všech organizací. Obsahuje úplný seznam `organizations` a veřejné výstupy v mapě `organization_outputs`.
 - Create, update i destroy jsou `PATCH` existující organizace. Přerušený běh proto další apply bezpečně zopakuje.
 - Postcondition po čtení `GET /orgs/{org}` ([dokumentace](https://docs.github.com/en/enterprise-cloud@latest/rest/orgs/orgs#get-an-organization)) vyžaduje spravované hodnoty. Chybějící pole je chyba, ne shoda. Plan tak zachytí drift spravovaných polí.
 - `members_can_fork_private_repositories` řídí enterprise politika, ne modul. Create, update ani destroy toto pole neposílají. Samostatná postcondition vyžaduje přesně boolean `false` z API; `true`, `null`, chybějící pole nebo neplatná hodnota je chyba s odkazem na předpoklad `privateInternalForksDisabled`. U existujícího prostředku s nezměněnými `data` kontrola zastaví plan po refreshi. Při prvním nasazení nebo změně `data` není `api_response` během planu známá; kontrola proběhne až při apply po PATCH. Apply proto může selhat až po zápisu ostatních spravovaných polí. Teardown enterprise politiku zachová.
@@ -148,7 +150,7 @@ Seznam patterns je v `customPatterns` v `instance.yaml`. Výchozí seznam je pr�
 
 ## Implementace a obnova po přerušení
 
-- Code security configuration a patterns nepoužívají `Mastercard/restapi` ani `integrations/github`. Spravují je prostředky `terraform_data` s PowerShell skripty v `scripts/`. Skripty volají REST API s tokenem z `REST_API_BEARER` a pevnou hlavičkou `X-GitHub-Api-Version: 2026-03-10`.
+- Code security configuration a patterns spravuje samostatný Terraform root `code-security/`; nepoužívají `Mastercard/restapi` ani `integrations/github`. Prostředky `terraform_data` volají původní PowerShell skripty v `scripts/` s tokenem z `REST_API_BEARER` a pevnou hlavičkou `X-GitHub-Api-Version: 2026-03-10`.
   - `restapi` neumí převzít configuration, jejíž odpověď na `POST` se ztratila. Další apply by vytvořil duplikát, nebo selhal na kolizi názvu.
   - Mazání patternu posílá ID a verzi v těle `DELETE`; `restapi` tělo pro mazání neposílá.
 - Každý objekt má dva prostředky. Identitní prostředek (`code_security_configuration`, `custom_pattern`) objekt jen maže při destroy. Obsahový prostředek (`code_security_configuration_settings`, `custom_pattern_content`) při vytvoření objekt najde podle názvu a vytvoří nebo upraví. Změna obsahu proto upraví objekt na místě.

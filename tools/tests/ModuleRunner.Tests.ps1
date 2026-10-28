@@ -57,6 +57,41 @@ Describe 'Module runner with local Terraform' {
         Test-Path -LiteralPath (Join-Path $arguments.StatePath 'foundation.tfstate') | Should -BeTrue
     }
 
+    It 'isolates a declared early root state and artifact from its late root without requiring late manual confirmations' {
+        $phaseRoot = Join-Path $modules 'foundation/code-security'
+        New-Item -ItemType Directory -Path $phaseRoot | Out-Null
+        Copy-Item -LiteralPath (Join-Path $modules 'foundation/main.tf') -Destination $phaseRoot
+        $manifestPath = Join-Path $modules 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.manualPrerequisites = @('liveWorkflowsPromoted')
+        $manifest.phases = @{ 'code-security' = @{ prerequisites = @(); manualPrerequisites = @() } }
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $instance.manualPrerequisites.liveWorkflowsPromoted = $false
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        $early = & $runner -Module foundation -DeploymentPhase code-security -Action apply @arguments 6>$null
+
+        $early.OutputsPath | Should -Match 'foundation\.code-security\.json$'
+        Test-Path -LiteralPath (Join-Path $arguments.StatePath 'foundation.code-security.tfstate') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $arguments.StatePath 'foundation.tfstate') | Should -BeFalse
+        { & $runner -Module foundation -Action plan @arguments 6>$null } |
+            Should -Throw '*$.manualPrerequisites.liveWorkflowsPromoted*'
+        $lateArtifact = Join-Path $arguments.ArtifactsPath 'foundation.json'
+        Test-Path -LiteralPath $lateArtifact | Should -BeFalse
+        (Get-Content -LiteralPath $early.OutputsPath -Raw | ConvertFrom-Json).message | Should -Be 'hello'
+    }
+
+    It 'rejects undeclared phases and clears a stale phase artifact before invoking Terraform' {
+        $stale = Join-Path $arguments.ArtifactsPath 'foundation.unknown.json'
+        New-Item -ItemType Directory -Path $arguments.ArtifactsPath -Force | Out-Null
+        Set-Content -LiteralPath $stale -Value '{"stale":true}'
+        function terraform { throw 'Terraform must not run.' }
+
+        { & $runner -Module foundation -DeploymentPhase unknown -Action plan @arguments 6>$null } |
+            Should -Throw '*no declared deployment phase*'
+        Test-Path -LiteralPath $stale | Should -BeFalse
+    }
+
     It 'refuses a ruleset component without a declared isolated exception' {
         { & $runner -Module foundation -Action plan -Rulesets @arguments 6>$null } |
             Should -Throw '*declared ruleset*'
@@ -340,6 +375,33 @@ terraform {
         (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).application_name |
             Should -Be 'demo-foundation-application'
         Test-Path -LiteralPath (Join-Path $arguments.StatePath 'foundation.tfstate') | Should -BeFalse
+    }
+
+    It 'imports the public output of the declared phase rather than the late module output' {
+        $phaseRoot = Join-Path $modules 'foundation/code-security'
+        New-Item -ItemType Directory -Path $phaseRoot | Out-Null
+        Copy-Item -LiteralPath (Join-Path $modules 'foundation/main.tf') -Destination $phaseRoot
+        $manifestPath = Join-Path $modules 'foundation/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.phases = @{ 'code-security' = @{ prerequisites = @() } }
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $manifestPath = Join-Path $modules 'application/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.prerequisites = @('foundation:code-security')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $applicationRoot = Join-Path $modules 'application/main.tf'
+        (Get-Content -LiteralPath $applicationRoot -Raw).Replace('var.prerequisites.foundation.foundation_name', 'var.prerequisites["foundation:code-security"].foundation_name') |
+            Set-Content -LiteralPath $applicationRoot
+        $instance.modules = @{ application = @{} }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+        $null = & $runner -Module foundation -DeploymentPhase code-security -Action plan @arguments 6>$null
+        $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
+
+        $result = & $runner -Module application -Action plan @arguments 6>$null
+
+        (Get-Content -LiteralPath $result.OutputsPath -Raw | ConvertFrom-Json).application_name |
+            Should -Be 'demo-foundation-application'
+        Test-Path -LiteralPath (Join-Path $arguments.ArtifactsPath 'foundation.json') | Should -BeFalse
     }
 
     It 'fails clearly for missing prerequisite artifacts before executing the dependent module' {

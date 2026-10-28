@@ -55,7 +55,7 @@ locals {
     }
   ]...)
 
-  code_security_script = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-CodeSecurityChange.ps1", "-Action"]
+  code_security_script = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/../scripts/Invoke-CodeSecurityChange.ps1", "-Action"]
 }
 
 # The REST provider cannot recover a configuration whose POST response was lost, and the custom pattern API deletes
@@ -73,7 +73,7 @@ resource "terraform_data" "code_security_configuration" {
 
   provisioner "local-exec" {
     when        = destroy
-    interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-CodeSecurityChange.ps1", "-Action"]
+    interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/../scripts/Invoke-CodeSecurityChange.ps1", "-Action"]
     command     = "RemoveConfiguration"
     environment = { CODE_SECURITY_INPUT = jsonencode(self.input) }
   }
@@ -113,7 +113,7 @@ resource "terraform_data" "custom_pattern" {
 
   provisioner "local-exec" {
     when        = destroy
-    interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-CodeSecurityChange.ps1", "-Action"]
+    interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/../scripts/Invoke-CodeSecurityChange.ps1", "-Action"]
     command     = "RemoveCustomPattern"
     environment = { CODE_SECURITY_INPUT = jsonencode(self.input) }
   }
@@ -147,7 +147,7 @@ resource "terraform_data" "custom_pattern_content" {
 data "external" "code_security_state" {
   for_each = toset(var.target_organizations)
 
-  program = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Read-CodeSecurityState.ps1"]
+  program = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/../scripts/Read-CodeSecurityState.ps1"]
   query = {
     api_url            = local.github_api_url
     organization       = each.key

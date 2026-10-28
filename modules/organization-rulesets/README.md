@@ -2,7 +2,7 @@
 
 Modul spravuje organizační ruleset `platform-default-branch` ve všech organizacích instance: platformní, akcí a workloadů. Ruleset vyžaduje review od CODEOWNERS na výchozí větvi všech repozitářů organizace a nemá bypass. Modul vznikl vyčleněním rootu `rulesets/` z modulu `enterprise-baseline` ([#73](https://github.com/msucharda/devsecops-platform/issues/73)).
 
-Předpoklad: `organizations`. Na modulu závisí `actions-catalog`: katalog akcí vyžaduje schvalovací pravidlo v organizaci akcí ještě před prvním apply. Pořadí nasazení je `organizations` → `organization-rulesets` → `actions-catalog` → `enterprise-baseline`. Modul `enterprise-baseline` závisí na `actions-catalog` kvůli politice akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)). Ruleset by proto v `enterprise-baseline` vytvořil cyklus.
+Předpoklady: `organizations` a časná fáze `enterprise-baseline:code-security`. Katalog akcí vyžaduje schvalovací pravidlo v organizaci akcí před svým prvním apply. Pořadí je `organizations` → časná Code Security fáze → `organization-rulesets` → `actions-catalog` → pozdní `enterprise-baseline`. Pozdní root čeká na katalog kvůli politice akcí ([#18](https://github.com/msucharda/devsecops-platform/issues/18)). Samostatná časná fáze proto odstraňuje dřívější cyklus. Ruleset plan na první instanci selže, dokud vzdálená výchozí Code Security konfigurace neexistuje; postup po etapách popisuje [šablona instance](../../templates/instance/README.md#plan-a-apply).
 
 ## Konfigurace
 

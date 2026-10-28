@@ -18,6 +18,12 @@ function Initialize-RulesetsStub {
     [CmdletBinding()]
     param([string] $Origin, [string] $Organization = 'demo', [string] $Token = 'stub-token')
 
+    $defaults = Get-GitHubApiFixture -Name code-security/get-default-configurations
+    $defaults[0]['default_for_new_repos'] = 'all'
+    $defaults[0]['configuration'] = Get-GitHubApiFixture -Name code-security/get-configuration -Set @{
+        id = 42; name = 'platform-baseline'; target_type = 'organization'; enforcement = 'enforced'
+        advanced_security = 'enabled'; code_scanning_default_setup = 'enabled'
+    }
     return [hashtable]::Synchronized(@{
         Origin = $Origin
         Organization = $Organization
@@ -29,6 +35,7 @@ function Initialize-RulesetsStub {
         FailNext = ''
         NextId = 100
         EmptyDetail = $false
+        CodeSecurityDefaults = @($defaults[0])
     })
 }
 
@@ -42,7 +49,10 @@ function Invoke-RulesetsStubRequest {
         $reply.Status = 401
         return $reply
     }
-    if ($Path -ceq '/orgs/new/rulesets?per_page=100' -and $Method -ceq 'GET') {
+    if ($Path -cmatch "^/orgs/($([regex]::Escape($State.Organization))|new)/code-security/configurations/defaults$" -and $Method -ceq 'GET') {
+        $reply.Body = ConvertTo-Json -InputObject $State.CodeSecurityDefaults -Depth 100 -Compress
+    }
+    elseif ($Path -ceq '/orgs/new/rulesets?per_page=100' -and $Method -ceq 'GET') {
         $reply.Body = '[]'
     }
     elseif ($Path -cmatch "^/orgs/$([regex]::Escape($State.Organization))/rulesets\?per_page=100(?:&page=(?<page>[0-9]+))?$" -and $Method -ceq 'GET') {

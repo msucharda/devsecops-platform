@@ -4,6 +4,7 @@
 param(
     [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')][string] $Module,
     [Parameter(Mandatory)][ValidateSet('plan', 'apply', 'destroy', 'output', 'state')][string] $Action,
+    [ValidatePattern('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')][string] $DeploymentPhase,
     [switch] $Rulesets,
     [Parameter(Mandatory)][string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
@@ -23,7 +24,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
-$outputName = if ($Rulesets) { "$Module.rulesets" } else { $Module }
+if ($Rulesets -and $DeploymentPhase) { throw 'A deployment phase cannot use the isolated rulesets root.' }
+$outputName = if ($Rulesets) { "$Module.rulesets" } elseif ($DeploymentPhase) { "$Module.$DeploymentPhase" } else { $Module }
 $artifactFile = [IO.Path]::GetFullPath((Join-Path $ArtifactsPath "$outputName.json"))
 if ($Action -ne 'state' -and (Test-Path -LiteralPath $artifactFile -PathType Leaf)) {
     [IO.File]::Delete($artifactFile)
@@ -157,6 +159,10 @@ function Test-ModuleStateEmpty {
 
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
+if ($DeploymentPhase -and
+    (-not $modules[$Module].Contains('phases') -or -not $modules[$Module]['phases'].Contains($DeploymentPhase))) {
+    throw "Module '$Module' has no declared deployment phase '$DeploymentPhase'."
+}
 if ($Module -cnotin (Get-PlatformModuleSelection -Instance $instance -Modules $modules)) {
     throw "Module '$Module' is not selected in $.modules or required by a selected module."
 }
@@ -166,6 +172,10 @@ if ($Organization -and -not $organizationScoped) {
 }
 $moduleRoot = [IO.Path]::GetFullPath((Join-Path $ModulesPath $Module))
 $stateKey = 'terraform.tfstate'
+if ($DeploymentPhase) {
+    $moduleRoot = Join-Path $moduleRoot $DeploymentPhase
+    $stateKey = "terraform.$DeploymentPhase.tfstate"
+}
 if ($Rulesets) {
     if (-not $modules[$Module]['permissions']['githubApp'].Contains('rulesetPlan')) {
         throw "Module '$Module' requires a declared ruleset exception before running its rulesets root."
@@ -192,14 +202,17 @@ if ($Module -eq 'bootstrap' -and $Action -ne 'destroy') {
     Assert-PlatformManualPrerequisite -Instance $instance
 }
 [string[]] $declaredPrerequisites = @()
-if ($modules[$Module].Contains('manualPrerequisites')) {
+if ($DeploymentPhase -and $modules[$Module]['phases'][$DeploymentPhase].Contains('manualPrerequisites')) {
+    $declaredPrerequisites = @($modules[$Module]['phases'][$DeploymentPhase]['manualPrerequisites'])
+}
+elseif (-not $DeploymentPhase -and $modules[$Module].Contains('manualPrerequisites')) {
     $declaredPrerequisites = @($modules[$Module]['manualPrerequisites'])
 }
 if ($declaredPrerequisites.Count -gt 0 -and $Action -notin @('destroy', 'state')) {
     Assert-PlatformManualPrerequisite -Instance $instance -Name $declaredPrerequisites -Subject "Module '$Module'"
 }
 $workflowPreflight = $null
-if ($Module -ceq 'enterprise-baseline' -and $Action -in @('plan', 'apply')) {
+if ($Module -ceq 'enterprise-baseline' -and -not $DeploymentPhase -and $Action -in @('plan', 'apply')) {
     if ($null -eq $organizations) {
         throw 'Workflow preflight for enterprise-baseline requires PlatformOrganization to derive the actions organization.'
     }
@@ -212,7 +225,7 @@ $manualStates = [System.Collections.Generic.List[object]]::new()
 $prerequisiteStates = [System.Collections.Generic.List[object]]::new()
 $summary = [System.Collections.Generic.List[string]]::new()
 $organizationLabel = if ($Organization) { ' / `{0}`' -f $Organization } else { '' }
-$summary.Add("`n## Module ``$Module``${organizationLabel}: $Action")
+$summary.Add("`n## Module ``$outputName``${organizationLabel}: $Action")
 if ($Module -eq 'bootstrap' -and $Action -ne 'destroy') {
     $summary.Add('Required manual prerequisite confirmations are present. Live state is not automatically verified by this runner.')
 }
@@ -395,7 +408,10 @@ if ($instance['modules'].Contains($Module) -and $instance['modules'][$Module].Co
         }
     }
 }
-$prerequisites = @($modules[$Module]['prerequisites'])
+$prerequisites = if ($DeploymentPhase) {
+    @($modules[$Module]['phases'][$DeploymentPhase]['prerequisites'])
+}
+else { @($modules[$Module]['prerequisites']) }
 if ($Action -in @('output', 'state')) {
     $prerequisites = @()
 }
@@ -406,7 +422,7 @@ function Import-ModulePrerequisiteOutput {
         if (-not $Path) {
             throw "Missing prerequisite outputs for '$prerequisite': supply -PrerequisiteOutputsPath."
         }
-        $file = Join-Path $Path "$prerequisite.json"
+        $file = Join-Path $Path "$($prerequisite.Replace(':', '.')).json"
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
             throw "Missing prerequisite outputs for '$prerequisite': '$file'."
         }
@@ -525,6 +541,9 @@ try {
     }
     if ($Action -eq 'destroy') {
         $planArguments += '-destroy'
+        if ($Rulesets -and $Module -ceq 'organization-rulesets') {
+            $planArguments += '-var=ruleset_destroy_started=true'
+        }
     }
     $plan = Invoke-ModuleTerraform -Arguments $planArguments -AllowedExitCodes @(0, 2)
     $output = Invoke-ModuleTerraform -Arguments @('show', '-json', $planFile) -Json

@@ -516,5 +516,89 @@ function Remove-CustomPattern {
     }
 }
 
+# security-check: code-security-repository-coverage
+function Get-CodeSecurityCoverageStatus {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]] $Attachments,
+        [Parameter(Mandatory)][string] $SecurityStatus
+    )
+
+    if ($Attachments.Count -ne 1) { return 'drift' }
+    $attachment = $Attachments[0]
+    if ($attachment.status -cnotin @('attached', 'enforced', 'enterprise_enforced')) { return 'drift' }
+    $configuration = $attachment.configuration
+    if ($configuration['advanced_security'] -isnot [string] -or $configuration['advanced_security'] -cnotin @('enabled', 'code_security')) {
+        return 'drift'
+    }
+    if ($configuration['code_scanning_default_setup'] -isnot [string] -or $configuration['code_scanning_default_setup'] -cne 'enabled') {
+        return 'drift'
+    }
+    if ($SecurityStatus -ceq 'disabled') { return 'drift' }
+    if ($SecurityStatus -cne 'enabled') { return 'unverified' }
+    return 'compliant'
+}
+
+function Get-CodeSecurityCoverage {
+    <#
+    .SYNOPSIS
+    Reports configuration coverage and distinguishes readable repository security from unverified state.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $ApiUrl, [Parameter(Mandatory)][string] $Organization)
+
+    $inventory = Get-CodeSecurityRepositoryInventory -ApiUrl $ApiUrl -Organization $Organization
+    $bindings = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    foreach ($configuration in (Get-CodeSecurityConfigurationList -ApiUrl $ApiUrl -Organization $Organization)) {
+        foreach ($attachment in (Get-CodeSecurityConfigurationRepository -ApiUrl $ApiUrl -Organization $Organization -ConfigurationId $configuration['id'])) {
+            if ($attachment.status -cnotin $script:ActiveAttachmentStatuses) { continue }
+            if (-not $bindings.ContainsKey($attachment.id)) { $bindings[$attachment.id] = [Collections.Generic.List[object]]::new() }
+            $bindings[$attachment.id].Add(@{ configuration = $configuration; status = $attachment.status; repository = $attachment.repository })
+        }
+    }
+    $records = @(foreach ($entry in $inventory) {
+        $attachments = @(if ($bindings.ContainsKey($entry.id)) { $bindings[$entry.id].ToArray() })
+        foreach ($attachment in $attachments) {
+            if ($attachment.repository -ine $entry.repository) { throw "Configuration coverage of '$($entry.repository)' has mismatched repository identity." }
+        }
+        # GET /repos/{owner}/{repo}, API 2026-03-10: security_and_analysis is optional and admin-only.
+        # https://docs.github.com/en/enterprise-cloud@latest/rest/repos/repos#get-a-repository
+        $repository = $null
+        try {
+            $repository = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method GET -Path "/repos/$($entry.repository)" -AllowNotFound
+        }
+        catch {
+            if ($_.Exception.Message -cne "GitHub returned HTTP 403 for GET /repos/$($entry.repository).") { throw }
+        }
+        $securityStatus = 'unverified'
+        if ($null -ne $repository) {
+            if ($repository -isnot [Collections.IDictionary] -or [string] $repository['id'] -cne $entry.id -or
+                [string] $repository['full_name'] -ine $entry.repository) {
+                throw "Repository security response of '$($entry.repository)' has mismatched identity."
+            }
+            $security = $repository['security_and_analysis']
+            if ($security -is [Collections.IDictionary]) {
+                $product = if ($security.Contains('code_security')) { $security['code_security'] } else { $security['advanced_security'] }
+                if ($product -is [Collections.IDictionary] -and $product['status'] -is [string] -and
+                    $product['status'] -cin @('enabled', 'disabled')) {
+                    $securityStatus = $product['status']
+                }
+            }
+        }
+        [ordered]@{
+            repository = $entry.repository
+            status = Get-CodeSecurityCoverageStatus -Attachments $attachments -SecurityStatus $securityStatus
+            security_status = $securityStatus
+            attachment_status = @($attachments | ForEach-Object { $_.status })
+        }
+    })
+    return [ordered]@{
+        repositories = $records
+        compliant = @($records | Where-Object { $_.status -ceq 'compliant' }).Count
+        drift = @($records | Where-Object { $_.status -ceq 'drift' }).Count
+        unverified = @($records | Where-Object { $_.status -ceq 'unverified' }).Count
+    }
+}
+
 Export-ModuleMember -Function Invoke-CodeSecurityApi, Get-CodeSecurityState, Set-CodeSecurityConfiguration,
-    Remove-CodeSecurityConfiguration, Set-CustomPattern, Remove-CustomPattern
+    Remove-CodeSecurityConfiguration, Set-CustomPattern, Remove-CustomPattern, Get-CodeSecurityCoverage

@@ -44,13 +44,17 @@ data "external" "ruleset_plan_state" {
   for_each = toset(var.target_organizations)
 
   program = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/../scripts/Read-RulesetState.ps1"]
-  query = {
+  query = merge({
     api_url      = local.github_api_url
     organization = each.key
     name         = local.ruleset.name
-  }
+  }, var.ruleset_destroy_started ? {} : { require_code_security = "true" })
 
   lifecycle {
+    postcondition {
+      condition     = var.ruleset_destroy_started || try(self.result.code_security_ready == "true", false)
+      error_message = "Organization ${each.key} has no verified enforced platform-baseline Code Security default. Deploy the enterprise-baseline Code Security phase before applying organization-rulesets."
+    }
     postcondition {
       condition     = try(jsondecode(self.result.state) == null ? true : jsonencode(jsondecode(self.result.state).bypass_actors) == "[]", false)
       error_message = "The existing ruleset of ${each.key} has bypass actors; restore the empty bypass list before apply."
@@ -91,9 +95,14 @@ resource "restapi_object" "ruleset" {
   data                    = jsonencode(local.ruleset)
   ignore_server_additions = true
 
-  depends_on = [terraform_data.ruleset_intent]
+  depends_on = [terraform_data.ruleset_intent, data.external.ruleset_plan_state]
 
   lifecycle {
+    precondition {
+      condition     = !var.ruleset_destroy_started
+      error_message = "ruleset_destroy_started is reserved for teardown recovery; creating or updating active rulesets requires the Code Security prerequisite."
+    }
+
     postcondition {
       condition = try(
         tostring(jsondecode(self.api_response).id) == self.id &&

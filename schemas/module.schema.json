@@ -21,7 +21,30 @@
     "prerequisites": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "$ref": "#/definitions/moduleName" }
+      "items": { "$ref": "#/definitions/phaseReference" }
+    },
+    "phases": {
+      "description": "Additional Terraform roots in the same module. Each phase has its own dependencies and state but shares the module's plan/apply credentials.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/moduleName" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["prerequisites"],
+        "properties": {
+          "prerequisites": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/definitions/phaseReference" }
+          },
+          "manualPrerequisites": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" }
+          }
+        }
+      }
     },
     "manualPrerequisites": {
       "description": "Instance manual prerequisite names the module plan and apply require. The runner reports them as declarations only.",
@@ -233,6 +256,10 @@
       "type": "string",
       "maxLength": 63,
       "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+    },
+    "phaseReference": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*(:[a-z][a-z0-9]*(-[a-z0-9]+)*)?$"
     },
     "nonBlankString": {
       "type": "string",

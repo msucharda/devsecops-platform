@@ -167,20 +167,31 @@ function Get-PlatformModuleGraph {
                 }
             }
         }
+        if ($manifest.Contains('phases')) {
+            [string[]] $knownPrerequisites = @(Get-PlatformManualPrerequisiteName)
+            foreach ($phase in $manifest.phases.PSBase.Keys) {
+                if (-not (Test-Path -LiteralPath (Join-Path $ModulesPath "$name/$phase") -PathType Container)) {
+                    throw "Module '$name' has no Terraform root for phase '$phase'."
+                }
+                if ($manifest.phases[$phase].Contains('manualPrerequisites')) {
+                    foreach ($prerequisite in $manifest.phases[$phase].manualPrerequisites) {
+                        if ($prerequisite -cnotin $knownPrerequisites) {
+                            throw "Module '$name' phase '$phase' references unknown manual prerequisite '$prerequisite'."
+                        }
+                    }
+                }
+                [string[]] $phasePrerequisites = @($manifest.phases[$phase].prerequisites)
+                [System.Array]::Sort($phasePrerequisites, [System.StringComparer]::Ordinal)
+                $manifest.phases[$phase].prerequisites = $phasePrerequisites
+            }
+        }
         [string[]] $prerequisites = @($manifest.prerequisites)
         [System.Array]::Sort($prerequisites, [System.StringComparer]::Ordinal)
         $manifest.prerequisites = $prerequisites
         $modules.Add($manifest.name, $manifest)
     }
 
-    foreach ($name in $modules.PSBase.Keys) {
-        foreach ($prerequisite in $modules[$name].prerequisites) {
-            if (-not $modules.Contains($prerequisite)) {
-                throw "Module '$name' requires missing prerequisite '$prerequisite'."
-            }
-        }
-    }
-
+    $nodes = Get-PlatformModulePhaseGraph -Modules $modules
     $visited = @{}
     $path = [System.Collections.Generic.List[string]]::new()
     $visit = {
@@ -193,16 +204,56 @@ function Get-PlatformModuleGraph {
             return
         }
         $path.Add($Name)
-        foreach ($prerequisite in $modules[$Name].prerequisites) {
+        foreach ($prerequisite in $nodes[$Name].Prerequisites) {
             & $visit $prerequisite
         }
         $path.RemoveAt($path.Count - 1)
         $visited[$Name] = $true
     }
-    foreach ($name in $modules.PSBase.Keys) {
+    foreach ($name in $nodes.PSBase.Keys) {
         & $visit $name
     }
     return $modules
+}
+
+function Get-PlatformModulePhaseGraph {
+    [CmdletBinding()]
+    [OutputType([System.Collections.IDictionary])]
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Modules)
+
+    $nodes = [ordered]@{}
+    foreach ($name in $Modules.PSBase.Keys) {
+        $manifest = $Modules[$name]
+        if ($manifest.Contains('phases')) {
+            foreach ($phase in @($manifest.phases.PSBase.Keys | Sort-Object -CaseSensitive)) {
+                $key = "${name}:$phase"
+                $nodes[$key] = [pscustomobject]@{
+                    Name = $key; Module = $name; Phase = $phase
+                    Prerequisites = @($manifest.phases[$phase].prerequisites)
+                    Manifest = $manifest
+                }
+            }
+        }
+        $nodes[$name] = [pscustomobject]@{
+            Name = $name; Module = $name; Phase = $null
+            Prerequisites = @($manifest.prerequisites)
+            Manifest = $manifest
+        }
+    }
+    $jobIds = @{}
+    foreach ($name in $nodes.PSBase.Keys) {
+        $jobId = $name.Replace('-', '_').Replace(':', '_')
+        if ($jobIds.ContainsKey($jobId)) {
+            throw "Deployment phases '$($jobIds[$jobId])' and '$name' produce the same workflow job ID."
+        }
+        $jobIds[$jobId] = $name
+        foreach ($prerequisite in $nodes[$name].Prerequisites) {
+            if (-not $nodes.Contains($prerequisite)) {
+                throw "Deployment phase '$name' requires missing prerequisite '$prerequisite'."
+            }
+        }
+    }
+    return $nodes
 }
 
 # security-check: platform-ordinal-string
@@ -574,6 +625,7 @@ function Get-PlatformModuleSelection {
         [Parameter(Mandatory)][System.Collections.IDictionary] $Modules
     )
 
+    $nodes = Get-PlatformModulePhaseGraph -Modules $Modules
     $pending = [System.Collections.Generic.Queue[string]]::new()
     foreach ($name in $Instance['modules'].PSBase.Keys) {
         $pending.Enqueue($name)
@@ -582,8 +634,11 @@ function Get-PlatformModuleSelection {
     while ($pending.Count -gt 0) {
         $name = $pending.Dequeue()
         if ($selected.Add($name)) {
-            foreach ($prerequisite in $Modules[$name]['prerequisites']) {
-                $pending.Enqueue($prerequisite)
+            foreach ($node in $nodes.PSBase.Values |
+                Where-Object { $_.Module -ceq $name }) {
+                foreach ($prerequisite in $node.Prerequisites) {
+                    $pending.Enqueue($prerequisite.Split(':')[0])
+                }
             }
         }
     }
@@ -798,4 +853,4 @@ function Get-PlatformOrganizationToken {
     return $tokens
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformInstance, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken, Test-PlatformReleaseFile
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformModulePhaseGraph, Get-PlatformInstance, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken, Test-PlatformReleaseFile

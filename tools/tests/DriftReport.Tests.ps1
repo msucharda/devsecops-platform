@@ -50,6 +50,39 @@ BeforeAll {
 }
 
 Describe 'Drift report evaluation' {
+    It 'reports early Code Security coverage as <Status> separately' -ForEach @(
+        @{ Status = 'compliant'; Security = 'enabled'; Publish = 'false'; Complete = 'true' }
+        @{ Status = 'drift'; Security = 'disabled'; Publish = 'true'; Complete = 'true' }
+        @{ Status = 'unverified'; Security = 'unverified'; Publish = 'true'; Complete = 'false' }
+    ) {
+        $modulesPath = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination $modulesPath -Recurse
+        $manifestPath = Join-Path $modulesPath 'enterprise-baseline/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest['phases'] = @{ 'code-security' = @{ prerequisites = @('foundation'); manualPrerequisites = @() } }
+        New-Item -ItemType Directory -Path (Join-Path $modulesPath 'enterprise-baseline/code-security') | Out-Null
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $needs = Get-DriftNeed
+        $counts = @{ compliant = 0; drift = 0; unverified = 0 }
+        $counts[$Status] = 1
+        $counts['repositories'] = @(@{ repository = 'platform/app'; status = $Status; security_status = $Security; attachment_status = @('attached') })
+        $needs['module_enterprise_baseline_code_security'] = @{
+            result = 'success'
+            outputs = @{
+                changes = 'false'
+                codeSecurityCoverage = ConvertTo-Json -InputObject @{ organizations = @{ platform = $counts } } -Depth 10 -Compress
+            }
+        }
+
+        Invoke-DriftReport -Needs $needs
+
+        $output.report | Should -BeExactly $Publish
+        $output.complete | Should -BeExactly $Complete
+        $report | Should -Match 'Repository Code Security coverage'
+        $report | Should -Match "$Status 1"
+        if ($Status -cne 'compliant') { $report | Should -Match 'platform/app' }
+    }
+
     It 'publishes no issue when every selected plan completed without changes' {
         Invoke-DriftReport -Needs (Get-DriftNeed)
 
