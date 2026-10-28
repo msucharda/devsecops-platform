@@ -53,6 +53,7 @@ function Save-Module {
     $destination = Join-Path $Path "$Name/$RequiredVersion"
     $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
     Copy-Item (Join-Path $env:INSTALLER_STATE 'payload') $destination -Recurse
+    [pscustomobject]@{ Name = $Name; Version = [version]$RequiredVersion } | Export-Clixml (Join-Path $destination 'PSGetModuleInfo.xml')
     Stop-AtBoundary Saved
 }
 function Get-PSRepository {

@@ -67,6 +67,7 @@ Describe 'Tool dependency installation' {
             $destination = Join-Path $Path "$Name/$RequiredVersion"
             $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
             Copy-Item -LiteralPath $fixture.Payload -Destination $destination -Recurse
+            [pscustomobject]@{ Name = $Name; Version = [version]$RequiredVersion } | Export-Clixml (Join-Path $destination 'PSGetModuleInfo.xml')
         }
         Mock Start-Sleep { }
         Mock Get-PSRepository { [pscustomobject]@{ Name = 'PSGallery' } }
@@ -75,6 +76,7 @@ Describe 'Tool dependency installation' {
     It 'publishes a verified development module without importing it' {
         & $fixture.Installer -Development
         Test-Path (Join-Path $fixture.Root '.dependencies/Pester/5.7.1/Pester.psd1') | Should -BeTrue
+        Test-Path (Join-Path $fixture.Root '.dependencies/Pester/5.7.1/PSGetModuleInfo.xml') | Should -BeTrue
         Should -Invoke Save-Module -Times 1 -Exactly -ParameterFilter {
             $Name -eq 'Pester' -and $RequiredVersion -eq '5.7.1' -and $Repository -eq 'PSGallery' -and $ErrorAction -eq 'Stop'
         }
@@ -100,6 +102,7 @@ Describe 'Tool dependency installation' {
             $destination = Join-Path $Path "$Name/$RequiredVersion"
             $null = New-Item -ItemType Directory -Path $destination -Force
             Copy-Item (Join-Path $fixture.Payload '*') $destination
+            [pscustomobject]@{ Name = $Name; Version = [version]$RequiredVersion } | Export-Clixml (Join-Path $destination 'PSGetModuleInfo.xml')
             Set-Content (Join-Path $destination 'Pester.psm1') 'changed module'
         }
         { & $fixture.Installer -Development } | Should -Throw '*SHA256 mismatch for Pester.psm1*'
@@ -116,6 +119,7 @@ Describe 'Tool dependency installation' {
             $destination = Join-Path $Path "$Name/$RequiredVersion"
             $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
             Copy-Item $fixture.Payload $destination -Recurse
+            [pscustomobject]@{ Name = $Name; Version = [version]$RequiredVersion } | Export-Clixml (Join-Path $destination 'PSGetModuleInfo.xml')
             Set-Content (Join-Path $destination 'unexpected.psm1') 'untrusted'
         }
         { & $fixture.Installer -Development } | Should -Throw '*unexpected files*'
@@ -157,6 +161,7 @@ Describe 'Tool dependency installation' {
             $destination = Join-Path $Path "$Name/$RequiredVersion"
             $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
             Copy-Item $fixture.Payload $destination -Recurse
+            [pscustomobject]@{ Name = $Name; Version = [version]$RequiredVersion } | Export-Clixml (Join-Path $destination 'PSGetModuleInfo.xml')
         }
         & $fixture.Installer -Development -RetryDelaySeconds 0
         Should -Invoke Save-Module -Times 2 -Exactly
