@@ -27,6 +27,7 @@
         'AppInstallationContract.Tests.ps1'
         'Bootstrap.Tests.ps1'
         'C3RunbookToken.Tests.ps1'
+        'CiBinaryIntegrity.Tests.ps1'
         'CodeSecurity.Tests.ps1'
         'DeadlineHttp.Tests.ps1'
         'DriftIssue.Tests.ps1'
@@ -66,6 +67,7 @@
         'TeardownEnterpriseOwner.Tests.ps1'
         'TeardownMainCommit.Tests.ps1'
         'TeardownWorkflow.Tests.ps1'
+        'VendoredRuntime.Tests.ps1'
         'Vendoring.Tests.ps1'
         'VendoringAppToken.Tests.ps1'
         'VendoringPullRequest.Tests.ps1'
@@ -84,6 +86,7 @@
         'OrganizationRoles.Interruption.Tests.ps1'
         'Organizations.Interruption.Tests.ps1'
         'PlatformRelease.Interruption.Tests.ps1'
+        'VendoredRuntime.Interruption.Tests.ps1'
         'VendoringPullRequest.Interruption.Tests.ps1'
     )
 }
