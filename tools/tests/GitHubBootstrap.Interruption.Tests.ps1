@@ -75,7 +75,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
                 # commit the ref points to, so an interrupted publication must not expose contents on main.
                 $ref = [Web.HttpUtility]::ParseQueryString($Uri.Query)['ref']
                 $main = $cloud.resources['/repos/demo-a1b2c3-platform/instance/git/ref/heads/main']
-                $published = if ($ref -ceq 'main') { $main -and $main.object.sha -ceq 'commit-sha' } else { $ref -ceq 'commit-sha' }
+                $publishedSha = if ($cloud.commitShaOverride) { $cloud.commitShaOverride } else { $upgradeMainSha }
+                $published = if ($ref -ceq 'main') { $main -and $main.object.sha -ceq $publishedSha } else { $ref -ceq $publishedSha }
                 if (-not ($cloud.commit -and $published)) { return [pscustomobject]@{ StatusCode = 404; Content = '{"message":"Not Found"}' } }
             }
             if ($Method -eq 'GET' -or ($path -eq '/graphql' -and $data.query -notlike 'mutation*')) { return & $stubTransport @call }
@@ -153,6 +154,39 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
 
         $report = Format-InterruptionResult -Name 'Invoke-GitHubBootstrap.ps1 (credential setup)' -Result $result
+        Write-Information $report -InformationAction Continue
+        @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
+    }
+
+    It 'recovers from an interruption at every mutating step of a supported inventory upgrade' -Tag 'BootstrapUpgrade' {
+        $arguments.ResourcesOnly = $false
+        $cloud.commitShaOverride = $upgradeMainSha
+        $null = & $bootstrap @arguments 3>$null 6>$null
+        $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $record.releaseVersion = '0.1.0-rc.5'
+        $record.apps.authorization.previousKeys = @(@{
+            appId = '99'; fingerprint = 'previous-fingerprint'; createdAt = '2026-01-01T00:00:00Z'
+            rotateBy = '2026-03-31T00:00:00Z'; revocationRequired = $false
+        })
+        $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
+        $arguments.ReleaseVersion = '0.1.0-rc.10'
+        $arguments.UpgradeInventory = $true
+        $markerBlob = $cloud.tree | Where-Object path -CEQ '.platform-bootstrap.json'
+        $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
+        $marker.releaseVersion = $arguments.ReleaseVersion
+        $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
+        $cloud.requiredContentRef = $upgradeMainSha
+        $cloud.resources['/repos/demo-a1b2c3-platform/instance/actions/permissions'].enabled = $false
+        $credential = @($cloud.resources.Keys | Where-Object { $_ -like '*/federatedIdentityCredentials/*' })[0]
+        $cloud.resources.Remove($credential)
+        $initialCloud = Copy-TestValue $cloud
+        $initialInventory = [IO.File]::ReadAllText($inventory)
+        $run = { $null = & $bootstrap @arguments 3>$null 6>$null }
+
+        # Two writes have eight interruption cases; share their preflight cost across all four CI shards.
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -ShardByInterruption @shard)
+
+        $report = Format-InterruptionResult -Name 'Invoke-GitHubBootstrap.ps1 (inventory upgrade)' -Result $result
         Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
     }

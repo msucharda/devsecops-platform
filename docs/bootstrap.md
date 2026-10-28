@@ -297,7 +297,71 @@ Brána `approve_apply` vyžaduje úspěšné joby `authorize`, `select` a `plan_
 
 Bootstrap zachová `bootstrap-resources.json` mimo source release i checkout spouštěného skriptu. Inventory eviduje identifikátor nasazení, identifikátory potvrzených prostředků, deklarované a ověřené Apps, instalace, veřejné fingerprinty, vlastníka, termíny rotace a povinnost odstranění. Deklarace Apps uloží ještě před cloudovými změnami a ověřením klíčů; zachová i dřívější deklarace a App IDs při změně aliasu. Chyba ověření proto neztratí evidenci ruční registrace. Neobsahuje tokeny ani privátní klíče. Soubor musíš zachovat i při přerušení a předat skriptu `tools/Remove-Bootstrap.ps1`. Skript do něj zapisuje stav odstranění. Ručně registrované Apps jsou prostředky bootstrapu, nikoli zachovávané enterprise předpoklady.
 
-Opakovaný běh se stejným release, konfigurací a klíči neprovádí zápisy prostředků a vrátí `HasChanges: false`. Zkušební installation tokeny znovu vydá a odvolá; nejde o změnu nasazených prostředků. Inventory jiné verze release skript odmítne před cloudovými změnami. Chybějící cloudové oprávnění, nepodporované API nebo jiné oprávnění App skončí explicitní chybou. Skript nemá PAT fallback, rozšíření oprávnění ani automatický rollback. Po chybě oprav příčinu a spusť stejný příkaz se stejným inventory. Po inicializaci nesmí bootstrap přepsat konfiguraci nebo release na `main`; další obsahové změny vyžadují PR.
+Opakovaný běh se stejným release, konfigurací a klíči neprovádí zápisy prostředků a vrátí `HasChanges: false`. Zkušební installation tokeny znovu vydá a odvolá; nejde o změnu nasazených prostředků. Inventory jiné verze lze použít jen pro popsaný upgrade GitHub bootstrapu. Chybějící cloudové oprávnění, nepodporované API nebo jiné oprávnění App skončí explicitní chybou. Skript nemá PAT fallback, rozšíření oprávnění ani automatický rollback. Po chybě oprav příčinu a spusť stejný příkaz se stejným inventory. Po inicializaci nesmí bootstrap přepsat konfiguraci nebo release na `main`; další obsahové změny vyžadují PR.
+
+#### Upgrade GitHub bootstrapu
+
+Jediný podporovaný přechod inventory je `0.1.0-rc.5` → `0.1.0-rc.10`. Vyžaduje inicializované inventory a výslovný příznak `-UpgradeInventory`. Ostatní dvojice verzí, včetně `0.1.0-rc.5` → `0.1.0-rc.9` a stejné verze, bootstrap odmítne před prvním požadavkem na GitHub API. Běžné opakování se stejnou verzí příznak nepoužívá.
+
+Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na release `0.1.0-rc.10`. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu.
+
+Vendoring aktualizuje `platform/**`, nikoli `.platform-bootstrap.json`. Marker vytvoř v lokálním checkoutu **větve tohoto PR**. `$release` musí označovat původní schválený release rc.10, `$cfg` ověřený `instance.yaml` a `$instanceCheckout` checkout repozitáře instance. Nehashuj vendorovanou kopii: vendoring přepisuje odkazy na akce ve workflow šablonách, ale marker používá původní bytes release.
+
+```powershell
+# Generate the marker from the original approved release, not its vendored copy.
+$release = (Resolve-Path -LiteralPath $release).Path
+Import-Module (Join-Path $release 'tools\PlatformTools.psm1')
+$configuration = Get-PlatformYaml -Path $cfg
+$hashes = @{}
+Get-ChildItem -LiteralPath $release -Recurse -Force -File |
+    Where-Object {
+        $_.FullName -notmatch '[\\/](\.git|\.terraform|artifacts|node_modules)[\\/]' -and
+        (Test-PlatformReleaseFile -RelativePath ([IO.Path]::GetRelativePath($release, $_.FullName)))
+    } |
+    ForEach-Object {
+        $relative = [IO.Path]::GetRelativePath($release, $_.FullName).Replace('\', '/')
+        $hashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+$marker = @{
+    instance = $configuration['instance']['name']
+    releaseVersion = '0.1.0-rc.10'
+    files = $hashes
+}
+[IO.File]::WriteAllText(
+    (Join-Path $instanceCheckout '.platform-bootstrap.json'),
+    (ConvertTo-PlatformCanonicalJson $marker) + "`n",
+    [Text.UTF8Encoding]::new($false))
+```
+
+Commit markeru přidej do stejného PR. Po review a merge použij stejný release, inventory, výstup Azure bootstrapu a konfiguraci shodnou s `main`.
+
+Do `$arguments` převezmi **všechny** parametry posledního úspěšného bootstrapu, včetně těch, které byly předané samostatně. Povinné `AuthorizationApp` a `AppKeysPath` musí zachovat původní alias a externí manifest klíčů. Pokud byly použité `DriftReportApp`, `VendoringActionApp`, `VendoringReleaseApp`, `VendoringSourceApp`, `VendoringSourceRepository` nebo `VendoringSourceApiUrl`, ponech je se stejnými hodnotami. Jejich vynechání není způsob, jak App odpojit.
+
+```powershell
+$upgradeArguments = @{} + $arguments
+$upgradeArguments.ReleasePath = $release
+$upgradeArguments.ReleaseVersion = '0.1.0-rc.10'
+foreach ($name in @('AuthorizationApp', 'AppKeysPath')) {
+    if (-not $upgradeArguments.ContainsKey($name) -or
+        [string]::IsNullOrWhiteSpace($upgradeArguments[$name])) {
+        throw "Reuse the previously used $name in the complete bootstrap argument set."
+    }
+}
+& (Join-Path $release 'tools\Invoke-GitHubBootstrap.ps1') @upgradeArguments -NoChanges
+& (Join-Path $release 'tools\Invoke-GitHubBootstrap.ps1') @upgradeArguments -UpgradeInventory
+```
+
+Před prvním reconcile requestem bootstrap ověří vazbu inventory na repozitář a enterprise, aktuální `main`, přesný marker schváleného release a konfiguraci shodnou s lokálním `instance.yaml`. Větev musí vrátit commit SHA o 40 hexadecimálních znacích. Bootstrap připne čtení markeru i konfigurace k této SHA. Přes Git commit načte kořenový Git tree a pro obě cesty vyžaduje právě jeden běžný soubor (`blob`, mode `100644` nebo `100755`). Neúplný tree odmítne. Samotné `type=file` z Contents API nestačí: API může vrátit obsah cíle symbolického odkazu.
+
+Před každým GitHub zápisem, Azure zápisem federated credential i potvrzením nové verze inventory bootstrap ověří, že `main` stále ukazuje na stejný commit. Obsah API musí mít typ `file` a kódování `base64`; bootstrap odmítne adresáře, symbolické odkazy i submoduly. Bootstrap odmítne chybějící větev `main`, nepodporovanou dvojici verzí, neplatnou SHA, nesoulad markeru, změnu konfigurace i pohyb větve během ověřování. Při chybě markeru nebo konfigurace nejdřív oprav stav přes review PR; nepoužívej přímý zápis bootstrapu do `main`.
+
+Před uložením inventory a prvním reconcile requestem bootstrap read-only ověří také existující security tým a aktivní ruleset `platform-instance-main`: přesný rozsah `main`, zákaz smazání a force push, požadovaná PR schválení včetně security týmu a prázdný bypass. Chybějící, vypnutou, oslabenou nebo nečitelnou ochranu odmítne i s `-ResourcesOnly`; během upgradu ji neopravuje. Platformní tým musí ochranu obnovit samostatně schváleným postupem.
+
+Po ověření chráněného `main` bootstrap uloží aktualizované deklarace Apps ještě před prvním reconcile requestem. Zachová původní App IDs v historii a zatím nezmění verzi inventory. Přerušení tak neztratí evidenci ručně registrované App.
+
+Po úspěšném provisioningu bootstrap zapíše novou `releaseVersion` do stejného inventory. Do té doby ponechá zaznamenanou verzi. Zachová identifikátor nasazení, záznamy prostředků, Apps, otisky klíčů, termíny rotace a historii klíčů. Pokud běh selže, oprav příčinu a spusť znovu bootstrap se stejným inventory a release. `-NoChanges` zůstává read-only: ověřuje inventory stejné verze nebo jediný podporovaný pár `0.1.0-rc.5` → `0.1.0-rc.10` proti markeru, Git tree a konfiguraci na `main`, ale inventory ani prostředky nemění. Chybějící, prázdnou či nepodporovanou verzi inventory odmítne před prvním GitHub API požadavkem.
+
+`-NoChanges` nelze kombinovat s `-UpgradeInventory`; slouží pouze k ověření bez zápisů.
 
 **Vlastník rotace je platformní tým.** `rotateBy` musí ležet nejpozději 90 dní po `createdAt` a nesmí být v minulosti. Nezměněnému klíči nesmíš posunout evidované datum vytvoření ani termín rotace. Při podezření na kompromitaci tým rotuje klíč okamžitě. Nejdřív vytvoří nový klíč stejné App, upraví lokální manifest a znovu spustí bootstrap. Pak v každém dotčeném environmentu ověří skutečné vydání tokenu workflow a teprve potom starý klíč odvolá v enterprise App settings. Inventory uchová v `previousKeys` původní App ID, fingerprint, `createdAt` a `rotateBy` s `revocationRequired: true`; zachová také starší historii. Po ručním odvolání tým eviduje datum a nastaví příznak na `false`. Běžná workflow vydávají hodinové installation tokeny bez člověka.
 

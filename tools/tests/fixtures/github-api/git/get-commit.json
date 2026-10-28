@@ -1,0 +1,86 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/git/commits/{commit_sha}",
+    "operationId": "git/get-commit",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/commits#get-a-commit",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/git-commit"
+  },
+  "required": {
+    "": [
+      "sha",
+      "node_id",
+      "url",
+      "html_url",
+      "author",
+      "committer",
+      "tree",
+      "message",
+      "parents",
+      "verification"
+    ],
+    "author": [
+      "email",
+      "name",
+      "date"
+    ],
+    "committer": [
+      "email",
+      "name",
+      "date"
+    ],
+    "tree": [
+      "sha",
+      "url"
+    ],
+    "parents.[]": [
+      "sha",
+      "url",
+      "html_url"
+    ],
+    "verification": [
+      "verified",
+      "reason",
+      "signature",
+      "payload",
+      "verified_at"
+    ]
+  },
+  "body": {
+    "sha": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+    "node_id": "MDY6Q29tbWl0MTI5NjI2OTo3ZmQxYTYwYjAxZjkxYjMxNGY1OTk1NWE0ZTRkNGU4MGQ4ZWRmMTFk",
+    "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+    "html_url": "https://github.com/octocat/Hello-World/commit/7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+    "author": {
+      "name": "The Octocat",
+      "email": "octocat@nowhere.com",
+      "date": "2012-03-06T23:06:50Z"
+    },
+    "committer": {
+      "name": "The Octocat",
+      "email": "octocat@nowhere.com",
+      "date": "2012-03-06T23:06:50Z"
+    },
+    "tree": {
+      "sha": "b4eecafa9be2f2006ce1b709d6857b07069b4608",
+      "url": "https://api.github.com/repos/octocat/Hello-World/git/trees/b4eecafa9be2f2006ce1b709d6857b07069b4608"
+    },
+    "message": "Merge pull request #6 from Spaceghost/patch-1\n\nNew line at end of file.",
+    "parents": [
+      {
+        "sha": "553c2077f0edc3d5dc5d17262f6aa498e69d6f8e",
+        "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/553c2077f0edc3d5dc5d17262f6aa498e69d6f8e",
+        "html_url": "https://github.com/octocat/Hello-World/commit/553c2077f0edc3d5dc5d17262f6aa498e69d6f8e"
+      }
+    ],
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  }
+}

@@ -147,6 +147,8 @@ function Invoke-InterruptionMatrix {
     CaptureLocal returns the persisted local state (for example the state file text) and RestoreLocal
     receives it and writes it back. Both are required: without them an injected error could hide
     progress that the tool only saves in catch or finally blocks.
+    ShardByInterruption distributes individual step/kind/stop cases instead of keeping every variant
+    of a step in one shard. This balances scenarios with fewer expensive steps than CI shards.
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject[]])]
@@ -161,7 +163,8 @@ function Invoke-InterruptionMatrix {
         [ValidateSet('BeforeApply', 'LoseResponse')][string[]] $Kind = @('BeforeApply', 'LoseResponse'),
         [ValidateSet('Error', 'Abrupt')][string[]] $Stop = @('Error', 'Abrupt'),
         [ValidateRange(0, 1000)][int] $ShardIndex = 0,
-        [ValidateRange(1, 1000)][int] $ShardCount = 1
+        [ValidateRange(1, 1000)][int] $ShardCount = 1,
+        [switch] $ShardByInterruption
     )
 
     if ($ShardIndex -ge $ShardCount) { throw "ShardIndex $ShardIndex must be lower than ShardCount $ShardCount." }
@@ -176,10 +179,13 @@ function Invoke-InterruptionMatrix {
     foreach ($identity in $Plan.Applied) { $referenceApplied[$identity] = 1 + [int] $referenceApplied[$identity] }
     if ($requests.Count -eq 0) { throw 'The reference run made no mutating request. The stub does not route requests through Invoke-InterruptionStep.' }
 
+    $interruptionIndex = 0
     foreach ($stopName in $Stop) {
         foreach ($kindName in $Kind) {
             for ($step = 1; $step -le $requests.Count; $step++) {
-                if (($step - 1) % $ShardCount -ne $ShardIndex) { continue }
+                $selectionIndex = if ($ShardByInterruption) { $interruptionIndex } else { $step - 1 }
+                $interruptionIndex++
+                if ($selectionIndex % $ShardCount -ne $ShardIndex) { continue }
                 & $Reset
                 Clear-InterruptionPlan -Plan $Plan -Target $step -Kind $kindName
                 $Plan.CaptureLocal = if ($stopName -eq 'Abrupt') { $CaptureLocal } else { $null }
