@@ -11,7 +11,7 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         $work = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $null = New-Item -ItemType Directory -Path "$candidate/platform", "$candidate/vendoring" -Force
         "instance:`n  name: demo" | Set-Content "$candidate/instance.yaml"
-        '{"version":1,"actions":{}}' | Set-Content "$candidate/vendoring/actions.json"
+        '{"version":2,"actions":{}}' | Set-Content "$candidate/vendoring/actions.json"
         [IO.File]::WriteAllText("$candidate/platform/README.md", 'approved')
         # SHA256 of the literal ASCII string "approved", independent of the verifier.
         $hash = '2687f86ed6784b8a5fca36e6c468e12aa44dc3c7e8137e3160d1a95079bdcd02'
@@ -21,7 +21,7 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         [IO.File]::WriteAllText("$sourceRoot/README.md", 'approved')
         $null = New-Item -ItemType Directory -Path "$sourceRoot/tools/.dependencies" -Force
         [IO.File]::WriteAllText("$sourceRoot/tools/.dependencies/cache.txt", 'excluded cache')
-        $rawWorkflow = 'jobs: {build: {steps: [{uses: actions/checkout@v4}]}}'
+        $rawWorkflow = 'jobs: {build: {steps: [{uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1}]}}'
         $vendoredWorkflow = "jobs: {build: {steps: [{uses: 'demo-actions/actions-checkout@1111111111111111111111111111111111111111'}]}}"
         foreach ($name in @('deploy.yml', 'vendor.yml')) {
             $relative = "templates/instance/.github/workflows/$name"
@@ -32,7 +32,7 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
             $content = if ((Get-Variable Mode -ErrorAction SilentlyContinue) -and $Mode -ceq 'transformed') { $vendoredWorkflow } else { $rawWorkflow }
             [IO.File]::WriteAllText($destination, $content)
         }
-        '{"version":1,"actions":{"actions/checkout":{"repository":"demo-actions/actions-checkout","sha":"1111111111111111111111111111111111111111"}}}' |
+        '{"version":2,"actions":{"actions/checkout":{"repository":"demo-actions/actions-checkout","sha":"1111111111111111111111111111111111111111","upstreamCommit":"3d3c42e5aac5ba805825da76410c181273ba90b1","tag":"v7.0.1"}}}' |
             Set-Content "$candidate/vendoring/actions.json"
         $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
         $api = @{ attested = $true; exitCode = 0 }
@@ -84,7 +84,7 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         @{ Mode = 'raw' }
         @{ Mode = 'transformed' }
     ) {
-        if ($Mode -ceq 'raw') { '{"version":1,"actions":{}}' | Set-Content "$candidate/vendoring/actions.json" }
+        if ($Mode -ceq 'raw') { '{"version":2,"actions":{}}' | Set-Content "$candidate/vendoring/actions.json" }
         else { '{"version":1,"kind":"release"}' | Set-Content "$candidate/platform/.vendoring.json" }
         { & $preflight @arguments } | Should -Not -Throw
         Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0

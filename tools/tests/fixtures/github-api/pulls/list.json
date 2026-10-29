@@ -6,7 +6,8 @@
     "apiVersion": "2026-03-10",
     "description": "https://github.com/github/rest-api-description/blob/755ee33b4a81d51f6f07a902cce26cbec3b822f2/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
-    "schema": "#/components/schemas/pull-request-simple"
+    "schema": "#/components/schemas/pull-request-simple",
+    "note": "The pinned operation example omits required label archived_at/archived_by and requested team type. Null archive fields and organization type follow the label/team schemas. Inline PR labels require archived_at without defining its type; the label component defines it as a nullable date-time."
   },
   "required": {
     "[]": [
@@ -39,6 +40,13 @@
       "user",
       "author_association",
       "auto_merge"
+    ],
+    "[].labels[]": [
+      "archived_at",
+      "archived_by"
+    ],
+    "[].requested_teams[]": [
+      "type"
     ],
     "[].head": [
       "label",
@@ -102,7 +110,9 @@
           "name": "bug",
           "description": "Something isn't working",
           "color": "f29513",
-          "default": true
+          "default": true,
+          "archived_at": null,
+          "archived_by": null
         }
       ],
       "milestone": {
@@ -234,6 +244,7 @@
       ],
       "requested_teams": [
         {
+          "type": "organization",
           "id": 1,
           "node_id": "MDQ6VGVhbTE=",
           "url": "https://api.github.com/teams/1",
