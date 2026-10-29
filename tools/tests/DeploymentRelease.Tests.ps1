@@ -220,7 +220,7 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
     }
 
     It 'uses the current catalog for a legacy transformed tree without a receipt' -Tag 'CatalogSnapshot' -ForEach @(@{ Mode = 'transformed' }) {
-        Remove-Item "$candidate/platform/.vendoring.json"
+        Remove-Item -LiteralPath "$candidate/platform/.vendoring.json" -Force
         $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
         $catalog.actions['actions/checkout'].upstreamCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
         $catalog | ConvertTo-Json -Depth 10 | Set-Content "$candidate/vendoring/actions.json"
