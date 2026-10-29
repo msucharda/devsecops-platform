@@ -26,6 +26,7 @@ permissions:
     plan:
       permissions:
         organization_administration: read
+        administration: read
         metadata: read
       resources:
         organizations: target_organizations

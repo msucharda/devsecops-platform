@@ -173,14 +173,17 @@ function Assert-AppRepositorySelection {
 # security-check: token-app-permission
 function Assert-AppPermission {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][System.Collections.IDictionary] $Actual)
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Actual,
+        [string] $Context = 'App'
+    )
 
     $normalized = @{} + $Actual
     if (-not $expected['permissions'].Contains('metadata') -and $normalized['metadata'] -ceq 'read') {
         $normalized.Remove('metadata')
     }
     if ((ConvertTo-PlatformCanonicalJson $normalized) -cne (ConvertTo-PlatformCanonicalJson $expected['permissions'])) {
-        throw 'Actual GitHub App permissions differ from the phase contract. Narrowing a write-capable App token does not isolate its private key.'
+        throw "Actual GitHub App permissions differ from the phase contract ($Context). Expected $(ConvertTo-PlatformCanonicalJson $expected['permissions']); received $(ConvertTo-PlatformCanonicalJson $normalized). Update the App in Permissions & events and approve requested permissions in every target organization installation. Narrowing a write-capable App token does not isolate its private key."
     }
 }
 
@@ -359,7 +362,7 @@ try {
         if ((-not $enterpriseInstallation -and $installation['target_type'] -cne 'Organization') -or $installation['suspended_at']) {
             throw "App installation for '$organization' is not an active installation of the declared target type."
         }
-        Assert-AppPermission -Actual $installation['permissions']
+        Assert-AppPermission -Actual $installation['permissions'] -Context "installation '$organization'"
         $repositoryResourcesDeclared = -not $enterpriseInstallation -and $expected['resources'].Contains('repositories')
         $repositories = if ($enterpriseInstallation) { @{} } else { $expected['resources']['repositories'] }
         $selected = $repositories -and $repositories.Contains($organization)
@@ -380,7 +383,7 @@ try {
         $issuanceUncertain = $false
         Send-GitHubAppTokenEvent -EventName Issued -Token $issued['token']
         if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }
-        Assert-AppPermission -Actual $issued['permissions']
+        Assert-AppPermission -Actual $issued['permissions'] -Context "issued token for '$organization'"
         if ($ValidateOnly -and $enterpriseInstallation -and $expected['permissions'].Contains('enterprise_organization_installations')) {
             $null = Invoke-GitHubAppRequest -Path "/enterprises/$($expected['enterprise'])/apps/installable_organizations?per_page=1" `
                 -Token $issued['token']

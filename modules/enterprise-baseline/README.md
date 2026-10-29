@@ -194,6 +194,7 @@ Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu
 ## Identita
 
 - Běžný plan používá installation token s `Organization Administration: read`; apply používá `write` pro organizace instance. Stejná oprávnění dokumentace uvádí pro čtení a změny code security configurations, custom patterns, pattern configurations a politiky GitHub Actions organizace.
+- Plan navíc vyžaduje repository `Administration: read` pro přímý stav `security_and_analysis` přes [`GET /repos/{owner}/{repo}`](https://docs.github.com/en/rest/repos/repos?apiVersion=2026-03-10#get-a-repository), API verze `2026-03-10`. Toto oprávnění používá noční Code Security coverage; apply ani plan jiného modulu ho nedostávají. Chybějící přímý stav zůstává `unverified`, nikdy compliant. Existující App i každá její instalace potřebují schválenou změnu podle [postupu upgradu](../../docs/bootstrap.md#upgrade-oprávnění-code-security-reader-app).
 - Při registraci obou Apps zahrň i `metadata: read`. Manifest deklaruje `installationSelection: all`; ruční instalace musí zahrnout všechny repozitáře cílových organizací, ne `No repositories`. Plan jiný výběr odmítne.
 - PR platformního týmu může spustit plan job automaticky, bez dalšího schválení security týmem. Forky, jiní autoři ani App-created PR credentials automaticky nedostanou.
 - Apply nadále schvaluje platformní tým a navíc security tým.

@@ -28,6 +28,7 @@ Describe 'Enterprise App key and installation token isolation' {
         $environmentPath = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $actualPermissions = @{ members = 'read'; metadata = 'read' }
         $actualOrganizations = @('platform')
+        $installationPermissions = @{}
         $fakeRepositoryNames = @()
         $ownerFields = @{ 'owner.login' = 'example'; 'owner.type' = 'enterprise' }
         $malformedOwner = $null
@@ -50,7 +51,9 @@ Describe 'Enterprise App key and installation token isolation' {
                 return ,@($actualOrganizations | ForEach-Object {
                     (Get-GitHubApiFixture -Name apps/list-installations -Set @{
                         '0.id' = $(if ($_ -eq 'workloads') { 202 } else { 201 }); '0.account.login' = $_; '0.account.type' = 'Organization'
-                        '0.target_type' = 'Organization'; '0.permissions' = $actualPermissions; '0.repository_selection' = $repositorySelection
+                        '0.target_type' = 'Organization'
+                        '0.permissions' = $(if ($installationPermissions.ContainsKey($_)) { $installationPermissions[$_] } else { $actualPermissions })
+                        '0.repository_selection' = $repositorySelection
                         '0.suspended_at' = $null
                     })[0]
                 })
@@ -210,13 +213,25 @@ Describe 'Enterprise App key and installation token isolation' {
         Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
     }
 
-    It 'issues a read-only module token map with <Selection> repository selection' -ForEach @(
-        @{ Selection = 'all' }
-        @{ Selection = 'selected' }
+    It 'issues a read-only module token map with <Selection> repository selection (coverage=<Coverage>, owner=<OwnerVariant>, missing=<MissingOrganization>)' -ForEach @(
+        @{ Selection = 'all'; Coverage = $false; OwnerVariant = 'SimpleUser'; MissingOrganization = '' }
+        @{ Selection = 'selected'; Coverage = $false; OwnerVariant = 'SimpleUser'; MissingOrganization = '' }
+        @{ Selection = 'all'; Coverage = $true; OwnerVariant = 'SimpleUser'; MissingOrganization = '' }
+        @{ Selection = 'all'; Coverage = $true; OwnerVariant = 'Enterprise'; MissingOrganization = '' }
+        @{ Selection = 'all'; Coverage = $true; OwnerVariant = 'SimpleUser'; MissingOrganization = 'actions' }
+        @{ Selection = 'all'; Coverage = $true; OwnerVariant = 'SimpleUser'; MissingOrganization = 'workloads' }
     ) {
         Import-Module powershell-yaml -RequiredVersion 0.4.12
         $actualOrganizations = @('actions', 'workloads')
         $actualPermissions = @{ organization_administration = 'read'; metadata = 'read' }
+        if ($Coverage) { $actualPermissions.administration = 'read' }
+        if ($OwnerVariant -ceq 'Enterprise') {
+            Mock Invoke-RestMethod {
+                Get-GitHubApiFixture -Name apps/get-app.owner-enterprise -Set @{
+                    id = 101; 'owner.slug' = 'example'; permissions = $actualPermissions
+                }
+            } -ParameterFilter { $Uri -ceq 'https://api.example.test/app' }
+        }
         $repositorySelection = $Selection
         $fakeRepositoryNames = @('instance')
         $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
@@ -227,11 +242,20 @@ Describe 'Enterprise App key and installation token isolation' {
             rulesets = @{ appId = '103'; installationId = '203'; enterprise = 'example'; permissions = @{ organization_administration = 'write' }; resources = @{ organizations = @('actions', 'workloads') } }
         }
         $modulesPath = Join-Path $PSScriptRoot 'fixtures/modules'
-        if ($Selection -eq 'selected') {
-            $modulesPath = Join-Path $TestDrive 'selected-modules'
+        if ($Selection -eq 'selected' -or $Coverage) {
+            $modulesPath = Join-Path $TestDrive "module-contracts-$([guid]::NewGuid())"
             Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination $modulesPath -Recurse
             $manifestPath = Join-Path $modulesPath 'enterprise-baseline/module.yaml'
             $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        }
+        if ($Coverage) {
+            $productionPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline/module.yaml'
+            $production = ConvertFrom-Yaml (Get-Content -LiteralPath $productionPath -Raw)
+            $manifest.permissions.githubApp.plan = $production.permissions.githubApp.plan
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+            $instance.githubApps.reader.permissions = @{ organization_administration = 'read'; administration = 'read'; metadata = 'read' }
+        }
+        if ($Selection -eq 'selected') {
             foreach ($phase in @('plan', 'apply')) {
                 $manifest.permissions.githubApp[$phase].resources.repositories = 'target_repositories'
             }
@@ -251,6 +275,20 @@ Describe 'Enterprise App key and installation token isolation' {
         $path = Join-Path $TestDrive 'module.yaml'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $path
 
+        if ($MissingOrganization) {
+            $installationPermissions[$MissingOrganization] = @{} + $actualPermissions
+            $installationPermissions[$MissingOrganization].Remove('administration')
+            {
+                & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
+                    -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
+            } | Should -Throw "*installation '$MissingOrganization'*administration*read*approve*"
+
+            Test-Path -LiteralPath $environmentPath | Should -BeFalse
+            $issuedBeforeFailure = if ($MissingOrganization -ceq 'workloads') { 1 } else { 0 }
+            Should -Invoke Invoke-RestMethod -Times $issuedBeforeFailure -Exactly -ParameterFilter { $Method -ceq 'POST' }
+            Should -Invoke Invoke-WebRequest -Times $issuedBeforeFailure -Exactly -ParameterFilter { $Method -ceq 'DELETE' }
+            return
+        }
         & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
             -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
 
@@ -259,6 +297,11 @@ Describe 'Enterprise App key and installation token isolation' {
         @($tokens.Keys | Sort-Object) | Should -Be @('actions', 'workloads')
         [IO.File]::ReadAllText($environmentPath) | Should -Not -Match '(?m)^GH_TOKEN='
         Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        if ($Coverage) {
+            Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter {
+                $Method -ceq 'POST' -and ($Body | ConvertFrom-Json -AsHashtable).permissions.administration -ceq 'read'
+            }
+        }
     }
 
     It 'issues an organization-only module token without repository access' {
