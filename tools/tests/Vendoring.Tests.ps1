@@ -199,6 +199,23 @@ jobs:
         Test-Path $output | Should -BeFalse
     }
 
+    It 'rejects an array-wrapped catalog before output: <Kind>' -ForEach @(
+        @{ Kind = 'action' }
+        @{ Kind = 'release' }
+    ) {
+        $catalogPath = Join-Path $TestDrive "array-catalog-$Kind.json"
+        $catalogJson = Get-Content (Join-Path $fixtures 'catalog.json') -Raw
+        # Deliberately invalid: the catalog root must be an object, not a single-element array.
+        "[$catalogJson]" | Set-Content $catalogPath
+        $output = Join-Path $TestDrive "array-output-$Kind"
+        $modes = Join-Path $TestDrive "array-modes-$Kind.json"
+        { & $prepare -SourcePath (Join-Path $fixtures $Kind) -OutputPath $output -CatalogPath $catalogPath `
+                -ActionsOrganization customer-actions -Kind $Kind -ModeManifestPath $modes } |
+            Should -Throw '*must declare version 2 and an actions mapping*'
+        Test-Path $output | Should -BeFalse
+        Test-Path $modes | Should -BeFalse
+    }
+
     It 'rejects an unmigrated catalog before output' {
         $catalogPath = Join-Path $TestDrive 'version-1.json'
         $catalog = Get-Content (Join-Path $fixtures 'catalog.json') -Raw | ConvertFrom-Json -AsHashtable

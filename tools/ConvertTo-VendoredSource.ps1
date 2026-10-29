@@ -41,7 +41,7 @@ function Assert-VendoringReleaseCommit {
     }
 }
 
-$catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable
+$catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
 if ($catalog -isnot [Collections.IDictionary] -or $catalog['version'] -isnot [long] -or
     $catalog['version'] -ne 2 -or $catalog['actions'] -isnot [Collections.IDictionary]) {
     throw 'Action catalog must declare version 2 and an actions mapping; migrate upstreamCommit from approved receipts.'

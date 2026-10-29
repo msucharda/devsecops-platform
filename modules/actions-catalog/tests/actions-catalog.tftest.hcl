@@ -77,7 +77,7 @@ run "tags_an_approved_release" {
   assert {
     condition = terraform_data.release_tag["actions/checkout"].input == {
       api_url       = "https://api.example.ghe.com", organization = "demo-a1b2c3-actions", upstream = "actions/checkout"
-      security_team = "actions-security", tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683"
+      security_team = "actions-security", tag = "v4.2.2", commit = "1111111111111111111111111111111111111111"
       upstream_commit = "11bd71901bbe5b1630ceea73d27597364c9af683"
     }
     error_message = "A release tag must carry the repository identity, the tag and the commit."
@@ -86,7 +86,7 @@ run "tags_an_approved_release" {
   assert {
     condition = (
       data.external.catalog_state["actions/checkout"].query.tag == "v4.2.2" &&
-      data.external.catalog_state["actions/checkout"].query.commit == "11bd71901bbe5b1630ceea73d27597364c9af683" &&
+      data.external.catalog_state["actions/checkout"].query.commit == "1111111111111111111111111111111111111111" &&
       data.external.catalog_state["actions/checkout"].query.upstream_commit == "11bd71901bbe5b1630ceea73d27597364c9af683"
     )
     error_message = "The state reader must verify the released tag."
@@ -128,7 +128,7 @@ run "exposes_repositories_and_releases_of_a_compliant_catalog" {
 
   assert {
     condition = output.releases == {
-      "actions/checkout" = { tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683", upstream_commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
+      "actions/checkout" = { tag = "v4.2.2", commit = "1111111111111111111111111111111111111111", upstream_commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
     }
     error_message = "The output must expose the verified release."
   }
