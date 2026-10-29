@@ -176,7 +176,7 @@ jobs:
                 Should -Match "customer-actions/actions-checkout@1111111111111111111111111111111111111111' # v7.0.1"
         }
         else {
-            $expectedError = if ($Case -ceq 'null tag') {
+            $expectedError = if ($Case -cin @('null tag', 'non-string tag', 'array tag')) {
                 "*Invalid catalog entry 'actions/checkout'*"
             }
             else {
