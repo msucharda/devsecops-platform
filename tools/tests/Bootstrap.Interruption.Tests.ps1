@@ -33,6 +33,17 @@ Describe 'Azure bootstrap interruption harness' -Tag 'Interruption' {
             role = 'Reader'; scope = '/subscriptions/22222222-2222-2222-2222-222222222222'; phase = 'plan'
         })
         $manifest.permissions.microsoftGraph = @('Group.Create', @{ permission = 'Group.Read.All'; phase = 'plan' })
+        $manifest.permissions.entraDirectoryRoles = @(
+            @{ phase = 'apply'; scope = 'enterpriseApplication'; actions = @(
+                'microsoft.directory/servicePrincipals/appRoleAssignedTo/update'
+                'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+                'microsoft.directory/servicePrincipals/standard/read'
+            ) }
+            @{ phase = 'plan'; scope = 'enterpriseApplication'; actions = @(
+                'microsoft.directory/servicePrincipals/appRoleAssignedTo/read'
+                'microsoft.directory/servicePrincipals/standard/read'
+            ) }
+        )
         ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
         $configuration = [IO.File]::ReadAllText($instancePath)
@@ -56,6 +67,15 @@ Describe 'Azure bootstrap interruption harness' -Tag 'Interruption' {
                 })[0]
                 $data = ConvertFrom-Json -InputObject $Body -AsHashtable
                 $identity = "$($resource.id)/$($data.appRoleId)"
+            }
+            elseif ($Method -ceq 'POST' -and $Uri.AbsolutePath -ceq '/v1.0/roleManagement/directory/roleDefinitions') {
+                $data = ConvertFrom-Json -InputObject $Body -AsHashtable
+                $identity = "directory role $($data.displayName)"
+            }
+            elseif ($Method -ceq 'POST' -and $Uri.AbsolutePath -ceq '/v1.0/roleManagement/directory/roleAssignments') {
+                $data = ConvertFrom-Json -InputObject $Body -AsHashtable
+                $definition = @($cloud.directoryRoleDefinitions | Where-Object { $_.id -ceq $data.roleDefinitionId })[0]
+                $identity = "directory assignment $($definition.displayName)/$($data.directoryScopeId)"
             }
             Invoke-InterruptionStep -Plan $plan -Request "$Method $($Uri.AbsolutePath)" -Identity $identity -Apply {
                 & $transport @call
@@ -81,6 +101,7 @@ Describe 'Azure bootstrap interruption harness' -Tag 'Interruption' {
                         $aliases[$resource.properties[$field]] = "$($resource.id)/$field"
                     }
                 }
+                foreach ($definition in $cloud.directoryRoleDefinitions) { $aliases[$definition.id] = "directoryRole/$($definition.displayName)" }
             }
             $normalize = {
                 param($Value)
@@ -92,6 +113,12 @@ Describe 'Azure bootstrap interruption harness' -Tag 'Interruption' {
             @{
                 resources = @($cloud.resources.Values | ForEach-Object { & $normalize $_ } | Sort-Object -CaseSensitive)
                 grants = @($cloud.graphAssignments.Values | ForEach-Object { foreach ($grant in $_) { & $normalize $grant } } | Sort-Object -CaseSensitive)
+                directoryRoleDefinitions = @($cloud.directoryRoleDefinitions | ForEach-Object { & $normalize $_ } | Sort-Object -CaseSensitive)
+                directoryRoleAssignments = @($cloud.directoryRoleAssignments | ForEach-Object {
+                    $assignment = $_.Clone()
+                    $assignment.Remove('id')
+                    & $normalize $assignment
+                } | Sort-Object -CaseSensitive)
                 modules = & $normalize $output.Result.Modules
                 configuration = [IO.File]::ReadAllText($instancePath)
             }
@@ -104,6 +131,34 @@ Describe 'Azure bootstrap interruption harness' -Tag 'Interruption' {
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot `
             -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
         $report = Format-InterruptionResult -Name 'Invoke-Bootstrap.ps1' -Result $result
+        Write-Information $report -InformationAction Continue
+        @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
+    }
+
+    It 'repairs drifted directory role permissions after every interrupted patch without replacing roles or assignments' {
+        & $run
+        $definition = @($cloud.directoryRoleDefinitions | Where-Object displayName -EQ 'platform-demo-foundation-plan')[0]
+        $definition.rolePermissions = @(@{ allowedResourceActions = @('microsoft.directory/servicePrincipals/appRoleAssignedTo/update') })
+        $seed = @{
+            Resources = ConvertTo-Json -InputObject $cloud.resources -Depth 100
+            Grants = ConvertTo-Json -InputObject $cloud.graphAssignments -Depth 100
+            Definitions = ConvertTo-Json -InputObject @($cloud.directoryRoleDefinitions) -Depth 100
+            Assignments = ConvertTo-Json -InputObject @($cloud.directoryRoleAssignments) -Depth 100
+        }
+        $reset = {
+            $cloud.resources = ConvertFrom-Json -InputObject $seed.Resources -AsHashtable
+            $cloud.graphAssignments = ConvertFrom-Json -InputObject $seed.Grants -AsHashtable
+            $cloud.directoryRoleDefinitions.Clear()
+            foreach ($item in (ConvertFrom-Json -InputObject $seed.Definitions -AsHashtable -NoEnumerate)) { $cloud.directoryRoleDefinitions.Add($item) }
+            $cloud.directoryRoleAssignments.Clear()
+            foreach ($item in (ConvertFrom-Json -InputObject $seed.Assignments -AsHashtable -NoEnumerate)) { $cloud.directoryRoleAssignments.Add($item) }
+            $cloud.writes.Clear()
+            $output.Result = $null
+            [IO.File]::WriteAllText($instancePath, $configuration)
+        }
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot `
+            -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -ShardByInterruption @shard)
+        $report = Format-InterruptionResult -Name 'Invoke-Bootstrap.ps1 (directory role drift repair)' -Result $result
         Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
     }

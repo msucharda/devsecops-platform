@@ -29,6 +29,8 @@ BeforeAll {
     . $stubBlocks.BeforeAll[0]
     $invokeStub = {
         param($Transport, $Uri, $Method, $Body, $Headers, $world, $requests, $failure, $ghLogin, $azureLogin)
+        # The extracted mock reads these bindings dynamically from its caller scope.
+        $null = @($Uri, $Method, $Body, $Headers, $world, $requests, $failure, $ghLogin, $azureLogin)
         & $Transport
     }
 }
