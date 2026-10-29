@@ -4,8 +4,8 @@
 # EnterpriseBaselinePatchContract baseline measured in Source CI run 40776003849 (2026-10-28), rounded up.
 # Missing files receive a one-second estimate and are still selected automatically.
 @{
-    # Source CI run 40801249278, attempt 2: 348.0369 seconds, rounded up.
-    'EnterpriseBaseline.Tests.ps1' = 349
+    # Source CI run 40961020894: 539.4744 seconds, rounded up.
+    'EnterpriseBaseline.Tests.ps1' = 540
     'EnterpriseBaselinePatchContract.Tests.ps1' = 5
     # Source CI run 40921301537: 712.3353 seconds, rounded up.
     'GitHubBootstrap.Tests.ps1' = 713
@@ -30,6 +30,8 @@
     'LocalCiConcurrency.Tests.ps1' = 10
     'InstanceConfiguration.Tests.ps1' = 8
     'GitHubAcceptanceProbe.Tests.ps1' = 7
+    # Source CI run 40961020894: 3.7723 seconds, rounded up.
+    'TerraformTestProcess.Tests.ps1' = 4
     'OrganizationModule.Tests.ps1' = 7
     'WorkflowGenerator.Tests.ps1' = 10
     'TeardownEnterpriseOwner.Tests.ps1' = 6
