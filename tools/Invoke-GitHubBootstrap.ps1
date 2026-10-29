@@ -102,10 +102,9 @@ function Assert-GitHubBootstrapInventoryUpgradePair {
         [Parameter(Mandatory)][string] $To
     )
 
-    $pattern = '\A0\.1\.0(?:-rc\.([1-9][0-9]*))?\z'
-    $source = [regex]::Match($From, $pattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant)
-    $target = [regex]::Match($To, $pattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant)
-    if (-not $source.Success -or -not $target.Success -or -not $source.Groups[1].Success) {
+    $source = [regex]::Match($From, '\A0\.1\.0-rc\.([1-9][0-9]*)\z', [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    $target = [regex]::Match($To, '\A0\.1\.0(?:-rc\.([1-9][0-9]*))?\z', [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    if (-not $source.Success -or -not $target.Success) {
         throw "Unsupported bootstrap inventory upgrade '$From' to '$To'."
     }
     $sourceRc = [bigint]::Parse($source.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture)
