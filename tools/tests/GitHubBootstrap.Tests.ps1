@@ -1,4 +1,38 @@
 BeforeDiscovery {
+    $upgradeVersionCases = @(
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.6'; To = '0.1.0-rc.8' }
+        @{ From = '0.1.0-rc.9'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.12'; To = '0.1.0' }
+        @{ From = '0.1.0-rc.2147483648'; To = '0.1.0-rc.2147483649' }
+    )
+    $unsupportedUpgradeVersionCases = @(
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.5' }
+        @{ From = '0.1.0-rc.4'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.9' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-RC.5'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-RC.10' }
+        @{ From = '0.1.0'; To = '0.1.0' }
+        @{ From = '0.1.0'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.4' }
+        @{ From = '0.1.1-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.1-rc.12' }
+        @{ From = '0.2.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.2.0-rc.12' }
+        @{ From = '10.1.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '10.1.0-rc.12' }
+        @{ From = '0.1.0-beta.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-beta.12' }
+        @{ From = '0.1.0-rc.05'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.012' }
+        @{ From = '0.1.0-rc.0'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.0' }
+        @{ From = "0.1.0-rc.5`n"; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = "0.1.0-rc.12`n" }
+        @{ From = '0.1.0-rc.2147483649'; To = '0.1.0-rc.2147483648' }
+    )
     $upgradeProtectionCases = @(
         @{ ProtectionCase = 'disabled' }
         @{ ProtectionCase = 'missing' }
@@ -75,15 +109,15 @@ BeforeAll {
     $rsa.Dispose()
 
     function Initialize-TestInventoryUpgrade {
-        param($Arguments, $Cloud, $Inventory, $Bootstrap)
+        param($Arguments, $Cloud, $Inventory, $Bootstrap, $From = '0.1.0-rc.5', $To = '0.1.0-rc.10')
 
         $Arguments.ResourcesOnly = $false
         $Cloud.commitShaOverride = $upgradeMainSha
         $null = & $Bootstrap @Arguments
         $record = Get-Content -LiteralPath $Inventory -Raw | ConvertFrom-Json -AsHashtable
-        $record.releaseVersion = '0.1.0-rc.5'
+        $record.releaseVersion = $From
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $Inventory
-        $Arguments.ReleaseVersion = '0.1.0-rc.10'
+        $Arguments.ReleaseVersion = $To
         $Arguments.UpgradeInventory = $true
         $Cloud.requiredContentRef = $upgradeMainSha
         $markerBlob = $Cloud.tree | Where-Object path -CEQ '.platform-bootstrap.json'
@@ -1003,7 +1037,9 @@ Describe 'GitHub bootstrap public interface' {
         finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
     }
 
-    It 'upgrades initialized historical inventory only after protected main proves the current release' -Tag 'HistoricalInventory', 'BootstrapUpgrade' {
+    It 'upgrades initialized historical inventory only after protected main proves the current release' -Tag 'HistoricalInventory', 'BootstrapUpgrade', 'ReleaseVersionUpgrade' {
+        $From = '0.1.0-rc.5'
+        $To = '0.1.0-rc.12'
         $originalCulture = [Globalization.CultureInfo]::CurrentCulture
         $arguments.ResourcesOnly = $false
         try {
@@ -1013,7 +1049,7 @@ Describe 'GitHub bootstrap public interface' {
             Set-Content -LiteralPath (Join-Path (Join-Path $release 'tools') 'hotel.txt') -Value 'ordinal order'
             $null = & $bootstrap @arguments
             $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
-            $record.releaseVersion = '0.1.0-rc.5'
+            $record.releaseVersion = $From
             $record.apps.authorization.previousKeys = @(@{
                 appId = '99'; fingerprint = 'previous-fingerprint'; createdAt = '2026-01-01T00:00:00Z'
                 rotateBy = '2026-03-31T00:00:00Z'; revocationRequired = $false
@@ -1025,7 +1061,7 @@ Describe 'GitHub bootstrap public interface' {
 
             $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
             $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-            $arguments.ReleaseVersion = '0.1.0-rc.10'
+            $arguments.ReleaseVersion = $To
             $arguments.UpgradeInventory = $true
             $cloud.requiredContentRef = $upgradeMainSha
             $marker.releaseVersion = $arguments.ReleaseVersion
@@ -1041,9 +1077,9 @@ Describe 'GitHub bootstrap public interface' {
 
             $result = & $bootstrap @arguments
 
-            $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
+            $result.ReleaseVersion | Should -BeExactly $To
             $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
-            $record.releaseVersion | Should -BeExactly '0.1.0-rc.10'
+            $record.releaseVersion | Should -BeExactly $To
             $record.deploymentIdentifier | Should -BeExactly $deploymentIdentifier
             (ConvertTo-PlatformCanonicalJson $record.resources) | Should -BeExactly $resources
             (ConvertTo-PlatformCanonicalJson $record.apps) | Should -BeExactly $apps
@@ -1069,16 +1105,20 @@ Describe 'GitHub bootstrap public interface' {
         finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
     }
 
-    It 'rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request' -Tag 'BootstrapUpgrade' -ForEach @(
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.5' }
-        @{ From = '0.1.0-rc.4'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.8' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.9' }
-        @{ From = '0.1.0-rc.6'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-RC.5'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-RC.10' }
-    ) {
+    It 'upgrades supported release transition <From> to <To>' -Tag 'BootstrapUpgrade', 'ReleaseVersionUpgrade' -ForEach $upgradeVersionCases {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap -From $From -To $To
+        $expected = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $expected.releaseVersion = $To
+
+        $result = & $bootstrap @arguments
+
+        $result.ReleaseVersion | Should -BeExactly $To
+        $actual = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        (ConvertTo-PlatformCanonicalJson $actual) | Should -BeExactly (ConvertTo-PlatformCanonicalJson $expected)
+        $cloud.writes.Count | Should -Be 0
+    }
+
+    It 'rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request' -Tag 'BootstrapUpgrade', 'ReleaseVersionUpgrade' -ForEach $unsupportedUpgradeVersionCases {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
         $null = & $bootstrap @arguments
@@ -1096,7 +1136,12 @@ Describe 'GitHub bootstrap public interface' {
             return $true
         }.GetNewClosure()
 
-        { & $bootstrap @arguments } | Should -Throw '*Unsupported bootstrap inventory upgrade*'
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('cs-CZ')
+            { & $bootstrap @arguments } | Should -Throw '*Unsupported bootstrap inventory upgrade*'
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
 
         $operations.Count | Should -Be 0
         $cloud.writes.Count | Should -Be 0
@@ -1503,6 +1548,7 @@ Describe 'GitHub bootstrap public interface' {
         $example = [regex]::Match($documentation,
             '(?s)```powershell\r?\n(# Generate the marker from the original approved release,.*?)(?:\r?\n)```')
         $example.Success | Should -BeTrue
+        $releaseVersion = $arguments.ReleaseVersion
         $cfg = $instancePath
         $instanceCheckout = Join-Path $casePath 'instance-checkout'
         $null = New-Item -ItemType Directory -Path $instanceCheckout
@@ -1877,15 +1923,19 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash $inventory).Hash | Should -BeExactly $before
     }
 
-    It 'allows the sole supported inventory pair during read-only verification' -Tag 'NoChanges', 'BootstrapUpgrade' {
+    It 'allows supported inventory upgrades during read-only verification from <From> to <To>' -Tag 'NoChanges', 'BootstrapUpgrade', 'ReadOnlyUpgrade' -ForEach @(
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.12'; To = '0.1.0' }
+    ) {
         $arguments.ResourcesOnly = $false
         $null = & $bootstrap @arguments
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
-        $record.releaseVersion = '0.1.0-rc.5'
+        $record.releaseVersion = $From
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.10'
+        $arguments.ReleaseVersion = $To
         $marker.releaseVersion = $arguments.ReleaseVersion
         $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
         $before = (Get-FileHash -LiteralPath $inventory).Hash
@@ -1894,7 +1944,7 @@ Describe 'GitHub bootstrap public interface' {
 
         $result = & $bootstrap @arguments
 
-        $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
+        $result.ReleaseVersion | Should -BeExactly $To
         $result.HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before
@@ -3216,6 +3266,7 @@ Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
         $ast = [Management.Automation.Language.Parser]::ParseFile(
             (Join-Path $tools 'Invoke-GitHubBootstrap.ps1'), [ref] $null, [ref] $null)
         foreach ($name in @(
+            'Assert-GitHubBootstrapInventoryUpgradePair',
             'Assert-GitHubBootstrapUpgradeInventoryState', 'Assert-GitHubBootstrapUpgradeMainProtection',
             'Get-GitHubBootstrapMainRuleset', 'Test-GitHubBootstrapValue'
         )) {
@@ -3260,6 +3311,29 @@ Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
 
     It 'accepts the documented main protection fixture' {
         { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Not -Throw
+    }
+
+    It 'accepts isolated release transition <From> to <To>' -ForEach $upgradeVersionCases {
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            foreach ($culture in @('en-US', 'cs-CZ')) {
+                [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($culture)
+                { Assert-GitHubBootstrapInventoryUpgradePair -From $From -To $To } | Should -Not -Throw
+            }
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
+    }
+
+    It 'rejects isolated release transition <From> to <To>' -ForEach $unsupportedUpgradeVersionCases {
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            foreach ($culture in @('en-US', 'cs-CZ')) {
+                [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($culture)
+                { Assert-GitHubBootstrapInventoryUpgradePair -From $From -To $To } |
+                    Should -Throw '*Unsupported bootstrap inventory upgrade*'
+            }
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
     }
 
     It 'rejects isolated protection <ProtectionCase>' -ForEach $upgradeProtectionCases {

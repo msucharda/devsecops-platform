@@ -172,7 +172,7 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
             rotateBy = '2026-03-31T00:00:00Z'; revocationRequired = $false
         })
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
-        $arguments.ReleaseVersion = '0.1.0-rc.10'
+        $arguments.ReleaseVersion = '0.1.0-rc.12'
         $arguments.UpgradeInventory = $true
         $markerBlob = $cloud.tree | Where-Object path -CEQ '.platform-bootstrap.json'
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable

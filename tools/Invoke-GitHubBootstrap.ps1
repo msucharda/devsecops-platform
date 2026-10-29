@@ -94,9 +94,6 @@ function Assert-GitHubBootstrapExternalPath {
 $inventoryFile = Assert-GitHubBootstrapExternalPath -Path $InventoryPath
 $inventoryUpgradePending = $false
 $inventoryUpgradeMainSha = $null
-$supportedInventoryUpgrades = @(
-    @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.10' }
-)
 # security-check: bootstrap-inventory-upgrade-pair
 function Assert-GitHubBootstrapInventoryUpgradePair {
     [CmdletBinding()]
@@ -105,10 +102,17 @@ function Assert-GitHubBootstrapInventoryUpgradePair {
         [Parameter(Mandatory)][string] $To
     )
 
-    $supportedPair = @($supportedInventoryUpgrades | Where-Object {
-        [StringComparer]::Ordinal.Equals($_.From, $From) -and [StringComparer]::Ordinal.Equals($_.To, $To)
-    }).Count -eq 1
-    if (-not $supportedPair) {
+    $source = [regex]::Match($From, '\A0\.1\.0-rc\.([1-9][0-9]*)\z', [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    $target = [regex]::Match($To, '\A0\.1\.0(?:-rc\.([1-9][0-9]*))?\z', [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    if (-not $source.Success -or -not $target.Success) {
+        throw "Unsupported bootstrap inventory upgrade '$From' to '$To'."
+    }
+    $sourceRc = [bigint]::Parse($source.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture)
+    if ($sourceRc -lt 5) {
+        throw "Unsupported bootstrap inventory upgrade '$From' to '$To'."
+    }
+    if ($target.Groups[1].Success -and
+        $sourceRc -ge [bigint]::Parse($target.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture)) {
         throw "Unsupported bootstrap inventory upgrade '$From' to '$To'."
     }
 }
