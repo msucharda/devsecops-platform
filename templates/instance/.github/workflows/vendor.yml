@@ -145,7 +145,8 @@ jobs:
           if ($env:IMPORT_KIND -ceq 'release') {
             $marker = @{ ReleaseMarkerPath = './.platform-bootstrap.json'; ReleaseVersion = $env:SOURCE_TAG.Substring(1) }
           }
-          ./platform/tools/ConvertTo-VendoredSource.ps1 -SourcePath $source.SourcePath -OutputPath ./vendor/prepared -CatalogPath ./vendoring/actions.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND -ModeManifestPath ./vendor/modes.json @marker
+          Copy-Item -LiteralPath ./vendoring/actions.json -Destination ./vendor/catalog.json
+          ./platform/tools/ConvertTo-VendoredSource.ps1 -SourcePath $source.SourcePath -OutputPath ./vendor/prepared -CatalogPath ./vendor/catalog.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND -ModeManifestPath ./vendor/modes.json @marker
       - name: Revoke source installation token
         if: ${{ always() && inputs.private-source && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh
@@ -160,6 +161,7 @@ jobs:
             vendor/prepared/
             vendor/source/receipt.json
             vendor/modes.json
+            vendor/catalog.json
           include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
@@ -210,8 +212,9 @@ jobs:
         env:
           TARGET_REPOSITORY: ${{ inputs.target-repository }}
           IMPORT_KIND: ${{ inputs.kind }}
+          ACTIONS_ORGANIZATION: ${{ inputs.actions-organization }}
         run: |
-          ./trusted/platform/tools/Publish-VendoringPullRequest.ps1 -PreparedPath ./candidate/prepared -TargetPath ./target -ReceiptPath ./candidate/source/receipt.json -ModeManifestPath ./candidate/modes.json -Kind $env:IMPORT_KIND -Repository $env:TARGET_REPOSITORY -ApiUrl $env:GITHUB_API_URL -GitHubOutputPath $env:GITHUB_OUTPUT -SummaryPath $env:GITHUB_STEP_SUMMARY
+          ./trusted/platform/tools/Publish-VendoringPullRequest.ps1 -PreparedPath ./candidate/prepared -TargetPath ./target -ReceiptPath ./candidate/source/receipt.json -ModeManifestPath ./candidate/modes.json -CatalogPath ./candidate/catalog.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND -Repository $env:TARGET_REPOSITORY -ApiUrl $env:GITHUB_API_URL -GitHubOutputPath $env:GITHUB_OUTPUT -SummaryPath $env:GITHUB_STEP_SUMMARY
       - name: Revoke target installation token
         if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh

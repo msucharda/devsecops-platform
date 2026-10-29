@@ -31,6 +31,10 @@ Describe 'Vendoring diff and pull request publication' {
         $receipt = Join-Path $TestDrive 'receipt.json'
         '{"Repository":"upstream/action","Tag":"v1","Commit":"3333333333333333333333333333333333333333","Sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Attestation":"not-present","Asset":""}' |
             Set-Content -LiteralPath $receipt
+        $releaseCatalogArgs = @{
+            CatalogPath = Join-Path $PSScriptRoot 'fixtures/vendoring/catalog.json'
+            ActionsOrganization = 'customer-actions'
+        }
         $savedToken = $env:GH_TOKEN
         $savedMap = $env:PLATFORM_GITHUB_TOKENS
         $env:GH_TOKEN = 'ghs_fixture'
@@ -123,7 +127,7 @@ Describe 'Vendoring diff and pull request publication' {
         & $gitExecutable -C $target push --quiet $remotePath main
         $before = & $gitExecutable -C $target rev-parse HEAD
 
-        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
 
         $result.HasChanges | Should -BeTrue
@@ -133,11 +137,201 @@ Describe 'Vendoring diff and pull request publication' {
         Get-Content (Join-Path $target 'instance.yaml') | Should -Be 'instance configuration'
     }
 
+    It 'commits the exact import-time action catalog as a version 2 release receipt' -Tag 'CatalogSnapshot' {
+        Remove-Item (Join-Path $prepared 'action.yml')
+        $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+        'new release' | Set-Content (Join-Path $prepared 'platform/README.md')
+        '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+            Set-Content (Join-Path $prepared '.platform-bootstrap.json')
+        $catalogPath = Join-Path $TestDrive 'release-catalog.json'
+        '{"version":2,"actions":{"actions/checkout":{"repository":"customer-actions/actions-checkout","sha":"1111111111111111111111111111111111111111","upstreamCommit":"3d3c42e5aac5ba805825da76410c181273ba90b1","tag":"v7.0.1"}}}' |
+            Set-Content $catalogPath
+
+        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com `
+            -CatalogPath $catalogPath -ActionsOrganization customer-actions
+
+        $result.HasChanges | Should -BeTrue
+        $saved = (& $gitExecutable -C $target show HEAD:platform/.vendoring.json | Out-String) |
+            ConvertFrom-Json -AsHashtable
+        $saved.version | Should -Be 2
+        $saved.kind | Should -BeExactly 'release'
+        $saved.catalog.version | Should -Be 2
+        $saved.catalog.actions['actions/checkout'].repository | Should -BeExactly 'customer-actions/actions-checkout'
+        $saved.catalog.actions['actions/checkout'].upstreamCommit |
+            Should -BeExactly '3d3c42e5aac5ba805825da76410c181273ba90b1'
+        $saved.catalog.actions['actions/checkout'].sha | Should -BeExactly '1111111111111111111111111111111111111111'
+    }
+
+    It 'rejects <Case> rather than publishing a release without a valid import-time catalog' -Tag 'CatalogSnapshot' -ForEach @(
+        @{ Case = 'missing catalog'; Content = $null; Error = '*Import-time catalog snapshot file is missing for release publication*' }
+        @{ Case = 'malformed catalog'; Content = '{'; Error = '*Invalid import-time catalog snapshot*' }
+        @{ Case = 'catalog outside the actions organization'; Content = '{"version":2,"actions":{"actions/checkout":{"repository":"other-actions/actions-checkout","sha":"1111111111111111111111111111111111111111","upstreamCommit":"3d3c42e5aac5ba805825da76410c181273ba90b1","tag":"v7.0.1"}}}'; Error = '*Invalid catalog entry*' }
+        @{ Case = 'catalog with a non-SHA copy pin'; Content = '{"version":2,"actions":{"actions/checkout":{"repository":"customer-actions/actions-checkout","sha":"not-a-commit","upstreamCommit":"3d3c42e5aac5ba805825da76410c181273ba90b1","tag":"v7.0.1"}}}'; Error = '*Invalid catalog entry*' }
+        @{ Case = 'catalog with a non-SHA upstream commit'; Content = '{"version":2,"actions":{"actions/checkout":{"repository":"customer-actions/actions-checkout","sha":"1111111111111111111111111111111111111111","upstreamCommit":"not-a-commit","tag":"v7.0.1"}}}'; Error = '*upstreamCommit*full lowercase commit SHA*' }
+        @{ Case = 'catalog with the wrong version'; Content = '{"version":1,"actions":{"actions/checkout":{"repository":"customer-actions/actions-checkout","sha":"1111111111111111111111111111111111111111","upstreamCommit":"3d3c42e5aac5ba805825da76410c181273ba90b1","tag":"v7.0.1"}}}'; Error = '*must declare version 2*' }
+    ) {
+        Remove-Item (Join-Path $prepared 'action.yml')
+        $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+        'new release' | Set-Content (Join-Path $prepared 'platform/README.md')
+        '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+            Set-Content (Join-Path $prepared '.platform-bootstrap.json')
+        $catalogPath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '-release-catalog.json')
+        if ($null -ne $Content) { Set-Content $catalogPath $Content }
+        else { Test-Path -LiteralPath $catalogPath | Should -BeFalse }
+
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com `
+            -CatalogPath $catalogPath -ActionsOrganization customer-actions } | Should -Throw $Error
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'rejects catalog snapshot <Case> at the public publisher boundary' -Tag 'CatalogSnapshot' -ForEach @(
+        @{ Case = 'string version'; Change = { $catalog.version = '2' }; Error = '*Action catalog must declare version 2 and an actions mapping*' }
+        @{ Case = 'non-object actions'; Change = { $catalog.actions = 'invalid' }; Error = '*Action catalog must declare version 2 and an actions mapping*' }
+        @{ Case = 'non-object copy'; Change = { $catalog.actions['actions/checkout'] = 'invalid' }; Error = "*Invalid catalog entry 'actions/checkout'*" }
+        @{ Case = 'repository capitalization'; Change = { $catalog.actions['actions/checkout'].repository = 'CUSTOMER-ACTIONS/actions-checkout' }; Error = "*Invalid catalog entry 'actions/checkout'*" }
+        @{ Case = 'SHA capitalization'; Change = { $catalog.actions['actions/checkout'].sha = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }; Error = "*Invalid catalog entry 'actions/checkout'*" }
+        @{ Case = 'invalid action key'; Change = {
+            $copy = $catalog.actions['actions/checkout']
+            $catalog.actions.Remove('actions/checkout')
+            $copy.repository = 'customer-actions/actions?-checkout'
+            $catalog.actions['actions?/checkout'] = $copy
+        }; Error = "*Invalid catalog entry 'actions?/checkout'*" }
+        @{ Case = 'action key capitalization'; Change = {
+            $copy = $catalog.actions['actions/checkout']
+            $catalog.actions.Remove('actions/checkout')
+            $copy.repository = 'customer-actions/Actions-checkout'
+            $catalog.actions['Actions/checkout'] = $copy
+        }; Error = "*Invalid catalog entry 'Actions/checkout'*" }
+    ) {
+        Remove-Item (Join-Path $prepared 'action.yml')
+        $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+        'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
+        '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+            Set-Content (Join-Path $prepared '.platform-bootstrap.json')
+        $catalog = Get-Content $releaseCatalogArgs.CatalogPath -Raw | ConvertFrom-Json -AsHashtable
+        . $Change
+        $catalogPath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '-invalid-catalog.json')
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content $catalogPath
+
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com `
+            -CatalogPath $catalogPath -ActionsOrganization customer-actions } | Should -Throw $Error
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+    }
+
+    It 'requires an explicit catalog snapshot for every new release publication' -Tag 'CatalogSnapshot' {
+        Remove-Item (Join-Path $prepared 'action.yml')
+        $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+        'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
+        '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+            Set-Content (Join-Path $prepared '.platform-bootstrap.json')
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Import-time catalog snapshot path is required for release publication*'
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+    }
+
+    It 'requires the configured actions organization when publishing a release snapshot' -Tag 'CatalogSnapshot' {
+        Remove-Item (Join-Path $prepared 'action.yml')
+        $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+        'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
+        '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+            Set-Content (Join-Path $prepared '.platform-bootstrap.json')
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com `
+            -CatalogPath $releaseCatalogArgs.CatalogPath } |
+            Should -Throw '*Import-time catalog snapshot requires an actions organization*'
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+    }
+
+    It 'resumes a freshly prepared release with identical receipt bytes despite catalog key order' -Tag 'CatalogSnapshot' {
+        $fixtures = Join-Path $PSScriptRoot 'fixtures/vendoring'
+        $source = Join-Path $TestDrive 'snapshot-release-source'
+        Copy-Item (Join-Path $fixtures 'release') $source -Recurse
+        $markerPath = Join-Path $TestDrive 'snapshot-marker.json'
+        '{"instance":"demo","releaseVersion":"1.0.0","files":{}}' | Set-Content $markerPath
+        $catalogPath = Join-Path $TestDrive 'release-catalog.json'
+        $forward = '{"version":2,"actions":{"actions/checkout":{"repository":"customer-actions/actions-checkout","upstreamCommit":"3d3c42e5aac5ba805825da76410c181273ba90b1","sha":"1111111111111111111111111111111111111111"},"example/tool":{"repository":"customer-actions/example-tool","upstreamCommit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha":"2222222222222222222222222222222222222222"}}}'
+        $reverse = '{"actions":{"example/tool":{"sha":"2222222222222222222222222222222222222222","upstreamCommit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repository":"customer-actions/example-tool"},"actions/checkout":{"sha":"1111111111111111111111111111111111111111","upstreamCommit":"3d3c42e5aac5ba805825da76410c181273ba90b1","repository":"customer-actions/actions-checkout"}},"version":2}'
+        $converter = Join-Path (Split-Path $PSScriptRoot -Parent) 'ConvertTo-VendoredSource.ps1'
+        $pwsh = (Get-Process -Id $PID).Path
+        $firstReceipt = $null
+        $firstHead = $null
+        foreach ($attempt in 1..2) {
+            $catalogText = if ($attempt -eq 1) { $forward } else { $reverse }
+            Set-Content $catalogPath $catalogText
+            $regenerated = Join-Path $TestDrive "snapshot-prepared-$attempt"
+            & $pwsh -NoLogo -NoProfile -File $converter -SourcePath $source -OutputPath $regenerated `
+                -CatalogPath $catalogPath -ActionsOrganization customer-actions -Kind release `
+                -ReleaseMarkerPath $markerPath -ReleaseVersion '1.2.3'
+            $LASTEXITCODE | Should -Be 0
+            if ($firstHead) { & $gitExecutable -C $target switch --quiet main }
+            $result = & $publisher -PreparedPath $regenerated -TargetPath $target -ReceiptPath $receipt -Kind release `
+                -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com `
+                -CatalogPath $catalogPath -ActionsOrganization customer-actions
+            $result.HasChanges | Should -BeTrue
+            $receiptBytes = [string]::Join("`n", @(& $gitExecutable -C $target show HEAD:platform/.vendoring.json))
+            if ($null -eq $firstReceipt) {
+                $firstReceipt = $receiptBytes
+                $firstHead = & $gitExecutable -C $target rev-parse HEAD
+            }
+            else {
+                $receiptBytes | Should -BeExactly $firstReceipt
+                & $gitExecutable -C $target rev-parse HEAD | Should -BeExactly $firstHead
+            }
+        }
+        $cloud.pulls.Count | Should -Be 1
+    }
+
+    It 'resumes a release after regenerating its canonical marker in fresh processes' -Tag 'DeploymentRelease', 'ReleaseMarkerResume' {
+        $fixtures = Join-Path $PSScriptRoot 'fixtures/vendoring'
+        $source = Join-Path $TestDrive 'regenerated-release'
+        Copy-Item (Join-Path $fixtures 'release') $source -Recurse
+        'uppercase path' | Set-Content (Join-Path $source 'Zebra.txt')
+        'lowercase path' | Set-Content (Join-Path $source 'alpha.txt')
+        $markerPath = Join-Path $TestDrive 'regeneration-marker.json'
+        '{"instance":"demo","releaseVersion":"1.0.0","files":{}}' | Set-Content $markerPath
+        $expectedFiles = [ordered]@{}
+        foreach ($relative in @('README.md', 'Zebra.txt', 'alpha.txt', 'templates/instance/.github/workflows/deploy.yml')) {
+            $expectedFiles[$relative] = (Get-FileHash (Join-Path $source $relative)).Hash.ToLowerInvariant()
+        }
+        $expected = ([ordered]@{
+            instance = 'demo'; releaseVersion = '1.2.3'; files = $expectedFiles
+        } | ConvertTo-Json -Depth 10) + "`n"
+        $markers = [Collections.Generic.List[string]]::new()
+        $prepare = Join-Path (Split-Path $PSScriptRoot -Parent) 'ConvertTo-VendoredSource.ps1'
+        $pwsh = (Get-Process -Id $PID).Path
+        $first = $null
+        $firstHead = $null
+        foreach ($attempt in 1..4) {
+            $regenerated = Join-Path $TestDrive "regenerated-$attempt"
+            & $pwsh -NoLogo -NoProfile -File $prepare -SourcePath $source -OutputPath $regenerated `
+                -CatalogPath (Join-Path $fixtures 'catalog.json') -ActionsOrganization customer-actions -Kind release `
+                -ReleaseMarkerPath $markerPath -ReleaseVersion '1.2.3'
+            $LASTEXITCODE | Should -Be 0
+            $markers.Add((Get-Content (Join-Path $regenerated '.platform-bootstrap.json') -Raw))
+            if ($first) { & $gitExecutable -C $target switch --quiet main }
+            $result = & $publisher -PreparedPath $regenerated -TargetPath $target -ReceiptPath $receipt -Kind release @releaseCatalogArgs `
+                -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+            if (-not $first) {
+                $first = $result
+                $firstHead = & $gitExecutable -C $target rev-parse HEAD
+            }
+            $result.PullRequest | Should -BeExactly $first.PullRequest
+            & $gitExecutable -C $target rev-parse HEAD | Should -BeExactly $firstHead
+        }
+        $cloud.pulls.Count | Should -Be 1
+        foreach ($marker in $markers) { $marker | Should -BeExactly $expected }
+    }
+
     It 'rejects a release prepared without its root marker before publishing' -Tag 'DeploymentRelease' {
         Remove-Item (Join-Path $prepared 'action.yml')
         $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
         'release' | Set-Content (Join-Path $prepared 'platform/README.md')
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*include the root release marker*'
         Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
@@ -311,7 +505,7 @@ Describe 'Vendoring diff and pull request publication' {
             if ($Method -eq 'POST') { throw 'Injected lost PR create response.' }
             return ,$response
         }
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*Injected lost PR create response*'
         $cloud.pulls.Count | Should -Be 1
@@ -321,7 +515,7 @@ Describe 'Vendoring diff and pull request publication' {
         & $gitExecutable --git-dir=$remotePath update-ref refs/heads/other main
         $cloud.pulls[0].base.ref = 'other'
 
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*base is not main*'
 
@@ -366,7 +560,7 @@ Describe 'Vendoring diff and pull request publication' {
             if ($Method -eq 'POST') { throw 'Injected PR creation interruption.' }
             & $cloudTransport -Uri $Uri -Method $Method -Body $Body
         }
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*Injected PR creation interruption*'
         $refs = @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname)' refs/heads/vendor)
@@ -392,11 +586,11 @@ Describe 'Vendoring diff and pull request publication' {
             param([uri] $Uri, [string] $Method = 'GET', $Body)
             & $cloudTransport -Uri $Uri -Method $Method -Body $Body
         }
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*HTTP 422*'
         & $gitExecutable -C $target switch --quiet main
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*author type is not Bot*'
 
@@ -439,7 +633,7 @@ Describe 'Vendoring diff and pull request publication' {
             if ($Method -eq 'POST') { throw 'Injected PR creation interruption.' }
             & $cloudTransport -Uri $Uri -Method $Method -Body $Body
         }
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*Injected PR creation interruption*'
         $refs = @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname)' refs/heads/vendor)
@@ -479,14 +673,14 @@ Describe 'Vendoring diff and pull request publication' {
         }
 
         if ($Inside) {
-            { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
                 -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
                 Should -Throw '*main changed inside the vendoring boundary*delete the orphaned import branch*run the import again*'
             $cloud.pulls.Count | Should -Be 0
             Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
         }
         else {
-            $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
                 -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
             $result.Branch | Should -BeExactly $refs[0].Substring('refs/heads/'.Length)
             $result.PullRequest | Should -BeExactly 'https://example.ghe.com/customer-actions/upstream-action/pull/1'
@@ -541,7 +735,7 @@ Describe 'Vendoring diff and pull request publication' {
         & $gitExecutable -C $writer push --quiet $remotePath main
         $remoteMain = & $gitExecutable --git-dir=$remotePath rev-parse refs/heads/main
 
-        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
 
         & $gitExecutable --git-dir=$remotePath rev-parse "$($result.Branch)^" | Should -BeExactly $remoteMain
@@ -571,7 +765,7 @@ Describe 'Vendoring diff and pull request publication' {
                 if ($Method -eq 'POST') { throw 'Injected PR creation interruption.' }
                 & $cloudTransport -Uri $Uri -Method $Method -Body $Body
             }
-            { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
                 -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
                 Should -Throw '*Injected PR creation interruption*'
             & $gitExecutable -C $target switch --quiet main
@@ -601,7 +795,7 @@ Describe 'Vendoring diff and pull request publication' {
                 return $result
             }
         }
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*Target main changed during vendoring*retry*'
         $cloud.pulls.Count | Should -Be 0
@@ -759,7 +953,7 @@ Describe 'Vendoring diff and pull request publication' {
             $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
             'release' | Set-Content (Join-Path $prepared 'platform/README.md')
         }
-        $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
         & $gitExecutable -C $target branch -f main HEAD
         & $gitExecutable -C $target switch --quiet main
@@ -771,7 +965,7 @@ Describe 'Vendoring diff and pull request publication' {
         & $gitExecutable -C $target commit --quiet -m outside-boundary
         & $gitExecutable -C $target push --quiet $remotePath main
 
-        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
         $result.HasChanges | Should -BeFalse
         $result.PullRequest | Should -BeNullOrEmpty
@@ -781,7 +975,7 @@ Describe 'Vendoring diff and pull request publication' {
         & $gitExecutable -C $target add .
         & $gitExecutable -C $target commit --quiet -m inside-boundary
         & $gitExecutable -C $target push --quiet $remotePath main
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*main no longer contains*'
     }
@@ -795,7 +989,7 @@ Describe 'Vendoring diff and pull request publication' {
             $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
             'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
         }
-        $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
         & $gitExecutable -C $target branch -f main HEAD
         & $gitExecutable -C $target switch --quiet main
@@ -814,7 +1008,7 @@ Describe 'Vendoring diff and pull request publication' {
             }
             return $result
         }
-        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
             Should -Throw '*Target main changed during vendoring*retry*'
         $cloud.pulls.Count | Should -Be 1
@@ -957,7 +1151,7 @@ Describe 'Vendoring diff and pull request publication' {
         '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
             Set-Content -LiteralPath (Join-Path $prepared '.platform-bootstrap.json')
 
-        $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+        $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release @releaseCatalogArgs `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com -RunIdentifier fixture
         Get-Content -LiteralPath (Join-Path $target 'instance.yaml') -Raw | Should -Match 'configured instance'
         Get-Content -LiteralPath (Join-Path $target '.github/workflows/deploy.yml') -Raw | Should -Match 'trusted deployment'

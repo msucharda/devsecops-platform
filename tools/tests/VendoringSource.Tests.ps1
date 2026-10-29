@@ -14,6 +14,15 @@ BeforeAll {
         foreach ($url in $BundleUrl) { $item = @{} + $template; $item.bundle_url = $url; $list.attestations.Add($item) }
         return $list
     }
+    function Set-MockedSourceResponseHeaders([string] $Name, $Link) {
+        for ($scope = 1; $scope -le 16; $scope++) {
+            $variable = Get-Variable -Name $Name -Scope $scope -ErrorAction SilentlyContinue
+            if ($null -eq $variable) { continue }
+            $variable.Value = @{ Link = $Link }
+            return
+        }
+        throw "Cannot find source response-header variable '$Name' in the request scope."
+    }
     $snappyAst = [Management.Automation.Language.Parser]::ParseFile($download, [ref] $null, [ref] $null)
     $snappyFunction = $snappyAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertFrom-SnappyBlock' }, $true)
     . ([scriptblock]::Create($snappyFunction.Extent.Text))
@@ -137,6 +146,144 @@ Describe 'Tagged vendoring source and attestation policy' {
         $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work
         $result.Attestation | Should -Be 'verified'
         Should -Invoke gh -Times 2 -Exactly
+    }
+
+    It 'verifies a matching attestation on the next cursor page after 30 unrelated attestations' -Tag AttestationPagination {
+        $firstPage = Get-AttestationList @(1..30 | ForEach-Object { "https://bundles.test/$($_).json.sn" })
+        $secondPage = Get-AttestationList 'https://bundles.test/31.json.sn'
+        $verifyExitCodes = @(1..30 | ForEach-Object { 1 }) + @(0)
+        Mock Invoke-RestMethod {
+            param($Uri, $ResponseHeadersVariable)
+            if ($Uri -like '*/git/ref/tags/v1.2.3') {
+                return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' }
+            }
+            if ($Uri -like '*/compare/main...3333333333333333333333333333333333333333?per_page=1') { return $comparison }
+            if ($Uri -match '/attestations/sha256:[a-f0-9]{64}\?after=cursor-two$') { return $secondPage }
+            if ($Uri -match '/attestations/sha256:[a-f0-9]{64}$') {
+                if ($ResponseHeadersVariable) {
+                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable `
+                        -Link "<${Uri}?after=cursor-two>; rel=`"next`", <${Uri}?after=cursor-two>; rel=`"last`""
+                }
+                return $firstPage
+            }
+            throw "Unexpected source API: $Uri"
+        }
+
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -SignerWorkflow upstream/action/.github/workflows/release.yml -RequireAttestation -ProtectedBranch main
+
+        $result.Attestation | Should -BeExactly 'verified'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -match '/attestations/sha256:[a-f0-9]{64}\?after=cursor-two$' }
+        Should -Invoke gh -Times 31 -Exactly
+        ($verifyCalls[30].Arguments -join ' ') | Should -Match '--source-ref refs/tags/v1\.2\.3 --source-digest 3{40} --deny-self-hosted-runners --signer-workflow upstream/action/\.github/workflows/release\.yml$'
+    }
+
+    It 'rejects unsafe attestation pagination with <Case>' -Tag AttestationPagination -ForEach @(
+        @{ Case = 'an empty Link collection'; Link = @(); ErrorPattern = '*Unreadable source attestation pagination Link*' }
+        @{ Case = 'an empty Link value'; Link = ''; ErrorPattern = '*Unreadable source attestation pagination Link*' }
+        @{ Case = 'a whitespace Link value'; Link = '   '; ErrorPattern = '*Unreadable source attestation pagination Link*' }
+        @{ Case = 'a malformed Link header'; Link = '<{digest}?after=one; rel="next"'; ErrorPattern = '*Unreadable source attestation pagination Link*' }
+        @{ Case = 'duplicate next relations'; Link = '<{digest}?after=one>; rel="next", <{digest}?after=two>; rel="next"'; ErrorPattern = '*Multiple next-page links*' }
+        @{ Case = 'a foreign API origin'; Link = '<https://other.invalid/repos/upstream/action/attestations/sha256:abc?after=one>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
+        @{ Case = 'a different digest path'; Link = '<{otherDigest}?after=one>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
+        @{ Case = 'a URL fragment'; Link = '<{digest}?after=one#fragment>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
+        @{ Case = 'no cursor'; Link = '<{digest}>; rel="next"'; ErrorPattern = '*no cursor*' }
+        @{ Case = 'only per_page without a cursor'; Link = '<{digest}?per_page=30>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
+        @{ Case = 'an uppercase cursor key'; Link = '<{digest}?After=one>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
+        @{ Case = 'a cursor with an extra query field'; Link = '<{digest}?after=one&access_token=secret>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
+        @{ Case = 'duplicate cursor fields'; Link = '<{digest}?after=one&after=two>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
+    ) {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $verifyExitCodes = @(1)
+        $requests = [Collections.Generic.List[string]]::new()
+        Mock Invoke-RestMethod {
+            param($Uri, $ResponseHeadersVariable)
+            if ($Uri -like '*/git/ref/tags/v1.2.3') {
+                return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' }
+            }
+            if ($Uri -like '*/compare/main...3333333333333333333333333333333333333333?per_page=1') { return $comparison }
+            $requests.Add([string] $Uri)
+            if ($requests.Count -gt 3) { throw 'Pagination mock stopped an unbounded request loop.' }
+            if ($Uri -match '/attestations/sha256:[a-f0-9]{64}$') {
+                if ($ResponseHeadersVariable) {
+                    $otherDigest = $Uri -replace '[a-f0-9]{64}$', ('a' * 64)
+                    $linkValue = $Link
+                    if ($Link -is [string]) { $linkValue = $Link.Replace('{digest}', $Uri).Replace('{otherDigest}', $otherDigest) }
+                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable `
+                        -Link $linkValue
+                }
+                return $fakeAttestations
+            }
+            throw "Unexpected source API: $Uri"
+        }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -InstallationToken ghs_installation -SignerWorkflow upstream/action/.github/workflows/release.yml `
+            -RequireAttestation -ProtectedBranch main } | Should -Throw $ErrorPattern
+        $requests.Count | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $work 'extracted') | Should -BeFalse
+    }
+
+    It 'rejects a cyclic attestation next link to <Case> without repeating a request' -Tag AttestationPagination -ForEach @(
+        @{ Case = 'the current page'; Cycle = 'self'; RequestCount = 2 }
+        @{ Case = 'a previously visited page'; Cycle = 'prior'; RequestCount = 3 }
+    ) {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $verifyExitCodes = @(1)
+        $requests = [Collections.Generic.List[string]]::new()
+        Mock Invoke-RestMethod {
+            param($Uri, $ResponseHeadersVariable)
+            if ($Uri -like '*/git/ref/tags/v1.2.3') {
+                return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' }
+            }
+            if ($Uri -like '*/compare/main...3333333333333333333333333333333333333333?per_page=1') { return $comparison }
+            $requests.Add([string] $Uri)
+            if ($requests.Count -gt 4) { throw 'Pagination mock stopped an unbounded request loop.' }
+            if ($Uri -match '/attestations/sha256:[a-f0-9]{64}(\?after=(one|two))?$') {
+                if ($ResponseHeadersVariable) {
+                    if ($Uri -match '\?after=two$') { $next = $Uri -replace 'after=two$', 'after=one' }
+                    elseif ($Uri -match '\?after=one$' -and $Cycle -eq 'prior') { $next = $Uri -replace 'after=one$', 'after=two' }
+                    elseif ($Uri -match '\?after=one$') { $next = $Uri }
+                    else { $next = "${Uri}?after=one" }
+                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable -Link "<$next>; rel=`"next`""
+                }
+                return $fakeAttestations
+            }
+            throw "Unexpected source API: $Uri"
+        }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -SignerWorkflow upstream/action/.github/workflows/release.yml -RequireAttestation -ProtectedBranch main } |
+            Should -Throw '*Cyclic source attestation pagination link*'
+        $requests.Count | Should -Be $RequestCount
+        Test-Path -LiteralPath (Join-Path $work 'extracted') | Should -BeFalse
+    }
+
+    It 'does not treat a later attestation page 404 as public absence' -Tag AttestationPagination {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $verifyExitCodes = @(1)
+        Mock Invoke-RestMethod {
+            param($Uri, $ResponseHeadersVariable)
+            if ($Uri -like '*/git/ref/tags/v1.2.3') {
+                return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' }
+            }
+            if ($Uri -match '/compare/main\.\.\.3{40}\?per_page=1$') { return $comparison }
+            if ($Uri -match '\?after=one$') {
+                $httpResponse = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound)
+                throw [Microsoft.PowerShell.Commands.HttpResponseException]::new('Later page not found', $httpResponse)
+            }
+            if ($Uri -match '/attestations/sha256:[a-f0-9]{64}$') {
+                if ($ResponseHeadersVariable) {
+                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable -Link "<${Uri}?after=one>; rel=`"next`""
+                }
+                return $fakeAttestations
+            }
+            throw "Unexpected source API: $Uri"
+        }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -SignerWorkflow upstream/action/.github/workflows/release.yml -RequireAttestation -ProtectedBranch main } |
+            Should -Throw '*Later page not found*'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -match '/attestations/sha256:[a-f0-9]{64}\?after=one$' }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Uri -eq 'https://api.github.com/repos/upstream/action' }
+        Test-Path -LiteralPath (Join-Path $work 'extracted') | Should -BeFalse
     }
 
     It 'stops when no attestation of several satisfies the policy' {

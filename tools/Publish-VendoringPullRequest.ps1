@@ -8,6 +8,8 @@ param(
     [Parameter(Mandatory)][string] $TargetPath,
     [Parameter(Mandatory)][string] $ReceiptPath,
     [string] $ModeManifestPath,
+    [string] $CatalogPath,
+    [string] $ActionsOrganization,
     [Parameter(Mandatory)][ValidateSet('action', 'release')][string] $Kind,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$')][string] $Repository,
     [Parameter(Mandatory)][string] $ApiUrl,
@@ -18,6 +20,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'VendoringCatalog.psm1')
 $Kind = $Kind.ToLowerInvariant()
 $owner = $Repository.Split('/')[0]
 if (([uri] $ApiUrl).Scheme -cne 'https' -or -not $env:PLATFORM_GITHUB_TOKENS -or $env:GH_TOKEN -cnotmatch '^ghs_') {
@@ -44,6 +47,33 @@ if ($receipt['Commit'] -cnotmatch '^[a-f0-9]{40}$' -or $receipt['Sha256'] -cnotm
     throw 'Invalid source receipt.'
 }
 $receipt['Repository'] = $receipt['Repository'].ToLowerInvariant()
+# security-check: vendoring-publish-catalog-snapshot
+function Get-VendoringPublishCatalogSnapshot {
+    param([string] $CatalogPath, [string] $ActionsOrganization)
+
+    if (-not $CatalogPath) {
+        throw 'Import-time catalog snapshot path is required for release publication.'
+    }
+    if (-not $ActionsOrganization) {
+        throw 'Import-time catalog snapshot requires an actions organization.'
+    }
+    if (-not (Test-Path -LiteralPath $CatalogPath -PathType Leaf)) {
+        throw 'Import-time catalog snapshot file is missing for release publication.'
+    }
+    try {
+        $catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+        Assert-VendoringCatalog -Catalog $catalog -ActionsOrganization $ActionsOrganization
+        return (ConvertTo-CanonicalVendoringCatalog -Value $catalog)
+    }
+    catch {
+        throw "Invalid import-time catalog snapshot: $($_.Exception.Message)"
+    }
+}
+$catalogSnapshot = $null
+if ($Kind -eq 'release') {
+    $catalogSnapshot = Get-VendoringPublishCatalogSnapshot -CatalogPath $CatalogPath `
+        -ActionsOrganization $ActionsOrganization
+}
 function Invoke-VendoringGit {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string[]] $Arguments)
@@ -265,12 +295,13 @@ foreach ($relative in $newFiles) {
 }
 $metadataPath = if ($Kind -eq 'release') { 'platform/.vendoring.json' } else { '.vendoring.json' }
 $metadata = [ordered]@{
-    version = 1; kind = $Kind
+    version = if ($Kind -eq 'release') { 2 } else { 1 }; kind = $Kind
     source = $receipt['Repository']; tag = $receipt['Tag']; commit = $receipt['Commit']
     sha256 = $receipt['Sha256']; asset = $receipt['Asset']; attestation = $receipt['Attestation']
     files = @($newFiles | Sort-Object -CaseSensitive)
 }
-$metadata | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $target $metadataPath) -Encoding utf8NoBOM
+if ($Kind -eq 'release') { $metadata['catalog'] = $catalogSnapshot }
+$metadata | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath (Join-Path $target $metadataPath) -Encoding utf8NoBOM
 foreach ($relative in @($newFiles) + @($metadataPath)) {
     $null = Invoke-VendoringGit @('add', '--force', '--', $relative)
     if ($null -ne $modes -and $relative -cne $metadataPath) {

@@ -32,6 +32,22 @@
             Tests = @(@{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' })
         }
         @{
+            Name = 'deployment-release-catalog-snapshot'
+            Tests = @(@{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' })
+        }
+        @{
+            Name = 'vendoring-publish-catalog-snapshot'
+            Tests = @(@{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*catalog snapshot*', '*catalog as a version 2 release receipt*', '*import-time catalog*', '*configured actions organization*') })
+        }
+        @{
+            Name = 'vendoring-catalog-snapshot'
+            Tests = @(
+                @{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' }
+                @{ Path = 'tools/tests/Vendoring.Tests.ps1'; FullName = 'Vendored source preparation through the public command*' }
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = '*rejects catalog snapshot*at the public publisher boundary*' }
+            )
+        }
+        @{
             Name = 'token-issuance-revocation'
             Tests = @(@{
                 Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'
@@ -418,6 +434,12 @@
             Name = 'release-published-state'
             Tests = @(
                 @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*published release with different content*', '*publish response that does not match*', '*identical published release*') }
+            )
+        }
+        @{
+            Name = 'vendoring-attestation-pagination'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringSource.Tests.ps1'; FullName = @('*attestation pagination*', '*matching attestation on the next cursor page*', '*cyclic attestation next link*', '*later attestation page 404*') }
             )
         }
         @{

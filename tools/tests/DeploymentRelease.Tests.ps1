@@ -38,6 +38,9 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
             $directory = Get-Item "$sourceRoot/templates/instance/.github" -Force
             $directory.Attributes = $directory.Attributes -bor [IO.FileAttributes]::Hidden
         }
+        if ((Get-Variable Mode -ErrorAction SilentlyContinue) -and $Mode -ceq 'transformed') {
+            '{"version":1,"kind":"release"}' | Set-Content "$candidate/platform/.vendoring.json"
+        }
         $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
         $api = @{ attested = $true; exitCode = 0 }
         Mock Invoke-RestMethod {
@@ -97,6 +100,100 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
     It 'rejects an extra receipt beside the untransformed raw release' -Tag 'ReceiptBoundary' -ForEach @(@{ Mode = 'raw' }) {
         '{"version":1,"kind":"release"}' | Set-Content "$candidate/platform/.vendoring.json"
         { & $preflight @arguments } | Should -Throw '*Candidate hash differs*'
+    }
+
+    It 'accepts the installed release after the current action catalog advances' -Tag 'CatalogSnapshot' -ForEach @(@{ Mode = 'transformed' }) {
+        $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
+        @{ version = 2; kind = 'release'; catalog = $catalog } | ConvertTo-Json -Depth 10 |
+            Set-Content "$candidate/platform/.vendoring.json"
+        $catalog.actions['actions/checkout'].upstreamCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        $catalog.actions['actions/checkout'].sha = '2222222222222222222222222222222222222222'
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content "$candidate/vendoring/actions.json"
+
+        { & $preflight @arguments } | Should -Not -Throw
+        Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
+    It 'rejects <Case> in an imported catalog snapshot rather than falling back to the current catalog' -Tag 'CatalogSnapshot' -ForEach @(
+        @{ Mode = 'transformed'; Case = 'a copy outside the actions organization'; Change = {
+            $catalog.actions['actions/checkout'].repository = 'other-actions/actions-checkout'
+        }; Error = '*Invalid catalog entry*' }
+        @{ Mode = 'transformed'; Case = 'a non-SHA copy pin'; Change = {
+            $catalog.actions['actions/checkout'].sha = 'not-a-commit'
+        }; Error = '*Invalid catalog entry*' }
+        @{ Mode = 'transformed'; Case = 'a non-SHA upstream commit'; Change = {
+            $catalog.actions['actions/checkout'].upstreamCommit = 'not-a-commit'
+        }; Error = '*upstreamCommit*full lowercase commit SHA*' }
+        @{ Mode = 'transformed'; Case = 'different transformed bytes'; Change = {
+            $catalog.actions['actions/checkout'].sha = '2222222222222222222222222222222222222222'
+        }; Error = '*Candidate hash differs*' }
+    ) {
+        $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
+        . $Change
+        @{ version = 2; kind = 'release'; catalog = $catalog } | ConvertTo-Json -Depth 10 |
+            Set-Content "$candidate/platform/.vendoring.json"
+
+        { & $preflight @arguments } | Should -Throw $Error
+        Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
+    It 'rejects <Case> on a version 2 import even if the current catalog would reproduce its bytes' -Tag 'CatalogSnapshot' -ForEach @(
+        @{ Mode = 'transformed'; Case = 'missing snapshot'; Receipt = '{"version":2,"kind":"release"}' }
+        @{ Mode = 'transformed'; Case = 'corrupt snapshot'; Receipt = '{"version":2,"kind":"release","catalog":{"version":2,"actions":"invalid"}}' }
+        @{ Mode = 'transformed'; Case = 'downgraded snapshot'; Receipt = '{"version":1,"kind":"release","catalog":{"version":2,"actions":{}}}' }
+        @{ Mode = 'transformed'; Case = 'unsupported receipt version'; Receipt = '{"version":3,"kind":"release","catalog":{"version":2,"actions":{}}}' }
+    ) {
+        $Receipt | Set-Content "$candidate/platform/.vendoring.json"
+        { & $preflight @arguments } | Should -Throw '*catalog snapshot*'
+        Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
+    It 'rejects receipt <Case> before selecting a converter catalog' -Tag 'CatalogSnapshot' -ForEach @(
+        @{ Mode = 'transformed'; Case = 'array root'; Change = {
+            $receiptJson = '[' + ($receipt | ConvertTo-Json -Depth 10 -Compress) + ']'
+        }; Error = '*Invalid transformed release receipt*' }
+        @{ Mode = 'transformed'; Case = 'action kind'; Change = {
+            $receipt.kind = 'action'
+        }; Error = '*Invalid transformed release receipt*' }
+        @{ Mode = 'transformed'; Case = 'kind capitalization'; Change = {
+            $receipt.kind = 'Release'
+        }; Error = '*Invalid transformed release receipt*' }
+        @{ Mode = 'transformed'; Case = 'string version'; Change = {
+            $receipt.version = '2'
+        }; Error = '*Invalid transformed release receipt*' }
+        @{ Mode = 'transformed'; Case = 'non-object snapshot'; Change = {
+            $receipt.catalog = 'invalid'
+        }; Error = '*Invalid catalog snapshot*Action catalog must declare version 2*' }
+        @{ Mode = 'transformed'; Case = 'snapshot version 1'; Change = {
+            $receipt.catalog.version = 1
+        }; Error = '*Invalid catalog snapshot*Action catalog must declare version 2*' }
+    ) {
+        $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
+        $receipt = @{ version = 2; kind = 'release'; catalog = $catalog }
+        $receiptJson = $null
+        . $Change
+        if ($null -eq $receiptJson) { $receiptJson = $receipt | ConvertTo-Json -Depth 10 }
+        $receiptJson | Set-Content "$candidate/platform/.vendoring.json"
+
+        { & $preflight @arguments } | Should -Throw $Error
+        Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
+    It 'uses the current catalog for a legacy transformed tree without a receipt' -Tag 'CatalogSnapshot' -ForEach @(@{ Mode = 'transformed' }) {
+        Remove-Item "$candidate/platform/.vendoring.json"
+        $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
+        $catalog.actions['actions/checkout'].upstreamCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content "$candidate/vendoring/actions.json"
+        { & $preflight @arguments } | Should -Throw '*Upstream commit*must match release pin*'
+        Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
+    It 'fails closed for a legacy import without a snapshot after the catalog pin changes' -Tag 'CatalogSnapshot' -ForEach @(@{ Mode = 'transformed' }) {
+        '{"version":1,"kind":"release"}' | Set-Content "$candidate/platform/.vendoring.json"
+        $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
+        $catalog.actions['actions/checkout'].upstreamCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content "$candidate/vendoring/actions.json"
+        { & $preflight @arguments } | Should -Throw '*Upstream commit*must match release pin*'
     }
 
     It 'rejects an array-wrapped release marker before source requests' -Tag 'MarkerArrayBoundary' {

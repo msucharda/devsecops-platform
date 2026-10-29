@@ -15,6 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
 Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
+Import-Module (Join-Path $PSScriptRoot 'VendoringCatalog.psm1')
 
 # security-check: vendoring-release-tag
 function Assert-VendoringReleaseTag {
@@ -22,15 +23,6 @@ function Assert-VendoringReleaseTag {
 
     if ($CatalogTag -isnot [string] -or $CatalogTag -cne $ExpectedTag) {
         throw "Catalog tag for '$Upstream' must match release pin tag '$ExpectedTag'; update the action copy and catalog before importing this release."
-    }
-}
-
-# security-check: vendoring-upstream-commit
-function Assert-VendoringUpstreamCommit {
-    param([AllowNull()][object] $Commit, [string] $Upstream)
-
-    if ($Commit -isnot [string] -or $Commit -cnotmatch '^[a-f0-9]{40}\z') {
-        throw "Catalog upstreamCommit for '$Upstream' must be a full lowercase commit SHA from its approved receipt."
     }
 }
 
@@ -57,20 +49,7 @@ function Assert-VendoringReleaseMarkerPreparation {
 }
 
 $catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
-if ($catalog -isnot [Collections.IDictionary] -or $catalog['version'] -isnot [long] -or
-    $catalog['version'] -ne 2 -or $catalog['actions'] -isnot [Collections.IDictionary]) {
-    throw 'Action catalog must declare version 2 and an actions mapping; migrate upstreamCommit from approved receipts.'
-}
-foreach ($entry in $catalog['actions'].PSBase.Keys) {
-    $copy = $catalog['actions'][$entry]
-    if ($entry -cnotmatch '^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$' -or
-        $copy -isnot [Collections.IDictionary] -or
-        $copy['repository'] -cne "$ActionsOrganization/$($entry.Replace('/', '-'))" -or
-        $copy['sha'] -cnotmatch '^[a-f0-9]{40}$') {
-        throw "Invalid catalog entry '$entry': expected $ActionsOrganization/owner-repo and a full commit SHA."
-    }
-    Assert-VendoringUpstreamCommit -Commit $copy['upstreamCommit'] -Upstream $entry
-}
+Assert-VendoringCatalog -Catalog $catalog -ActionsOrganization $ActionsOrganization
 $source = (Resolve-Path -LiteralPath $SourcePath).Path
 $output = [IO.Path]::GetFullPath($OutputPath)
 if ($output -eq $source -or $output.StartsWith("$source$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::OrdinalIgnoreCase)) {
@@ -181,7 +160,11 @@ if ($ReleaseMarkerPath) {
     Assert-VendoringReleaseMarkerPreparation -Kind $Kind -ReleaseVersion $ReleaseVersion -Marker $marker
     Import-Module (Join-Path $PSScriptRoot 'ReleaseIntegrity.psm1')
     $rawFiles = Get-ReleaseFileHash -Path $source -RawRelease
-    $updatedMarker = @{ instance = $marker['instance']; releaseVersion = $ReleaseVersion; files = $rawFiles }
+    $markerFiles = [ordered]@{}
+    $paths = [string[]]@($rawFiles.get_Keys())
+    [Array]::Sort($paths, [StringComparer]::Ordinal)
+    foreach ($path in $paths) { $markerFiles[$path] = $rawFiles[$path] }
+    $updatedMarker = [ordered]@{ instance = $marker['instance']; releaseVersion = $ReleaseVersion; files = $markerFiles }
     $pending.Add(@{
         Path = '.platform-bootstrap.json'
         Bytes = [Text.UTF8Encoding]::new($false).GetBytes(($updatedMarker | ConvertTo-Json -Depth 10) + "`n")

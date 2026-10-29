@@ -58,7 +58,7 @@ Describe 'Vendoring publication interruption harness' -Tag 'Interruption' {
         $run = {
             & $gitExecutable -C $target switch --quiet main
             $cloud.attempt++
-            $cloud.result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
+            $cloud.result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind @releaseCatalogArgs `
                 -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com -RunIdentifier "attempt-$($cloud.attempt)"
         }
         $snapshot = {

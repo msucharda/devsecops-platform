@@ -11,6 +11,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 Import-Module (Join-Path $PSScriptRoot 'ReleaseIntegrity.psm1')
+Import-Module (Join-Path $PSScriptRoot 'VendoringCatalog.psm1')
 
 # security-check: deployment-release-marker
 function Assert-DeploymentReleaseMarker {
@@ -30,6 +31,38 @@ function Assert-DeploymentReleaseMarkerFile {
     if ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
         throw 'Release marker must not be a symbolic link.'
     }
+}
+
+# security-check: deployment-release-catalog-snapshot
+function Resolve-DeploymentReleaseCatalog {
+    param([string] $Candidate, [string] $WorkPath, [string] $ActionsOrganization)
+
+    $receiptPath = Join-Path $Candidate 'platform/.vendoring.json'
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+        return (Join-Path $Candidate 'vendoring/actions.json')
+    }
+    $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+    if ($receipt -isnot [Collections.IDictionary] -or $receipt['kind'] -cne 'release' -or
+        $receipt['version'] -isnot [long]) {
+        throw 'Invalid transformed release receipt.'
+    }
+    if ($receipt['version'] -eq 1 -and -not $receipt.Contains('catalog')) {
+        return (Join-Path $Candidate 'vendoring/actions.json')
+    }
+    if ($receipt['version'] -ne 2) {
+        throw 'Version 2 release requires a valid catalog snapshot; legacy receipts cannot carry one.'
+    }
+    $catalog = $receipt['catalog']
+    try {
+        Assert-VendoringCatalog -Catalog $catalog -ActionsOrganization $ActionsOrganization
+    }
+    catch {
+        throw "Invalid catalog snapshot: $($_.Exception.Message)"
+    }
+    $snapshotPath = Join-Path $WorkPath 'catalog-snapshot.json'
+    $canonical = ConvertTo-CanonicalVendoringCatalog -Value $catalog
+    $canonical | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $snapshotPath -Encoding utf8NoBOM
+    return $snapshotPath
 }
 
 $candidate = (Resolve-Path -LiteralPath $CandidatePath).Path
@@ -58,8 +91,10 @@ if (Test-RawReleaseCandidate -Raw $raw -Candidate $actualFiles) {
 # Only transformed imports carry publisher metadata; a raw bootstrap must have the exact release file set.
 $null = $actualFiles.Remove('.vendoring.json')
 $expected = Join-Path $WorkPath 'expected'
+$catalogPath = Resolve-DeploymentReleaseCatalog -Candidate $candidate -WorkPath $WorkPath `
+    -ActionsOrganization $inputs.ActionsOrganization
 & (Join-Path $PSScriptRoot 'ConvertTo-VendoredSource.ps1') -SourcePath $source.SourcePath `
-    -OutputPath $expected -CatalogPath (Join-Path $candidate 'vendoring/actions.json') `
+    -OutputPath $expected -CatalogPath $catalogPath `
     -ActionsOrganization $inputs.ActionsOrganization -Kind release
 $expectedFiles = Get-ReleaseFileHash -Path (Join-Path $expected 'platform')
 Assert-ReleaseFileHash -Expected $expectedFiles -Actual $actualFiles -Label Candidate
