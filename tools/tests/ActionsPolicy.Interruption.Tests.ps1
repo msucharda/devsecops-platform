@@ -62,6 +62,7 @@ Describe 'Actions policy interruption harness' -Tag 'Interruption' {
             & $resetStub {
                 if ($Policy -ceq 'default') {
                     $stub.Actions['allowed_actions'] = 'local_only'
+                    $stub.Actions['sha_pinning_required'] = $true
                     $stub.Workflow['can_approve_pull_request_reviews'] = $true
                 }
             }

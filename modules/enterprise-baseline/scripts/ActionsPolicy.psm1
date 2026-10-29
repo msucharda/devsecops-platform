@@ -83,7 +83,7 @@ function Invoke-ActionsPolicyApi {
 function ConvertTo-ActionsPolicy {
     <#
     .SYNOPSIS
-    Validates a managed policy from Terraform and returns it with a boolean can_approve_pull_request_reviews.
+    Validates a managed policy from Terraform and normalizes its boolean fields.
     .DESCRIPTION
     The external data source passes every query value as a string, so 'true' and 'false' are accepted besides booleans.
     #>
@@ -94,15 +94,18 @@ function ConvertTo-ActionsPolicy {
     if ($Policy -isnot [System.Collections.IDictionary]) { throw 'The managed actions policy is not an object.' }
     $approve = $Policy['can_approve_pull_request_reviews']
     if ($approve -is [string] -and $approve -cin @('true', 'false')) { $approve = $approve -ceq 'true' }
+    $pinning = $Policy['sha_pinning_required']
+    if ($pinning -is [string] -and $pinning -cin @('true', 'false')) { $pinning = $pinning -ceq 'true' }
     if ($Policy['enabled_repositories'] -isnot [string] -or $Policy['enabled_repositories'] -cnotin $script:EnabledRepositories -or
         $Policy['allowed_actions'] -isnot [string] -or $Policy['allowed_actions'] -cnotin $script:AllowedActions -or
         $Policy['default_workflow_permissions'] -isnot [string] -or $Policy['default_workflow_permissions'] -cnotin $script:WorkflowPermissions -or
-        $approve -isnot [bool]) {
+        $approve -isnot [bool] -or $pinning -isnot [bool]) {
         throw 'The managed actions policy has a missing or undocumented value.'
     }
     return [ordered]@{
         enabled_repositories             = $Policy['enabled_repositories']
         allowed_actions                  = $Policy['allowed_actions']
+        sha_pinning_required             = $pinning
         default_workflow_permissions     = $Policy['default_workflow_permissions']
         can_approve_pull_request_reviews = $approve
     }
@@ -150,6 +153,10 @@ function Get-ActionsPolicyStateViolation {
         $actions['allowed_actions'] -cne $Policy['allowed_actions']) {
         "The allowed actions policy of $Organization is not $($Policy['allowed_actions'])."
     }
+    if ($actions -isnot [System.Collections.IDictionary] -or $actions['sha_pinning_required'] -isnot [bool] -or
+        $actions['sha_pinning_required'] -ne $Policy['sha_pinning_required']) {
+        "Required SHA pinning of $Organization is not $($Policy['sha_pinning_required'].ToString().ToLowerInvariant())."
+    }
     if ($workflow -isnot [System.Collections.IDictionary] -or $workflow['default_workflow_permissions'] -isnot [string] -or
         $workflow['default_workflow_permissions'] -cne $Policy['default_workflow_permissions']) {
         "The default GITHUB_TOKEN permissions of $Organization are not $($Policy['default_workflow_permissions'])."
@@ -180,10 +187,12 @@ function Set-ActionsPolicy {
     $managed = ConvertTo-ActionsPolicy -Policy $Policy
     $state = Get-ActionsPolicyState -ApiUrl $ApiUrl -Organization $Organization
     $actions = $state['actions_permissions']
-    if ($actions['enabled_repositories'] -cne $managed['enabled_repositories'] -or $actions['allowed_actions'] -cne $managed['allowed_actions']) {
+    if ($actions['enabled_repositories'] -cne $managed['enabled_repositories'] -or $actions['allowed_actions'] -cne $managed['allowed_actions'] -or
+        $actions['sha_pinning_required'] -isnot [bool] -or $actions['sha_pinning_required'] -ne $managed['sha_pinning_required']) {
         Invoke-ActionsPolicyApi -ApiUrl $ApiUrl -Method PUT -Path "/orgs/$Organization/actions/permissions" -Body ([ordered]@{
                 enabled_repositories = $managed['enabled_repositories']
                 allowed_actions      = $managed['allowed_actions']
+                sha_pinning_required = $managed['sha_pinning_required']
             })
     }
     $workflow = $state['workflow_permissions']

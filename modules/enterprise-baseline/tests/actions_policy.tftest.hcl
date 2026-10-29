@@ -55,6 +55,7 @@ run "manages_the_policy_of_every_organization" {
         policy = {
           enabled_repositories             = "all"
           allowed_actions                  = "local_only"
+          sha_pinning_required             = true
           default_workflow_permissions     = "read"
           can_approve_pull_request_reviews = false
         }
@@ -72,6 +73,7 @@ run "manages_the_policy_of_every_organization" {
         organization                     = organization
         enabled_repositories             = "all"
         allowed_actions                  = "local_only"
+        sha_pinning_required             = "true"
         default_workflow_permissions     = "read"
         can_approve_pull_request_reviews = "false"
       })
@@ -92,6 +94,7 @@ run "restores_the_github_defaults_on_destroy" {
         policy = {
           enabled_repositories             = "all"
           allowed_actions                  = "all"
+          sha_pinning_required             = false
           default_workflow_permissions     = "read"
           can_approve_pull_request_reviews = false
         }
