@@ -1183,4 +1183,13 @@ Describe 'Actions catalog Terraform programs' {
         $LASTEXITCODE | Should -Be 1
         ($output -join "`n") | Should -BeLike '*needs both a tag and a commit*'
     }
+
+    It 'fails the state reader on a release without an upstream commit before any request' {
+        $query = $resourceInput.Clone()
+        $query.tag = 'v4.2.2'; $query.commit = ('a' * 40); $query.upstream_commit = ''
+
+        $output = ConvertTo-Json $query -Compress | pwsh -NoProfile -NonInteractive -File $read 2>&1
+        $LASTEXITCODE | Should -Be 1
+        ($output -join "`n") | Should -BeLike '*needs an upstream commit*'
+    }
 }
