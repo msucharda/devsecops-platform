@@ -459,10 +459,14 @@ exit 139
         $failure.Exception.Message | Should -Match 'PSModulePath='
         $failure.Exception.Message | Should -Match 'PSModuleAnalysisCachePath='
         $failure.Exception.Message | Should -Match 'XDG_CACHE_HOME='
-        $failure.Exception.Message | Should -Match 'childCache='
-        $failure.Exception.Message | Should -Match 'childAnalysisCache='
-        $contextCache = [regex]::Match($failure.Exception.Message, 'childCache=([^;]+);').Groups[1].Value
-        $contextAnalysisCache = [regex]::Match($failure.Exception.Message, 'childAnalysisCache=([^;]+);').Groups[1].Value
+        $diagnosticLines = @($failure.Exception.Message -split '\r?\n' | Where-Object { $_ -cmatch '^\[terraform-test\] ' })
+        $diagnosticLines | Should -HaveCount 1
+        $cacheMatch = [regex]::Match($diagnosticLines[0], '; childCache=([^;]+);')
+        $analysisCacheMatch = [regex]::Match($diagnosticLines[0], '; childAnalysisCache=([^;]+);')
+        $cacheMatch.Success | Should -BeTrue -Because 'the diagnostic must report a non-empty child cache path'
+        $analysisCacheMatch.Success | Should -BeTrue -Because 'the diagnostic must report a non-empty child analysis cache path'
+        $contextCache = $cacheMatch.Groups[1].Value
+        $contextAnalysisCache = $analysisCacheMatch.Groups[1].Value
         $failure.Exception.Message | Should -Match ([regex]::Escape("testChildCache=$contextCache"))
         $failure.Exception.Message | Should -Match ([regex]::Escape("testChildAnalysisCache=$contextAnalysisCache"))
         $codeSecurity.DropNext | Should -Not -BeNullOrEmpty
