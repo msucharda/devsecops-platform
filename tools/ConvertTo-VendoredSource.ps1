@@ -177,7 +177,7 @@ foreach ($file in $files) {
 }
 if (-not $pending.Count) { throw 'Source has no importable files.' }
 if ($ReleaseMarkerPath) {
-    $marker = Get-Content -LiteralPath $ReleaseMarkerPath -Raw | ConvertFrom-Json -AsHashtable
+    $marker = Get-Content -LiteralPath $ReleaseMarkerPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
     Assert-VendoringReleaseMarkerPreparation -Kind $Kind -ReleaseVersion $ReleaseVersion -Marker $marker
     Import-Module (Join-Path $PSScriptRoot 'ReleaseIntegrity.psm1')
     $rawFiles = Get-ReleaseFileHash -Path $source -RawRelease

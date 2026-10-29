@@ -95,6 +95,13 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         { & $preflight @arguments } | Should -Throw '*Candidate hash differs*'
     }
 
+    It 'rejects an array-wrapped release marker before source requests' -Tag 'MarkerArrayBoundary' {
+        $json = Get-Content "$candidate/.platform-bootstrap.json" -Raw
+        "[$json]" | Set-Content "$candidate/.platform-bootstrap.json"
+        { & $preflight @arguments } | Should -Throw '*Release marker must be an object*'
+        Should -Invoke Invoke-RestMethod -Times 0
+    }
+
     It 'rejects a symbolic link in <Location>' -Skip:$IsWindows -ForEach @(
         @{ Location = 'release tree' }
         @{ Location = 'marker' }

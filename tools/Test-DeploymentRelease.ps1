@@ -33,7 +33,7 @@ function Assert-DeploymentReleaseMarkerFile {
 $candidate = (Resolve-Path -LiteralPath $CandidatePath).Path
 $markerPath = Join-Path $candidate '.platform-bootstrap.json'
 Assert-DeploymentReleaseMarkerFile -Path $markerPath
-$marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json -AsHashtable
+$marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
 $instancePath = Join-Path $candidate 'instance.yaml'
 $instance = Get-PlatformYaml -Path $instancePath
 Assert-DeploymentReleaseMarker -Marker $marker -InstanceName $instance['instance']['name']

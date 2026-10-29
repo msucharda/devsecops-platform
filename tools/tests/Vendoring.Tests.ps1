@@ -47,6 +47,16 @@ Describe 'Vendored source preparation through the public command' {
         Test-Path $output | Should -BeFalse
     }
 
+    It 'rejects release marker preparation for array-wrapped marker' -Tag 'DeploymentRelease', 'MarkerArrayBoundary' {
+        $markerPath = Join-Path $TestDrive 'array-marker.json'
+        '[{"instance":"demo","releaseVersion":"1.0.0","files":{}}]' | Set-Content $markerPath
+        $output = Join-Path $TestDrive 'array-marker-output'
+        { & $prepare -SourcePath (Join-Path $fixtures 'release') -OutputPath $output `
+                -CatalogPath (Join-Path $fixtures 'catalog.json') -ActionsOrganization customer-actions -Kind release `
+                -ReleaseMarkerPath $markerPath -ReleaseVersion '1.2.3' } | Should -Throw '*marker must be an object*'
+        Test-Path $output | Should -BeFalse
+    }
+
     It 'excludes platform caches only for release preparation: <Kind>' -ForEach @(
         @{ Kind = 'release'; Prefix = 'platform/'; IncludesCache = $false }
         @{ Kind = 'action'; Prefix = ''; IncludesCache = $true }
