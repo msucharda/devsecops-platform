@@ -28,6 +28,7 @@
     )
     # Full CI retains these setup, stateful scenario-matrix, and Terraform suites unchanged.
     Integration = @(
+        'DeploymentRelease.Tests.ps1'
         'AcceptanceRunEvidence.Tests.ps1'
         'ActionImport.Tests.ps1'
         'ActionsCatalog.Tests.ps1'

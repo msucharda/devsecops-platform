@@ -5,6 +5,8 @@ param(
     [Parameter(Mandatory)][string] $OutputPath,
     [Parameter(Mandatory)][string] $CatalogPath,
     [string] $ModeManifestPath,
+    [string] $ReleaseMarkerPath,
+    [string] $ReleaseVersion,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string] $ActionsOrganization,
     [Parameter(Mandatory)][ValidateSet('action', 'release')][string] $Kind
 )
@@ -13,22 +15,14 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
 Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
+Import-Module (Join-Path $PSScriptRoot 'VendoringCatalog.psm1')
 
 # security-check: vendoring-release-tag
 function Assert-VendoringReleaseTag {
-    param([AllowNull()][object] $CatalogTag, [string] $ExpectedTag, [string] $Upstream)
+    param([AllowNull()][string] $CatalogTag, [string] $ExpectedTag, [string] $Upstream)
 
-    if ($CatalogTag -isnot [string] -or $CatalogTag -cne $ExpectedTag) {
+    if ($CatalogTag -cne $ExpectedTag) {
         throw "Catalog tag for '$Upstream' must match release pin tag '$ExpectedTag'; update the action copy and catalog before importing this release."
-    }
-}
-
-# security-check: vendoring-upstream-commit
-function Assert-VendoringUpstreamCommit {
-    param([AllowNull()][object] $Commit, [string] $Upstream)
-
-    if ($Commit -isnot [string] -or $Commit -cnotmatch '^[a-f0-9]{40}\z') {
-        throw "Catalog upstreamCommit for '$Upstream' must be a full lowercase commit SHA from its approved receipt."
     }
 }
 
@@ -41,21 +35,21 @@ function Assert-VendoringReleaseCommit {
     }
 }
 
-$catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
-if ($catalog -isnot [Collections.IDictionary] -or $catalog['version'] -isnot [long] -or
-    $catalog['version'] -ne 2 -or $catalog['actions'] -isnot [Collections.IDictionary]) {
-    throw 'Action catalog must declare version 2 and an actions mapping; migrate upstreamCommit from approved receipts.'
-}
-foreach ($entry in $catalog['actions'].PSBase.Keys) {
-    $copy = $catalog['actions'][$entry]
-    if ($entry -cnotmatch '^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$' -or
-        $copy -isnot [Collections.IDictionary] -or
-        $copy['repository'] -cne "$ActionsOrganization/$($entry.Replace('/', '-'))" -or
-        $copy['sha'] -cnotmatch '^[a-f0-9]{40}$') {
-        throw "Invalid catalog entry '$entry': expected $ActionsOrganization/owner-repo and a full commit SHA."
+# security-check: vendoring-release-marker-preparation
+function Assert-VendoringReleaseMarkerPreparation {
+    param([string] $Kind, [string] $ReleaseVersion, [AllowNull()][object] $Marker)
+    if ($Kind -ne 'release') { throw 'Only release preparation can update a release marker.' }
+    if ($ReleaseVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$') {
+        throw 'A release marker requires a stable or release-candidate SemVer version without v.'
     }
-    Assert-VendoringUpstreamCommit -Commit $copy['upstreamCommit'] -Upstream $entry
+    if ($Marker -isnot [Collections.IDictionary]) { throw 'The existing release marker must be an object.' }
+    if ($Marker['instance'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Marker['instance'])) {
+        throw 'The existing release marker must identify the instance.'
+    }
 }
+
+$catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+Assert-VendoringCatalog -Catalog $catalog -ActionsOrganization $ActionsOrganization
 $source = (Resolve-Path -LiteralPath $SourcePath).Path
 $output = [IO.Path]::GetFullPath($OutputPath)
 if ($output -eq $source -or $output.StartsWith("$source$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::OrdinalIgnoreCase)) {
@@ -161,16 +155,32 @@ foreach ($file in $files) {
     $pending.Add(@{ Path = $destinationPath; Bytes = $bytes; Source = $file.FullName })
 }
 if (-not $pending.Count) { throw 'Source has no importable files.' }
+if ($ReleaseMarkerPath) {
+    $marker = Get-Content -LiteralPath $ReleaseMarkerPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+    Assert-VendoringReleaseMarkerPreparation -Kind $Kind -ReleaseVersion $ReleaseVersion -Marker $marker
+    Import-Module (Join-Path $PSScriptRoot 'ReleaseIntegrity.psm1')
+    $rawFiles = Get-ReleaseFileHash -Path $source -RawRelease
+    $markerFiles = [ordered]@{}
+    $paths = [string[]]@($rawFiles.get_Keys())
+    [Array]::Sort($paths, [StringComparer]::Ordinal)
+    foreach ($path in $paths) { $markerFiles[$path] = $rawFiles[$path] }
+    $updatedMarker = [ordered]@{ instance = $marker['instance']; releaseVersion = $ReleaseVersion; files = $markerFiles }
+    $pending.Add(@{
+        Path = '.platform-bootstrap.json'
+        Bytes = [Text.UTF8Encoding]::new($false).GetBytes(($updatedMarker | ConvertTo-Json -Depth 10) + "`n")
+        Source = $null
+    })
+}
 foreach ($item in $pending) {
     $destination = Join-Path $output $item.Path
     $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
     [IO.File]::WriteAllBytes($destination, $item.Bytes)
-    if (-not $IsWindows) { [IO.File]::SetUnixFileMode($destination, [IO.File]::GetUnixFileMode($item.Source)) }
+    if (-not $IsWindows -and $item.Source) { [IO.File]::SetUnixFileMode($destination, [IO.File]::GetUnixFileMode($item.Source)) }
 }
 if ($ModeManifestPath) {
     $modes = [ordered]@{}
     foreach ($item in $pending) {
-        $modes[$item.Path] = -not $IsWindows -and (([int] [IO.File]::GetUnixFileMode($item.Source) -band 73) -ne 0)
+        $modes[$item.Path] = -not $IsWindows -and $item.Source -and (([int] [IO.File]::GetUnixFileMode($item.Source) -band 73) -ne 0)
     }
     @{ version = 1; files = $modes } | ConvertTo-Json -Depth 10 |
         Set-Content -LiteralPath $ModeManifestPath -Encoding utf8NoBOM

@@ -8,6 +8,8 @@ param(
     [Parameter(Mandatory)][string] $TargetPath,
     [Parameter(Mandatory)][string] $ReceiptPath,
     [string] $ModeManifestPath,
+    [string] $CatalogPath,
+    [string] $ActionsOrganization,
     [Parameter(Mandatory)][ValidateSet('action', 'release')][string] $Kind,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$')][string] $Repository,
     [Parameter(Mandatory)][string] $ApiUrl,
@@ -18,6 +20,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'VendoringCatalog.psm1')
 $Kind = $Kind.ToLowerInvariant()
 $owner = $Repository.Split('/')[0]
 if (([uri] $ApiUrl).Scheme -cne 'https' -or -not $env:PLATFORM_GITHUB_TOKENS -or $env:GH_TOKEN -cnotmatch '^ghs_') {
@@ -36,14 +39,52 @@ if ($scope.total_count -ne 1 -or @($scope.repositories).Count -ne 1 -or $scope.r
 }
 $target = (Resolve-Path -LiteralPath $TargetPath).Path
 $prepared = (Resolve-Path -LiteralPath $PreparedPath).Path
-$receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json -AsHashtable
-if ($receipt['Commit'] -cnotmatch '^[a-f0-9]{40}$' -or $receipt['Sha256'] -cnotmatch '^[a-f0-9]{64}$' -or
-    $receipt['Attestation'] -cnotin @('verified', 'not-present', 'manual-not-verified') -or
-    $receipt['Repository'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$' -or
-    $receipt['Tag'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._/-]*$') {
-    throw 'Invalid source receipt.'
+$receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+# security-check: vendoring-source-receipt
+function Assert-VendoringSourceReceipt {
+    param([AllowNull()][object] $SourceReceipt)
+
+    if ($SourceReceipt -isnot [Collections.IDictionary] -or
+        $SourceReceipt['Commit'] -isnot [string] -or $SourceReceipt['Commit'] -cnotmatch '\A[a-f0-9]{40}\z' -or
+        $SourceReceipt['Sha256'] -isnot [string] -or $SourceReceipt['Sha256'] -cnotmatch '\A[a-f0-9]{64}\z' -or
+        $SourceReceipt['Attestation'] -isnot [string] -or
+        $SourceReceipt['Attestation'] -cnotin @('verified', 'not-present', 'manual-not-verified') -or
+        $SourceReceipt['Repository'] -isnot [string] -or
+        $SourceReceipt['Repository'] -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+\z' -or
+        $SourceReceipt['Tag'] -isnot [string] -or
+        $SourceReceipt['Tag'] -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9._/-]*\z') {
+        throw 'Invalid source receipt.'
+    }
 }
+Assert-VendoringSourceReceipt -SourceReceipt $receipt
 $receipt['Repository'] = $receipt['Repository'].ToLowerInvariant()
+# security-check: vendoring-publish-catalog-snapshot
+function Get-VendoringPublishCatalogSnapshot {
+    param([string] $CatalogPath, [string] $ActionsOrganization)
+
+    if (-not $CatalogPath) {
+        throw 'Import-time catalog snapshot path is required for release publication.'
+    }
+    if (-not $ActionsOrganization) {
+        throw 'Import-time catalog snapshot requires an actions organization.'
+    }
+    if (-not (Test-Path -LiteralPath $CatalogPath -PathType Leaf)) {
+        throw 'Import-time catalog snapshot file is missing for release publication.'
+    }
+    try {
+        $catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+        Assert-VendoringCatalog -Catalog $catalog -ActionsOrganization $ActionsOrganization
+        return (ConvertTo-CanonicalVendoringCatalog -Value $catalog)
+    }
+    catch {
+        throw "Invalid import-time catalog snapshot: $($_.Exception.Message)"
+    }
+}
+$catalogSnapshot = $null
+if ($Kind -eq 'release') {
+    $catalogSnapshot = Get-VendoringPublishCatalogSnapshot -CatalogPath $CatalogPath `
+        -ActionsOrganization $ActionsOrganization
+}
 function Invoke-VendoringGit {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string[]] $Arguments)
@@ -146,8 +187,16 @@ function Assert-VendoringPublishHead {
 
 function Get-VendoringBoundaryDifference {
     param([string] $ReferenceSha, [string] $TargetSha)
-    $paths = if ($Kind -eq 'release') { @('platform') } else { @('.', ':(top,exclude).github') }
+    $paths = if ($Kind -eq 'release') { @('platform', '.platform-bootstrap.json') } else { @('.', ':(top,exclude).github') }
     Invoke-VendoringGit (@('diff', '--name-only', '--no-renames', $ReferenceSha, $TargetSha, '--') + $paths)
+}
+
+# security-check: vendoring-publish-release-marker
+function Assert-VendoringPreparedReleaseMarker {
+    param([Collections.Generic.List[string]] $Files)
+    if ($Kind -eq 'release' -and -not $Files.Contains('.platform-bootstrap.json')) {
+        throw 'Prepared release must include the root release marker in the same import commit.'
+    }
 }
 
 # security-check: vendoring-main-ref
@@ -193,12 +242,13 @@ foreach ($file in @($items | Where-Object { -not $_.PSIsContainer })) {
     $relative = [IO.Path]::GetRelativePath($prepared, $file.FullName).Replace('\', '/')
     if ($relative -match '(^|/)\.git(/|$)' -or $relative -eq '.vendoring.json' -or
         ($Kind -eq 'action' -and $relative.StartsWith('.github/')) -or
-        ($Kind -eq 'release' -and -not $relative.StartsWith('platform/'))) {
+        ($Kind -eq 'release' -and -not $relative.StartsWith('platform/') -and $relative -cne '.platform-bootstrap.json')) {
         throw "Prepared file '$relative' is outside the $Kind vendoring boundary."
     }
     $newFiles.Add($relative)
 }
 if (-not $newFiles.Count) { throw 'Prepared source is empty.' }
+Assert-VendoringPreparedReleaseMarker -Files $newFiles
 $modes = $null
 if ($ModeManifestPath) {
     $manifest = Get-Content -LiteralPath $ModeManifestPath -Raw | ConvertFrom-Json -AsHashtable
@@ -230,7 +280,8 @@ $null = Invoke-VendoringGit @('switch', '--quiet', '--detach', $start)
 foreach ($item in @(Get-ChildItem -LiteralPath $target -Recurse -Force |
     Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })) {
     $relative = [IO.Path]::GetRelativePath($target, $item.FullName).Replace('\', '/')
-    if (($Kind -eq 'release' -and $relative.StartsWith('platform/')) -or
+    if (($Kind -eq 'release' -and $relative -ceq '.platform-bootstrap.json') -or
+        ($Kind -eq 'release' -and $relative.StartsWith('platform/')) -or
         ($Kind -eq 'release' -and $relative -ceq 'platform') -or
         ($Kind -eq 'action' -and -not $relative.StartsWith('.github/'))) {
         throw "Target vendoring boundary contains symbolic link '$relative'."
@@ -255,12 +306,13 @@ foreach ($relative in $newFiles) {
 }
 $metadataPath = if ($Kind -eq 'release') { 'platform/.vendoring.json' } else { '.vendoring.json' }
 $metadata = [ordered]@{
-    version = 1; kind = $Kind
+    version = if ($Kind -eq 'release') { 2 } else { 1 }; kind = $Kind
     source = $receipt['Repository']; tag = $receipt['Tag']; commit = $receipt['Commit']
     sha256 = $receipt['Sha256']; asset = $receipt['Asset']; attestation = $receipt['Attestation']
     files = @($newFiles | Sort-Object -CaseSensitive)
 }
-$metadata | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $target $metadataPath) -Encoding utf8NoBOM
+if ($Kind -eq 'release') { $metadata['catalog'] = $catalogSnapshot }
+$metadata | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath (Join-Path $target $metadataPath) -Encoding utf8NoBOM
 foreach ($relative in @($newFiles) + @($metadataPath)) {
     $null = Invoke-VendoringGit @('add', '--force', '--', $relative)
     if ($null -ne $modes -and $relative -cne $metadataPath) {

@@ -71,6 +71,65 @@ function Test-CommitOnBranch {
     return $Comparison.merge_base_commit.sha -ceq $Commit
 }
 
+# security-check: vendoring-attestation-pagination
+function Get-SourceAttestationNextPage {
+    param(
+        [AllowNull()] $Headers,
+        [Parameter(Mandatory)][string] $DigestUri,
+        [Parameter(Mandatory)][Collections.Generic.HashSet[string]] $Visited
+    )
+    if ($null -eq $Headers) { return $null }
+    $links = $Headers['Link']
+    if ($null -eq $links) { return $null }
+    [string[]] $values = @($links)
+    if ($values.Count -eq 0) { throw 'Unreadable source attestation pagination Link header.' }
+    $next = $null
+    foreach ($value in $values) {
+        $offset = 0
+        foreach ($match in [regex]::Matches($value,
+                '\G\s*<(?<url>[^<>]+)>\s*;\s*rel\s*=\s*(?:"(?<rel>[^"]+)"|(?<rel>[A-Za-z]+))\s*(?:,\s*(?=<)|(?=\z))')) {
+            $offset += $match.Length
+            $relationTypes = $match.Groups['rel'].Value
+            if ($relationTypes -notmatch '^[A-Za-z][A-Za-z0-9.-]*(?: +[A-Za-z][A-Za-z0-9.-]*)*$') {
+                throw 'Unreadable source attestation pagination Link header.'
+            }
+            foreach ($relation in ($relationTypes -split ' +')) {
+                if ($relation -ieq 'next') {
+                    if ($null -ne $next) { throw 'Multiple next-page links in source attestation pagination.' }
+                    $next = $match.Groups['url'].Value
+                }
+            }
+        }
+        if ($offset -ne $value.Length -or $offset -eq 0) { throw 'Unreadable source attestation pagination Link header.' }
+    }
+    if ($null -eq $next) { return $null }
+    $target = $null
+    # UriPartial.Authority includes scheme and user info; exact equality also excludes HTTP and embedded credentials.
+    if (-not [uri]::TryCreate($next, [UriKind]::Absolute, [ref] $target) -or
+        $target.Fragment -or
+        -not [string]::Equals($target.GetLeftPart([UriPartial]::Authority),
+            ([uri] $DigestUri).GetLeftPart([UriPartial]::Authority), [StringComparison]::Ordinal) -or
+        -not [string]::Equals($target.AbsolutePath, ([uri] $DigestUri).AbsolutePath, [StringComparison]::Ordinal)) {
+        throw 'Source attestation pagination link outside the digest endpoint.'
+    }
+    $query = $target.Query.TrimStart('?')
+    if (-not $query) { throw 'Source attestation pagination link has no cursor.' }
+    $parameters = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($part in $query.Split('&')) {
+        if ($part -cnotmatch '^(after|before|per_page)=([^&=]+)$' -or -not $parameters.Add($Matches[1])) {
+            throw 'Invalid source attestation pagination cursor.'
+        }
+    }
+    if ((-not $parameters.Contains('after') -and -not $parameters.Contains('before')) -or
+        ($parameters.Contains('after') -and $parameters.Contains('before'))) {
+        throw 'Invalid source attestation pagination cursor.'
+    }
+    if ($Visited.Contains($target.AbsoluteUri)) {
+        throw 'Cyclic source attestation pagination link.'
+    }
+    return $target.AbsoluteUri
+}
+
 function ConvertFrom-SnappyBlock {
     # Decodes the raw snappy block format (https://github.com/google/snappy/blob/main/format_description.txt).
     # The result is untrusted; gh attestation verify validates it cryptographically.
@@ -179,8 +238,16 @@ if ($AssetName) { $downloadHeaders.Accept = 'application/octet-stream' }
 $null = Invoke-SourceRequest { Invoke-WebRequest -Uri $downloadUrl -Headers $downloadHeaders -OutFile $archivePath }
 $digest = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 # GitHub.com returns 404 for an unrecorded digest, but private access failures can look identical.
+$digestUri = "$base/attestations/sha256:$digest"
+$pageHeaders = $null
 try {
-    $response = Invoke-SourceRequest { Invoke-RestMethod -Uri "$base/attestations/sha256:$digest" -Headers $headers }
+    $firstPage = Invoke-SourceRequest {
+        $responseHeaders = $null
+        $body = Invoke-RestMethod -Uri $digestUri -Headers $headers -ResponseHeadersVariable responseHeaders -MaximumRedirection 0
+        [pscustomobject]@{ Body = $body; Headers = $responseHeaders }
+    }
+    $response = $firstPage.Body
+    $pageHeaders = $firstPage.Headers
 }
 catch {
     $status = if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) { [int] $_.Exception.Response.StatusCode } else { 0 }
@@ -192,56 +259,69 @@ catch {
     Write-Warning 'Public GitHub.com source has no attestation for the downloaded digest (404). Provenance is NOT VERIFIED.'
     $response = @{ attestations = @() }
 }
-if (-not $response.PSObject.Properties['attestations'] -and
-    -not ($response -is [Collections.IDictionary] -and $response.Contains('attestations'))) {
-    throw 'Source attestation API returned no attestations collection.'
-}
-if ($response.attestations -isnot [Collections.IList]) { throw 'Source attestation API returned an invalid attestations collection.' }
 $attestation = 'not-present'
-if (@($response.attestations).Count -gt 0) {
-    # gh needs credentials to fetch attestations itself; local bundles let a public source verify without any token.
-    $bundlePaths = [Collections.Generic.List[string]]::new()
-    $bundleDirectory = Join-Path $WorkPath 'bundles'
-    $null = New-Item -ItemType Directory -Path $bundleDirectory
+$pageUri = $digestUri
+$visited = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+$null = $visited.Add(([uri] $digestUri).AbsoluteUri)
+$bundleDirectory = Join-Path $WorkPath 'bundles'
+$bundleCount = 0
+while ($true) {
+    if (-not $response.PSObject.Properties['attestations'] -and
+        -not ($response -is [Collections.IDictionary] -and $response.Contains('attestations'))) {
+        throw 'Source attestation API returned no attestations collection.'
+    }
+    if ($response.attestations -isnot [Collections.IList]) { throw 'Source attestation API returned an invalid attestations collection.' }
     foreach ($item in @($response.attestations)) {
         $bundleUrl = if ($item -is [Collections.IDictionary]) { $item['bundle_url'] } elseif ($item.PSObject.Properties['bundle_url']) { $item.bundle_url } else { $null }
         if ($bundleUrl -isnot [string] -or -not [uri]::IsWellFormedUriString($bundleUrl, [UriKind]::Absolute) -or
             ([uri] $bundleUrl).Scheme -cne 'https' -or ([uri] $bundleUrl).UserInfo) {
             throw 'Source attestation has no HTTPS bundle_url; import stopped.'
         }
-        $compressedPath = Join-Path $bundleDirectory "$($bundlePaths.Count).json.sn"
+        if (-not (Test-Path -LiteralPath $bundleDirectory)) { $null = New-Item -ItemType Directory -Path $bundleDirectory }
+        $compressedPath = Join-Path $bundleDirectory "$bundleCount.json.sn"
         # The pre-signed storage URL must not receive the GitHub credential.
         $null = Invoke-WebRequest -Uri $bundleUrl -OutFile $compressedPath
         if ((Get-Item -LiteralPath $compressedPath).Length -gt 16MB) { throw 'Attestation bundle download exceeds 16 MiB.' }
-        $bundlePath = Join-Path $bundleDirectory "$($bundlePaths.Count).json"
+        $bundlePath = Join-Path $bundleDirectory "$bundleCount.json"
         [IO.File]::WriteAllBytes($bundlePath, (ConvertFrom-SnappyBlock -Data ([IO.File]::ReadAllBytes($compressedPath))))
-        $bundlePaths.Add($bundlePath)
-    }
-    $saved = @{}
-    foreach ($name in @('GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GH_CONFIG_DIR')) {
-        $saved[$name] = [Environment]::GetEnvironmentVariable($name)
-    }
-    try {
-        $hostName = ([uri] $ApiUrl).Host -replace '^api\.', ''
-        $env:GH_TOKEN = $InstallationToken
-        $env:GH_ENTERPRISE_TOKEN = $InstallationToken
-        $env:GITHUB_TOKEN = $null
-        $env:GITHUB_ENTERPRISE_TOKEN = $null
-        $env:GH_HOST = $hostName
-        $env:GH_CONFIG_DIR = Join-Path $WorkPath 'gh-config'
-        $policy = @('--repo', $Repository, '--hostname', $hostName, '--source-ref', "refs/tags/$Tag",
-            '--source-digest', $commit, '--deny-self-hosted-runners')
-        if ($SignerWorkflow) { $policy += @('--signer-workflow', $SignerWorkflow) }
-        # Like gh itself, one attestation satisfying the full policy proves provenance; unrelated attestations do not.
-        foreach ($bundlePath in $bundlePaths) {
+        $bundleCount++
+        $saved = @{}
+        foreach ($name in @('GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GH_CONFIG_DIR')) {
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+        }
+        try {
+            $hostName = ([uri] $ApiUrl).Host -replace '^api\.', ''
+            $env:GH_TOKEN = $InstallationToken
+            $env:GH_ENTERPRISE_TOKEN = $InstallationToken
+            $env:GITHUB_TOKEN = $null
+            $env:GITHUB_ENTERPRISE_TOKEN = $null
+            $env:GH_HOST = $hostName
+            $env:GH_CONFIG_DIR = Join-Path $WorkPath 'gh-config'
+            $policy = @('--repo', $Repository, '--hostname', $hostName, '--source-ref', "refs/tags/$Tag",
+                '--source-digest', $commit, '--deny-self-hosted-runners')
+            if ($SignerWorkflow) { $policy += @('--signer-workflow', $SignerWorkflow) }
             & gh attestation verify $archivePath --bundle $bundlePath @policy | Out-Host
             if ($LASTEXITCODE -eq 0) { $attestation = 'verified'; break }
         }
-        if ($attestation -cne 'verified') { throw "Invalid or unverifiable source attestation for '$Repository@$Tag'; import stopped." }
+        finally {
+            foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+        }
     }
-    finally {
-        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    if ($attestation -ceq 'verified') { break }
+    $nextPage = Get-SourceAttestationNextPage -Headers $pageHeaders -DigestUri $digestUri -Visited $visited
+    if ($null -eq $nextPage) { break }
+    $null = $visited.Add($nextPage)
+    $pageUri = $nextPage
+    $page = Invoke-SourceRequest {
+        $responseHeaders = $null
+        $body = Invoke-RestMethod -Uri $pageUri -Headers $headers -ResponseHeadersVariable responseHeaders -MaximumRedirection 0
+        [pscustomobject]@{ Body = $body; Headers = $responseHeaders }
     }
+    $response = $page.Body
+    $pageHeaders = $page.Headers
+}
+if ($attestation -cne 'verified' -and $bundleCount -gt 0) {
+    throw "Invalid or unverifiable source attestation for '$Repository@$Tag'; import stopped."
 }
 if (-not (Test-AttestationRequirementMet -Attestation $attestation -Required $RequireAttestation.IsPresent -SignerWorkflow $SignerWorkflow)) {
     throw "Source '$Repository@$Tag' requires a verified attestation from a pinned signer workflow; import stopped."
