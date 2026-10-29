@@ -232,6 +232,10 @@ function Get-LocalCiSelection {
         }
         if ($file -cmatch '^modules/(?<module>[^/]+)/') {
             $module = $Matches['module']
+            if ($file -cmatch '/(parameters\.schema\.json|variables\.tf)$' -and
+                (Test-Path -LiteralPath (Join-Path $testRoot 'ModuleParameters.Tests.ps1') -PathType Leaf)) {
+                $mapped.Add('tools/tests/ModuleParameters.Tests.ps1')
+            }
             foreach ($test in $tests) {
                 if ($test.Text.Contains("modules/$module/", [StringComparison]::Ordinal) -or
                     $test.Text.Contains("modules/$module'", [StringComparison]::Ordinal) -or

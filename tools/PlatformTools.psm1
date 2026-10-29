@@ -131,6 +131,39 @@ function Get-PlatformModuleGraph {
         if ($manifest.name -cne $name) {
             throw "Module '$($manifest.name)' must match directory '$name' in '$manifestPath'."
         }
+        $parameterSchemaPath = Join-Path $ModulesPath "$name/parameters.schema.json"
+        if (Test-Path -LiteralPath $parameterSchemaPath -PathType Leaf) {
+            try {
+                $parameterSchema = Get-Content -LiteralPath $parameterSchemaPath -Raw -ErrorAction Stop |
+                    ConvertFrom-Json -AsHashtable -NoEnumerate -ErrorAction Stop
+            }
+            catch { throw "Invalid module parameter schema '$parameterSchemaPath': $($_.Exception.Message)" }
+            if ($parameterSchema -isnot [System.Collections.IDictionary]) {
+                throw "Module parameter schema '$parameterSchemaPath' must be an object."
+            }
+            $checkSchema = {
+                param($Value)
+                if ($Value -is [System.Collections.IDictionary]) {
+                    foreach ($keyword in @('$ref', '$id', '$anchor', '$dynamicRef', '$recursiveRef')) {
+                        if ($Value.Contains($keyword)) { throw "Unsupported schema keyword '$keyword' in '$parameterSchemaPath'." }
+                    }
+                    foreach ($key in $Value.PSBase.Keys) { & $checkSchema $Value[$key] }
+                }
+                elseif ($Value -is [System.Collections.IList]) {
+                    foreach ($item in $Value) { & $checkSchema $item }
+                }
+            }
+            & $checkSchema $parameterSchema
+            if ($parameterSchema['type'] -cne 'object' -or
+                $parameterSchema['additionalProperties'] -isnot [bool] -or $parameterSchema['additionalProperties'] -or
+                $parameterSchema['properties'] -isnot [System.Collections.IDictionary]) {
+                throw "Module parameter schema '$parameterSchemaPath' must declare an object with properties and additionalProperties: false."
+            }
+            $manifest['parameterSchema'] = $parameterSchema
+        }
+        elseif (Test-Path -LiteralPath (Join-Path $ModulesPath "$name/variables.tf") -PathType Leaf) {
+            throw "Module '$name' is missing parameter schema '$parameterSchemaPath'."
+        }
         foreach ($phase in $manifest.permissions.githubApp.PSBase.Keys) {
             $declaration = $manifest.permissions.githubApp[$phase]
             if ($phase -eq 'plan' -and 'write' -cin @($declaration.permissions.PSBase.Values)) {
@@ -363,6 +396,26 @@ function Assert-PlatformAppManifestScope {
     }
 }
 
+function Add-PlatformCredentialDefault {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.IDictionary] $Credentials,
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.IDictionary] $Modules
+    )
+
+    foreach ($name in $Modules.PSBase.Keys) {
+        if (-not $Credentials.Contains($name)) {
+            $Credentials[$name] = @{
+                plan = @{ environment = "$name-plan" }
+                apply = @{ environment = "$name-apply" }
+            }
+        }
+        if ($Modules[$name].permissions.githubApp.Contains('rulesetPlan') -and -not $Credentials[$name].Contains('rulesetPlan')) {
+            $Credentials[$name]['rulesetPlan'] = @{ environment = "$name-ruleset-plan" }
+        }
+    }
+}
+
 function Get-PlatformInstance {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     [OutputType([System.Collections.IDictionary])]
@@ -393,6 +446,22 @@ function Get-PlatformInstance {
         }
     }
     $schema = Get-PlatformJsonSchema -Name instance
+    foreach ($name in $Modules.PSBase.Keys) {
+        if (-not $Modules[$name].Contains('parameterSchema')) { continue }
+        $parameterSchema = $Modules[$name]['parameterSchema']
+        $entry = @{
+            allOf = @(
+                @{ '$ref' = '#/definitions/moduleEntry' }
+                @{
+                    properties = @{ parameters = $parameterSchema }
+                }
+            )
+        }
+        if ($parameterSchema.Contains('required') -and $parameterSchema['required'].Count -gt 0) {
+            $entry.allOf[1]['required'] = @('parameters')
+        }
+        $schema.properties.modules.properties[$name] = $entry
+    }
     $schemaJson = ConvertTo-Json -InputObject $schema -Depth 100
     $instanceJson = ConvertTo-Json -InputObject $instance -Depth 100 -Compress
     $validationErrors = @()
@@ -486,16 +555,16 @@ function Get-PlatformInstance {
         }
     }
     $selected = Get-PlatformModuleSelection -Instance $instance -Modules $Modules
+    foreach ($name in $selected) {
+        if ($Modules[$name].Contains('parameterSchema') -and
+            $Modules[$name]['parameterSchema'].Contains('required') -and
+            $Modules[$name]['parameterSchema']['required'].Count -gt 0 -and
+            -not $instance['modules'].Contains($name)) {
+            throw "Invalid instance configuration '$Path': $.modules.$name is required by the selected prerequisites and must declare its required parameters."
+        }
+    }
+    Add-PlatformCredentialDefault -Credentials $instance['credentials'] -Modules $Modules
     foreach ($name in $Modules.PSBase.Keys) {
-        if (-not $instance['credentials'].Contains($name)) {
-            $instance['credentials'][$name] = @{
-                plan = @{ environment = "$name-plan" }
-                apply = @{ environment = "$name-apply" }
-            }
-        }
-        if ($Modules[$name].permissions.githubApp.Contains('rulesetPlan') -and -not $instance['credentials'][$name].Contains('rulesetPlan')) {
-            $instance['credentials'][$name]['rulesetPlan'] = @{ environment = "$name-ruleset-plan" }
-        }
         foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
             if (-not $instance['credentials'][$name].Contains($phase)) {
                 continue
@@ -863,4 +932,4 @@ function Get-PlatformOrganizationToken {
     return $tokens
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformModulePhaseGraph, Get-PlatformInstance, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken, Test-PlatformReleaseFile
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformModulePhaseGraph, Get-PlatformInstance, Add-PlatformCredentialDefault, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken, Test-PlatformReleaseFile
