@@ -87,8 +87,11 @@
         'WorkflowPreflight.Tests.ps1'
     )
     Interruption = @(
+        'Acceptance.Interruption.Tests.ps1'
         'ActionsCatalog.Interruption.Tests.ps1'
         'ActionsPolicy.Interruption.Tests.ps1'
+        'Bootstrap.Interruption.Tests.ps1'
+        'CodeSecurity.Interruption.Tests.ps1'
         'GitHubBootstrap.Interruption.Tests.ps1'
         'InstallToolDependencies.Interruption.Tests.ps1'
         'InstanceSetup.Interruption.Tests.ps1'
@@ -97,6 +100,7 @@
         'OrganizationRoles.Interruption.Tests.ps1'
         'Organizations.Interruption.Tests.ps1'
         'PlatformRelease.Interruption.Tests.ps1'
+        'RemoveBootstrap.Interruption.Tests.ps1'
         'VendoredRuntime.Interruption.Tests.ps1'
         'VendoringPullRequest.Interruption.Tests.ps1'
     )
