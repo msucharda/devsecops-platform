@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][string] $ModulesPath,
     [Parameter(Mandatory)][string] $ReportPath,
     [Parameter(Mandatory)][string] $GitHubOutputPath,
+    [string] $CodeSecurityCoveragePath = './artifacts/code-security-coverage/code-security-coverage.json',
     [string] $PlatformOrganization = $env:GITHUB_REPOSITORY_OWNER,
     [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY,
     [string] $RunUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
@@ -19,15 +20,23 @@ $incomplete = [System.Collections.Generic.List[string]]::new()
 $drift = [System.Collections.Generic.List[string]]::new()
 $uncovered = [System.Collections.Generic.List[string]]::new()
 $codeSecuritySummaries = [System.Collections.Generic.List[string]]::new()
+$coverageArtifactUrl = "$RunUrl#artifacts"
+
+# security-check: code-security-coverage-artifact
+function Test-CodeSecurityArtifactId {
+    param([AllowNull()][object] $Value)
+
+    return $Value -is [string] -and $Value -match '^[1-9][0-9]*$'
+}
 
 function Add-CodeSecurityCoverage {
     [CmdletBinding()]
-    param([AllowNull()][object] $Json, [string[]] $Organizations)
+    param([string] $Path, [string[]] $Organizations)
 
     $coverage = $null
-    try { $coverage = ConvertFrom-Json -InputObject $Json -AsHashtable -ErrorAction Stop } catch { $coverage = $null }
+    try { $coverage = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText([IO.Path]::GetFullPath($Path))) -AsHashtable -ErrorAction Stop } catch { $coverage = $null }
     if ($coverage -isnot [Collections.IDictionary] -or $coverage['organizations'] -isnot [Collections.IDictionary]) {
-        $incomplete.Add('Code Security coverage did not publish a readable organization map.')
+        $incomplete.Add('Code Security coverage artifact did not publish a readable organization map.')
         return
     }
     $results = $coverage['organizations']
@@ -181,7 +190,16 @@ if ($needs) {
                         if (-not $organizationScoped) {
                             $coverageOrganizations = @($instance['modules'][$module]['parameters']['target_organizations'])
                         }
-                        Add-CodeSecurityCoverage -Json (Get-NeedValue $needs $root.Job 'codeSecurityCoverage') -Organizations $coverageOrganizations
+                        if (-not (Test-CodeSecurityArtifactId (Get-NeedValue $needs $root.Job 'codeSecurityCoverage'))) {
+                            $incomplete.Add("Code Security coverage artifact was not published by job $($root.Job); a previous attempt is not evidence.")
+                        }
+                        else {
+                            Add-CodeSecurityCoverage -Path $CodeSecurityCoveragePath -Organizations $coverageOrganizations
+                            $publishedUrl = Get-NeedValue $needs $root.Job 'codeSecurityCoverageUrl'
+                            if ($publishedUrl -is [string] -and -not [string]::IsNullOrWhiteSpace($publishedUrl)) {
+                                $coverageArtifactUrl = $publishedUrl
+                            }
+                        }
                     }
                     $changes = Get-NeedValue $needs $root.Job 'changes'
                     # A plan can report changes before a later step fails the job; keep that drift visible.
@@ -300,6 +318,19 @@ $report.Add('')
 $report.AddRange($uncovered)
 $content = ($report -join "`n") + "`n"
 $encoding = [System.Text.UTF8Encoding]::new($false)
+$bytes = $encoding.GetByteCount($content)
+if ($bytes -gt 50000) {
+    $complete = $false
+    $omitted = 0
+    do {
+        $last = $report.Count - 1
+        $bytes -= $encoding.GetByteCount($report[$last] + "`n")
+        $report.RemoveAt($last)
+        $omitted++
+        $notice = "`n### Drift detection INCOMPLETE: TRUNCATED`n$omitted omitted lines. Counts and actual drift precede unverified details. Full repository details: [code-security-coverage artifact]($coverageArtifactUrl), retained for 1 day. [Run]($RunUrl).`n"
+    } while ($report.Count -gt 0 -and $bytes + $encoding.GetByteCount($notice) -gt 50000)
+    $content = ($report -join "`n") + "`n" + $notice
+}
 [System.IO.File]::WriteAllText([System.IO.Path]::GetFullPath($ReportPath), $content, $encoding)
 if ($JobSummaryPath) {
     [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($JobSummaryPath), $content, $encoding)

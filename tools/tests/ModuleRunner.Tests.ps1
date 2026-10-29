@@ -5,6 +5,125 @@ BeforeAll {
     $example = Join-Path $PSScriptRoot 'fixtures/instance.yaml'
 }
 
+Describe 'Legacy Code Security transition identity validation' -Tag 'CodeSecurityTransition' {
+    BeforeAll {
+        $ast = [Management.Automation.Language.Parser]::ParseFile($runner, [ref] $null, [ref] $null)
+        $definition = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Assert-LegacyCodeSecurityTransition'
+        }, $true)
+        if ($null -eq $definition) { throw 'Missing legacy Code Security transition guard.' }
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+
+    BeforeEach {
+        $late = @{
+            values = @{ root_module = @{ resources = @(
+                @{ mode = 'managed'; type = 'terraform_data'; name = 'code_security_configuration'; index = 'demo'; values = @{ input = @{ organization = 'demo'; name = 'platform-baseline' } } }
+                @{ mode = 'managed'; type = 'terraform_data'; name = 'custom_pattern'; index = 'demo/Old token'; values = @{ input = @{ organization = 'demo'; name = 'Old token' } } }
+            ) } }
+        }
+        $early = ConvertFrom-Json -AsHashtable -InputObject (ConvertTo-Json -Depth 20 -InputObject $late)
+        $configured = @(@{ name = 'Old token' })
+        $readEarly = { $early }
+    }
+
+    It 'accepts matching adopted configuration and pattern identities' {
+        { Assert-LegacyCodeSecurityTransition -LateState $late -ReadEarlyState $readEarly -ConfiguredPatterns $configured } |
+            Should -Not -Throw
+    }
+
+    It 'rejects malformed or unadopted <Case> before forgetting legacy state' -ForEach @(
+        @{ Case = 'late values type'; Expected = '*readable late root state*' }
+        @{ Case = 'late root type'; Expected = '*readable late root state*' }
+        @{ Case = 'configured pattern type'; Expected = '*unique configured customPatterns names*' }
+        @{ Case = 'configured pattern name type'; Expected = '*unique configured customPatterns names*' }
+        @{ Case = 'configured pattern whitespace'; Expected = '*unique configured customPatterns names*' }
+        @{ Case = 'early state type'; Expected = '*readable adopted early root state*' }
+        @{ Case = 'early values type'; Expected = '*readable adopted early root state*' }
+        @{ Case = 'early root type'; Expected = '*readable adopted early root state*' }
+        @{ Case = 'legacy organization type'; Expected = '*unreadable identity in late state*' }
+        @{ Case = 'legacy organization whitespace'; Expected = '*unreadable identity in late state*' }
+        @{ Case = 'legacy pattern name type'; Expected = '*unreadable identity in late state*' }
+        @{ Case = 'legacy configuration name whitespace'; Expected = '*unreadable identity in late state*' }
+        @{ Case = 'legacy mode'; Expected = '*unreadable identity in late state*' }
+        @{ Case = 'legacy mode case'; Expected = '*unreadable identity in late state*' }
+        @{ Case = 'legacy index'; Expected = '*unreadable identity in late state*' }
+        @{ Case = 'legacy index case'; Expected = '*unreadable identity in late state*' }
+        @{ Case = 'legacy configuration name'; Expected = '*differs from the managed platform-baseline*' }
+        @{ Case = 'legacy configuration name case'; Expected = '*differs from the managed platform-baseline*' }
+        @{ Case = 'adopted input type'; Expected = '*different identity in the early root state*' }
+        @{ Case = 'adopted organization case'; Expected = '*different identity in the early root state*' }
+        @{ Case = 'adopted pattern name'; Expected = '*different identity in the early root state*' }
+        @{ Case = 'adopted pattern name case'; Expected = '*different identity in the early root state*' }
+    ) {
+        switch ($Case) {
+            'late values type' { $late['values'] = 'invalid' }
+            'late root type' { $late['values'].root_module = 'invalid' }
+            'configured pattern type' { $configured[0] = 'invalid' }
+            'configured pattern name type' {
+                $configured[0].name = 42
+                $late['values'].root_module.resources[1]['values'].input.name = 42
+                $early['values'].root_module.resources[1]['values'].input.name = 42
+                $late['values'].root_module.resources[1].index = 'demo/42'
+                $early['values'].root_module.resources[1].index = 'demo/42'
+            }
+            'configured pattern whitespace' { $configured[0].name = ' ' }
+            'early state type' { $early = 'invalid' }
+            'early values type' { $early['values'] = 'invalid' }
+            'early root type' { $early['values'].root_module = 'invalid' }
+            'legacy organization type' {
+                $late['values'].root_module.resources[1]['values'].input.organization = 42
+                $early['values'].root_module.resources[1]['values'].input.organization = 42
+                $late['values'].root_module.resources[1].index = '42/Old token'
+                $early['values'].root_module.resources[1].index = '42/Old token'
+            }
+            'legacy organization whitespace' {
+                $late['values'].root_module.resources[1]['values'].input.organization = ' '
+                $early['values'].root_module.resources[1]['values'].input.organization = ' '
+                $late['values'].root_module.resources[1].index = ' /Old token'
+                $early['values'].root_module.resources[1].index = ' /Old token'
+            }
+            'legacy pattern name type' {
+                $configured[0].name = '42'
+                $late['values'].root_module.resources[1]['values'].input.name = 42
+                $early['values'].root_module.resources[1]['values'].input.name = 42
+                $late['values'].root_module.resources[1].index = 'demo/42'
+                $early['values'].root_module.resources[1].index = 'demo/42'
+            }
+            'legacy configuration name whitespace' {
+                $late['values'].root_module.resources[0]['values'].input.name = ' '
+                $early['values'].root_module.resources[0]['values'].input.name = ' '
+            }
+            'legacy mode' { $late['values'].root_module.resources[1].mode = 'data' }
+            'legacy mode case' { $late['values'].root_module.resources[1].mode = 'MANAGED' }
+            'legacy index' {
+                $late['values'].root_module.resources[1].index = 'demo/Renamed token'
+                $early['values'].root_module.resources[1].index = 'demo/Renamed token'
+            }
+            'legacy index case' {
+                $late['values'].root_module.resources[1].index = 'demo/OLD TOKEN'
+                $early['values'].root_module.resources[1].index = 'demo/OLD TOKEN'
+            }
+            'legacy configuration name' {
+                $late['values'].root_module.resources[0]['values'].input.name = 'alternative'
+                $early['values'].root_module.resources[0]['values'].input.name = 'alternative'
+            }
+            'legacy configuration name case' {
+                $late['values'].root_module.resources[0]['values'].input.name = 'PLATFORM-BASELINE'
+                $early['values'].root_module.resources[0]['values'].input.name = 'PLATFORM-BASELINE'
+            }
+            'adopted input type' { $early['values'].root_module.resources[1]['values'].input = 'invalid' }
+            'adopted organization case' { $early['values'].root_module.resources[1]['values'].input.organization = 'DEMO' }
+            'adopted pattern name' { $early['values'].root_module.resources[1]['values'].input.name = 'Other token' }
+            'adopted pattern name case' { $early['values'].root_module.resources[1]['values'].input.name = 'OLD TOKEN' }
+        }
+        { Assert-LegacyCodeSecurityTransition -LateState $late -ReadEarlyState $readEarly -ConfiguredPatterns $configured } |
+            Should -Throw $Expected
+    }
+}
+
 Describe 'Module runner with local Terraform' {
     BeforeEach {
         $directory = Join-Path $TestDrive ([guid]::NewGuid().ToString())
@@ -101,6 +220,121 @@ Describe 'Module runner with local Terraform' {
             Should -Throw "*Module 'foundation' is not selected*"
         { & $runner -Module foundation -DeploymentPhase code-security -Action plan @arguments 6>$null } |
             Should -Throw '*Selected early phase reached Terraform*'
+    }
+
+    It 'protects legacy pattern migration when <Case>' -Tag 'CodeSecurityTransition' -ForEach @(
+        foreach ($scenario in @(
+            @{ Case = 'the pattern is renamed'; DesiredName = 'Renamed token'; EarlyName = 'Renamed token'; ExpectedError = '*legacy*pattern*Old token*absent from customPatterns*' }
+            @{ Case = 'the pattern is removed'; DesiredName = $null; EarlyName = $null; ExpectedError = '*legacy*pattern*Old token*absent from customPatterns*' }
+            @{ Case = 'the pattern changes case'; DesiredName = 'old token'; EarlyName = 'old token'; ExpectedError = '*legacy*pattern*Old token*absent from customPatterns*' }
+            @{ Case = 'the early root did not adopt the pattern'; DesiredName = 'Old token'; EarlyName = 'Renamed token'; ExpectedError = '*legacy*pattern*Old token*no matching identity*' }
+            @{ Case = 'the early root lost the content record'; DesiredName = 'Old token'; EarlyName = 'Old token'; MissingContent = $true; ExpectedError = '*legacy*pattern*Old token*no matching identity*' }
+            @{ Case = 'the early root points to another organization'; DesiredName = 'Old token'; EarlyName = 'Old token'; WrongOrganization = $true; ExpectedError = '*legacy*pattern*Old token*different identity*' }
+            @{ Case = 'the early root has not yet been applied'; DesiredName = 'Old token'; EarlyName = 'Old token'; DelayEarly = $true }
+            @{ Case = 'the unchanged pattern was adopted before the late state is forgotten'; DesiredName = 'Old token'; EarlyName = 'Old token'; Success = $true }
+        )) {
+            $defaults = @{ Success = $false; DelayEarly = $false; MissingContent = $false; WrongOrganization = $false; ExpectedError = '' }
+            foreach ($key in $scenario.Keys) { $defaults[$key] = $scenario[$key] }
+            $defaults
+        }
+    ) {
+        $baseline = Join-Path $modules 'enterprise-baseline'
+        Copy-Item -LiteralPath (Join-Path $modules 'foundation') -Destination $baseline -Recurse
+        $manifestPath = Join-Path $baseline 'module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.name = 'enterprise-baseline'
+        $manifest.phases = @{ 'code-security' = @{ prerequisites = @() } }
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $early = Join-Path $baseline 'code-security'
+        New-Item -ItemType Directory -Path $early | Out-Null
+        Copy-Item -LiteralPath (Join-Path $baseline 'main.tf') -Destination $early
+        $legacyResources = @'
+resource "terraform_data" "code_security_configuration" {
+  for_each = toset(["demo"])
+  input = { organization = each.key, name = "platform-baseline" }
+}
+resource "terraform_data" "code_security_configuration_settings" {
+  for_each = toset(["demo"])
+  input = { organization = each.key, configuration = { name = "platform-baseline" } }
+}
+resource "terraform_data" "custom_pattern" {
+  for_each = { "demo/Old token" = "Old token" }
+  input = { organization = "demo", name = each.value }
+}
+resource "terraform_data" "custom_pattern_content" {
+  for_each = { "demo/Old token" = "Old token" }
+  input = { organization = "demo", pattern = { name = each.value } }
+}
+'@
+        Set-Content -LiteralPath (Join-Path $baseline 'legacy.tf') -Value $legacyResources
+        $earlySource = $legacyResources.Replace('Old token', $(if ($EarlyName) { $EarlyName } else { 'Old token' }))
+        if (-not $EarlyName) { $earlySource = $earlySource.Replace('for_each = { "demo/Old token" = "Old token" }', 'for_each = {}') }
+        if ($MissingContent) {
+            $earlySource = [regex]::Replace($earlySource,
+                '(?s)(resource "terraform_data" "custom_pattern_content" \{\s*for_each\s*=\s*)\{[^}]*\}', '${1}{}')
+        }
+        if ($WrongOrganization) { $earlySource = $earlySource.Replace('organization = "demo"', 'organization = "other"') }
+        Set-Content -LiteralPath (Join-Path $early 'adopted.tf') -Value $earlySource
+        [IO.Directory]::CreateDirectory($arguments.StatePath) | Out-Null
+        $lateState = Join-Path $arguments.StatePath 'enterprise-baseline.tfstate'
+        $earlyState = Join-Path $arguments.StatePath 'enterprise-baseline.code-security.tfstate'
+        $legacyVars = @{
+            instance = @{ name = 'demo'; regions = @{ primary = 'westeurope' }; customPatterns = @(@{ name = 'Old token'; secretRegex = 'itk_.*' }) }
+            prerequisites = @{}
+        }
+        $legacyVars | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $baseline 'terraform.tfvars.json')
+        $legacyInit = & terraform "-chdir=$baseline" init -input=false "-backend-config=path=$lateState" -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $legacyInit
+        $legacyApply = & terraform "-chdir=$baseline" apply -input=false -auto-approve -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $legacyApply
+
+        Remove-Item -LiteralPath (Join-Path $baseline 'legacy.tf')
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../../modules/enterprise-baseline/removed.tf') -Destination $baseline
+        $legacyVars.instance.customPatterns = @()
+        if ($DesiredName) {
+            $legacyVars.instance.customPatterns = @(@{ name = $DesiredName; secretRegex = 'itk_.*' })
+        }
+        $legacyVars | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $early 'terraform.tfvars.json')
+        if (-not $DelayEarly) {
+            $earlyInit = & terraform "-chdir=$early" init -input=false "-backend-config=path=$earlyState" -no-color 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $earlyInit
+            $earlyApply = & terraform "-chdir=$early" apply -input=false -auto-approve -no-color 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $earlyApply
+        }
+        $instance.modules = @{ 'enterprise-baseline' = @{} }
+        $instance.customPatterns = $legacyVars.instance.customPatterns
+        $instance.teardown = @{ allowed = $true }
+        ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+
+        if ($Success) {
+            { & $runner -Module enterprise-baseline -Action destroy @arguments 6>$null } | Should -Not -Throw
+            { & $runner -Module enterprise-baseline -Action destroy @arguments 6>$null } | Should -Not -Throw
+        }
+        elseif ($DelayEarly) {
+            { & $runner -Module enterprise-baseline -Action destroy @arguments 6>$null } |
+                Should -Throw '*Legacy Code Security*early*'
+        }
+        else {
+            { & $runner -Module enterprise-baseline -Action destroy @arguments 6>$null } | Should -Throw $ExpectedError
+        }
+        $legacyAddresses = & terraform "-chdir=$baseline" state list -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $legacyAddresses
+        if ($Success) {
+            $legacyAddresses | Should -Not -Match 'terraform_data\.custom_pattern\['
+        }
+        else {
+            $legacyAddresses | Should -Match 'terraform_data\.custom_pattern\["demo/Old token"\]'
+        }
+        if ($DelayEarly) {
+            $earlyInit = & terraform "-chdir=$early" init -input=false "-backend-config=path=$earlyState" -no-color 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $earlyInit
+            $earlyApply = & terraform "-chdir=$early" apply -input=false -auto-approve -no-color 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $earlyApply
+            { & $runner -Module enterprise-baseline -Action destroy @arguments 6>$null } | Should -Not -Throw
+            $resumedState = & terraform "-chdir=$baseline" state list -no-color 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $resumedState
+            $resumedState | Should -Not -Match 'terraform_data\.custom_pattern\['
+        }
     }
 
     It 'rejects undeclared phases and clears a stale phase artifact before invoking Terraform' {

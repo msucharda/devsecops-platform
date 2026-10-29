@@ -4,6 +4,14 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'legacy-code-security-transition'
+            Tests = @(@{ Path = 'tools/tests/ModuleRunner.Tests.ps1'; FullName = @('*protects legacy pattern migration when <Case>*', 'Legacy Code Security transition identity validation*') })
+        }
+        @{
+            Name = 'code-security-coverage-artifact'
+            Tests = @(@{ Path = 'tools/tests/DriftReport.Tests.ps1'; FullName = @('Drift report evaluation*coverage*artifact*', 'Drift report evaluation*early Code Security coverage*') })
+        }
+        @{
             Name = 'code-security-coverage-identity'
             Tests = @(
                 @{ Path = 'tools/tests/CodeSecurityCoverage.Tests.ps1'; FullName = @('Repository Code Security coverage*') }

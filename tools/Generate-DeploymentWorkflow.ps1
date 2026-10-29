@@ -106,7 +106,8 @@ function Add-DeploymentJob {
             $lines.Add('      organizations: ${{ steps.run.outputs.organizations }}')
         }
         if ($name -ceq 'enterprise-baseline' -and $deploymentPhase -ceq 'code-security') {
-            $lines.Add('      codeSecurityCoverage: ${{ steps.code_security.outputs.codeSecurityCoverage }}')
+            $lines.Add('      codeSecurityCoverage: ${{ steps.code_security_artifact.outputs.artifact-id }}')
+            $lines.Add('      codeSecurityCoverageUrl: ${{ steps.code_security_artifact.outputs.artifact-url }}')
         }
         if ($Phase -eq 'rulesetPlan') { $lines.Add('      inheritedRulesets: ${{ steps.bypass.outputs.inheritedRulesets }}') }
     }
@@ -212,7 +213,18 @@ function Add-DeploymentJob {
         if: ${{ !cancelled() && env.PLATFORM_GITHUB_TOKENS != '' }}
         continue-on-error: true
         shell: pwsh
-        run: ./trusted/platform/tools/Test-CodeSecurityCoverage.ps1 -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./trusted/platform/tools/Test-CodeSecurityCoverage.ps1 -ReportPath ./artifacts/code-security-coverage.json
+      - name: Upload repository Code Security coverage
+        id: code_security_artifact
+        if: ${{ !cancelled() && steps.code_security.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: code-security-coverage
+          path: ./artifacts/code-security-coverage.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
 '@
     }
     Add-WorkflowBlock @'
@@ -488,6 +500,20 @@ Add-WorkflowBlock @'
       - name: Install trusted runtime dependencies
         shell: pwsh
         run: ./trusted/platform/tools/Install-ToolDependencies.ps1
+'@
+if ($phaseGraph.Contains('enterprise-baseline:code-security')) {
+    Add-WorkflowBlock @'
+      - name: Download repository Code Security coverage
+        if: ${{ needs.module_enterprise_baseline_code_security.outputs.codeSecurityCoverage != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.module_enterprise_baseline_code_security.outputs.codeSecurityCoverage }}
+          path: ./artifacts/code-security-coverage
+          merge-multiple: true
+'@
+}
+Add-WorkflowBlock @'
       - name: Evaluate drift without any credential
         id: evaluate
         shell: pwsh

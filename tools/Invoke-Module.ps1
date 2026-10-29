@@ -157,6 +157,107 @@ function Test-ModuleStateEmpty {
     return $true
 }
 
+# security-check: legacy-code-security-transition
+function Assert-LegacyCodeSecurityTransition {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary] $LateState,
+        [Parameter(Mandatory)][scriptblock] $ReadEarlyState,
+        [AllowEmptyCollection()][object[]] $ConfiguredPatterns
+    )
+
+    $managed = @('code_security_configuration', 'code_security_configuration_settings', 'custom_pattern', 'custom_pattern_content')
+    if ($null -eq $LateState['values']) { return }
+    if ($LateState['values'] -isnot [System.Collections.IDictionary]) {
+        throw 'Legacy Code Security transition requires a readable late root state before forgetting its resources.'
+    }
+    $lateRoot = $LateState['values']['root_module']
+    if ($null -eq $lateRoot) { return }
+    if ($lateRoot -isnot [System.Collections.IDictionary]) {
+        throw 'Legacy Code Security transition requires a readable late root state before forgetting its resources.'
+    }
+    $legacy = @(@($lateRoot['resources']) | Where-Object {
+        $_ -is [System.Collections.IDictionary] -and $_['type'] -ceq 'terraform_data' -and $_['name'] -cin $managed
+    })
+    if ($legacy.Count -eq 0) { return }
+
+    $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($pattern in $ConfiguredPatterns) {
+        if ($pattern -isnot [System.Collections.IDictionary] -or
+            $pattern['name'] -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($pattern['name']) -or
+            -not $names.Add($pattern['name'])) {
+            throw 'Legacy Code Security pattern migration requires unique configured customPatterns names.'
+        }
+    }
+    $earlyState = & $ReadEarlyState
+    if ($earlyState -isnot [System.Collections.IDictionary] -or
+        $earlyState['values'] -isnot [System.Collections.IDictionary] -or
+        $earlyState['values']['root_module'] -isnot [System.Collections.IDictionary]) {
+        throw 'Legacy Code Security transition requires a readable adopted early root state before forgetting late state.'
+    }
+    $earlyResources = @($earlyState['values']['root_module']['resources'])
+    foreach ($resource in $legacy) {
+        $legacyInput = if ($resource['values'] -is [System.Collections.IDictionary]) { $resource['values']['input'] } else { $null }
+        $kind = [string] $resource['name']
+        $organization = if ($legacyInput -is [System.Collections.IDictionary]) { $legacyInput['organization'] } else { $null }
+        $name = if ($legacyInput -is [System.Collections.IDictionary]) {
+            switch ($kind) {
+                'code_security_configuration_settings' {
+                    if ($legacyInput['configuration'] -is [System.Collections.IDictionary]) { $legacyInput['configuration']['name'] }
+                    break
+                }
+                'custom_pattern_content' {
+                    if ($legacyInput['pattern'] -is [System.Collections.IDictionary]) { $legacyInput['pattern']['name'] }
+                    break
+                }
+                default { $legacyInput['name'] }
+            }
+        }
+        $patternResource = $kind -cin @('custom_pattern', 'custom_pattern_content')
+        $identity = if ($patternResource) { 'pattern' } else { 'configuration' }
+        $expectedIndex = if ($patternResource) { "$organization/$name" } else { $organization }
+        if ($organization -isnot [string] -or [string]::IsNullOrWhiteSpace($organization) -or
+            $name -isnot [string] -or [string]::IsNullOrWhiteSpace($name) -or
+            $resource['mode'] -cne 'managed' -or
+            $resource['index'] -cne $expectedIndex) {
+            throw "Legacy Code Security $identity has an unreadable identity in late state."
+        }
+        if ($patternResource -and -not $names.Contains($name)) {
+            throw "Legacy Code Security pattern '$name' in '$organization' is absent from customPatterns. Adopt it in the early root before forgetting late state."
+        }
+        if (-not $patternResource -and $name -cne 'platform-baseline') {
+            throw "Legacy Code Security configuration '$name' in '$organization' differs from the managed platform-baseline."
+        }
+        $adoptionMatches = @($earlyResources | Where-Object {
+            $_ -is [System.Collections.IDictionary] -and
+            $_['mode'] -ceq 'managed' -and $_['type'] -ceq 'terraform_data' -and
+            $_['name'] -ceq $kind -and $_['index'] -ceq $resource['index']
+        })
+        if ($adoptionMatches.Count -ne 1) {
+            throw "Legacy Code Security $identity '$name' in '$organization' has no matching identity in the early root state."
+        }
+        $adopted = if ($adoptionMatches[0]['values'] -is [System.Collections.IDictionary]) { $adoptionMatches[0]['values']['input'] } else { $null }
+        $adoptedName = if ($adopted -is [System.Collections.IDictionary]) {
+            switch ($kind) {
+                'code_security_configuration_settings' {
+                    if ($adopted['configuration'] -is [System.Collections.IDictionary]) { $adopted['configuration']['name'] }
+                    break
+                }
+                'custom_pattern_content' {
+                    if ($adopted['pattern'] -is [System.Collections.IDictionary]) { $adopted['pattern']['name'] }
+                    break
+                }
+                default { $adopted['name'] }
+            }
+        }
+        if ($adopted -isnot [System.Collections.IDictionary] -or
+            $adopted['organization'] -cne $organization -or $adoptedName -cne $name) {
+            throw "Legacy Code Security $identity '$name' in '$organization' has a different identity in the early root state."
+        }
+    }
+}
+
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
 if ($DeploymentPhase -and
@@ -549,6 +650,38 @@ try {
     $plan = Invoke-ModuleTerraform -Arguments $planArguments -AllowedExitCodes @(0, 2)
     $output = Invoke-ModuleTerraform -Arguments @('show', '-json', $planFile) -Json
     $planData = ConvertFrom-Json -InputObject $output.Text -AsHashtable
+    if ($Module -ceq 'enterprise-baseline' -and -not $DeploymentPhase -and -not $Rulesets) {
+        $lateState = ConvertFrom-Json -InputObject (Invoke-ModuleTerraform -Arguments @('show', '-json') -Json).Text -AsHashtable
+        $readEarlyState = {
+            $earlyBackendArguments = @(
+                foreach ($argument in $backendArguments) {
+                    if ($argument.StartsWith('-backend-config=path=', [StringComparison]::Ordinal)) {
+                        $earlyName = if ($Organization) { 'terraform.code-security.tfstate' } else { "$Module.code-security.tfstate" }
+                        "-backend-config=path=$(Join-Path $stateDirectory $earlyName)"
+                    }
+                    elseif ($argument.StartsWith('-backend-config=key=', [StringComparison]::Ordinal)) {
+                        $earlyKey = if ($Organization) { "organizations/$Organization/terraform.code-security.tfstate" } else { 'terraform.code-security.tfstate' }
+                        "-backend-config=key=$earlyKey"
+                    }
+                    else { $argument }
+                }
+            )
+            $savedDataDirectory = $env:TF_DATA_DIR
+            try {
+                $env:TF_DATA_DIR = Join-Path $temporaryDirectory 'early-data'
+                $earlyRoot = Join-Path (Join-Path $ModulesPath $Module) 'code-security'
+                $initOutput = & terraform "-chdir=$earlyRoot" init -input=false -no-color -reconfigure @earlyBackendArguments 2>&1 | Out-String
+                if ($LASTEXITCODE -ne 0) { throw "Legacy Code Security early state initialization failed: $initOutput" }
+                $earlyOutput = & terraform "-chdir=$earlyRoot" show -json 2>&1 | Out-String
+                if ($LASTEXITCODE -ne 0) { throw "Legacy Code Security early state read failed: $earlyOutput" }
+                return ConvertFrom-Json -InputObject $earlyOutput -AsHashtable -ErrorAction Stop
+            }
+            finally {
+                $env:TF_DATA_DIR = $savedDataDirectory
+            }
+        }
+        Assert-LegacyCodeSecurityTransition -LateState $lateState -ReadEarlyState $readEarlyState -ConfiguredPatterns @($instance['customPatterns'])
+    }
     $terraformOutputs = @{}
     if ($planData['planned_values'].Contains('outputs')) {
         $terraformOutputs = $planData['planned_values']['outputs']

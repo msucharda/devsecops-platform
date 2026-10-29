@@ -24,10 +24,15 @@
       "items": { "$ref": "#/definitions/phaseReference" }
     },
     "phases": {
-      "description": "Additional Terraform roots in the same module. Each phase has its own dependencies and state but shares the module's plan/apply credentials.",
+      "description": "Additional Terraform roots in the same module. Each phase has its own dependencies and state but shares the module's plan/apply credentials. The isolated rulesets root is reserved and cannot be a phase.",
       "type": "object",
       "minProperties": 1,
-      "propertyNames": { "$ref": "#/definitions/moduleName" },
+      "propertyNames": {
+        "allOf": [
+          { "$ref": "#/definitions/moduleName" },
+          { "not": { "const": "rulesets" } }
+        ]
+      },
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,

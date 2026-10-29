@@ -250,15 +250,45 @@ Describe 'Repository Code Security coverage' {
 
     It 'publishes separate coverage counters and restores the caller token' {
         $checker = Join-Path (Split-Path $PSScriptRoot -Parent) 'Test-CodeSecurityCoverage.ps1'
-        $output = Join-Path $TestDrive 'coverage.out'
-        $result = & $checker -TokensJson '{"demo":"test-plan-token"}' -ApiUrl 'https://api.example.ghe.com' -GitHubOutputPath $output
+        $artifact = Join-Path $TestDrive 'coverage.json'
+        $result = & $checker -TokensJson '{"demo":"test-plan-token"}' -ApiUrl 'https://api.example.ghe.com' -ReportPath $artifact
 
         $result.organizations.demo.compliant | Should -Be 1
         $result.organizations.demo.drift | Should -Be 0
         $result.organizations.demo.unverified | Should -Be 0
         $env:REST_API_BEARER | Should -BeExactly 'stub-token'
-        $published = [IO.File]::ReadAllText($output)
-        $published | Should -Match '^codeSecurityCoverage=\{'
-        ($published.Split('=', 2)[1] | ConvertFrom-Json).organizations.demo.compliant | Should -Be 1
+        (Get-Content -LiteralPath $artifact -Raw | ConvertFrom-Json).organizations.demo.compliant | Should -Be 1
+    }
+
+    It 'keeps more than 128 KiB of repository details in an artifact, not GITHUB_OUTPUT' {
+        $checker = Join-Path (Split-Path $PSScriptRoot -Parent) 'Test-CodeSecurityCoverage.ps1'
+        $artifact = Join-Path $TestDrive 'large-coverage.json'
+        $jobOutput = Join-Path $TestDrive 'large-coverage.out'
+        $previousOutput = $env:GITHUB_OUTPUT
+        $env:GITHUB_OUTPUT = $jobOutput
+        [IO.File]::WriteAllText($jobOutput, 'existing=small')
+        $repositories = @(1..2000 | ForEach-Object {
+            @{ repository = "demo/repository-$_"; status = 'unverified'; security_status = 'unverified'; attachment_status = @('attached') }
+        })
+        Mock Get-CodeSecurityCoverage { @{ compliant = 0; drift = 0; unverified = 2000; repositories = $repositories } }
+        try {
+            $result = & $checker -TokensJson '{"demo":"test-plan-token"}' -ApiUrl 'https://api.example.ghe.com' -ReportPath $artifact
+            [IO.File]::ReadAllBytes($artifact).Length | Should -BeGreaterThan 131072
+            (Get-Content -LiteralPath $artifact -Raw | ConvertFrom-Json).organizations.demo.repositories.Count | Should -Be 2000
+            $result.organizations.demo.repositories.Count | Should -Be 2000
+            [IO.File]::ReadAllText($jobOutput) | Should -BeExactly 'existing=small'
+        }
+        finally { $env:GITHUB_OUTPUT = $previousOutput }
+    }
+
+    It 'removes a previous coverage artifact before token validation can fail' {
+        $checker = Join-Path (Split-Path $PSScriptRoot -Parent) 'Test-CodeSecurityCoverage.ps1'
+        $artifact = Join-Path $TestDrive 'stale-coverage.json'
+        [IO.File]::WriteAllText($artifact, '{"organizations":{}}')
+
+        { & $checker -TokensJson '{}' -ApiUrl 'https://api.example.ghe.com' -ReportPath $artifact } |
+            Should -Throw '*installation token map*'
+
+        Test-Path -LiteralPath $artifact | Should -BeFalse
     }
 }

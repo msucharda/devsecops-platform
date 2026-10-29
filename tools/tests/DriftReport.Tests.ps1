@@ -9,6 +9,32 @@ BeforeAll {
     $instancePath = Join-Path $TestDrive 'instance.yaml'
     ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
     $revision = 'a' * 40
+    $coverageArtifact = Join-Path $TestDrive 'code-security-coverage.json'
+
+    function New-CoverageReportModule {
+        [CmdletBinding(SupportsShouldProcess)]
+        param()
+
+        $path = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        if (-not $PSCmdlet.ShouldProcess($path, 'Create Code Security report fixture')) { return }
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination $path -Recurse
+        $manifestPath = Join-Path $path 'enterprise-baseline/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest['phases'] = @{ 'code-security' = @{ prerequisites = @('foundation'); manualPrerequisites = @() } }
+        New-Item -ItemType Directory -Path (Join-Path $path 'enterprise-baseline/code-security') | Out-Null
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        return $path
+    }
+
+    function Write-CoverageArtifact {
+        param([object[]] $Repositories)
+        $counts = @{ repositories = $Repositories }
+        foreach ($status in @('compliant', 'drift', 'unverified')) {
+            $counts[$status] = @($Repositories | Where-Object { $_.status -ceq $status }).Count
+        }
+        ConvertTo-Json -InputObject @{ organizations = @{ platform = $counts } } -Depth 10 -Compress |
+            Set-Content -LiteralPath $coverageArtifact
+    }
 
     function Get-DriftNeed {
         [CmdletBinding()]
@@ -32,14 +58,15 @@ BeforeAll {
 
     function Invoke-DriftReport {
         [CmdletBinding()]
-        param([Parameter(Mandatory)][System.Collections.IDictionary] $Needs, [string] $Instance = $instancePath)
+        param([Parameter(Mandatory)][System.Collections.IDictionary] $Needs, [string] $Instance = $instancePath,
+            [string] $CoverageFile = $coverageArtifact)
 
         $script:reportPath = Join-Path $TestDrive "$([guid]::NewGuid()).md"
         $script:outputPath = Join-Path $TestDrive "$([guid]::NewGuid()).out"
         $script:summaryPath = Join-Path $TestDrive "$([guid]::NewGuid()).summary"
         & $reporter -NeedsJson (ConvertTo-Json -InputObject $Needs -Depth 10)         -InstancePath $Instance -ModulesPath $modulesPath `
             -ReportPath $script:reportPath -GitHubOutputPath $script:outputPath -JobSummaryPath $script:summaryPath `
-            -RunUrl 'https://github.example.test/platform/instance/actions/runs/7' 6>$null
+            -CodeSecurityCoveragePath $CoverageFile -RunUrl 'https://github.example.test/platform/instance/actions/runs/7' 6>$null
         $script:output = @{}
         foreach ($line in [IO.File]::ReadAllLines($script:outputPath)) {
             $name, $value = $line -split '=', 2
@@ -56,13 +83,7 @@ Describe 'Drift report evaluation' {
         @{ Status = 'drift'; Security = 'unverified'; Publish = 'true'; Complete = 'false' }
         @{ Status = 'unverified'; Security = 'unverified'; Publish = 'true'; Complete = 'false' }
     ) {
-        $modulesPath = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination $modulesPath -Recurse
-        $manifestPath = Join-Path $modulesPath 'enterprise-baseline/module.yaml'
-        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
-        $manifest['phases'] = @{ 'code-security' = @{ prerequisites = @('foundation'); manualPrerequisites = @() } }
-        New-Item -ItemType Directory -Path (Join-Path $modulesPath 'enterprise-baseline/code-security') | Out-Null
-        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $modulesPath = New-CoverageReportModule
         $needs = Get-DriftNeed
         $counts = @{ compliant = 0; drift = 0; unverified = 0 }
         $counts[$Status] = 1
@@ -71,9 +92,10 @@ Describe 'Drift report evaluation' {
             result = 'success'
             outputs = @{
                 changes = 'false'
-                codeSecurityCoverage = ConvertTo-Json -InputObject @{ organizations = @{ platform = $counts } } -Depth 10 -Compress
+                codeSecurityCoverage = '123'
             }
         }
+        Write-CoverageArtifact -Repositories $counts.repositories
 
         Invoke-DriftReport -Needs $needs
 
@@ -89,6 +111,118 @@ Describe 'Drift report evaluation' {
             $report | Should -Match 'Drift detection INCOMPLETE'
         }
     }
+
+        It 'marks missing or unreadable coverage artifacts incomplete: <Case>' -ForEach @(
+            @{ Case = 'missing'; ArtifactText = $null }
+            @{ Case = 'unreadable'; ArtifactText = 'invalid JSON' }
+        ) {
+            $modulesPath = New-CoverageReportModule
+            $needs = Get-DriftNeed
+            $needs['module_enterprise_baseline_code_security'] = @{ result = 'success'; outputs = @{ changes = 'false'; codeSecurityCoverage = '123' } }
+            $missingOrInvalid = Join-Path $TestDrive "$Case-coverage.json"
+            if ($null -ne $ArtifactText) { Set-Content -LiteralPath $missingOrInvalid -Value $ArtifactText }
+
+            Invoke-DriftReport -Needs $needs -CoverageFile $missingOrInvalid
+
+            $output.complete | Should -BeExactly 'false'
+            $output.report | Should -BeExactly 'true'
+            $report | Should -Match 'coverage.*readable'
+        }
+
+        It 'bounds the issue at the exact UTF-8 boundary without discarding drift before unverified: <Target>' -ForEach @(
+            @{ Target = 49999; Truncated = $false }
+            @{ Target = 50001; Truncated = $true }
+        ) {
+            $modulesPath = New-CoverageReportModule
+            $needs = Get-DriftNeed
+            $needs['module_enterprise_baseline_code_security'] = @{ result = 'success'; outputs = @{ changes = 'false'; codeSecurityCoverage = '123' } }
+            $needs.module_enterprise_baseline_code_security.outputs.codeSecurityCoverageUrl = 'https://github.example.test/platform/instance/actions/runs/7/artifacts/123'
+            $repositories = @(1..250 | ForEach-Object {
+                @{ repository = ('platform/u{0:D3}' -f $_); status = 'unverified'; security_status = 'unverified' }
+            }) + @(@{ repository = 'platform/real-drift'; status = 'drift'; security_status = 'enabled' })
+            Write-CoverageArtifact -Repositories $repositories
+            Invoke-DriftReport -Needs $needs
+            $sourceLines = ($report -split "`n").Count - 1
+            $padding = $Target - [Text.Encoding]::UTF8.GetByteCount($report)
+            $padding | Should -BeGreaterThan 0
+            foreach ($repository in $repositories) {
+                if ($repository.status -cne 'unverified') { continue }
+                $added = [Math]::Min(80, $padding)
+                $repository.repository += 'x' * $added
+                $padding -= $added
+                if ($padding -eq 0) { break }
+            }
+            $padding | Should -Be 0
+            Write-CoverageArtifact -Repositories $repositories
+
+            Invoke-DriftReport -Needs $needs
+
+            $report | Should -Match 'drift 1, unverified 250'
+            $report | Should -Match 'platform/real-drift'
+            $output.complete | Should -BeExactly 'false'
+            if ($Truncated) {
+                [Text.Encoding]::UTF8.GetByteCount($report) | Should -BeLessOrEqual 50000
+                $report | Should -Match 'TRUNCATED'
+                $report | Should -Match 'code-security-coverage'
+                $report | Should -Match 'retained for 1 day'
+                $report | Should -Match 'actions/runs/7/artifacts/123'
+                $omitted = [int] [regex]::Match($report, '(\d+) omitted lines').Groups[1].Value
+                $omitted | Should -BeGreaterThan 0
+                $footer = $report.IndexOf("`n### Drift detection INCOMPLETE: TRUNCATED", [StringComparison]::Ordinal)
+                $footer | Should -BeGreaterThan 0
+                $retainedLines = ($report.Substring(0, $footer) -split "`n").Count - 1
+                $omitted | Should -Be ($sourceLines - $retainedLines)
+            }
+            else {
+                [Text.Encoding]::UTF8.GetByteCount($report) | Should -Be $Target
+                $report | Should -Not -Match 'TRUNCATED'
+            }
+        }
+
+            It 'rejects stale coverage artifacts without a valid current artifact ID: <Case>' -ForEach @(
+                @{ Case = 'missing'; ArtifactId = $null }
+                @{ Case = 'empty'; ArtifactId = '' }
+                @{ Case = 'wrong type'; ArtifactId = 123 }
+                @{ Case = 'malformed'; ArtifactId = 'invalid' }
+                @{ Case = 'zero'; ArtifactId = '0' }
+                @{ Case = 'leading zero'; ArtifactId = '0123' }
+            ) {
+                $modulesPath = New-CoverageReportModule
+                $needs = Get-DriftNeed
+                $needs['module_enterprise_baseline_code_security'] = @{
+                    result = 'success'; outputs = @{ changes = 'false'; codeSecurityCoverage = $ArtifactId }
+                }
+                Write-CoverageArtifact -Repositories @(@{ repository = 'platform/app'; status = 'compliant'; security_status = 'enabled' })
+
+                Invoke-DriftReport -Needs $needs
+
+                $output.complete | Should -BeExactly 'false'
+                $output.report | Should -BeExactly 'true'
+                $report | Should -Match 'artifact was not published.*previous attempt is not evidence'
+                $report | Should -Not -Match 'compliant 1'
+            }
+
+            It 'evaluates a large coverage artifact without putting repository details in the needs environment' {
+                $modulesPath = New-CoverageReportModule
+                $needs = Get-DriftNeed
+                $needs['module_enterprise_baseline_code_security'] = @{
+                    result = 'success'; outputs = @{ changes = 'false'; codeSecurityCoverage = '123' }
+                }
+                $repositories = @(1..2000 | ForEach-Object {
+                    @{ repository = "platform/unverified-$_"; status = 'unverified'; security_status = 'unverified' }
+                }) + @(@{ repository = 'platform/real-drift'; status = 'drift'; security_status = 'enabled' })
+                Write-CoverageArtifact -Repositories $repositories
+                [IO.File]::ReadAllBytes($coverageArtifact).Length | Should -BeGreaterThan 131072
+                [Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $needs -Depth 10)) | Should -BeLessThan 8192
+
+                Invoke-DriftReport -Needs $needs
+
+                $output.complete | Should -BeExactly 'false'
+                $report | Should -Match 'drift 1, unverified 2000'
+                $report | Should -Match 'platform/real-drift'
+                $report | Should -Match 'TRUNCATED'
+                [Text.Encoding]::UTF8.GetByteCount($report) | Should -BeLessOrEqual 50000
+            }
 
     It 'publishes no issue when every selected plan completed without changes' {
         Invoke-DriftReport -Needs (Get-DriftNeed)
