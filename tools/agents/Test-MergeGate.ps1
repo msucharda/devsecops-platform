@@ -12,6 +12,11 @@ The coordinator extracts tools/ from origin/main into a trusted temporary direct
 Run <trusted-directory>/tools/agents/Test-MergeGate.ps1 there. G10 uses the bundled, hash-verified YAML parser;
 copying only the gate scripts omits that runtime. Never load dependencies from the pull request branch.
 
+G10 derives changed paths and statuses from complete Git trees pinned to the merge-base and head commits.
+The merge base comes from the comparison of the pinned base tip and head; both refs are checked again at the end.
+PR files only supplement availability/completeness checks; benign workflow renames use pinned sensitive projections.
+Truncated or unreadable trees fail evaluation, including the recursive API limit of 100,000 entries or 7 MB.
+
 .EXAMPLE
 ./tools/agents/Test-MergeGate.ps1 -Repository msucharda/devsecops-platform -Pr 85 -ExpectedHeadSha <sha>
 

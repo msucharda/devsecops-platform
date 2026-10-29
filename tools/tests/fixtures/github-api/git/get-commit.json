@@ -2,77 +2,45 @@
   "source": {
     "operation": "GET /repos/{owner}/{repo}/git/commits/{commit_sha}",
     "operationId": "git/get-commit",
-    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/commits#get-a-commit",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/commits#get-a-commit-object",
     "apiVersion": "2026-03-10",
-    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "description": "https://github.com/github/rest-api-description/blob/c66e298030d4070b70a569dcd4268b3a041b5380/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
     "schema": "#/components/schemas/git-commit"
   },
   "required": {
-    "": [
-      "sha",
-      "node_id",
-      "url",
-      "html_url",
-      "author",
-      "committer",
-      "tree",
-      "message",
-      "parents",
-      "verification"
-    ],
-    "author": [
-      "email",
-      "name",
-      "date"
-    ],
-    "committer": [
-      "email",
-      "name",
-      "date"
-    ],
-    "tree": [
-      "sha",
-      "url"
-    ],
-    "parents.[]": [
-      "sha",
-      "url",
-      "html_url"
-    ],
-    "verification": [
-      "verified",
-      "reason",
-      "signature",
-      "payload",
-      "verified_at"
-    ]
+    "": ["sha", "node_id", "url", "html_url", "author", "committer", "tree", "message", "parents", "verification"],
+    "author": ["email", "name", "date"],
+    "committer": ["email", "name", "date"],
+    "tree": ["sha", "url"],
+    "parents.[]": ["sha", "url", "html_url"],
+    "verification": ["verified", "reason", "signature", "payload", "verified_at"]
   },
   "body": {
-    "sha": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
-    "node_id": "MDY6Q29tbWl0MTI5NjI2OTo3ZmQxYTYwYjAxZjkxYjMxNGY1OTk1NWE0ZTRkNGU4MGQ4ZWRmMTFk",
-    "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
-    "html_url": "https://github.com/octocat/Hello-World/commit/7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+    "sha": "7638417db6d59f3c431d3e1f261cc637155684cd",
+    "node_id": "MDY6Q29tbWl0NmRjYjA5YjViNTc4NzVmMzM0ZjYxYWViZWQ2OTVlMmU0MTkzZGI1ZQ==",
+    "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/7638417db6d59f3c431d3e1f261cc637155684cd",
+    "html_url": "https://github.com/octocat/Hello-World/commit/7638417db6d59f3c431d3e1f261cc637155684cd",
     "author": {
-      "name": "The Octocat",
-      "email": "octocat@nowhere.com",
-      "date": "2012-03-06T23:06:50Z"
+      "date": "2014-11-07T22:01:45Z",
+      "name": "Monalisa Octocat",
+      "email": "octocat@github.com"
     },
     "committer": {
-      "name": "The Octocat",
-      "email": "octocat@nowhere.com",
-      "date": "2012-03-06T23:06:50Z"
+      "date": "2014-11-07T22:01:45Z",
+      "name": "Monalisa Octocat",
+      "email": "octocat@github.com"
     },
+    "message": "added readme, because im a good github citizen",
     "tree": {
-      "sha": "b4eecafa9be2f2006ce1b709d6857b07069b4608",
-      "url": "https://api.github.com/repos/octocat/Hello-World/git/trees/b4eecafa9be2f2006ce1b709d6857b07069b4608"
+      "url": "https://api.github.com/repos/octocat/Hello-World/git/trees/691272480426f78a0138979dd3ce63b77f706feb",
+      "sha": "691272480426f78a0138979dd3ce63b77f706feb"
     },
-    "message": "Merge pull request #6 from Spaceghost/patch-1\n\nNew line at end of file.",
     "parents": [
       {
-        "sha": "553c2077f0edc3d5dc5d17262f6aa498e69d6f8e",
-        "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/553c2077f0edc3d5dc5d17262f6aa498e69d6f8e",
-        "html_url": "https://github.com/octocat/Hello-World/commit/553c2077f0edc3d5dc5d17262f6aa498e69d6f8e"
+        "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/1acc419d4d6a9ce985db7be48c6349a0475975b5",
+        "sha": "1acc419d4d6a9ce985db7be48c6349a0475975b5",
+        "html_url": "https://github.com/octocat/Hello-World/commit/7638417db6d59f3c431d3e1f261cc637155684cd"
       }
     ],
     "verification": {
