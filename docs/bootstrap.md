@@ -178,7 +178,7 @@ Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. P
 
 Rozhodnutí koordinátora: První nasazení má pořadí `code-security` → `catalog` → import a povýšení workflow → `full`. Pro oba staged běhy otevři v repozitáři instance **Actions → Deploy instance → Run workflow** na chráněné větvi `main`. Jde o dva nové živé uživatelské kroky. Výchozí volba `full` spouští běžný deploy; `push` a PR dál používají úplný graf. Nepodporovanou, prázdnou nebo jinak velkými písmeny zapsanou hodnotu dispatch odmítne první job bez credentials ještě před autorizací.
 
-**Před prvním `deployment: code-security` připrav custom patterns.** Pokud `customPatterns` v `instance.yaml` není prázdné, doporučený postup je ručně vytvořit a publikovat každý uvedený pattern ve všech organizacích z `target_organizations` modulu `enterprise-baseline`. Pokud organizace ještě neexistují, nejprve nasaď `organizations` podle předchozího postupu. Apply časné fáze postupuje po organizacích a skončí u první chyby; bez přípravy může vytvořit nepublikovaný pattern jen v první organizaci a k dalším se nedostat.
+**Doporučená příprava custom patterns před prvním `deployment: code-security`.** Pokud `customPatterns` v `instance.yaml` není prázdné, operátor by měl ručně vytvořit a publikovat každý uvedený pattern ve všech organizacích z `target_organizations` modulu `enterprise-baseline`. Pokud organizace ještě neexistují, nejprve nasaď `organizations` podle předchozího postupu. Apply časné fáze postupuje po organizacích a skončí u první chyby; bez přípravy může vytvořit nepublikovaný pattern jen v první organizaci a k dalším se nedostat.
 
 Ruční přípravu proveď takto:
 
