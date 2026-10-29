@@ -627,7 +627,30 @@
         @{
             Name = 'merge-gate-workflow-file-coverage'
             Tests = @(
-                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 pinned trees*', '*G10 handles*') }
+                @{
+                    Path = 'tools/tests/MergeGate.Tests.ps1'
+                    # The complete CLI matrix runs in Pester; mutation runs retain the relevant base-tip regressions.
+                    FullName = @(
+                        '*G10 pinned trees reject*'
+                        '*G10 pinned trees preserve*'
+                        '*G10 pinned trees reuse*'
+                        '*G10 pinned trees repair*'
+                        '*G10 pinned trees do not pair*'
+                        '*G10 pinned trees consume*'
+                        '*G10 pinned trees validate*'
+                        '*G10 pinned trees ignore*'
+                        '*G10 pinned trees handle*'
+                        '*G10 pinned trees detect*'
+                        '*G10 pinned trees never pair*'
+                        '*G10 pinned trees evaluate*'
+                        '*G10 pinned trees resolve*'
+                        '*G10 pinned trees through CLI reject reactivation*'
+                        '*G10 pinned trees through CLI require acknowledgement when main changed*'
+                        '*G10 pinned trees through CLI retain a rename*'
+                        '*G10 pinned trees through CLI reject a rename from*'
+                        '*G10 handles*'
+                    )
+                }
             )
         }
         @{
@@ -651,7 +674,19 @@
         @{
             Name = 'merge-gate-workflow-comparison'
             Tests = @(
-                @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 compares*', '*G10 ignores*', '*G10 handles*', '*G10 rejects*file list*', '*G10 pinned trees*', '*G10 CLI evaluates*') }
+                @{
+                    Path = 'tools/tests/MergeGate.Tests.ps1'
+                    FullName = @(
+                        '*G10 compares*'
+                        '*G10 ignores*'
+                        '*G10 handles*'
+                        '*G10 rejects*file list*'
+                        '*G10 pinned trees preserve a rename snapshot error*'
+                        '*G10 pinned trees do not pair different sensitive rename projections*'
+                        '*G10 pinned trees consume each matching rename source at most once*'
+                        '*G10 pinned trees never pair an opaque rename*'
+                    )
+                }
             )
         }
         @{
