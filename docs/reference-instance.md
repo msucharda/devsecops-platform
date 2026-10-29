@@ -1,6 +1,6 @@
 # Příprava a akceptace referenční instance
 
-Začni průvodcem `tools/Start-InstanceSetup.ps1`. Bez přepínačů provede fázi A a krok B1. Ověří tenant Entra ID, Azure a enterprise na GHE.com. Změny, které mají API, provede po tvém potvrzení. Kroky bez API popíše cestou v UI. Přepínač `-GitHubAcceptance` naváže na ověřené vstupy z #10 a provede [akceptaci GitHub části bootstrapu](#akceptace-github-části-bootstrapu-11). Fáze D je akceptace přírůstku 1 po implementaci zbylých issues.
+Začni průvodcem `tools/Start-InstanceSetup.ps1`. Bez přepínačů provede fázi A a krok B1. Ověří tenant Entra ID, Azure a enterprise na GHE.com. Změny, které mají API, provede po tvém potvrzení. Kroky bez API popíše cestou v UI. Přepínač `-GitHubAcceptance` naváže na ověřené vstupy z #10 a provede [akceptaci GitHub části bootstrapu](#akceptace-github-části-bootstrapu-11). Samostatná fáze `-Phase ManualSteps` provede [ručními kroky vybraných modulů](#ruční-kroky-modulů). Fáze D je akceptace přírůstku 1 po implementaci zbylých issues.
 
 Postup provádí člen Platform team (platformní tým) na Reference instance (referenční instanci). Kroky mají tyto části:
 
@@ -94,9 +94,11 @@ Spusť průvodce v PowerShell 7.4+ v kořeni checkoutu zdrojového repozitáře:
 | Parametr | Výchozí hodnota | Význam |
 |---|---|---|
 | `-WorkPath` | `$HOME\platform-reference` | Adresář `$work` pro data instance. Průvodce odmítne adresář uvnitř checkoutu (ADR 0012). |
-| `-ModulesPath` | `tools\tests\fixtures\runner-modules` | Manifesty modulů pro validaci konfigurace a preflight. |
+| `-ModulesPath` | Pro `ManualSteps`: `modules`; jinak `tools\tests\fixtures\runner-modules` | Manifesty modulů pro validaci konfigurace, preflight nebo ruční kroky. |
+| `-Phase` | `Prerequisites` | `Prerequisites` zachová fázi A a B1. `ManualSteps` spustí samostatného průvodce ručními kroky bez přihlášení a bez API. |
+| `-ManualStep` | interaktivní výběr | Pro `-Phase ManualSteps` vybere jediný krok ve tvaru `module/id`. |
 | `-Reconfirm` | vypnuto | Průvodce znovu vyžádá uložená potvrzení kroků bez API a zopakuje testy GitHub Apps z kroku A9. |
-| `-PassThru` | vypnuto | Skript vrátí výsledky dílčích kroků, příznaky `manualPrerequisites` a cestu k `instance.yaml`. |
+| `-PassThru` | vypnuto | Skript vrátí výsledky dílčích kroků, příznaky `manualPrerequisites` a cestu k `instance.yaml`. Pro `ManualSteps` vrátí stav jednotlivých potvrzení, `Completed` a cestu k progress. |
 
 Průvodce dělí kroky A1–A9 a B1 na dílčí kroky. Každý krok uvádí své dílčí kroky. Pro každý dílčí krok platí:
 
@@ -132,6 +134,29 @@ Průvodce zapíše do `$work` tyto soubory:
 | `session.ps1` | Proměnné relace pro příkazy fází B–D. |
 | `setup-state.json` | Potvrzení kroků bez API a výsledky testů z kroku A9. |
 | `keys\probe-admin.pem` | Privátní klíč App B z kroku A9 pro fázi C. |
+
+## Ruční kroky modulů
+
+Fáze `ManualSteps` načte `$work\instance.yaml` a `manualSteps` z manifestů vybraných modulů včetně jejich předpokladů. Nenavazuje na uložený úspěch fáze A a znovu ji nespouští. Runbook a README modulu zůstávají zdrojem pravdy pro pořadí, předpoklady a schválení.
+
+```powershell
+# Choose a step; Enter selects the first pending step, q stops the wizard.
+.\tools\Start-InstanceSetup.ps1 -WorkPath $work -Phase ManualSteps -PassThru
+
+# Select this step only at the required point of the teardown runbook.
+.\tools\Start-InstanceSetup.ps1 -WorkPath $work -Phase ManualSteps `
+  -ManualStep organizations/delete-instance-organizations -PassThru
+```
+
+Manifest neoznačuje životní fázi ani nevratnost kroku. Průvodce proto žádný krok nespustí automaticky a před pokyny ke **každému** kroku vyžádá přesné opsání `instance.name`, včetně velikosti písmen. Potom vypíše popis, vlastníka, omezení pro plan, drift a teardown a cestu k dokumentaci modulu. Ruční operaci provedeš sám podle runbooku. Průvodce ji neprovádí, nespouští externí proces a nevolá API.
+
+Průvodce uloží záměr před zobrazením pokynů a výsledek až po samostatném potvrzení dokončení. Soubor `$work\manual-steps-state.json` drží stavy `Pending` a `Confirmed`; `Confirmed` znamená pouze lidské potvrzení (`method: human`, `verified: false`). Po přerušení nejdřív zkontroluj skutečný stav. Nevratnou operaci neopakuj jen proto, že v progress chybí potvrzení.
+
+Další běh převezme potvrzení jen pro stejnou konfiguraci instance a stejný manifest modulu. Změna vstupů vyžádá nové potvrzení; `-Reconfirm` ho vyžádá i beze změny. Nečitelný nebo neplatný progress průvodce odmítne, nesmaže ho a nepovažuje ho za úspěch. Souběžné běhy nad stejným progress nepovolí. Fázi nelze kombinovat s `-GitHubAcceptance`.
+
+Fáze nemění `instance.yaml` ani původní `setup-state.json`. Potvrzení potřebná pro nasazení zapiš do `manualSteps.<module>.<id>` v repozitáři instance přes reviewovaný PR. Lokální progress nenahrazuje tento PR, schválení ani ověření přes API. `Completed` znamená, že všechny nabízené ruční kroky mají platné lidské potvrzení, nikoli dokončený životní cyklus instance.
+
+Bootstrap, registrace Apps pro moduly, průvodce C3 a orchestrace teardown zůstávají dalším rozsahem #64. Jejich dosavadní runbooky platí beze změny; tento přírůstek je neautomatizuje. Podmínka živého ověření #12, #13, #16 a #23 zůstává otevřená.
 
 ## Konvence relace
 
