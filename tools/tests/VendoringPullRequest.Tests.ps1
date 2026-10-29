@@ -749,7 +749,7 @@ Describe 'Vendoring diff and pull request publication' {
         $cloud.pulls.Count | Should -Be 1
     }
 
-    It 'checks a merged import after changes outside and inside the <ImportKind> boundary' -ForEach @(
+    It 'checks a merged import after changes outside and inside the <ImportKind> boundary' -Tag 'MergedBoundary' -ForEach @(
         @{ ImportKind = 'action'; Owned = 'action.yml'; Outside = '.github/CODEOWNERS' }
         @{ ImportKind = 'release'; Owned = 'platform/README.md'; Outside = 'instance.yaml' }
         @{ ImportKind = 'release'; Owned = '.platform-bootstrap.json'; Outside = 'instance.yaml' }
@@ -757,7 +757,7 @@ Describe 'Vendoring diff and pull request publication' {
         if ($ImportKind -ceq 'release') {
             Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
             $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
-            'release' | Set-Content (Join-Path $prepared $Owned)
+            'release' | Set-Content (Join-Path $prepared 'platform/README.md')
         }
         $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind $ImportKind `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com

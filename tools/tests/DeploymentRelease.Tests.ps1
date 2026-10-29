@@ -34,6 +34,10 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         }
         '{"version":2,"actions":{"actions/checkout":{"repository":"demo-actions/actions-checkout","sha":"1111111111111111111111111111111111111111","upstreamCommit":"3d3c42e5aac5ba805825da76410c181273ba90b1","tag":"v7.0.1"}}}' |
             Set-Content "$candidate/vendoring/actions.json"
+        if ($IsWindows) {
+            $directory = Get-Item "$sourceRoot/templates/instance/.github" -Force
+            $directory.Attributes = $directory.Attributes -bor [IO.FileAttributes]::Hidden
+        }
         $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
         $api = @{ attested = $true; exitCode = 0 }
         Mock Invoke-RestMethod {
@@ -60,7 +64,7 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
                 $archive = [IO.Compression.ZipFile]::Open($OutFile, [IO.Compression.ZipArchiveMode]::Create)
                 try {
                     $null = $archive.CreateEntry('release/')
-                    foreach ($file in Get-ChildItem $sourceRoot -Recurse -File) {
+                    foreach ($file in Get-ChildItem $sourceRoot -Recurse -Force -File) {
                         $relative = [IO.Path]::GetRelativePath($sourceRoot, $file.FullName).Replace('\', '/')
                         $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, "release/$relative")
                     }
@@ -80,7 +84,7 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         $arguments = @{ CandidatePath = $candidate; WorkPath = $work; SourceRepository = 'upstream/platform'; PlatformOrganization = 'demo-platform' }
     }
 
-    It 'accepts the exact attested <Mode> release without using source credentials' -ForEach @(
+    It 'accepts the exact attested <Mode> release without using source credentials' -Tag 'ReleaseArchiveBoundary' -ForEach @(
         @{ Mode = 'raw' }
         @{ Mode = 'transformed' }
     ) {
@@ -139,14 +143,15 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         { & $preflight @arguments } | Should -Throw '*Release marker must not be a symbolic link*'
     }
 
-    It 'rejects a Windows junction at <Location>' -Skip:(-not $IsWindows) -ForEach @(
+    It 'rejects a directory link at <Location>' -ForEach @(
         @{ Location = 'platform root'; LinkRelative = 'platform' }
         @{ Location = 'nested directory'; LinkRelative = 'platform/templates' }
     ) {
         $path = Join-Path $candidate $LinkRelative
         $external = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         Move-Item $path $external
-        $null = New-Item -ItemType Junction -Path $path -Target $external
+        $linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
+        $null = New-Item -ItemType $linkType -Path $path -Target $external
         { & $preflight @arguments } | Should -Throw '*Release tree contains symbolic link*'
     }
 
@@ -177,8 +182,8 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         @{ Case = 'unattested release'; Change = { $api.attested = $false }; Error = '*requires a verified attestation*' }
         @{ Case = 'invalid signature'; Change = { $api.exitCode = 1 }; Error = '*Invalid or unverifiable source attestation*' }
         @{ Case = 'empty attested release'; Change = {
-            Get-ChildItem $sourceRoot -Recurse -File | Remove-Item
-            Get-ChildItem "$candidate/platform" -Recurse -File | Remove-Item
+            Get-ChildItem $sourceRoot -Recurse -Force -File | Remove-Item -Force
+            Get-ChildItem "$candidate/platform" -Recurse -Force -File | Remove-Item -Force
             $marker.files = @{}
         }; Error = '*Marker has no release files*' }
         @{ Case = 'mixed workflows'; Change = {
