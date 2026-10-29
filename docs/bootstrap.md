@@ -179,6 +179,8 @@ Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. P
 
 ### Nový živý krok: časná Code Security fáze před prvním úplným deploy
 
+**Blokující předpoklad:** První živé nasazení `code-security` a `catalog` zůstává blokované do splnění živých kritérií [#157](https://github.com/msucharda/devsecops-platform/issues/157). Úspěšné offline testy ani tato dokumentační oprava živou akceptaci nenahrazují.
+
 Rozhodnutí koordinátora: První nasazení má pořadí `code-security` → `catalog` → import a povýšení workflow → `full`. Pro oba staged běhy otevři v repozitáři instance **Actions → Deploy instance → Run workflow** na chráněné větvi `main`. Jde o dva nové živé uživatelské kroky. Výchozí volba `full` spouští běžný deploy; `push` a PR dál používají úplný graf. Nepodporovanou, prázdnou nebo jinak velkými písmeny zapsanou hodnotu dispatch odmítne první job bez credentials ještě před autorizací.
 
 **Doporučená příprava custom patterns před prvním `deployment: code-security`.** Pokud `customPatterns` v `instance.yaml` není prázdné, operátor by měl ručně vytvořit a publikovat každý uvedený pattern ve všech organizacích z `target_organizations` modulu `enterprise-baseline`. Pokud organizace ještě neexistují, nejprve nasaď `organizations` podle předchozího postupu. Apply časné fáze postupuje po organizacích a skončí u první chyby; bez přípravy může vytvořit nepublikovaný pattern jen v první organizaci a k dalším se nedostat.
