@@ -284,6 +284,10 @@ Testy Pester volají veřejné skripty bootstrapu, generátoru, výběru, valid�
 .\tools\Invoke-Tests.ps1 -Path .\tools\tests\Bootstrap.Tests.ps1
 ```
 
+`EnterpriseBaseline.Tests.ps1` vytváří pro každý test vlastní TCP listener, server job a stav API stubu; po testu je ukončí i při selhání. Při chybě Terraformu výstup `[terraform-test]` uvádí root, příkaz, exit code Terraformu, nahlášený exit status nebo signál child procesu, cestu a verzi `pwsh`, verzi .NET, `PSModulePath`, `PSModuleAnalysisCachePath` a `XDG_CACHE_HOME`. Původní výstup Terraformu včetně stderr child procesu zůstává součástí chyby. Zjištěný pád runtime test ukončí hned, aby ho nezakryla kontrola nespotřebovaného stubu nebo další apply. Běžné chyby API zůstávají dostupné testům obnovy po ztrátě odpovědi.
+
+Regresní scénáře spustíš přes `.\tools\Invoke-Tests.ps1 -Path .\tools\tests\EnterpriseBaseline.Tests.ps1 -Tag ChildProcessIsolation,ChildProcessCrash,ChildProcessDiagnostic`. Testy mění jen dočasnou kopii skriptu; text signálu přehrávají bez skutečného pádu procesu a bez core dumpu. Ověřují také zachování hexadecimálního exit statusu, okamžité ukončení testu při fatálním statusu Windows, běh bez fixture předchozího testu a uzavření listeneru po neúplném HTTP požadavku. Tyto testy ověřují diagnostiku a izolaci, nikoli odstranění dosud neprokázané příčiny pádu runtime v #158.
+
 Před lokálním gate obnov moduly a ověřený actionlint do worktree cache:
 
 ```powershell

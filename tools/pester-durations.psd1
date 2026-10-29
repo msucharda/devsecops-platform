@@ -4,7 +4,8 @@
 # EnterpriseBaselinePatchContract baseline measured in Source CI run 40776003849 (2026-10-28), rounded up.
 # Missing files receive a one-second estimate and are still selected automatically.
 @{
-    'EnterpriseBaseline.Tests.ps1' = 359
+    # Source CI run 40801249278, attempt 2: 348.0369 seconds, rounded up.
+    'EnterpriseBaseline.Tests.ps1' = 349
     'EnterpriseBaselinePatchContract.Tests.ps1' = 5
     # Source CI run 40771671425: 543.7233 seconds, rounded up.
     'GitHubBootstrap.Tests.ps1' = 544
