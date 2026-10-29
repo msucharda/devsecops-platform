@@ -27,6 +27,7 @@ BeforeAll {
             foreach ($key in $Value.Keys) { $copy[$key] = Copy-TestValue $Value[$key] }
             return $copy
         }
+        if ($Value -is [byte[]]) { return , $Value.Clone() }
         if ($Value -is [System.Collections.IList]) { return , @(foreach ($item in $Value) { Copy-TestValue $item }) }
         return $Value
     }

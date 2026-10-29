@@ -83,11 +83,9 @@ Describe 'Acceptance preparation interruption harness' -Tag 'Interruption' {
                                 'workflow_runs.0.display_title' = "Bootstrap acceptance $($data.inputs.evidence_id)"
                                 'workflow_runs.0.status' = 'completed'; 'workflow_runs.0.conclusion' = 'success'
                             }).workflow_runs[0]
-                            & $respond 200 (Get-GitHubApiFixture -Name actions/create-workflow-dispatch -Set @{
-                                workflow_run_id = 123
-                                run_url = 'https://api.example.ghe.com/repos/demo-platform/instance/actions/runs/123'
-                                html_url = 'https://example.ghe.com/demo-platform/instance/actions/runs/123'
-                            })
+                            # The unversioned client omits return_run_details, so the 2022-11-28 contract returns 204.
+                            # https://docs.github.com/en/rest/actions/workflows?apiVersion=2022-11-28#create-a-workflow-dispatch-event
+                            & $respond 204 $null
                         } -Interrupt { & $respond 503 @{ message = 'Injected interruption.' } }
                     }
                     default { throw "Unexpected acceptance request: $Method $Uri" }

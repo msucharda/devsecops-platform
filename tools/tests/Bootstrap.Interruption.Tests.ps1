@@ -119,13 +119,30 @@ Describe 'Azure bootstrap interruption harness' -Tag 'Interruption' {
                     $assignment.Remove('id')
                     & $normalize $assignment
                 } | Sort-Object -CaseSensitive)
-                modules = & $normalize $output.Result.Modules
+                modules = if ($null -ne $output.Result) { & $normalize $output.Result.Modules } else { $null }
                 configuration = [IO.File]::ReadAllText($instancePath)
             }
         }
     }
 
     AfterEach { . $stubBlocks.AfterEach }
+
+    It 'reports every failed recovery when no bootstrap result is available' -Tag 'RecoveryDiagnostics' {
+        $run = {
+            Invoke-InterruptionStep -Plan $plan -Request 'PUT /snapshot-diagnostic' -Apply {
+                $output.Result = @{ Modules = @('reference-module') }
+            } -Interrupt { throw 'Injected interruption.' }
+        }
+        $recover = { throw 'Deliberately failed recovery.' }
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Recover $recover -Snapshot $snapshot `
+            -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -Kind BeforeApply)
+
+        $result.Count | Should -Be 2
+        foreach ($case in $result) {
+            $case.Passed | Should -BeFalse
+            $case.Problem | Should -BeLike '*the rerun failed: Deliberately failed recovery.*'
+        }
+    }
 
     It 'reconciles the backend, phase identities and grants without duplicate identities after every interrupted write' {
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot `
