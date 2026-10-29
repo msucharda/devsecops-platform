@@ -121,7 +121,7 @@ Describe 'Phase-specific App credential contracts' {
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $candidate
         $output = Join-Path $TestDrive 'not-published'
 
-        { & $selector -InstancePath $candidate -TrustedInstancePath $path -ModulesPath $fixtures -GitHubOutputPath $output } |
+        { & $selector -InstancePath $candidate -TrustedInstancePath $path -TrustedModulesPath $fixtures -ModulesPath $fixtures -GitHubOutputPath $output } |
             Should -Throw '*PR changes protected credentials*main after review and merge*'
         Test-Path -LiteralPath $output | Should -BeFalse
     }
@@ -132,7 +132,61 @@ Describe 'Phase-specific App credential contracts' {
         $instance.githubApps.reader.installationId = '999'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $candidate
 
-        { & $selector -InstancePath $candidate -TrustedInstancePath $path -ModulesPath $fixtures } |
+        { & $selector -InstancePath $candidate -TrustedInstancePath $path -TrustedModulesPath $fixtures -ModulesPath $fixtures } |
             Should -Throw '*PR changes protected githubApps*'
+    }
+
+    It 'compares common defaults without overwriting explicit <Graph> <Kind> <Phase> bindings' -ForEach @(
+        @{ Graph = 'candidate'; Kind = 'module'; Phase = 'plan' }
+        @{ Graph = 'candidate'; Kind = 'module'; Phase = 'apply' }
+        @{ Graph = 'candidate'; Kind = 'ruleset'; Phase = 'rulesetPlan' }
+        @{ Graph = 'trusted'; Kind = 'module'; Phase = 'plan' }
+        @{ Graph = 'trusted'; Kind = 'module'; Phase = 'apply' }
+        @{ Graph = 'trusted'; Kind = 'ruleset'; Phase = 'rulesetPlan' }
+    ) {
+        $directory = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $directory
+        $trustedModules = Join-Path $directory 'trusted-default-modules'
+        $candidateModules = Join-Path $directory 'candidate-default-modules'
+        Copy-Item $fixtures $trustedModules -Recurse
+        Copy-Item $fixtures $candidateModules -Recurse
+        $changedModules = if ($Graph -ceq 'candidate') { $candidateModules } else { $trustedModules }
+        $name = if ($Kind -ceq 'module') { 'extra' } else { 'observer' }
+        if ($Kind -ceq 'module') {
+            Copy-Item (Join-Path $changedModules 'observer') (Join-Path $changedModules $name) -Recurse
+        }
+        $manifestPath = Join-Path $changedModules "$name/module.yaml"
+        $manifest = ConvertFrom-Yaml (Get-Content $manifestPath -Raw)
+        $manifest.name = $name
+        if ($Kind -ceq 'ruleset') {
+            $baseline = ConvertFrom-Yaml (Get-Content (Join-Path $fixtures 'enterprise-baseline/module.yaml') -Raw)
+            $manifest.permissions.githubApp = $baseline.permissions.githubApp
+        }
+        ConvertTo-Yaml $manifest | Set-Content $manifestPath
+        ConvertTo-Yaml $instance | Set-Content $path
+        $candidate = Join-Path $directory 'candidate-defaults.yaml'
+        ConvertTo-Yaml $instance | Set-Content $candidate
+        $arguments = @{
+            InstancePath = $candidate; TrustedInstancePath = $path
+            ModulesPath = $candidateModules; TrustedModulesPath = $trustedModules
+        }
+
+        & $selector @arguments | Should -Be '["application","enterprise-baseline","foundation","service"]'
+        $instance.credentials[$name] = @{
+            plan = @{ environment = "$name-plan" }
+            apply = @{ environment = "$name-apply" }
+        }
+        if ($Kind -ceq 'ruleset') {
+            $instance.credentials[$name].rulesetPlan = @{ environment = "$name-ruleset-plan" }
+        }
+        $changedPath = if ($Graph -ceq 'candidate') { $candidate } else { $path }
+        ConvertTo-Yaml $instance | Set-Content $changedPath
+        & $selector @arguments | Should -Be '["application","enterprise-baseline","foundation","service"]'
+
+        $instance.credentials[$name][$Phase].environment = 'custom-upgrade-environment'
+        ConvertTo-Yaml $instance | Set-Content $changedPath
+        $output = Join-Path $directory 'rejected-upgrade-output'
+        { & $selector @arguments -GitHubOutputPath $output } | Should -Throw '*PR changes protected credentials*'
+        Test-Path $output | Should -BeFalse
     }
 }

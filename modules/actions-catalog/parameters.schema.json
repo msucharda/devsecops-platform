@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["target_organizations", "security_team"],
+  "properties": {
+    "target_organizations": { "type": "array", "items": { "type": "string" } },
+    "security_team": { "type": "string" },
+    "catalog": { "type": "array", "items": { "type": "string" } },
+    "vendoring_catalog_path": { "type": ["string", "null"] }
+  }
+}
