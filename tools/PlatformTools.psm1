@@ -135,7 +135,7 @@ function Get-PlatformModuleGraph {
         if (Test-Path -LiteralPath $parameterSchemaPath -PathType Leaf) {
             try {
                 $parameterSchema = Get-Content -LiteralPath $parameterSchemaPath -Raw -ErrorAction Stop |
-                    ConvertFrom-Json -AsHashtable -ErrorAction Stop
+                    ConvertFrom-Json -AsHashtable -NoEnumerate -ErrorAction Stop
             }
             catch { throw "Invalid module parameter schema '$parameterSchemaPath': $($_.Exception.Message)" }
             if ($parameterSchema -isnot [System.Collections.IDictionary]) {
@@ -535,6 +535,14 @@ function Get-PlatformInstance {
         }
     }
     $selected = Get-PlatformModuleSelection -Instance $instance -Modules $Modules
+    foreach ($name in $selected) {
+        if ($Modules[$name].Contains('parameterSchema') -and
+            $Modules[$name]['parameterSchema'].Contains('required') -and
+            $Modules[$name]['parameterSchema']['required'].Count -gt 0 -and
+            -not $instance['modules'].Contains($name)) {
+            throw "Invalid instance configuration '$Path': $.modules.$name is required by the selected prerequisites and must declare its required parameters."
+        }
+    }
     foreach ($name in $Modules.PSBase.Keys) {
         if (-not $instance['credentials'].Contains($name)) {
             $instance['credentials'][$name] = @{

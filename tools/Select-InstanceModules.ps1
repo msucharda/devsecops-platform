@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][string] $InstancePath,
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
     [string] $TrustedInstancePath,
+    [string] $TrustedModulesPath = (Join-Path $PSScriptRoot '../modules'),
     [string] $GitHubOutputPath,
     [string] $DeploymentScope = 'full'
 )
@@ -18,7 +19,8 @@ Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
 if ($TrustedInstancePath) {
-    $trusted = Get-PlatformInstance -Path $TrustedInstancePath -Modules $modules
+    $trustedModules = Get-PlatformModuleGraph -ModulesPath $TrustedModulesPath
+    $trusted = Get-PlatformInstance -Path $TrustedInstancePath -Modules $trustedModules
     foreach ($field in @('credentials', 'githubApps')) {
         if ((ConvertTo-PlatformCanonicalJson $instance[$field]) -cne (ConvertTo-PlatformCanonicalJson $trusted[$field])) {
             throw "PR changes protected $field bindings. Cloud plan must run from main after review and merge."

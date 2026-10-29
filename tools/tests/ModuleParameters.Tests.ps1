@@ -31,7 +31,25 @@ BeforeAll {
         param([string] $Name, [System.Collections.IDictionary] $Parameters)
         $instance = ConvertFrom-Yaml $example
         $instance.modules = @{ $Name = @{ parameters = $Parameters } }
+        do {
+            $count = $instance.modules.Count
+            $dependencies = Get-PlatformModuleSelection -Instance $instance -Modules $modules
+            foreach ($dependency in $dependencies) {
+                if (-not $instance.modules.Contains($dependency)) {
+                    $instance.modules[$dependency] = @{ parameters = Get-ValidModuleParameter $dependency }
+                }
+            }
+        } while ($instance.modules.Count -ne $count)
         Get-PlatformInstance -Yaml (ConvertTo-Yaml $instance) -Modules $modules -AllowUnboundApps
+    }
+
+    function Get-TerraformVariableDeclaration {
+        param([string] $Source)
+        $declarations = @([regex]::Matches($Source, '(?ms)^variable\s+"(?<name>[^"]+)"\s*\{(?<body>.*?)^\}'))
+        if ($declarations.Count -ne [regex]::Matches($Source, '(?m)^\s*variable\s+"[^"]+"\s*\{').Count) {
+            throw 'Unparsed Terraform variable declaration: use the supported multiline variable block format.'
+        }
+        return ,$declarations
     }
 
     function Get-SchemaTerraformType {
@@ -138,6 +156,13 @@ Describe 'Offline module parameter validation' {
     It 'preserves the empty instance template' {
         { Get-PlatformInstance -Yaml $example -Modules $modules } | Should -Not -Throw
     }
+
+    It 'rejects a selected prerequisite whose required module parameters are absent' {
+        $instance = ConvertFrom-Yaml $example
+        $instance.modules = @{ 'organization-roles' = @{ parameters = Get-ValidModuleParameter 'organization-roles' } }
+        { Get-PlatformInstance -Yaml (ConvertTo-Yaml $instance) -Modules $modules -AllowUnboundApps } |
+            Should -Throw '*$.modules.organizations*required*'
+    }
 }
 
 Describe 'Module parameter schema and Terraform contract' {
@@ -159,7 +184,7 @@ Describe 'Module parameter schema and Terraform contract' {
             $schema = $manifest.parameterSchema
             foreach ($file in Get-ChildItem (Join-Path $modulePath $name) -Filter variables.tf -Recurse) {
                 $source = Get-Content $file.FullName -Raw
-                $variables = @([regex]::Matches($source, '(?ms)^variable\s+"(?<name>[^"]+)"\s*\{(?<body>.*?)^\}'))
+                $variables = Get-TerraformVariableDeclaration -Source $source
                 $variables.Count | Should -BeGreaterThan 0 -Because $file.FullName
                 $injected = @('instance', 'prerequisites')
                 if ($name -ceq 'organization-rulesets' -and $file.Directory.Name -ceq 'rulesets') {
@@ -184,9 +209,22 @@ Describe 'Module parameter schema and Terraform contract' {
                     (Get-SchemaTerraformType $parameterSchema) -replace '\s', '' |
                         Should -BeExactly ($type.Groups['type'].Value -replace '\s', '') -Because "$($file.FullName): $parameter"
                 }
+
             }
 
         }
+    }
+}
+
+Describe 'Terraform declaration parsing' {
+    It 'does not silently skip an inline Terraform input declaration' {
+        $source = @(
+            'variable "instance" {'
+            '  type = any'
+            '}'
+            'variable "undeclared_input" { type = string }'
+        ) -join "`n"
+        { Get-TerraformVariableDeclaration -Source $source } | Should -Throw '*Unparsed Terraform variable declaration*'
     }
 }
 
@@ -220,11 +258,48 @@ Describe 'Offline module schema loading' {
         @{ Case = 'null'; Json = 'null'; Error = '*must be an object*' }
         @{ Case = 'boolean schema'; Json = 'true'; Error = '*must be an object*' }
         @{ Case = 'array'; Json = '[]'; Error = '*must be an object*' }
+        @{ Case = 'singleton array'; Json = '[{"type":"object","properties":{},"additionalProperties":false}]'; Error = '*must be an object*' }
         @{ Case = 'missing object contract'; Json = '{}'; Error = '*must declare an object*' }
         @{ Case = 'open properties'; Json = '{"type":"object","properties":{},"additionalProperties":true}'; Error = '*additionalProperties: false*' }
         @{ Case = 'string false'; Json = '{"type":"object","properties":{},"additionalProperties":"false"}'; Error = '*additionalProperties: false*' }
     ) {
         Set-Content $schemaPath $Json
         { Get-PlatformModuleGraph -ModulesPath $localModules } | Should -Throw $Error
+    }
+}
+
+Describe 'Parameter schema upgrades and protected credential comparison' {
+    It 'validates the trusted instance with its own release module schema' {
+        $directory = Join-Path $TestDrive 'schema-upgrade'
+        $null = New-Item -ItemType Directory -Path $directory
+        $trustedModules = Join-Path $directory 'trusted-modules'
+        $candidateModules = Join-Path $directory 'candidate-modules'
+        Copy-Item (Join-Path $PSScriptRoot 'fixtures/modules') $trustedModules -Recurse
+        Copy-Item (Join-Path $PSScriptRoot 'fixtures/modules') $candidateModules -Recurse
+        @{
+            type = 'object'; additionalProperties = $false
+            required = @('old_message'); properties = @{ old_message = @{ type = 'string' } }
+        } | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $trustedModules 'observer/parameters.schema.json')
+        @{
+            type = 'object'; additionalProperties = $false
+            required = @('message'); properties = @{ message = @{ type = 'string' } }
+        } | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $candidateModules 'observer/parameters.schema.json')
+        $instance = ConvertFrom-Yaml $example
+        $instance.modules = @{ observer = @{ parameters = @{ old_message = 'old release' } } }
+        $trustedPath = Join-Path $directory 'trusted.yaml'
+        ConvertTo-Yaml $instance | Set-Content $trustedPath
+        $instance.modules.observer.parameters = @{ message = 'new release' }
+        $candidatePath = Join-Path $directory 'candidate.yaml'
+        ConvertTo-Yaml $instance | Set-Content $candidatePath
+
+        $selected = & (Join-Path $repo 'tools/Select-InstanceModules.ps1') -InstancePath $candidatePath `
+            -ModulesPath $candidateModules -TrustedInstancePath $trustedPath -TrustedModulesPath $trustedModules
+        $selected | Should -BeExactly '["observer"]'
+        $trustedConfig = ConvertFrom-Yaml (Get-Content $trustedPath -Raw)
+        $trustedConfig.modules.observer.parameters.old_message = 42
+        ConvertTo-Yaml $trustedConfig | Set-Content $trustedPath
+        { & (Join-Path $repo 'tools/Select-InstanceModules.ps1') -InstancePath $candidatePath `
+                -ModulesPath $candidateModules -TrustedInstancePath $trustedPath -TrustedModulesPath $trustedModules } |
+            Should -Throw '*$.modules.observer.parameters.old_message*'
     }
 }

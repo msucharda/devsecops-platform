@@ -121,7 +121,7 @@ Describe 'Phase-specific App credential contracts' {
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $candidate
         $output = Join-Path $TestDrive 'not-published'
 
-        { & $selector -InstancePath $candidate -TrustedInstancePath $path -ModulesPath $fixtures -GitHubOutputPath $output } |
+        { & $selector -InstancePath $candidate -TrustedInstancePath $path -TrustedModulesPath $fixtures -ModulesPath $fixtures -GitHubOutputPath $output } |
             Should -Throw '*PR changes protected credentials*main after review and merge*'
         Test-Path -LiteralPath $output | Should -BeFalse
     }
@@ -132,7 +132,7 @@ Describe 'Phase-specific App credential contracts' {
         $instance.githubApps.reader.installationId = '999'
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $candidate
 
-        { & $selector -InstancePath $candidate -TrustedInstancePath $path -ModulesPath $fixtures } |
+        { & $selector -InstancePath $candidate -TrustedInstancePath $path -TrustedModulesPath $fixtures -ModulesPath $fixtures } |
             Should -Throw '*PR changes protected githubApps*'
     }
 }
