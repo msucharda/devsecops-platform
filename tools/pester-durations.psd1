@@ -23,7 +23,9 @@
     # Source CI run 40661148420: 14.539 seconds.
     'WorkflowPreflight.Tests.ps1' = 15
     'ModuleRunner.Tests.ps1' = 20
-    'ActionsCatalog.Tests.ps1' = 14
+    # Issue #136 suites measured in Source CI run 40841284383, rounded up.
+    'ActionsCatalog.Tests.ps1' = 11
+    'Vendoring.Tests.ps1' = 2
     'LocalCi.Tests.ps1' = 9
     'LocalCiConcurrency.Tests.ps1' = 10
     'InstanceConfiguration.Tests.ps1' = 8
