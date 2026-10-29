@@ -83,6 +83,7 @@ Modul v každé organizaci z `target_organizations` nastaví tato pole (API verz
 |---|---|---|---|
 | [`PUT /orgs/{org}/actions/permissions`](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions#set-github-actions-permissions-for-an-organization) | `enabled_repositories` | `all` | `all` |
 | | `allowed_actions` | `local_only` | `all` |
+| | `sha_pinning_required` | `true` | `false` |
 | [`PUT /orgs/{org}/actions/permissions/workflow`](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/permissions#set-default-workflow-permissions-for-an-organization) | `default_workflow_permissions` | `read` | `read` |
 | | `can_approve_pull_request_reviews` | `false` | `false` |
 
@@ -90,11 +91,13 @@ Modul v každé organizaci z `target_organizations` nastaví tato pole (API verz
 - Omezení: `local_only` nezablokuje akce z jiných organizací enterprise. Přírůstek 1 `local_only` ponechá (rozhodnutí uživatele z 22. 10. 2026). Užší pravidlo `selected` se vzorem pro organizaci akcí a jeho živé ověření řeší [#81](https://github.com/msucharda/devsecops-platform/issues/81).
 - Pořadí nasazení: úspěšný apply `actions-catalog` nedokazuje, že živá workflow v `.github/workflows` repozitáře instance už používají katalogové akce. Povýšení šablon z `platform/` je samostatný ruční krok ([vendoring](../../docs/vendoring.md#ruční-povýšení-živých-workflow-v-16)). Platformní tým musí povýšení mergnout před prvním apply tohoto modulu. Jinak politika zablokuje deploy, drift i teardown workflow, které upstream akce stále volají. Runner před plan i apply nadále vyžaduje `manualPrerequisites.liveWorkflowsPromoted: true`. Automatický preflight tuto deklaraci doplňuje, nenahrazuje ji. Obnova po chybném pořadí: organization owner v UI dočasně povolí všechny akce, povýší workflow a apply zopakuje.
 - `can_approve_pull_request_reviews` řídí i vytváření PR z GitHub Actions (v UI „Allow GitHub Actions to create and approve pull requests“).
-- Modul nespravuje `sha_pinning_required` ani seznam `selected-actions`; `sha_pinning_required` ponechá beze změny (rozhodnutí uživatele z 22. 10. 2026). Ověření SHA pinningu workflow a rozhodnutí o poli řeší [#82](https://github.com/msucharda/devsecops-platform/issues/82).
+- Modul pevně nastaví `sha_pinning_required: true`, bez nového parametru. Rozhodnutí uživatele z 29. 10. 2026 v [#82](https://github.com/msucharda/devsecops-platform/issues/82) nahrazuje rozhodnutí pole nespravovat z 22. 10. 2026. Seznam `selected-actions` modul nadále nespravuje.
+- GitHub [vyžaduje plný commit SHA pro vzdálené akce](https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization#managing-github-actions-permissions-for-your-organization), včetně akcí enterprise. Reusable workflow mohou podle GitHubu dál používat tag; preflight modulu je záměrně přísnější a pro vzdálené reference vyžaduje SHA. Lokální `./…` reference nemají `@SHA`: [step-level akce používá workspace](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsuses), job-level reusable workflow používá commit volajícího workflow. Plan a apply na referenční instanci, včetně ověření lokálních referencí při zapnuté politice, zůstávají živými kritérii #82.
 - Enterprise politika může nastavení organizace zakázat. Pak `PUT` vrátí HTTP 409 a apply selže se zprávou o enterprise politice. Modul enterprise politiku nemění.
 - Zápis i čtení provádí skript `scripts/ActionsPolicy.psm1`. Oba `PUT` vrací `204` bez těla, proto modul nepoužívá provider `restapi`. Každý zápis je idempotentní `PUT` jen se spravovanými poli. Skript nejdřív přečte stav a zapíše jen rozdíl. Po zápisu stav znovu přečte a selže, když neodpovídá politice.
 - Data source `external.actions_policy_state` čte `GET /orgs/{org}/actions/permissions` a `GET /orgs/{org}/actions/permissions/workflow` při každém planu a po apply. Chybějící pole, jiný typ nebo jiná velikost písmen je porušení, ne shoda. Drift zastaví plan; oprava je ruční obnova nebo apply s `-replace=terraform_data.actions_policy_settings["<org>"]`.
 - Identitní prostředek `terraform_data.actions_policy` při destroy obnoví výchozí hodnoty GitHubu z tabulky. Obsahový prostředek `terraform_data.actions_policy_settings` politiku zapisuje; změna politiky nahradí jen jeho, takže mezi starou a novou politikou nevznikne okno s výchozími hodnotami.
+- Reset nastaví `sha_pinning_required: false`, protože obnovuje výchozí politiku GitHubu, nikoli původní stav organizace. Starší Terraform state pole neobsahuje; pouze `ResetPolicy` tento uložený vstup doplní o `false`. Přímý destroy ani opakování přerušeného destroy proto nevyžaduje předchozí apply nové verze. `SetPolicy` a kontrola readbacku chybějící pole dál odmítají.
 
 ### Preflight živých workflow
 
@@ -106,7 +109,7 @@ Povolí jen lokální reference `./…` v témže Git stromu a reference z odvoz
 
 Úspěch dokazuje jen tvar referencí v Git stromu na ověřeném HEAD SHA. Netvrdí nic o původu souborů v runtime workspace (pracovním prostoru běhu). Step-level `./…` GitHub [načítá z workspace](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsuses), které může změnit checkout jiného repozitáře či refu nebo krok `run`. Lokální job-level reusable workflow se naopak váže na commit volajícího workflow. Toto omezení přijal koordinátor 28. 10. 2026: preflight hlídá pořadí nasazení, runtime hranici vynucuje politika akcí na GitHubu.
 
-Preflight nedokazuje dostupnost vzdálené akce, její obsah ani živou konfiguraci GitHubu. Modul nespravuje `sha_pinning_required`.
+Preflight nedokazuje dostupnost vzdálené akce, její obsah ani živou konfiguraci GitHubu. Nastavení `sha_pinning_required` modul ověřuje samostatným čtením API.
 
 ## Organizační rulesety
 

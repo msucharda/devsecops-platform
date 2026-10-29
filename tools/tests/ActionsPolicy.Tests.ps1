@@ -9,10 +9,12 @@ BeforeAll {
     $target = @{ ApiUrl = $apiUrl; Organization = $organization }
     $managedPolicy = @{
         enabled_repositories = 'all'; allowed_actions = 'local_only'
+        sha_pinning_required = $true
         default_workflow_permissions = 'read'; can_approve_pull_request_reviews = $false
     }
     $defaultPolicy = @{
         enabled_repositories = 'all'; allowed_actions = 'all'
+        sha_pinning_required = $false
         default_workflow_permissions = 'read'; can_approve_pull_request_reviews = $false
     }
 
@@ -81,17 +83,18 @@ Describe 'Actions policy' {
     }
 
     Context 'Set-ActionsPolicy' {
-        It 'writes the managed policy to a new organization and leaves sha_pinning_required unmanaged' {
+        It 'writes the managed policy including required SHA pinning to a new organization' {
             Set-ActionsPolicy @target -Policy $managedPolicy
 
             $stub.Actions['enabled_repositories'] | Should -BeExactly 'all'
             $stub.Actions['allowed_actions'] | Should -BeExactly 'local_only'
-            $stub.Actions['sha_pinning_required'] | Should -BeFalse
+            $stub.Actions['sha_pinning_required'] | Should -BeExactly $true
             $stub.Workflow['default_workflow_permissions'] | Should -BeExactly 'read'
             $stub.Workflow['can_approve_pull_request_reviews'] | Should -BeExactly $false
             $writes = Get-StubWrite
             $writes.Operation | Should -Be @('setActions', 'setWorkflow')
-            @($writes[0].Body.Keys) | Sort-Object | Should -Be @('allowed_actions', 'enabled_repositories')
+            @($writes[0].Body.Keys) | Sort-Object | Should -Be @('allowed_actions', 'enabled_repositories', 'sha_pinning_required')
+            $writes[0].Body['sha_pinning_required'] | Should -BeOfType [bool]
             $writes[1].Body['can_approve_pull_request_reviews'] | Should -BeOfType [bool]
         }
 
@@ -101,8 +104,29 @@ Describe 'Actions policy' {
             Set-ActionsPolicy @target -Policy $defaultPolicy
 
             $stub.Actions['allowed_actions'] | Should -BeExactly 'all'
+            $stub.Actions['sha_pinning_required'] | Should -BeExactly $false
             $stub.Workflow['default_workflow_permissions'] | Should -BeExactly 'read'
             $stub.Workflow['can_approve_pull_request_reviews'] | Should -BeExactly $false
+        }
+
+        It 'resets a legacy policy stored before SHA pinning was managed' {
+            Set-ActionsPolicy @target -Policy $managedPolicy
+            $legacy = @{} + $defaultPolicy
+            $legacy.Remove('sha_pinning_required')
+
+            Set-ActionsPolicy @target -Policy $legacy -Reset
+
+            $stub.Actions['sha_pinning_required'] | Should -BeExactly $false
+            $stub.Actions['allowed_actions'] | Should -BeExactly 'all'
+            $legacy.Contains('sha_pinning_required') | Should -BeFalse
+        }
+
+        It 'rejects a missing SHA field outside legacy reset' {
+            $legacy = @{} + $defaultPolicy
+            $legacy.Remove('sha_pinning_required')
+
+            { Set-ActionsPolicy @target -Policy $legacy } | Should -Throw '*missing or undocumented value*'
+            $stub.Requests | Should -BeNullOrEmpty
         }
 
         It 'writes nothing when the organization already has the policy' {
@@ -114,13 +138,18 @@ Describe 'Actions policy' {
             Get-StubWrite | Should -BeNullOrEmpty
         }
 
-        It 'accepts the string booleans of the external data source query' {
+        It 'accepts the string boolean <Pinning> of the external data source query' -ForEach @(
+            @{ Pinning = 'true'; Expected = $true }
+            @{ Pinning = 'false'; Expected = $false }
+        ) {
             $policy = @{} + $managedPolicy
             $policy['can_approve_pull_request_reviews'] = 'false'
+            $policy['sha_pinning_required'] = $Pinning
 
             Set-ActionsPolicy @target -Policy $policy
 
             $stub.Workflow['can_approve_pull_request_reviews'] | Should -BeExactly $false
+            $stub.Actions['sha_pinning_required'] | Should -BeExactly $Expected
         }
 
         It 'rejects a managed policy with <Case> before any request' -ForEach @(
@@ -131,6 +160,10 @@ Describe 'Actions policy' {
             @{ Case = 'a non-boolean approval'; Field = 'can_approve_pull_request_reviews'; Value = 'False' }
             @{ Case = 'a missing approval'; Field = 'can_approve_pull_request_reviews'; Value = $null }
             @{ Case = 'a missing allowed_actions'; Field = 'allowed_actions'; Value = $null }
+            @{ Case = 'a missing SHA pinning'; Field = 'sha_pinning_required'; Value = $null }
+            @{ Case = 'an upper-case SHA pinning'; Field = 'sha_pinning_required'; Value = 'True' }
+            @{ Case = 'an empty SHA pinning'; Field = 'sha_pinning_required'; Value = '' }
+            @{ Case = 'a numeric SHA pinning'; Field = 'sha_pinning_required'; Value = 1 }
         ) {
             $policy = @{} + $managedPolicy
             $policy[$Field] = $Value
@@ -149,6 +182,29 @@ Describe 'Actions policy' {
             $stub.Override['setActions'] = { @{ Status = 204; Body = '' } }
 
             { Set-ActionsPolicy @target -Policy $managedPolicy } | Should -Throw '*allowed actions policy of demo-a1b2c3-workloads is not local_only*'
+        }
+
+        It 'repairs SHA pinning alone without changing the other policy fields' {
+            Set-ActionsPolicy @target -Policy $managedPolicy
+            $stub.Actions['sha_pinning_required'] = $false
+            $stub.Requests.Clear()
+
+            Set-ActionsPolicy @target -Policy $managedPolicy
+
+            $writes = Get-StubWrite
+            $writes.Count | Should -Be 1
+            $writes[0].Operation | Should -BeExactly 'setActions'
+            $writes[0].Body['enabled_repositories'] | Should -BeExactly 'all'
+            $writes[0].Body['allowed_actions'] | Should -BeExactly 'local_only'
+            $writes[0].Body['sha_pinning_required'] | Should -BeExactly $true
+        }
+
+        It 'fails readback when GitHub accepts but ignores required SHA pinning' {
+            Set-ActionsPolicy @target -Policy $managedPolicy
+            $stub.Actions['sha_pinning_required'] = $false
+            $stub.Override['setActions'] = { @{ Status = 204; Body = '' } }
+
+            { Set-ActionsPolicy @target -Policy $managedPolicy } | Should -Throw '*Required SHA pinning*not true*'
         }
 
         It 'fails on HTTP <Status> of <Operation>' -ForEach @(
@@ -186,11 +242,12 @@ Describe 'Actions policy' {
             $policy = ConvertTo-ActionsPolicy -Policy $managedPolicy
         }
 
-        It 'accepts the managed policy regardless of sha_pinning_required <Pinning>' -ForEach @(
+        It 'accepts boolean SHA pinning <Pinning> when it matches the managed policy' -ForEach @(
             @{ Pinning = $true }
             @{ Pinning = $false }
         ) {
             $compliant.actions_permissions['sha_pinning_required'] = $Pinning
+            $policy['sha_pinning_required'] = $Pinning
 
             @(Get-ActionsPolicyStateViolation -State $compliant -Policy $policy -Organization $organization) | Should -BeNullOrEmpty
         }
@@ -206,6 +263,12 @@ Describe 'Actions policy' {
             @{ Case = 'upper-case allowed_actions'; Section = 'actions_permissions'; Field = 'allowed_actions'; Value = 'LOCAL_ONLY'; Message = '*allowed actions policy*not local_only*' }
             @{ Case = 'boolean allowed_actions'; Section = 'actions_permissions'; Field = 'allowed_actions'; Value = $true; Message = '*allowed actions policy*not local_only*' }
             @{ Case = 'missing allowed_actions'; Section = 'actions_permissions'; Field = 'allowed_actions'; Remove = $true; Message = '*allowed actions policy*not local_only*' }
+            @{ Case = 'disabled SHA pinning'; Section = 'actions_permissions'; Field = 'sha_pinning_required'; Value = $false; Message = '*Required SHA pinning*not true*' }
+            @{ Case = 'string SHA pinning'; Section = 'actions_permissions'; Field = 'sha_pinning_required'; Value = 'true'; Message = '*Required SHA pinning*not true*' }
+            @{ Case = 'null SHA pinning'; Section = 'actions_permissions'; Field = 'sha_pinning_required'; Value = $null; Message = '*Required SHA pinning*not true*' }
+            @{ Case = 'missing SHA pinning'; Section = 'actions_permissions'; Field = 'sha_pinning_required'; Remove = $true; Message = '*Required SHA pinning*not true*' }
+            @{ Case = 'empty SHA pinning'; Section = 'actions_permissions'; Field = 'sha_pinning_required'; Value = ''; Message = '*Required SHA pinning*not true*' }
+            @{ Case = 'numeric SHA pinning'; Section = 'actions_permissions'; Field = 'sha_pinning_required'; Value = 1; Message = '*Required SHA pinning*not true*' }
             @{ Case = 'write token'; Section = 'workflow_permissions'; Field = 'default_workflow_permissions'; Value = 'write'; Message = '*GITHUB_TOKEN permissions*not read*' }
             @{ Case = 'upper-case token permission'; Section = 'workflow_permissions'; Field = 'default_workflow_permissions'; Value = 'READ'; Message = '*GITHUB_TOKEN permissions*not read*' }
             @{ Case = 'boolean token permission'; Section = 'workflow_permissions'; Field = 'default_workflow_permissions'; Value = $true; Message = '*GITHUB_TOKEN permissions*not read*' }
@@ -223,17 +286,16 @@ Describe 'Actions policy' {
             $violations[0] | Should -BeLike $Message
         }
 
-        It 'reports both conditions of a missing <Section>' -ForEach @(
-            @{ Section = 'actions_permissions'; Messages = @('*not enabled for all repositories*', '*allowed actions policy*') }
+        It 'reports every condition of a missing <Section>' -ForEach @(
+            @{ Section = 'actions_permissions'; Messages = @('*not enabled for all repositories*', '*allowed actions policy*', '*Required SHA pinning*') }
             @{ Section = 'workflow_permissions'; Messages = @('*GITHUB_TOKEN permissions*', '*create and approve pull requests*') }
         ) {
             $compliant.Remove($Section)
 
             $violations = @(Get-ActionsPolicyStateViolation -State $compliant -Policy $policy -Organization $organization)
 
-            $violations.Count | Should -Be 2
-            $violations[0] | Should -BeLike $Messages[0]
-            $violations[1] | Should -BeLike $Messages[1]
+            $violations.Count | Should -Be $Messages.Count
+            for ($i = 0; $i -lt $Messages.Count; $i++) { $violations[$i] | Should -BeLike $Messages[$i] }
         }
     }
 
@@ -256,7 +318,7 @@ Describe 'Actions policy' {
             $result = Get-ActionsPolicyStateResult @target -Policy $query | ConvertFrom-Json -AsHashtable
 
             $violations = ConvertFrom-Json -InputObject $result['violations'] -NoEnumerate
-            $violations.Count | Should -Be 3
+            $violations.Count | Should -Be 4
             $violations | ForEach-Object { $_ | Should -BeOfType [string] }
             Get-StubWrite | Should -BeNullOrEmpty
         }

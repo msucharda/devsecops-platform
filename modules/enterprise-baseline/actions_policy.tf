@@ -6,6 +6,7 @@ locals {
   actions_policy = {
     enabled_repositories             = "all"
     allowed_actions                  = "local_only"
+    sha_pinning_required             = true
     default_workflow_permissions     = "read"
     can_approve_pull_request_reviews = false
   }
@@ -14,6 +15,7 @@ locals {
   actions_policy_github_defaults = {
     enabled_repositories             = "all"
     allowed_actions                  = "all"
+    sha_pinning_required             = false
     default_workflow_permissions     = "read"
     can_approve_pull_request_reviews = false
   }
