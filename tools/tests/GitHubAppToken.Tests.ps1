@@ -278,10 +278,15 @@ Describe 'Enterprise App key and installation token isolation' {
         if ($MissingOrganization) {
             $installationPermissions[$MissingOrganization] = @{} + $actualPermissions
             $installationPermissions[$MissingOrganization].Remove('administration')
-            {
+            $failure = {
                 & $issuer -Module enterprise-baseline -Phase plan -InstancePath $path -ModulesPath $modulesPath `
                     -ApiUrl https://api.example.test -EnvironmentPath $environmentPath 6>$null
-            } | Should -Throw "*installation '$MissingOrganization'*administration*read*approve*"
+            } | Should -Throw -PassThru
+            $failure.Exception.Message | Should -MatchExactly ([regex]::Escape(
+                "phase contract (installation '$MissingOrganization'). Expected " +
+                '{"administration":"read","metadata":"read","organization_administration":"read"}; received ' +
+                '{"metadata":"read","organization_administration":"read"}.'))
+            $failure.Exception.Message | Should -MatchExactly 'Permissions & events and approve requested permissions'
 
             Test-Path -LiteralPath $environmentPath | Should -BeFalse
             $issuedBeforeFailure = if ($MissingOrganization -ceq 'workloads') { 1 } else { 0 }

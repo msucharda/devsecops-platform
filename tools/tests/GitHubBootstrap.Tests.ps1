@@ -2817,8 +2817,13 @@ Describe 'GitHub bootstrap public interface' {
             if ($MissingAt -ceq 'App') { $cloud.apps['102'].permissions = $missingPermission }
             else { $cloud.apps['102'].installationPermissions = $missingPermission }
 
-            { & $bootstrap @arguments } |
-                Should -Throw '*permissions differ*administration*read*Permissions & events*approve*'
+            $failure = { & $bootstrap @arguments } | Should -Throw -PassThru
+            $context = if ($MissingAt -ceq 'App') { 'App' } else { "installation 'demo-a1b2c3-platform'" }
+            $failure.Exception.Message | Should -MatchExactly ([regex]::Escape(
+                "phase contract ($context). Expected " +
+                '{"administration":"read","metadata":"read","organization_administration":"read"}; received ' +
+                '{"metadata":"read","organization_administration":"read"}.'))
+            $failure.Exception.Message | Should -MatchExactly 'Permissions & events and approve requested permissions'
 
             $expectedReaderIssues = if ($Mode -ceq 'Bootstrap') { 0 } else { 1 }
             Should -Invoke Invoke-RestMethod -Times $expectedReaderIssues -Exactly -ParameterFilter {
