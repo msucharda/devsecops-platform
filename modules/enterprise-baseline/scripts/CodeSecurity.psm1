@@ -450,8 +450,11 @@ function Set-CustomPattern {
     # pattern_config_version guards the organization-wide configuration; Terraform writes patterns in parallel, so a 409 means re-read and retry.
     for ($attempt = 1; ; $attempt++) {
         $found = Get-CustomPatternOverride -ApiUrl $ApiUrl -Organization $Organization -Pattern $current
-        if (-not $found.Override -or -not $found.Override['token_type'] -or -not $found.Version) {
-            throw "Custom pattern '$name' in '$Organization' has no push protection setting; it is in state '$($current['state'])'. Publish the pattern and rerun the apply."
+        if (-not $found.Override -or -not $found.Override['token_type']) {
+            if ($current['state'] -ceq 'unpublished') {
+                throw "Custom pattern '$name' in '$Organization' is in state 'unpublished'. Publish the pattern and rerun the apply."
+            }
+            throw "Custom pattern '$name' in '$Organization' is in state '$($current['state'])' but has no push protection override with token_type. Check the pattern configuration and rerun the apply."
         }
         $setting = [ordered]@{ token_type = $found.Override['token_type'] }
         if ($found.Override['custom_pattern_version']) { $setting['custom_pattern_version'] = $found.Override['custom_pattern_version'] }
@@ -484,11 +487,16 @@ function Get-CustomPatternOverride {
 
     $configuration = Invoke-CodeSecurityApi -ApiUrl $ApiUrl -Method GET -Path "/orgs/$Organization/secret-scanning/pattern-configurations"
     if ($configuration -isnot [System.Collections.IDictionary]) { throw "Organization '$Organization' returned no pattern configuration." }
+    $version = $configuration['pattern_config_version']
+    if (-not $configuration.Contains('pattern_config_version') -or
+        ($null -ne $version -and ($version -isnot [string] -or -not $version))) {
+        throw "Organization '$Organization' returned an invalid pattern_config_version; expected a nonempty string or null."
+    }
     $slug = [string] $Pattern['slug']
     $overrides = @($configuration['custom_pattern_overrides'] | Where-Object { $null -ne $_ -and $slug -and [string] $_['slug'] -ceq $slug })
     if ($overrides.Count -gt 1) { throw "Organization '$Organization' returned $($overrides.Count) pattern settings for slug '$slug'." }
     return [pscustomobject]@{
-        Version  = [string] $configuration['pattern_config_version']
+        Version  = $version
         Override = if ($overrides.Count -eq 1) { $overrides[0] } else { $null }
     }
 }
