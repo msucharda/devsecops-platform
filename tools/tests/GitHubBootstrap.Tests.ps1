@@ -716,9 +716,12 @@ Describe 'GitHub bootstrap public interface' {
                 $appOrganization = if ($cloud.apps.ContainsKey($appId) -and $cloud.apps[$appId]['organization']) {
                     $cloud.apps[$appId]['organization']
                 } else { 'demo-a1b2c3-platform' }
+                $installationPermissions = if ($cloud.apps.ContainsKey($appId) -and $cloud.apps[$appId].ContainsKey('installationPermissions')) {
+                    $cloud.apps[$appId].installationPermissions
+                } else { $permissions }
                 return Get-GitHubApiFixture -Name apps/list-installations -Set @{
                     '0.id' = $installationId; '0.account.login' = $appOrganization; '0.account.type' = 'Organization'
-                    '0.target_type' = 'Organization'; '0.suspended_at' = $null; '0.permissions' = $permissions; '0.repository_selection' = $selection
+                    '0.target_type' = 'Organization'; '0.suspended_at' = $null; '0.permissions' = $installationPermissions; '0.repository_selection' = $selection
                 }
             }
             if ($Uri -like '*/access_tokens') {
@@ -2720,12 +2723,27 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Count | Should -Be 0
     }
 
-    It 'isolates all three <GovernanceModule> App identities including both nightly plans and requires security review only for apply (<Immutable>)' -TestCases @(
-        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false }
-        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $true }
-        @{ GovernanceModule = 'organization-rulesets'; Immutable = $false }
+    It 'isolates all three <GovernanceModule> App identities and validates reader permissions (<Immutable>, <Mode>, <MissingAt>)' -Tag 'CodeSecurityReader' -TestCases @(
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false; Mode = 'Bootstrap'; MissingAt = '' }
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $true; Mode = 'Bootstrap'; MissingAt = '' }
+        @{ GovernanceModule = 'organization-rulesets'; Immutable = $false; Mode = 'Bootstrap'; MissingAt = '' }
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false; Mode = 'Bootstrap'; MissingAt = 'App' }
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false; Mode = 'Bootstrap'; MissingAt = 'Installation' }
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false; Mode = 'NoChanges'; MissingAt = 'App' }
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false; Mode = 'NoChanges'; MissingAt = 'Installation' }
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false; Mode = 'UpgradeInventory'; MissingAt = 'App' }
+        @{ GovernanceModule = 'enterprise-baseline'; Immutable = $false; Mode = 'UpgradeInventory'; MissingAt = 'Installation' }
     ) {
-        param($GovernanceModule, $Immutable)
+        param($GovernanceModule, $Immutable, $Mode, $MissingAt)
+        if ($GovernanceModule -ceq 'enterprise-baseline') {
+            $manifestPath = Join-Path $release 'modules/enterprise-baseline/module.yaml'
+            $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+            $production = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path (Split-Path $tools -Parent) 'modules/enterprise-baseline/module.yaml') -Raw)
+            $manifest.permissions.githubApp.plan = $production.permissions.githubApp.plan
+            ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+            & (Join-Path $releaseTools.FullName 'Generate-DeploymentWorkflow.ps1') -ModulesPath (Join-Path $release 'modules') `
+                -OutputPath (Join-Path $release 'templates/instance/.github/workflows/deploy.yml')
+        }
         if ($GovernanceModule -cne 'enterprise-baseline') {
             # Reuse the isolated governance fixture under the module name that bootstrap must protect.
             $modulesRoot = Join-Path $release 'modules'
@@ -2747,6 +2765,9 @@ Describe 'GitHub bootstrap public interface' {
         $index = 102
         foreach ($alias in @('reader', 'writer', 'rulesets')) {
             $permissions = @{ organization_administration = $(if ($alias -eq 'reader') { 'read' } else { 'write' }) }
+            if ($GovernanceModule -ceq 'enterprise-baseline' -and $alias -ceq 'reader') {
+                $permissions = @{ organization_administration = 'read'; administration = 'read'; metadata = 'read' }
+            }
             $app = @{ appId = [string] $index; installationId = [string] ($index + 100); enterprise = 'example'
                 permissions = $permissions; resources = @{ organizations = @('demo-a1b2c3-platform') } }
             $instance.githubApps[$alias] = $app
@@ -2773,6 +2794,49 @@ Describe 'GitHub bootstrap public interface' {
         ConvertTo-Json -InputObject $keyManifest -Depth 20 | Set-Content -LiteralPath $keysPath
         $arguments.ResourcesOnly = $false
 
+        if ($Mode -cne 'Bootstrap') {
+            $null = & $bootstrap @arguments
+            $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+            $record.releaseVersion = '0.1.0-rc.12'
+            $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
+            $arguments.ReleaseVersion = '0.1.0-rc.13'
+            $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
+            $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
+            $marker.releaseVersion = $arguments.ReleaseVersion
+            $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
+            $arguments[$Mode] = $true
+            $before = (Get-FileHash -LiteralPath $inventory).Hash
+            $cloud.writes.Clear()
+        }
+        foreach ($alias in @('writer', 'rulesets')) {
+            $instance.githubApps[$alias].permissions.ContainsKey('administration') | Should -BeFalse
+        }
+        if ($MissingAt) {
+            $missingPermission = @{} + $cloud.apps['102'].permissions
+            $missingPermission.Remove('administration')
+            if ($MissingAt -ceq 'App') { $cloud.apps['102'].permissions = $missingPermission }
+            else { $cloud.apps['102'].installationPermissions = $missingPermission }
+
+            $failure = { & $bootstrap @arguments } | Should -Throw -PassThru
+            $context = if ($MissingAt -ceq 'App') { 'App' } else { "installation 'demo-a1b2c3-platform'" }
+            $failure.Exception.Message | Should -MatchExactly ([regex]::Escape(
+                "phase contract ($context). Expected " +
+                '{"administration":"read","metadata":"read","organization_administration":"read"}; received ' +
+                '{"metadata":"read","organization_administration":"read"}.'))
+            $failure.Exception.Message | Should -MatchExactly 'Permissions & events and approve requested permissions'
+
+            $expectedReaderIssues = if ($Mode -ceq 'Bootstrap') { 0 } else { 1 }
+            Should -Invoke Invoke-RestMethod -Times $expectedReaderIssues -Exactly -ParameterFilter {
+                $Method -ceq 'POST' -and $Uri -like '*/app/installations/202/access_tokens'
+            }
+            if ($Mode -ceq 'Bootstrap') { $cloud.secrets.Count | Should -Be 0 }
+            else {
+                if ($Mode -ceq 'NoChanges') { (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before }
+                else { (Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable).releaseVersion | Should -BeExactly '0.1.0-rc.12' }
+                $cloud.writes.Count | Should -Be 0
+            }
+            return
+        }
         $result = & $bootstrap @arguments
 
         $result.CredentialsConfigured | Should -BeTrue

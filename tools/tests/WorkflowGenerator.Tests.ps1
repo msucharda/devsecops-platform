@@ -199,12 +199,18 @@ Describe 'Deployment workflow generation' {
         $manifest.permissions.githubApp.apply.permissions.organization_administration | Should -Be 'write'
         $manifest.permissions.githubApp.ContainsKey('rulesetPlan') | Should -BeFalse
         foreach ($phase in @('plan', 'apply')) {
+            $expectedPermissions = if ($phase -ceq 'plan') {
+                @('administration', 'metadata', 'organization_administration')
+            } else {
+                @('metadata', 'organization_administration')
+            }
             @($manifest.permissions.githubApp[$phase].permissions.Keys | Sort-Object) |
-                Should -Be @('metadata', 'organization_administration')
+                Should -Be $expectedPermissions
             $manifest.permissions.githubApp[$phase].permissions.metadata | Should -BeExactly 'read'
             $manifest.permissions.githubApp[$phase].resources.installationSelection | Should -BeExactly 'all'
             $manifest.permissions.githubApp[$phase].resources.organizations | Should -Be 'target_organizations'
         }
+        $manifest.permissions.githubApp.plan.permissions.administration | Should -BeExactly 'read'
         @($manifest.permissions.adminPat) | Should -BeNullOrEmpty
         @($manifest.permissions.azure) | Should -BeNullOrEmpty
         @($manifest.permissions.microsoftGraph) | Should -BeNullOrEmpty
@@ -228,6 +234,7 @@ Describe 'Deployment workflow generation' {
         $manifest.permissions.githubApp.apply.permissions.organization_administration | Should -Be 'write'
         $manifest.permissions.githubApp.rulesetPlan.purpose | Should -Be 'organization-rulesets-full-read'
         foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
+            $manifest.permissions.githubApp[$phase].permissions.ContainsKey('administration') | Should -BeFalse
             $manifest.permissions.githubApp[$phase].resources.organizations | Should -Be 'target_organizations'
         }
         @($manifest.manualSteps) | Should -BeNullOrEmpty
