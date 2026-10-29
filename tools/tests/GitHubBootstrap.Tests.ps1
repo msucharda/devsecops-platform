@@ -1,4 +1,36 @@
 BeforeDiscovery {
+    $upgradeVersionCases = @(
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.6'; To = '0.1.0-rc.8' }
+        @{ From = '0.1.0-rc.9'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.12'; To = '0.1.0' }
+        @{ From = '0.1.0-rc.2147483648'; To = '0.1.0-rc.2147483649' }
+    )
+    $unsupportedUpgradeVersionCases = @(
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.5' }
+        @{ From = '0.1.0-rc.4'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.9' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-RC.5'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-RC.10' }
+        @{ From = '0.1.0'; To = '0.1.0' }
+        @{ From = '0.1.0'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.4' }
+        @{ From = '0.1.1-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.1-rc.12' }
+        @{ From = '0.2.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.2.0-rc.12' }
+        @{ From = '0.1.0-beta.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-beta.12' }
+        @{ From = '0.1.0-rc.05'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.012' }
+        @{ From = '0.1.0-rc.0'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.0' }
+        @{ From = "0.1.0-rc.5`n"; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = "0.1.0-rc.12`n" }
+        @{ From = '0.1.0-rc.2147483649'; To = '0.1.0-rc.2147483648' }
+    )
     $upgradeProtectionCases = @(
         @{ ProtectionCase = 'disabled' }
         @{ ProtectionCase = 'missing' }
@@ -1003,14 +1035,7 @@ Describe 'GitHub bootstrap public interface' {
         finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
     }
 
-    It 'upgrades initialized historical inventory only after protected main proves the current release' -Tag 'HistoricalInventory', 'BootstrapUpgrade' -ForEach @(
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.6'; To = '0.1.0-rc.8' }
-        @{ From = '0.1.0-rc.9'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.12'; To = '0.1.0' }
-        @{ From = '0.1.0-rc.2147483648'; To = '0.1.0-rc.2147483649' }
-    ) {
+    It 'upgrades initialized historical inventory only after protected main proves the current release' -Tag 'HistoricalInventory', 'BootstrapUpgrade', 'ReleaseVersionUpgrade' -ForEach $upgradeVersionCases {
         $originalCulture = [Globalization.CultureInfo]::CurrentCulture
         $arguments.ResourcesOnly = $false
         try {
@@ -1076,30 +1101,7 @@ Describe 'GitHub bootstrap public interface' {
         finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
     }
 
-    It 'rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request' -Tag 'BootstrapUpgrade' -ForEach @(
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.5' }
-        @{ From = '0.1.0-rc.4'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.9' }
-        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-RC.5'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-RC.10' }
-        @{ From = '0.1.0'; To = '0.1.0' }
-        @{ From = '0.1.0'; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.4' }
-        @{ From = '0.1.1-rc.5'; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.1-rc.12' }
-        @{ From = '0.2.0-rc.5'; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.5'; To = '0.2.0-rc.12' }
-        @{ From = '0.1.0-beta.5'; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-beta.12' }
-        @{ From = '0.1.0-rc.05'; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.012' }
-        @{ From = '0.1.0-rc.0'; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.0' }
-        @{ From = "0.1.0-rc.5`n"; To = '0.1.0-rc.12' }
-        @{ From = '0.1.0-rc.5'; To = "0.1.0-rc.12`n" }
-        @{ From = '0.1.0-rc.2147483649'; To = '0.1.0-rc.2147483648' }
-    ) {
+    It 'rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request' -Tag 'BootstrapUpgrade', 'ReleaseVersionUpgrade' -ForEach $unsupportedUpgradeVersionCases {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
         $null = & $bootstrap @arguments
@@ -3246,6 +3248,7 @@ Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
         $ast = [Management.Automation.Language.Parser]::ParseFile(
             (Join-Path $tools 'Invoke-GitHubBootstrap.ps1'), [ref] $null, [ref] $null)
         foreach ($name in @(
+            'Assert-GitHubBootstrapInventoryUpgradePair',
             'Assert-GitHubBootstrapUpgradeInventoryState', 'Assert-GitHubBootstrapUpgradeMainProtection',
             'Get-GitHubBootstrapMainRuleset', 'Test-GitHubBootstrapValue'
         )) {
@@ -3290,6 +3293,29 @@ Describe 'GitHub bootstrap isolated upgrade guards' -Tag 'UpgradeGuardUnit' {
 
     It 'accepts the documented main protection fixture' {
         { Assert-GitHubBootstrapUpgradeMainProtection } | Should -Not -Throw
+    }
+
+    It 'accepts isolated release transition <From> to <To>' -ForEach $upgradeVersionCases {
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            foreach ($culture in @('en-US', 'cs-CZ')) {
+                [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($culture)
+                { Assert-GitHubBootstrapInventoryUpgradePair -From $From -To $To } | Should -Not -Throw
+            }
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
+    }
+
+    It 'rejects isolated release transition <From> to <To>' -ForEach $unsupportedUpgradeVersionCases {
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            foreach ($culture in @('en-US', 'cs-CZ')) {
+                [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($culture)
+                { Assert-GitHubBootstrapInventoryUpgradePair -From $From -To $To } |
+                    Should -Throw '*Unsupported bootstrap inventory upgrade*'
+            }
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
     }
 
     It 'rejects isolated protection <ProtectionCase>' -ForEach $upgradeProtectionCases {

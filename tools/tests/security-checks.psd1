@@ -469,7 +469,7 @@
         @{
             Name = 'bootstrap-inventory-upgrade-pair'
             Tests = @(
-                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*upgrades initialized historical inventory only after protected main proves the current release', '*rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request', '*rejects ignorable inventory version character <CodePoint> before any GitHub request under <Culture>') }
+                @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*isolated upgrade guards*isolated release transition*') }
             )
         }
         @{
