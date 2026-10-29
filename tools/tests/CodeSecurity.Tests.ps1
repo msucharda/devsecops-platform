@@ -307,10 +307,25 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             $create['patterns'][0]['name'] | Should -Be 'Platform token'
             $create['patterns'][0]['start_delimiter'] | Should -Be '\A|[^0-9A-Za-z]'
             $setting = (Get-StubWrite PATCH '/pattern-configurations$')[0].Body
+            $setting['pattern_config_version'] | Should -BeExactly 'p1'
             $documented = (Get-GitHubApiFixtureContract -Name secret-scanning/update-org-pattern-configs).requestProperties
             foreach ($key in $setting.Keys) { $documented | Should -Contain $key }
             $setting['custom_pattern_settings'][0]['token_type'] | Should -Be "cp_$($stub.Patterns[0]['id'])"
             $setting['custom_pattern_settings'][0]['push_protection_setting'] | Should -Be 'enabled'
+        }
+
+        It 'enables push protection on the first write with a null pattern configuration version' {
+            $stub.PatternConfigVersion = $null
+
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+
+            $writes = @(Get-StubWrite PATCH '/pattern-configurations$')
+            $writes.Count | Should -Be 1
+            $writes[0].Body.Contains('pattern_config_version') | Should -BeTrue
+            ($null -eq $writes[0].Body['pattern_config_version']) | Should -BeTrue
+            $stub.Patterns[0]['push_protection_enabled'] | Should -BeTrue
+            $configuration = Invoke-CodeSecurityApi -ApiUrl $apiUrl -Method GET -Path '/orgs/demo/secret-scanning/pattern-configurations'
+            $configuration['pattern_config_version'] | Should -BeExactly 'p1'
         }
 
         It 'writes nothing when the pattern matches and push protection is enabled' {
@@ -391,7 +406,11 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             @($stub.Bodies | Where-Object { $_.Method -cne 'GET' }) | Should -BeNullOrEmpty
         }
 
-        It 'retries push protection after a concurrent change of the pattern configuration' {
+        It 'retries push protection after a concurrent change from version <InitialVersion>' -ForEach @(
+            @{ InitialVersion = 1 }
+            @{ InitialVersion = $null }
+        ) {
+            $stub.PatternConfigVersion = $InitialVersion
             $stub.ConcurrentPatternWrites = 2
 
             Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
@@ -422,7 +441,56 @@ Describe 'CodeSecurity module against the documented GitHub API' {
         It 'fails when the pattern configuration has no setting for the pattern' {
             $stub.PatternConfigOverride = $false
 
-            { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } | Should -Throw '*no push protection setting*'
+            $failure = { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } |
+                Should -Throw "*state 'published'*no push protection override with token_type*" -PassThru
+            $failure.Exception.Message | Should -Not -Match 'Publish the pattern'
+            Get-StubWrite PATCH '/pattern-configurations$' | Should -BeNullOrEmpty
+        }
+
+        It 'refuses a published override with <Case> token_type' -ForEach @(
+            @{ Case = 'null'; Value = $null }
+            @{ Case = 'empty'; Value = '' }
+            @{ Case = 'missing'; Value = $null }
+        ) {
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+            $stub.Patterns[0]['push_protection_enabled'] = $false
+            $stub.Bodies.Clear()
+            $response = Get-GitHubApiFixture -Name secret-scanning/list-org-pattern-configs -Set @{
+                'custom_pattern_overrides.0.slug' = $stub.Patterns[0]['slug']
+                'custom_pattern_overrides.0.token_type' = $Value
+            }
+            # Deliberately invalid: the override cannot identify the token type.
+            if ($Case -ceq 'missing') { $response['custom_pattern_overrides'][0].Remove('token_type') }
+            Mock -ModuleName CodeSecurity Invoke-WebRequest {
+                [pscustomobject]@{ StatusCode = 200; Content = ConvertTo-Json -InputObject $response -Depth 100; Headers = @{} }
+            } -ParameterFilter { $Method -ceq 'GET' -and ([Uri] $Uri).AbsolutePath -ceq '/orgs/demo/secret-scanning/pattern-configurations' }
+
+            { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } |
+                Should -Throw "*state 'published'*no push protection override with token_type*"
+            Get-StubWrite PATCH '/pattern-configurations$' | Should -BeNullOrEmpty
+        }
+
+        It 'refuses a configuration with <Case> pattern_config_version' -ForEach @(
+            @{ Case = 'empty'; Value = '' }
+            @{ Case = 'missing'; Value = $null }
+            @{ Case = 'numeric'; Value = 7 }
+        ) {
+            Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
+            $stub.Patterns[0]['push_protection_enabled'] = $false
+            $stub.Bodies.Clear()
+            $response = Get-GitHubApiFixture -Name secret-scanning/list-org-pattern-configs -Set @{
+                'custom_pattern_overrides.0.slug' = $stub.Patterns[0]['slug']
+                pattern_config_version = $Value
+            }
+            # Deliberately invalid: only an explicit null or a nonempty string is usable as a version.
+            if ($Case -ceq 'missing') { $response.Remove('pattern_config_version') }
+            Mock -ModuleName CodeSecurity Invoke-WebRequest {
+                [pscustomobject]@{ StatusCode = 200; Content = ConvertTo-Json -InputObject $response -Depth 100; Headers = @{} }
+            } -ParameterFilter { $Method -ceq 'GET' -and ([Uri] $Uri).AbsolutePath -ceq '/orgs/demo/secret-scanning/pattern-configurations' }
+
+            { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } |
+                Should -Throw '*invalid pattern_config_version*'
+            Get-StubWrite PATCH '/pattern-configurations$' | Should -BeNullOrEmpty
         }
 
         It 'refuses two patterns with the managed name' {

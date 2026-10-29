@@ -84,6 +84,13 @@ Describe 'CodeSecurity lifecycle interruption harness' -Tag 'Interruption' {
             )
         }
         @{
+            Case = 'custom pattern creation and first push protection'
+            Expected = @(
+                'POST /orgs/demo/secret-scanning/custom-patterns'
+                'PATCH /orgs/demo/secret-scanning/pattern-configurations'
+            )
+        }
+        @{
             Case = 'custom pattern content update'
             Expected = @('PATCH /orgs/demo/secret-scanning/custom-patterns/{id}')
         }
@@ -95,6 +102,9 @@ Describe 'CodeSecurity lifecycle interruption harness' -Tag 'Interruption' {
         $context.Case = $Case
         $reset = {
             $context.Stub = Initialize-CodeSecurityStub -Organization demo -Origin $apiUrl -Token $token
+            if ($context.Case -ceq 'custom pattern creation and first push protection') {
+                $context.Stub.PatternConfigVersion = $null
+            }
             if ($context.Case -like 'configuration update*' -or $context.Case -like 'configuration default removal*') {
                 $existing = Get-GitHubApiFixture -Name code-security/get-configuration -Set @{
                     id = 42; name = 'platform-baseline'; secret_scanning = 'disabled'
@@ -131,7 +141,7 @@ Describe 'CodeSecurity lifecycle interruption harness' -Tag 'Interruption' {
                     $null = Remove-CodeSecurityConfiguration -ApiUrl $apiUrl -Organization demo -Name platform-baseline
                     break
                 }
-                'custom pattern creation and push protection' {
+                { $_ -like 'custom pattern creation and *' } {
                     $null = Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
                     break
                 }

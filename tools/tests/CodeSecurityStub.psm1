@@ -331,7 +331,7 @@ function Invoke-StubRoute {
     }
     if ($route -cmatch "^GET /orgs/$org/secret-scanning/pattern-configurations$") {
         $reply = Get-GitHubApiFixture -Name secret-scanning/list-org-pattern-configs
-        $reply['pattern_config_version'] = "p$($State.PatternConfigVersion)"
+        $reply['pattern_config_version'] = if ($null -eq $State.PatternConfigVersion) { $null } else { "p$($State.PatternConfigVersion)" }
         $template = $reply['custom_pattern_overrides'][0]
         $reply['custom_pattern_overrides'] = @(foreach ($pattern in $State.Patterns) {
             if ($pattern['state'] -cne 'published' -or -not $State.PatternConfigOverride) { continue }
@@ -351,7 +351,8 @@ function Invoke-StubRoute {
             $State.ConcurrentPatternWrites--
             $State.PatternConfigVersion++
         }
-        if ($Request['pattern_config_version'] -cne "p$($State.PatternConfigVersion)") { return ConvertTo-StubReply -Status 409 -Body @{ message = 'Conflict' } }
+        $expectedVersion = if ($null -eq $State.PatternConfigVersion) { $null } else { "p$($State.PatternConfigVersion)" }
+        if (-not $Request.Contains('pattern_config_version') -or $Request['pattern_config_version'] -cne $expectedVersion) { return ConvertTo-StubReply -Status 409 -Body @{ message = 'Conflict' } }
         foreach ($setting in @($Request['custom_pattern_settings'])) {
             $pattern = $State.Patterns | Where-Object { "cp_$($_['id'])" -ceq $setting['token_type'] } | Select-Object -First 1
             if (-not $pattern -or $setting['custom_pattern_version'] -cne (Get-StubPatternVersion -Pattern $pattern)) {
