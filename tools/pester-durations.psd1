@@ -7,8 +7,8 @@
     # Source CI run 40801249278, attempt 2: 348.0369 seconds, rounded up.
     'EnterpriseBaseline.Tests.ps1' = 349
     'EnterpriseBaselinePatchContract.Tests.ps1' = 5
-    # Source CI run 40771671425: 543.7233 seconds, rounded up.
-    'GitHubBootstrap.Tests.ps1' = 656
+    # Source CI run 40921301537: 712.3353 seconds, rounded up.
+    'GitHubBootstrap.Tests.ps1' = 713
     'RulesetsTerraform.Tests.ps1' = 178
     'OrganizationRolePrograms.Tests.ps1' = 105
     'RemoveBootstrap.Tests.ps1' = 45
@@ -35,7 +35,8 @@
     'TeardownEnterpriseOwner.Tests.ps1' = 6
     'InstanceSetup.Tests.ps1' = 6
     # Token suites measured in Source CI run 40819725706, rounded up.
-    'GitHubAppToken.Tests.ps1' = 10
+    # GitHubAppToken measured in Source CI run 40921301537: 7.6856 seconds, rounded up.
+    'GitHubAppToken.Tests.ps1' = 8
     'GitHubTokenIssuance.Tests.ps1' = 7
     'EnterpriseInstallationToken.Tests.ps1' = 5
     'OrganizationToken.Tests.ps1' = 2
