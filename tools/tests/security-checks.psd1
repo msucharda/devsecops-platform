@@ -260,6 +260,18 @@
             )
         }
         @{
+            Name = 'vendoring-upstream-commit'
+            Tests = @(
+                @{ Path = 'tools/tests/Vendoring.Tests.ps1'; FullName = @('*upstream commit*') }
+            )
+        }
+        @{
+            Name = 'vendoring-release-commit'
+            Tests = @(
+                @{ Path = 'tools/tests/Vendoring.Tests.ps1'; FullName = @('*release pin*', '*upstream commit*') }
+            )
+        }
+        @{
             Name = 'vendoring-release-tag'
             Tests = @(
                 @{ Path = 'tools/tests/Vendoring.Tests.ps1'; FullName = @('*checks the annotated release pin tag against the catalog: <Case>') }

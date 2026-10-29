@@ -7,6 +7,7 @@ BeforeAll {
     $token = 'test-installation-token'
     $organization = 'demo-a1b2c3-actions'
     $upstream = 'actions/checkout'
+    $upstreamCommit = '11bd71901bbe5b1630ceea73d27597364c9af683'
     $repositoryName = 'actions-checkout'
     $securityTeam = 'actions-security'
     $codeOwners = "* @$organization/$securityTeam`n"
@@ -86,9 +87,10 @@ BeforeAll {
     }
 
     function Get-StubReceipt {
-        param([AllowNull()] $Version = 1, [AllowNull()] $Kind = 'action', [AllowNull()] $Source = $upstream, [AllowNull()] $Tag = 'v4.2.2')
+        param([AllowNull()] $Version = 1, [AllowNull()] $Kind = 'action', [AllowNull()] $Source = $upstream, [AllowNull()] $Tag = 'v4.2.2',
+            [AllowNull()] $Commit = $upstreamCommit)
         ConvertTo-Json -Compress -InputObject ([ordered]@{
-                version = $Version; kind = $Kind; source = $Source; tag = $Tag; commit = '11bd71901bbe5b1630ceea73d27597364c9af683'
+                version = $Version; kind = $Kind; source = $Source; tag = $Tag; commit = $Commit
                 sha256 = ('a' * 64); asset = 'vendored-action.tar.gz'; attestation = 'https://example.ghe.com/attestations/1'; files = 3
             })
     }
@@ -783,7 +785,7 @@ Describe 'Actions catalog module against the documented GitHub API' {
         BeforeEach {
             $repository = Add-StubCompliantRepository
             $release = Add-StubCommit -Files @{ '.vendoring.json' = (Get-StubReceipt); 'action.yml' = 'name: checkout' }
-            $tagTarget = $target + @{ Tag = 'v4.2.2'; Commit = $release }
+            $tagTarget = $target + @{ Tag = 'v4.2.2'; Commit = $release; UpstreamCommit = $upstreamCommit }
         }
 
         It 'tags the approved import at <Case>' -ForEach @(
@@ -809,6 +811,14 @@ Describe 'Actions catalog module against the documented GitHub API' {
             (Get-StubWrite).Count | Should -Be 0
         }
 
+        It 'refuses a receipt whose upstream commit differs from the catalog even for an existing tag' {
+            $repository.tags['v4.2.2'] = $release
+            $tagTarget.UpstreamCommit = 'a' * 40
+            { New-CatalogReleaseTag @tagTarget } |
+                Should -Throw '*records upstream commit*'
+            (Get-StubWrite).Count | Should -Be 0
+        }
+
         It 'publishes a newer approved import without moving or deleting the older tag after a lost response' {
             New-CatalogReleaseTag @tagTarget
             $nextRelease = Add-StubCommit -Files @{
@@ -820,16 +830,16 @@ Describe 'Actions catalog module against the documented GitHub API' {
                 $repository.tags[$Request.ref.Substring(10)] = $Request.sha
                 throw 'Injected lost second tag response.'
             }.GetNewClosure()
-            { New-CatalogReleaseTag @target -Tag v5.0.0 -Commit $nextRelease } |
+            { New-CatalogReleaseTag @target -Tag v5.0.0 -Commit $nextRelease -UpstreamCommit $upstreamCommit } |
                 Should -Throw '*POST /repos/demo-a1b2c3-actions/actions-checkout/git/refs status=none attempt=1*'
             $stub.Override.Remove('createRef')
 
-            New-CatalogReleaseTag @target -Tag v5.0.0 -Commit $nextRelease
+            New-CatalogReleaseTag @target -Tag v5.0.0 -Commit $nextRelease -UpstreamCommit $upstreamCommit
 
             $repository.tags['v4.2.2'] | Should -BeExactly $release
             $repository.tags['v5.0.0'] | Should -BeExactly $nextRelease
             $repository.tags.Count | Should -Be 2
-            $state = Get-CatalogRepositoryState @target -Tag v5.0.0 -Commit $nextRelease
+            $state = Get-CatalogRepositoryState @target -Tag v5.0.0 -Commit $nextRelease -UpstreamCommit $upstreamCommit
             @(Get-CatalogStateViolation -State $state -Organization $organization -SecurityTeam $securityTeam `
                 -Tag v5.0.0 -Commit $nextRelease).Count | Should -Be 0
             (Get-StubRequest createRef).Count | Should -Be 2
@@ -884,6 +894,14 @@ Describe 'Actions catalog module against the documented GitHub API' {
             @{ Case = 'has a receipt source array'; Receipt = @{ Source = 'array:actions/checkout' }; Error = '*records source*' }
             @{ Case = 'has an empty receipt tag array'; Receipt = @{ Tag = 'emptyArray' }; Error = '*records tag*' }
             @{ Case = 'has a receipt tag array'; Receipt = @{ Tag = 'array:v4.2.2' }; Error = '*records tag*' }
+            @{ Case = 'has another upstream commit'; Receipt = @{ Commit = ('a' * 40) }; Error = '*records upstream commit*' }
+            @{ Case = 'has an uppercase upstream commit'; Receipt = @{ Commit = '11BD71901BBE5B1630CEEA73D27597364C9AF683' }; Error = '*records upstream commit*' }
+            @{ Case = 'has an empty upstream commit'; Receipt = @{ Commit = '' }; Error = '*records upstream commit*' }
+            @{ Case = 'has a null upstream commit'; Receipt = @{ Commit = $null }; Error = '*records upstream commit*' }
+            @{ Case = 'has a numeric upstream commit'; Receipt = @{ Commit = 1 }; Error = '*records upstream commit*' }
+            @{ Case = 'has an array upstream commit'; Receipt = @{ Commit = 'array:11bd71901bbe5b1630ceea73d27597364c9af683' }; Error = '*records upstream commit*' }
+            @{ Case = 'has an empty array upstream commit'; Receipt = @{ Commit = 'emptyArray' }; Error = '*records upstream commit*' }
+            @{ Case = 'has no upstream commit'; Setup = 'missingCommit'; Error = '*records upstream commit*' }
             @{ Case = 'has an invalid receipt'; Setup = 'invalidJson'; Error = '*not a version 1 action receipt*' }
             @{ Case = 'has a receipt wrapped in an array'; Setup = 'arrayReceipt'; Error = '*not a version 1 action receipt*' }
         ) {
@@ -894,6 +912,11 @@ Describe 'Actions catalog module against the documented GitHub API' {
                 'diverged' { Add-StubCommit -Files @{ '.vendoring.json' = (Get-StubReceipt) } -Parent $repository.commits[$release].parent -Detached }
                 'noReceipt' { $repository.commits[$release].parent }
                 'invalidJson' { Add-StubCommit -Files @{ '.vendoring.json' = '{ not json' } }
+                'missingCommit' {
+                    $receipt = Get-StubReceipt | ConvertFrom-Json -AsHashtable
+                    $receipt.Remove('commit')
+                    Add-StubCommit -Files @{ '.vendoring.json' = ($receipt | ConvertTo-Json -Compress) }
+                }
                 # A singleton array around a valid receipt is a deliberately invalid shape.
                 'arrayReceipt' { Add-StubCommit -Files @{ '.vendoring.json' = "[$(Get-StubReceipt)]" } }
                 default {
@@ -966,10 +989,10 @@ Describe 'Actions catalog module against the documented GitHub API' {
         It 'reads a converged repository without violations' {
             Initialize-CatalogRepository @target
             $release = Add-StubCommit -Files @{ '.vendoring.json' = (Get-StubReceipt) }
-            New-CatalogReleaseTag @target -Tag 'v4.2.2' -Commit $release
+            New-CatalogReleaseTag @target -Tag 'v4.2.2' -Commit $release -UpstreamCommit $upstreamCommit
             $stub.Requests.Clear()
 
-            $state = Get-CatalogRepositoryState @target -Tag 'v4.2.2' -Commit $release
+            $state = Get-CatalogRepositoryState @target -Tag 'v4.2.2' -Commit $release -UpstreamCommit $upstreamCommit
             $violations = @(Get-CatalogStateViolation -State $state -Organization $organization -SecurityTeam $securityTeam -Tag 'v4.2.2' -Commit $release)
 
             $violations.Count | Should -Be 0
@@ -1104,9 +1127,10 @@ Describe 'Actions catalog Terraform programs' {
         @{ Action = 'InitializeRepository'; Key = 'security_team' }
         @{ Action = 'CreateReleaseTag'; Key = 'tag' }
         @{ Action = 'CreateReleaseTag'; Key = 'commit' }
+        @{ Action = 'CreateReleaseTag'; Key = 'upstream_commit' }
     ) {
         $value = $resourceInput.Clone()
-        $value.tag = 'v4.2.2'; $value.commit = ('a' * 40)
+        $value.tag = 'v4.2.2'; $value.commit = ('a' * 40); $value.upstream_commit = ('b' * 40)
         $value.Remove($Key)
         $env:CATALOG_INPUT = ConvertTo-Json $value -Compress
 
@@ -1134,9 +1158,10 @@ Describe 'Actions catalog Terraform programs' {
         @{ Key = 'security_team'; Error = "*no 'security_team'*" }
         @{ Key = 'tag'; Error = "*no string 'tag'*" }
         @{ Key = 'commit'; Error = "*no string 'commit'*" }
+        @{ Key = 'upstream_commit'; Error = "*no string 'upstream_commit'*" }
     ) {
         $query = $resourceInput.Clone()
-        $query.tag = ''; $query.commit = ''
+        $query.tag = ''; $query.commit = ''; $query.upstream_commit = ''
         $query.Remove($Key)
 
         $output = ConvertTo-Json $query -Compress | pwsh -NoProfile -NonInteractive -File $read 2>&1
@@ -1152,7 +1177,7 @@ Describe 'Actions catalog Terraform programs' {
 
     It 'fails the state reader on a tag without a commit' {
         $query = $resourceInput.Clone()
-        $query.tag = 'v4.2.2'; $query.commit = ''
+        $query.tag = 'v4.2.2'; $query.commit = ''; $query.upstream_commit = ''
 
         $output = ConvertTo-Json $query -Compress | pwsh -NoProfile -NonInteractive -File $read 2>&1
         $LASTEXITCODE | Should -Be 1

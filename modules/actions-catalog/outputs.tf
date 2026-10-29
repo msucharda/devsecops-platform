@@ -16,8 +16,8 @@ output "releases" {
 
   # Terraform checks these conditions during plan, before any resource changes.
   precondition {
-    condition     = local.vendoring != null && try(local.vendoring.version == 1, false) && can(keys(local.vendoring.actions))
-    error_message = "The vendoring catalog ${local.vendoring_path} must be readable JSON with version 1 and an actions mapping."
+    condition     = local.vendoring != null && try(local.vendoring.version == 2, false) && can(keys(local.vendoring.actions))
+    error_message = "The vendoring catalog ${local.vendoring_path} must be readable JSON with version 2 and an actions mapping; migrate upstreamCommit from approved receipts."
   }
 
   precondition {
@@ -44,5 +44,10 @@ output "releases" {
   precondition {
     condition     = alltrue([for release in values(local.releases) : can(regex("^[0-9a-f]{40}$", release.commit))])
     error_message = "Each action of the vendoring catalog must record a full lowercase commit SHA."
+  }
+
+  precondition {
+    condition     = alltrue([for release in values(local.releases) : can(regex("^[0-9a-f]{40}$", release.upstream_commit))])
+    error_message = "Each action of the vendoring catalog must record upstreamCommit as a full lowercase commit SHA from its approved receipt."
   }
 }

@@ -78,6 +78,7 @@ run "tags_an_approved_release" {
     condition = terraform_data.release_tag["actions/checkout"].input == {
       api_url       = "https://api.example.ghe.com", organization = "demo-a1b2c3-actions", upstream = "actions/checkout"
       security_team = "actions-security", tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683"
+      upstream_commit = "11bd71901bbe5b1630ceea73d27597364c9af683"
     }
     error_message = "A release tag must carry the repository identity, the tag and the commit."
   }
@@ -85,7 +86,8 @@ run "tags_an_approved_release" {
   assert {
     condition = (
       data.external.catalog_state["actions/checkout"].query.tag == "v4.2.2" &&
-      data.external.catalog_state["actions/checkout"].query.commit == "11bd71901bbe5b1630ceea73d27597364c9af683"
+      data.external.catalog_state["actions/checkout"].query.commit == "11bd71901bbe5b1630ceea73d27597364c9af683" &&
+      data.external.catalog_state["actions/checkout"].query.upstream_commit == "11bd71901bbe5b1630ceea73d27597364c9af683"
     )
     error_message = "The state reader must verify the released tag."
   }
@@ -126,7 +128,7 @@ run "exposes_repositories_and_releases_of_a_compliant_catalog" {
 
   assert {
     condition = output.releases == {
-      "actions/checkout" = { tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
+      "actions/checkout" = { tag = "v4.2.2", commit = "11bd71901bbe5b1630ceea73d27597364c9af683", upstream_commit = "11bd71901bbe5b1630ceea73d27597364c9af683" }
     }
     error_message = "The output must expose the verified release."
   }
@@ -355,7 +357,7 @@ run "rejects_a_vendoring_catalog_of_another_version" {
   command = plan
 
   variables {
-    vendoring_catalog_path = "tests/fixtures/version-2/vendoring/actions.json"
+    vendoring_catalog_path = "tests/fixtures/version-1/vendoring/actions.json"
   }
 
   expect_failures = [output.releases]
@@ -476,6 +478,36 @@ run "rejects_a_numeric_release_commit" {
 
   variables {
     vendoring_catalog_path = "tests/fixtures/numeric-commit/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_missing_upstream_commit" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/missing-upstream-commit/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_a_numeric_upstream_commit" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/numeric-upstream-commit/vendoring/actions.json"
+  }
+
+  expect_failures = [output.releases]
+}
+
+run "rejects_an_uppercase_upstream_commit" {
+  command = plan
+
+  variables {
+    vendoring_catalog_path = "tests/fixtures/upper-case-upstream-commit/vendoring/actions.json"
   }
 
   expect_failures = [output.releases]

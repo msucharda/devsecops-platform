@@ -28,7 +28,7 @@ Describe 'Vendored source preparation through the public command' {
         $source = Join-Path $TestDrive 'mixed-case'
         $workflow = Join-Path $source 'templates/instance/.github/workflows'
         $null = New-Item -ItemType Directory -Path $workflow -Force
-        'jobs: {build: {steps: [{uses: Actions/Checkout/SubPath@v4}]}}' |
+        'jobs: {build: {steps: [{uses: Actions/Checkout/SubPath@3d3c42e5aac5ba805825da76410c181273ba90b1}]}}' |
             Set-Content -LiteralPath (Join-Path $workflow 'deploy.yml')
         $output = Join-Path $TestDrive 'mixed-output'
 
@@ -128,6 +128,86 @@ jobs:
                 Should -Throw "*Catalog tag for 'actions/checkout' must match release pin tag 'v7.0.1'*"
             Test-Path $output | Should -BeFalse
         }
+    }
+
+    It 'checks a release pin against its catalog upstream commit: <Case>' -ForEach @(
+        @{ Case = 'same commit'; Pin = '3d3c42e5aac5ba805825da76410c181273ba90b1'; Allowed = $true }
+        @{ Case = 'different commit with same tag'; Pin = ('a' * 40); Allowed = $false }
+        @{ Case = 'uppercase commit'; Pin = '3D3C42E5AAC5BA805825DA76410C181273BA90B1'; Allowed = $false }
+        @{ Case = 'abbreviated commit'; Pin = '3d3c42e'; Allowed = $false }
+        @{ Case = 'tag'; Pin = 'v7.0.1'; Allowed = $false }
+        @{ Case = 'branch'; Pin = 'main'; Allowed = $false }
+    ) {
+        $caseId = $Case.Replace(' ', '-')
+        $source = Join-Path $TestDrive "wrong-commit-$caseId"
+        $workflow = Join-Path $source 'templates/instance/.github/workflows'
+        $null = New-Item -ItemType Directory -Path $workflow -Force
+        @"
+jobs:
+  reuse:
+    uses: actions/checkout/SubPath/workflow.yml@$Pin # v7.0.1
+  build:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+"@ | Set-Content (Join-Path $workflow 'deploy.yml')
+        $catalogPath = Join-Path $TestDrive "wrong-commit-$caseId.json"
+        $catalog = Get-Content (Join-Path $fixtures 'catalog.json') -Raw | ConvertFrom-Json -AsHashtable
+        $catalog.actions['actions/checkout']['upstreamCommit'] = '3d3c42e5aac5ba805825da76410c181273ba90b1'
+        $catalog.actions['actions/checkout']['tag'] = 'v7.0.1'
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content $catalogPath
+        $output = Join-Path $TestDrive "wrong-commit-output-$caseId"
+        $modes = Join-Path $TestDrive "wrong-commit-modes-$caseId.json"
+        if ($Allowed) {
+            & $prepare -SourcePath $source -OutputPath $output -CatalogPath $catalogPath `
+                -ActionsOrganization customer-actions -Kind release -ModeManifestPath $modes
+            Get-Content (Join-Path $output 'platform/templates/instance/.github/workflows/deploy.yml') -Raw |
+                Should -Match 'customer-actions/actions-checkout/SubPath/workflow.yml@1111111111111111111111111111111111111111'
+        }
+        else {
+            { & $prepare -SourcePath $source -OutputPath $output -CatalogPath $catalogPath `
+                    -ActionsOrganization customer-actions -Kind release -ModeManifestPath $modes } |
+                Should -Throw "*Upstream commit for 'actions/checkout' must match release pin*"
+            Test-Path $output | Should -BeFalse
+            Test-Path $modes | Should -BeFalse
+        }
+    }
+
+    It 'rejects a catalog upstream commit with <Case> before output: <Kind>' -ForEach @(
+        foreach ($kind in @('action', 'release')) {
+            foreach ($case in @(
+                @{ Case = 'missing field'; Value = '__missing__' }
+                @{ Case = 'null'; Value = $null }
+                @{ Case = 'empty string'; Value = '' }
+                @{ Case = 'uppercase'; Value = '3D3C42E5AAC5BA805825DA76410C181273BA90B1' }
+                @{ Case = 'short SHA'; Value = '3d3c42e' }
+                @{ Case = 'trailing newline'; Value = "3d3c42e5aac5ba805825da76410c181273ba90b1`n" }
+                @{ Case = 'number'; Value = 1 }
+                @{ Case = 'array'; Value = @('3d3c42e5aac5ba805825da76410c181273ba90b1') }
+                @{ Case = 'empty array'; Value = @() }
+            )) { $case + @{ Kind = $kind } }
+        }
+    ) {
+        $catalogPath = Join-Path $TestDrive 'invalid-upstream.json'
+        $catalog = Get-Content (Join-Path $fixtures 'catalog.json') -Raw | ConvertFrom-Json -AsHashtable
+        if ($Case -ceq 'missing field') { $catalog.actions['actions/checkout'].Remove('upstreamCommit') }
+        else { $catalog.actions['actions/checkout']['upstreamCommit'] = $Value }
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content $catalogPath
+        $output = Join-Path $TestDrive 'invalid-upstream-output'
+        { & $prepare -SourcePath (Join-Path $fixtures $Kind) -OutputPath $output -CatalogPath $catalogPath `
+                -ActionsOrganization customer-actions -Kind $Kind } |
+            Should -Throw "*Catalog upstreamCommit for 'actions/checkout' must be a full lowercase commit SHA*"
+        Test-Path $output | Should -BeFalse
+    }
+
+    It 'rejects an unmigrated catalog before output' {
+        $catalogPath = Join-Path $TestDrive 'version-1.json'
+        $catalog = Get-Content (Join-Path $fixtures 'catalog.json') -Raw | ConvertFrom-Json -AsHashtable
+        $catalog.version = 1
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content $catalogPath
+        $output = Join-Path $TestDrive 'version-1-output'
+        { & $prepare -SourcePath (Join-Path $fixtures 'release') -OutputPath $output -CatalogPath $catalogPath `
+                -ActionsOrganization customer-actions -Kind release } | Should -Throw '*must declare version 2*'
+        Test-Path $output | Should -BeFalse
     }
 
     It 'rejects dynamic references with an explicit error and no prepared files' {

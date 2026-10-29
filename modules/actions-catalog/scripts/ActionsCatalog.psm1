@@ -332,7 +332,7 @@ function Test-CatalogReleaseCommit {
     Returns the reasons why a commit of the vendored copy is not an approved import of the upstream tag.
     .DESCRIPTION
     The commit must be reachable from the given commit of the protected main branch, so it passed the reviewed PR, and its
-    .vendoring.json receipt must record the upstream repository and tag. The caller reads main once and passes its SHA, so a
+    .vendoring.json receipt must record the upstream repository, tag and commit. The caller reads main once and passes its SHA, so a
     moving branch cannot change the answer between the checks.
     #>
     [CmdletBinding()]
@@ -344,6 +344,7 @@ function Test-CatalogReleaseCommit {
         [Parameter(Mandatory)][string] $Upstream,
         [Parameter(Mandatory)][string] $Tag,
         [Parameter(Mandatory)][string] $Commit,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}\z', Options = 'None')][string] $UpstreamCommit,
         [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string] $Main
     )
 
@@ -363,6 +364,9 @@ function Test-CatalogReleaseCommit {
     }
     if ($receipt['source'] -isnot [string] -or $receipt['source'] -cne $Upstream) { "The receipt at $Commit of '$Organization/$Repository' records source '$($receipt['source'])', not '$Upstream'." }
     if ($receipt['tag'] -isnot [string] -or $receipt['tag'] -cne $Tag) { "The receipt at $Commit of '$Organization/$Repository' records tag '$($receipt['tag'])', not '$Tag'." }
+    if ($receipt['commit'] -isnot [string] -or $receipt['commit'] -cne $UpstreamCommit) {
+        "The receipt at $Commit of '$Organization/$Repository' records upstream commit '$($receipt['commit'])', not '$UpstreamCommit'."
+    }
 }
 
 function Get-CatalogRepositoryState {
@@ -378,10 +382,12 @@ function Get-CatalogRepositoryState {
         [Parameter(Mandatory)][string] $Upstream,
         [Parameter(Mandatory)][string] $SecurityTeam,
         [AllowNull()][AllowEmptyString()][string] $Tag,
-        [AllowNull()][AllowEmptyString()][string] $Commit
+        [AllowNull()][AllowEmptyString()][string] $Commit,
+        [AllowNull()][AllowEmptyString()][ValidatePattern('^$|^[0-9a-f]{40}\z', Options = 'None')][string] $UpstreamCommit
     )
 
     Assert-CatalogInput -Organization $Organization -Upstream $Upstream -SecurityTeam $SecurityTeam -Tag $Tag -Commit $Commit
+    if ($Tag -and -not $UpstreamCommit) { throw "Release of '$Upstream' needs an upstream commit." }
     $name = Get-CatalogRepositoryName -Upstream $Upstream
     $state = [ordered]@{ repository = $name; exists = $false }
     $repository = Get-CatalogRepository -ApiUrl $ApiUrl -Organization $Organization -Repository $name
@@ -400,7 +406,7 @@ function Get-CatalogRepositoryState {
         $state.tag = Get-CatalogTag -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Tag $Tag
         # Without main, the violations already report the missing branch.
         $state.release = if ($state.mainSha) {
-            @(Test-CatalogReleaseCommit -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Upstream $Upstream -Tag $Tag -Commit $Commit -Main $state.mainSha)
+            @(Test-CatalogReleaseCommit -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Upstream $Upstream -Tag $Tag -Commit $Commit -UpstreamCommit $UpstreamCommit -Main $state.mainSha)
         }
     }
     return $state
@@ -529,22 +535,26 @@ function New-CatalogReleaseTag {
         [Parameter(Mandatory)][string] $Upstream,
         [Parameter(Mandatory)][string] $SecurityTeam,
         [Parameter(Mandatory)][string] $Tag,
-        [Parameter(Mandatory)][string] $Commit
+        [Parameter(Mandatory)][string] $Commit,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}\z', Options = 'None')][string] $UpstreamCommit
     )
 
     Assert-CatalogInput -Organization $Organization -Upstream $Upstream -SecurityTeam $SecurityTeam -Tag $Tag -Commit $Commit
     $name = Get-CatalogRepositoryName -Upstream $Upstream
     $existing = Get-CatalogTag -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Tag $Tag
+    if ($null -ne $existing -and ($existing['Type'] -cne 'commit' -or $existing['Sha'] -cne $Commit)) {
+        throw "Tag '$Tag' in '$Organization/$name' already points to another object; the module never moves a tag."
+    }
+    $governance = Get-CatalogRepositoryState -ApiUrl $ApiUrl -Organization $Organization -Upstream $Upstream -SecurityTeam $SecurityTeam
+    $reasons = @(Get-CatalogStateViolation -State $governance -Organization $Organization -SecurityTeam $SecurityTeam)
+    if ($reasons.Count) { throw ((@('Repository is not governed;') + $reasons) -join ' ') }
+    $main = $governance['mainSha']
+    $reasons = @(Test-CatalogReleaseCommit -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Upstream $Upstream -Tag $Tag -Commit $Commit -UpstreamCommit $UpstreamCommit -Main $main)
+    if ($reasons.Count) { throw ($reasons -join ' ') }
+    if ((Get-CatalogBranchSha -ApiUrl $ApiUrl -Organization $Organization -Repository $name) -cne $main) {
+        throw "Main of '$Organization/$name' changed during the release check; run the release again."
+    }
     if ($null -eq $existing) {
-        $governance = Get-CatalogRepositoryState -ApiUrl $ApiUrl -Organization $Organization -Upstream $Upstream -SecurityTeam $SecurityTeam
-        $reasons = @(Get-CatalogStateViolation -State $governance -Organization $Organization -SecurityTeam $SecurityTeam)
-        if ($reasons.Count) { throw ((@('Repository is not governed;') + $reasons) -join ' ') }
-        $main = $governance['mainSha']
-        $reasons = @(Test-CatalogReleaseCommit -ApiUrl $ApiUrl -Organization $Organization -Repository $name -Upstream $Upstream -Tag $Tag -Commit $Commit -Main $main)
-        if ($reasons.Count) { throw ($reasons -join ' ') }
-        if ((Get-CatalogBranchSha -ApiUrl $ApiUrl -Organization $Organization -Repository $name) -cne $main) {
-            throw "Main of '$Organization/$name' changed during the release check; run the release again."
-        }
         $reply = Invoke-CatalogApi -ApiUrl $ApiUrl -Method POST -Path "/repos/$Organization/$name/git/refs" -AcceptStatus @(201, 422) `
             -Body @{ ref = "refs/tags/$Tag"; sha = $Commit }
         if ($reply.Status -eq 201) { return }

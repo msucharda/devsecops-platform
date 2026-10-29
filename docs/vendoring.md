@@ -21,39 +21,40 @@ Workflow vrátí výstup `pull-request`. Prázdná hodnota znamená, že import 
 
 Veřejnou akci importuje volající `import-action.yml` (`workflow_dispatch`, vstupy `repository` a `tag`). `Resolve-ActionImport.ps1` normalizuje upstream `owner/repo` na malá písmena a odvodí cíl `<organizace-akcí>/<owner>-<repo>` z identity instance a organizace platformy. Přijme jen upstream z `modules.actions-catalog.parameters.catalog`; bez explicitního seznamu použije výchozí katalog modulu. Chybějící modul, neplatný katalog nebo kolizi cílových jmen odmítne před zápisem výstupů. Volající nemůže zadat jiný cíl ani rozšířit scope. Cílový repozitář musí předem vytvořit modul `actions-catalog`. Import používá stejné main/event kontroly, oddělenou přípravu a publikaci i ověření tokenu jako import release. Po main/event kontrole ověří samostatný job přítomnost writer credentials ještě před prvním source nebo writer tokenem.
 
-Katalog `vendoring/actions.json` v repozitáři instance má verzi `1` a mapu `actions`. Prázdnou šablonu naplní platformní tým po schválení importů. Klíč určuje upstream repozitář; `repository` určuje kopii `{owner}-{repo}`, `tag` tag upstreamu a `sha` skutečný merge commit kopie:
+Katalog `vendoring/actions.json` v repozitáři instance má verzi `2` a mapu `actions`. Prázdnou šablonu naplní platformní tým po schválení importů. Klíč určuje upstream repozitář; `repository` určuje kopii `{owner}-{repo}`, `tag` tag upstreamu, `upstreamCommit` commit upstreamu z receiptu a `sha` skutečný merge commit kopie:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "actions": {
     "actions/checkout": {
       "repository": "example-actions/actions-checkout",
       "tag": "v4.2.2",
+      "upstreamCommit": "11bd71901bbe5b1630ceea73d27597364c9af683",
       "sha": "1111111111111111111111111111111111111111"
     }
   }
 }
 ```
 
-SHA v příkladu je pouze placeholder. Platformní tým musí přes API cílového repozitáře ověřit skutečný commit a jeho schválení security týmem. Offline validátor kontroluje formát a cílovou organizaci, nikoli existenci nebo schválení commitu. Katalog vybírá jednu schválenou kopii pro každý upstream repozitář; upstream reference sama nevybírá jinou verzi kopie.
+`sha` v příkladu je pouze placeholder; `upstreamCommit` odpovídá checkoutu v4.2.2. Platformní tým musí přes API cílového repozitáře ověřit skutečný commit kopie a jeho schválení security týmem. Offline validátor kontroluje formát a cílovou organizaci, nikoli existenci nebo schválení commitu. Katalog vybírá jednu schválenou kopii pro každý upstream repozitář; upstream reference sama nevybírá jinou verzi kopie.
 
-Modul [actions-catalog](../modules/actions-catalog/README.md#katalog-vendoringu) čte katalog jako jediný zdroj schválených importů. Pro každou položku vytvoří ve vendorované kopii tag `tag` na commitu `sha` a pole `tag` vyžaduje. Základní offline validace katalogu pole `tag` nekontroluje; při importu release s anotovaným pinem navíc platí kontrola shody tagu popsaná níže.
+Modul [actions-catalog](../modules/actions-catalog/README.md#katalog-vendoringu) čte katalog jako jediný zdroj schválených importů. Pro každou položku ověří receipt na pevném `sha`: `source`, `tag` a `commit` musí přesně odpovídat klíči, `tag` a `upstreamCommit` katalogu. Ověření platí i pro již existující tag a opakovaný apply. Modul vytvoří ve vendorované kopii tag `tag` na commitu `sha`; nový token ani oprávnění nepotřebuje. Základní offline validace pole `tag` nekontroluje; při importu release s anotovaným pinem navíc platí kontrola shody tagu popsaná níže.
 
 ## Aktualizace akce v instanci
 
 Release platformy určuje upstream piny šablon. Katalog instance určuje SHA schválených vendorovaných kopií. Tato SHA se liší: upstream SHA označuje zdroj akce, katalogové SHA označuje commit importu v organizaci akcí.
 
-Přepis `uses:` nesmí změnit chování workflow (pravidlo O11). Před importem release musí platformní tým pro každý jeho pin ověřit, že katalogová kopie pochází z tagu se stejným upstream commit SHA. Samotná shoda názvu akce nestačí. Import release používá právě aktuální katalog; nevybírá verzi podle upstream ref v `uses:`.
+Přepis `uses:` nesmí změnit chování workflow (pravidlo O11). Import release vyžaduje pro každý vzdálený GitHub `uses:` plný lowercase SHA pin shodný s `upstreamCommit` katalogu. Tag, větev, zkrácený SHA, chybějící nebo jiný upstream commit zastaví import před vytvořením výstupu i mode manifestu. Kontrola zahrnuje reusable job references a subpaths. Platí také pro starší release bez komentářů verze. Katalog tak nesmí potichu nahradit starší ani novější pin jinou verzí kopie.
 
-U pinů s komentářem `# v<verze>` příprava navíc vyžaduje přesnou shodu tohoto tagu s `tag` katalogu. Jiný, chybějící nebo nečitelný katalogový tag zastaví import před vytvořením výstupu. Tato lokální kontrola nečte receipt kopie a neprokazuje shodu upstream commitů při stejném názvu tagu. Starší reference bez komentáře verze zachovávají původní přepis. Automatické ověření úplné provenance řeší [#136](https://github.com/msucharda/devsecops-platform/issues/136); do té doby zůstává ruční kontrola O11 povinná.
+U pinů s komentářem `# v<verze>` příprava navíc vyžaduje přesnou shodu tohoto tagu s `tag` katalogu. Jiný, chybějící nebo nečitelný katalogový tag zastaví import před vytvořením výstupu. Příprava nečte receipt přes síť: důvěřuje katalogu schválenému v repozitáři instance a ověřenému modulem. Review katalogu a úspěšný apply proto zůstávají podmínkou importu release. Import composite akce zachovává přepis jejích závislostí podle katalogu včetně tagových references; porovnání s pinem release platí pro `kind: release`, nikoli pro tagové závislosti importované akce.
 
-Kontrola se uplatní až po importu a merge release, který ji obsahuje: import spouští schválené nástroje z aktuální `main` instance, nikoli nástroje importovaného zdroje. Při prvním přechodu na release z #130 proto tagy i upstream SHA musí ověřit člověk; stará verze nástroje tuto aktualizaci ještě nechrání.
+Kontrola se uplatní až po importu a merge release, který ji obsahuje: import spouští schválené nástroje z aktuální `main` instance, nikoli nástroje importovaného zdroje. První přechod musí projít [migrací katalogu](#migrace-katalogu-z-verze-1-na-2). Stará verze nástroje tuto aktualizaci ještě nechrání.
 
 1. Autor platformy zvýší piny, ověří změny runtime, vstupů a výstupů a vydá release s tabulkou upstream → tag → SHA. Platformní tým zkontroluje tuto tabulku a diff šablon.
 2. **Ještě před importem nového release** spustí platformní tým stávající `import-action.yml` pro každou změněnou akci s přesným upstream repozitářem a novým tagem z tabulky. Tag musí ukazovat na SHA pinu. Cílem zůstává stejný repozitář `{owner}-{repo}`; nový tag vytváří jinou importní větev a nový PR.
 3. Security tým zkontroluje diff, licenci a `.vendoring.json`: `source`, `tag` a upstream `commit` musí odpovídat schválené verzi. Po schválení platformní tým sloučí PR do `main` vendorované kopie a přes API zjistí skutečné SHA tohoto commitu. Upstream SHA nesmí zapsat místo SHA kopie.
-4. V samostatném PR repozitáře instance změní platformní tým `tag` a `sha` příslušné položky `vendoring/actions.json`. `repository` zůstává stejné. Po review a merge provede plan → approval → apply modulu `actions-catalog`; modul vytvoří nový tag na schváleném commitu kopie.
+4. V samostatném PR repozitáře instance změní platformní tým `tag`, `upstreamCommit` a `sha` příslušné položky `vendoring/actions.json`. `repository` zůstává stejné. `upstreamCommit` převezme z receiptu na pevném `sha`, nikoli z pohyblivého tagu. Po review a merge provede plan → approval → apply modulu `actions-catalog`; modul vytvoří nový tag na schváleném commitu kopie.
 5. Platformní tým spustí `import-release.yml` pro nový release platformy, už s aktualizovaným katalogem. Ověří, že přepsané šablony používají schválené SHA kopií a že jejich receipt dokládá upstream SHA pinů. Po review a merge povýší šablony do živých workflow samostatným PR podle [postupu povýšení](#ruční-povýšení-živých-workflow-v-16).
 6. Platformní tým spustí workflow s novým pinem a ověří jeho výsledek. Zelené CI platformy ani úspěšný import nenahrazují toto živé ověření.
 
@@ -62,6 +63,17 @@ Starý tag zůstává na původním commitu. Import nového obsahu mění `main`
 Opakování stejného importu navazuje na stejný PR. Import jiného tagu po merge předchozího importu založí nový PR nad aktuální `main` a zachová `.github/` i původní tagy. Offline regresní test ověřuje druhý import pomocí lokálního Git transportu; test katalogu ověřuje zachování starého tagu i obnovu po ztrátě odpovědi při tvorbě nového tagu. **Živé ověření aktualizace akce na referenční instanci zůstává otevřené kritérium #130.**
 
 Dependabot v repozitáři platformy upozorňuje na nové upstream verze pomocí PR. Neaktualizuje katalog ani akce instance. Platformní tým musí sledovat releasy platformy a spouštět uvedený postup; pin na SHA interní kopie sám o novém upstream release neinformuje.
+
+### Migrace katalogu z verze 1 na 2
+
+Migrace je živý krok vyžadující samostatný souhlas. V rámci #136 neproběhla. Nové nástroje ani modul verzi `1` nepřijmou; staré nástroje verzi `2` také odmítnou. Pole `upstreamCommit` nesmí vzniknout doplněním aktuálního cíle tagu bez ověření receiptu.
+
+1. Platformní tým při zachovaném katalogu verze `1` připraví import release s novými nástroji přes stávající `import-release.yml`. Pro každý pin ručně ověří receipt `.vendoring.json` kopie na pevném katalogovém `sha`, jeho `source`, `tag` a `commit` proti releasu. Chybějící, nečitelný nebo neodpovídající receipt blokuje migraci; tým nejprve provede schválený import akce běžným postupem výše. Nový kód nesmí tuto kontrolu nahradit úspěchem starého importéru.
+2. Security tým zkontroluje importní PR. Platformní tým přidá do stejného PR změnu kořenového `vendoring/actions.json`: `version: 2` a `upstreamCommit` z ověřeného receiptu u každé položky. `sha` zůstane SHA schválené kopie. Nesmí přepsat `sha` upstream commitem. Samotný import vlastní jen `platform/`, proto kořenový katalog vyžaduje tuto explicitní změnu přes PR.
+3. Po review a merge spustí platformní tým veřejné `deploy.yml` z `main` s `deployment: catalog` a provede plan → approval → apply. Modul ověří upstream commit i u tagu, který už existuje. Opakování po přerušení musí provést stejnou kontrolu; nesmí přeskočit receipt kvůli existujícímu tagu.
+4. Platformní tým zopakuje plan bez změny a připraví další release novým `import-release.yml`. Ověří odmítnutí katalogu s jiným upstream commitem a absenci výstupu či PR při odmítnutí. První import i povýšení živých workflow zůstávají samostatně schvalované kroky.
+
+Přerušení před merge ponechá staré nástroje i katalog společně na verzi `1`; přerušení po merge ponechá oba na verzi `2`. Do dokončení apply a kontroly stavu tým nesmí spouštět další import release. Změny tagů nevytvářejí katalog: katalog se mění atomicky jako commit repozitáře instance. Částečně dokončený apply proto nezmění `upstreamCommit`; neshodu pinu příprava odmítne nezávisle na tom, kolik tagů apply stihl vytvořit.
 
 ### Údržba pinů platformy
 

@@ -17,13 +17,14 @@ locals {
   # Missing, null, number and boolean fields become empty strings; Terraform equality never matches a string with another type, so tostring cannot coerce them, which the preconditions of the releases output reject.
   releases = {
     for upstream, copy in local.vendored : upstream => {
-      repository = try(copy.repository == tostring(copy.repository) ? copy.repository : "", "")
-      tag        = try(copy.tag == tostring(copy.tag) ? copy.tag : "", "")
-      commit     = try(copy.sha == tostring(copy.sha) ? copy.sha : "", "")
+      repository      = try(copy.repository == tostring(copy.repository) ? copy.repository : "", "")
+      tag             = try(copy.tag == tostring(copy.tag) ? copy.tag : "", "")
+      commit          = try(copy.sha == tostring(copy.sha) ? copy.sha : "", "")
+      upstream_commit = try(copy.upstreamCommit == tostring(copy.upstreamCommit) ? copy.upstreamCommit : "", "")
     }
   }
   # Only entries of the catalog reach a resource; any other entry fails the plan through the releases output.
-  release_tags = { for upstream, release in local.releases : upstream => { tag = release.tag, commit = release.commit } if contains(var.catalog, upstream) }
+  release_tags = { for upstream, release in local.releases : upstream => { tag = release.tag, commit = release.commit, upstream_commit = release.upstream_commit } if contains(var.catalog, upstream) }
   provisioner  = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Invoke-CatalogChange.ps1", "-Action"]
 }
 
@@ -50,7 +51,7 @@ resource "terraform_data" "repository" {
 resource "terraform_data" "release_tag" {
   for_each = local.release_tags
 
-  input            = merge(local.repositories[each.key], { tag = each.value.tag, commit = each.value.commit })
+  input            = merge(local.repositories[each.key], each.value)
   triggers_replace = [terraform_data.repository[each.key].id, merge(local.repositories[each.key], each.value)]
 
   provisioner "local-exec" {
@@ -69,8 +70,9 @@ data "external" "catalog_state" {
 
   program = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "${path.module}/scripts/Read-CatalogState.ps1"]
   query = merge(each.value, {
-    tag    = try(local.release_tags[each.key].tag, "")
-    commit = try(local.release_tags[each.key].commit, "")
+    tag             = try(local.release_tags[each.key].tag, "")
+    commit          = try(local.release_tags[each.key].commit, "")
+    upstream_commit = try(local.release_tags[each.key].upstream_commit, "")
   })
 
   depends_on = [terraform_data.repository, terraform_data.release_tag]
