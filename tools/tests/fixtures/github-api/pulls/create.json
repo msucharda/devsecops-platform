@@ -52,11 +52,11 @@
       "merged_by",
       "review_comments"
     ],
-    "labels[]": [
+    "labels.[]": [
       "archived_at",
       "archived_by"
     ],
-    "requested_teams[]": [
+    "requested_teams.[]": [
       "type"
     ],
     "head": [
