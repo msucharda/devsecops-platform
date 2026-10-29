@@ -95,6 +95,8 @@ Describe 'Interruption harness' {
         @{ StepCount = 1; ByInterruption = $true; Counts = @(1, 1, 1, 1) }
         @{ StepCount = 2; ByInterruption = $false; Counts = @(4, 4, 0, 0) }
         @{ StepCount = 2; ByInterruption = $true; Counts = @(2, 2, 2, 2) }
+        @{ StepCount = 3; ByInterruption = $false; Counts = @(4, 4, 4, 0) }
+        @{ StepCount = 3; ByInterruption = $true; Counts = @(3, 3, 3, 3) }
     ) {
         $run = { Invoke-ToyPutSequence -StepCount $StepCount }
         $reference = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal)

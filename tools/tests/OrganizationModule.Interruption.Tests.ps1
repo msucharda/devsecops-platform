@@ -16,7 +16,10 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
         $fixtureRoot = Join-Path $modules 'scoped'
         $null = New-Item -ItemType Directory -Path (Join-Path $fixtureRoot 'rulesets')
         Copy-Item -LiteralPath (Join-Path $fixtureRoot 'main.tf') -Destination (Join-Path $fixtureRoot 'rulesets/main.tf')
+        $null = New-Item -ItemType Directory -Path (Join-Path $fixtureRoot 'code-security')
+        Copy-Item -LiteralPath (Join-Path $fixtureRoot 'main.tf') -Destination (Join-Path $fixtureRoot 'code-security/main.tf')
         $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $fixtureRoot 'module.yaml') -Raw)
+        $manifest.phases = @{ 'code-security' = @{ prerequisites = @(); manualPrerequisites = @() } }
         $manifest.permissions.githubApp.rulesetPlan = @{
             permissions = @{ organization_administration = 'write' }
             resources = @{ organizations = 'target_organizations' }
@@ -41,7 +44,9 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
         $interruptionPlan = Get-InterruptionPlan
         $remoteOrganizations = @{}
         $backendPaths = @{}
+        $backendRoots = @{}
         $destroyPlans = @{}
+        $context = @{ OutputName = 'scoped'; ReferenceRequests = $null }
 
         # This stub models the Terraform process boundary, not a GitHub API. API write/recovery contracts
         # are exercised separately by the real Terraform and documented GitHub API stubs.
@@ -50,6 +55,7 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
             $global:LASTEXITCODE = 0
             if ($verb -eq 'init') {
                 $backendPaths[$env:TF_DATA_DIR] = ($args | Where-Object { $_ -like '-backend-config=path=*' }) -replace '^-backend-config=path=', ''
+                $backendRoots[$backendPaths[$env:TF_DATA_DIR]] = ([string] $args[0]) -replace '^-chdir=', ''
                 $null = New-Item -ItemType Directory -Path $env:TF_DATA_DIR -Force
                 Set-Content -LiteralPath (Join-Path $env:TF_DATA_DIR 'terraform.tfstate') -Value '{"backend":{"type":"local"}}'
                 return ''
@@ -124,9 +130,17 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
                 [IO.File]::WriteAllText($file, $Files[$file])
             }
         }
-        $reset = { $remoteOrganizations.Clear(); & $restoreLocal @{} }
+        $reset = {
+            $remoteOrganizations.Clear()
+            $backendPaths.Clear()
+            $backendRoots.Clear()
+            & $restoreLocal @{}
+        }
         $snapshot = {
-            $outputs = Join-Path $runnerArguments.ArtifactsPath $(if ($Rulesets) { 'scoped.rulesets.json' } else { 'scoped.json' })
+            if ($null -eq $context.ReferenceRequests) {
+                $context.ReferenceRequests = [string[]] $interruptionPlan.Requests.ToArray()
+            }
+            $outputs = Join-Path $runnerArguments.ArtifactsPath "$($context.OutputName).json"
             @{
                 remote = @{} + $remoteOrganizations
                 local = & $captureLocal
@@ -141,17 +155,49 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
     }
 
     It 'resumes every organization after each <Root> root process boundary' -ForEach @(
-        @{ Root = 'ordinary'; Rulesets = $false }
-        @{ Root = 'rulesets'; Rulesets = $true }
+        @{ Root = 'ordinary'; Rulesets = $false; DeploymentPhase = $null; OutputName = 'scoped' }
+        @{ Root = 'rulesets'; Rulesets = $true; DeploymentPhase = $null; OutputName = 'scoped.rulesets' }
+        @{ Root = 'code-security phase'; Rulesets = $false; DeploymentPhase = 'code-security'; OutputName = 'scoped.code-security' }
     ) {
-        $run = { $null = & $runner -Action apply -Rulesets:$Rulesets @runnerArguments 6>$null }
+        $context.OutputName = $OutputName
+        $run = {
+            $selection = @{}
+            if ($Rulesets) { $selection.Rulesets = $true }
+            if ($DeploymentPhase) { $selection.DeploymentPhase = $DeploymentPhase }
+            $null = & $runner -Action apply @selection @runnerArguments 6>$null
+        }
 
         $result = @(Invoke-InterruptionMatrix -Plan $interruptionPlan -Reset $reset -Run $run -Snapshot $snapshot `
-            -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
+            -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -ShardByInterruption:([bool] $DeploymentPhase) @shard)
 
         $report = Format-InterruptionResult -Name "Organization runner ($Root)" -Result $result
         Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
+        if ($DeploymentPhase) {
+            $expectedRequests = @($organizations | ForEach-Object { "apply $_/terraform.code-security.tfstate" })
+            $context.ReferenceRequests | Should -Be $expectedRequests
+            $result.Count | Should -Be ([Math]::Max(0, [Math]::Ceiling((12 - $shard.ShardIndex) / $shard.ShardCount)))
+            $outputs = Get-Content -LiteralPath (Join-Path $runnerArguments.ArtifactsPath 'scoped.code-security.json') -Raw |
+                ConvertFrom-Json -AsHashtable
+            ($outputs.organizations -join ',') | Should -Be ($organizations -join ',')
+            (@($outputs.organization_outputs.Keys | Sort-Object) -join ',') |
+                Should -Be (@($organizations | Sort-Object) -join ',')
+            foreach ($organizationName in $organizations) {
+                $stateDirectory = Join-Path $runnerArguments.StatePath "scoped/organizations/$organizationName"
+                $identity = "$organizationName/terraform.code-security.tfstate"
+                $statePath = Join-Path $stateDirectory 'terraform.code-security.tfstate'
+                (Get-Content -LiteralPath $statePath -Raw).Trim() | Should -Be "id-$identity"
+                $remoteOrganizations[$identity] | Should -Be "id-$identity"
+                $backendRoots[$statePath] | Should -Be (Join-Path $fixtureRoot 'code-security')
+                ($outputs.organization_outputs[$organizationName].organizations -join ',') | Should -Be $organizationName
+                $outputs.organization_outputs[$organizationName].identity | Should -Be "id-$identity"
+                Test-Path -LiteralPath (Join-Path $stateDirectory 'terraform.tfstate') | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $stateDirectory 'terraform.rulesets.tfstate') | Should -BeFalse
+            }
+            $remoteOrganizations.Count | Should -Be $organizations.Count
+            Test-Path -LiteralPath (Join-Path $runnerArguments.ArtifactsPath 'scoped.json') | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $runnerArguments.ArtifactsPath 'scoped.rulesets.json') | Should -BeFalse
+        }
     }
 
     Context 'Interrupted teardown' -Tag OrganizationTeardown {
@@ -160,6 +206,8 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
             ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
             $reset = {
                 $remoteOrganizations.Clear()
+                $backendPaths.Clear()
+                $backendRoots.Clear()
                 & $restoreLocal @{}
                 foreach ($stateName in @('terraform.rulesets.tfstate', 'terraform.tfstate')) {
                     foreach ($organizationName in $organizations) {
@@ -196,6 +244,59 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
             $env:PLATFORM_GITHUB_TOKENS = $null
             & $run
             ($interruptionPlan.Requests -join ',') | Should -Be ($expectedRequests -join ',')
+        }
+
+        It 'resumes the code-security phase teardown and skips its empty state on repeat' {
+            $instance.teardown = @{ allowed = $true }
+            ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
+            $context.OutputName = 'scoped.code-security'
+            $reset = {
+                $remoteOrganizations.Clear()
+                $backendPaths.Clear()
+                $backendRoots.Clear()
+                & $restoreLocal @{}
+                foreach ($organizationName in $organizations) {
+                    $stateDirectory = Join-Path $runnerArguments.StatePath "scoped/organizations/$organizationName"
+                    $null = New-Item -ItemType Directory -Path $stateDirectory -Force
+                    $identity = "$organizationName/terraform.code-security.tfstate"
+                    $remoteOrganizations[$identity] = "id-$identity"
+                    Set-Content -LiteralPath (Join-Path $stateDirectory 'terraform.code-security.tfstate') -Value "id-$identity"
+                }
+            }
+            $run = { $null = & $runner -Action destroy -DeploymentPhase code-security @runnerArguments 6>$null }
+
+            $result = @(Invoke-InterruptionMatrix -Plan $interruptionPlan -Reset $reset -Run $run -Snapshot $snapshot `
+                -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -ShardByInterruption @shard)
+
+            $report = Format-InterruptionResult -Name 'Organization runner code-security phase teardown' -Result $result
+            Write-Information $report -InformationAction Continue
+            @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
+            $expectedRequests = @($organizations | ForEach-Object { "destroy $_/terraform.code-security.tfstate" })
+            $context.ReferenceRequests | Should -Be $expectedRequests
+            $result.Count | Should -Be ([Math]::Max(0, [Math]::Ceiling((12 - $shard.ShardIndex) / $shard.ShardCount)))
+            $remoteOrganizations.Count | Should -Be 0
+            $outputsPath = Join-Path $runnerArguments.ArtifactsPath 'scoped.code-security.json'
+            $outputs = Get-Content -LiteralPath $outputsPath -Raw | ConvertFrom-Json -AsHashtable
+            ($outputs.organizations -join ',') | Should -Be ($organizations -join ',')
+            (@($outputs.organization_outputs.Keys | Sort-Object) -join ',') |
+                Should -Be (@($organizations | Sort-Object) -join ',')
+            foreach ($organizationName in $organizations) {
+                $stateDirectory = Join-Path $runnerArguments.StatePath "scoped/organizations/$organizationName"
+                $statePath = Join-Path $stateDirectory 'terraform.code-security.tfstate'
+                Test-Path -LiteralPath $statePath | Should -BeFalse
+                $backendRoots[$statePath] | Should -Be (Join-Path $fixtureRoot 'code-security')
+                $outputs.organization_outputs[$organizationName].Count | Should -Be 0
+                Test-Path -LiteralPath (Join-Path $stateDirectory 'terraform.tfstate') | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $stateDirectory 'terraform.rulesets.tfstate') | Should -BeFalse
+            }
+            Test-Path -LiteralPath (Join-Path $runnerArguments.ArtifactsPath 'scoped.json') | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $runnerArguments.ArtifactsPath 'scoped.rulesets.json') | Should -BeFalse
+            $requestCount = $interruptionPlan.Requests.Count
+            $env:PLATFORM_GITHUB_TOKENS = $null
+            & $run
+            $interruptionPlan.Requests.Count | Should -Be $requestCount
+            $remoteOrganizations.Count | Should -Be 0
+            Test-Path -LiteralPath $outputsPath | Should -BeTrue
         }
     }
 }
