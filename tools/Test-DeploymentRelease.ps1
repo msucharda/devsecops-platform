@@ -18,7 +18,9 @@ function Assert-DeploymentReleaseMarker {
     if ($Marker -isnot [Collections.IDictionary]) { throw 'Release marker must be an object.' }
     if ($Marker.get_Count() -ne 3) { throw 'Release marker must declare exactly instance, releaseVersion and files.' }
     if ($Marker['files'] -isnot [Collections.IDictionary]) { throw 'Release marker must declare a files mapping.' }
-    if ($Marker['instance'] -cne $InstanceName) { throw 'Release marker instance differs from instance.yaml.' }
+    if ($Marker['instance'] -isnot [string] -or $Marker['instance'] -cne $InstanceName) {
+        throw 'Release marker instance differs from instance.yaml.'
+    }
     if ($Marker['releaseVersion'] -isnot [string]) { throw 'Release marker version must be a string.' }
 }
 

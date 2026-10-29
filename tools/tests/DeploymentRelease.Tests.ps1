@@ -102,6 +102,16 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         Should -Invoke Invoke-RestMethod -Times 0
     }
 
+    It 'rejects marker instance as <Case> before source requests' -Tag 'MarkerInstanceBoundary' -ForEach @(
+        @{ Case = 'matching single-element array'; Identity = @('demo') }
+        @{ Case = 'empty array'; Identity = @() }
+    ) {
+        $marker.instance = $Identity
+        $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
+        { & $preflight @arguments } | Should -Throw '*Release marker instance differs*'
+        Should -Invoke Invoke-RestMethod -Times 0
+    }
+
     It 'rejects a symbolic link in <Location>' -Skip:$IsWindows -ForEach @(
         @{ Location = 'release tree' }
         @{ Location = 'marker' }
