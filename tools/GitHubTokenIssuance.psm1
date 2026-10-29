@@ -12,7 +12,7 @@ function Get-PlatformGitHubTokenIssuancePath {
     if (-not $root -or -not [IO.Path]::IsPathFullyQualified($root)) {
         throw 'Installation token issuance requires an absolute private user state directory.'
     }
-    $identity = "$($ApiUrl.GetLeftPart([UriPartial]::Authority).ToLowerInvariant())`n$AppId"
+    $identity = "$($ApiUrl.GetComponents([UriComponents]::SchemeAndServer, [UriFormat]::UriEscaped).ToLowerInvariant())`n$AppId"
     $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity))).ToLowerInvariant()
     Join-Path $root "devsecops-platform/token-issuance/$hash/pending.json"
 }
@@ -53,6 +53,19 @@ function Assert-PlatformGitHubTokenStateAncestorAccess {
     }
 }
 
+# security-check: token-issuance-reparse
+function Assert-PlatformGitHubTokenStateEntry {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Path)
+
+    try { $attributes = [IO.File]::GetAttributes($Path) }
+    catch [IO.FileNotFoundException] { return }
+    catch [IO.DirectoryNotFoundException] { return }
+    if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'Installation token state cannot use a symlink or reparse-point entry or ancestor.'
+    }
+}
+
 function Assert-PlatformGitHubTokenStateAncestorChain {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Path)
@@ -71,10 +84,8 @@ function Assert-PlatformGitHubTokenStateAncestorChain {
     }
     $ancestor = [IO.DirectoryInfo]::new($Path).Parent
     while ($null -ne $ancestor) {
+        Assert-PlatformGitHubTokenStateEntry -Path $ancestor.FullName
         if ($ancestor.Exists) {
-            if ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                throw 'Installation token state cannot use a symlink or reparse-point ancestor.'
-            }
             if ($IsWindows) {
                 $acl = Get-Acl -LiteralPath $ancestor.FullName
                 $actualOwner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
@@ -101,14 +112,8 @@ function Initialize-PlatformGitHubTokenStateDirectory {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Path)
 
+    Assert-PlatformGitHubTokenStateEntry -Path $Path
     Assert-PlatformGitHubTokenStateAncestorChain -Path $Path
-    $ancestor = [IO.DirectoryInfo]::new($Path)
-    while ($null -ne $ancestor) {
-        if ($ancestor.Exists -and ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            throw 'Installation token state cannot use a symlink or reparse-point ancestor.'
-        }
-        $ancestor = $ancestor.Parent
-    }
     if ($IsWindows) {
         $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
         $security = [Security.AccessControl.DirectorySecurity]::new()
@@ -136,6 +141,7 @@ function Initialize-PlatformGitHubTokenStateDirectory {
         if ($LASTEXITCODE -ne 0) { throw 'Cannot determine the installation token state owner.' }
         $private = [IO.File]::GetUnixFileMode($Path) -eq $mode
     }
+    Assert-PlatformGitHubTokenStateEntry -Path $Path
     Assert-PlatformGitHubTokenStateAncestorChain -Path $Path
     $directory = Get-Item -LiteralPath $Path -Force
     Assert-PlatformGitHubTokenStateAccess -Owner "$ownerId" -Access @{
@@ -154,9 +160,7 @@ function Open-PlatformGitHubTokenIssuance {
     Assert-PlatformGitHubTokenStateLocation -Path $fullPath
     Initialize-PlatformGitHubTokenStateDirectory -Path ([IO.Path]::GetDirectoryName($fullPath))
     foreach ($file in @($fullPath, "$fullPath.lock")) {
-        if ((Test-Path -LiteralPath $file) -and ((Get-Item -LiteralPath $file -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            throw 'Installation token state and lock must not be symlinks or reparse points.'
-        }
+        Assert-PlatformGitHubTokenStateEntry -Path $file
     }
     try { $lock = [IO.File]::Open("$fullPath.lock", [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
     catch { throw "Cannot exclusively lock installation token state '$fullPath'. Another issuer or resolver may still be running." }
@@ -202,7 +206,8 @@ function Save-PlatformGitHubTokenIssuance {
 
     if ($Context.Started) { Assert-PlatformGitHubTokenStateContent -Context $Context -Content $Context.Content }
     $record = @{
-        apiUrl = $ApiUrl; appId = $AppId; installationIds = $InstallationIds
+        apiUrl = ([uri] $ApiUrl).GetComponents([UriComponents]::SchemeAndServer, [UriFormat]::UriEscaped).ToLowerInvariant()
+        appId = $AppId; installationIds = $InstallationIds
         intentId = [guid]::NewGuid().ToString('D'); createdAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     }
     $content = ($record | ConvertTo-Json -Depth 5 -Compress) + "`n"

@@ -11,6 +11,12 @@ BeforeAll {
 
 Describe 'Installation token issuance recovery' {
     BeforeEach {
+        Mock Invoke-WebRequest {
+            param($Uri, $Method, $Headers, $MaximumRedirection, $TimeoutSec, $MaximumRetryCount)
+            $null = Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers -MaximumRedirection $MaximumRedirection `
+                -TimeoutSec $TimeoutSec -MaximumRetryCount $MaximumRetryCount
+            [pscustomobject]@{ StatusCode = 204 }
+        }
         $statePath = Join-Path $TestDrive "issuance-$([guid]::NewGuid())/pending.json"
         $app = @{
             appId = '101'; installationId = '201'; enterprise = 'example'
@@ -24,7 +30,7 @@ Describe 'Installation token issuance recovery' {
         $cloud = @{ Issued = 0; Revoked = 0; LoseResponse = $false }
         Mock Invoke-RestMethod {
             param($Uri, $Method)
-            if ($Uri -eq 'https://api.example.test/app') {
+            if (([uri] $Uri).AbsolutePath -eq '/app') {
                 return Get-GitHubApiFixture -Name apps/get-app.owner-enterprise -Set @{
                     id = 101; 'owner.slug' = 'example'; permissions = @{ members = 'read' }
                 }
@@ -94,6 +100,19 @@ Describe 'Installation token issuance recovery' {
         $cloud.Revoked | Should -Be 0
     }
 
+    It 'records API server identity without URI credentials' -Tag MetadataPrivacy {
+        $arguments.ApiUrl = 'https://fixture-user:fixture-password@api.example.test'
+        Mock Invoke-RestMethod {
+            $content = [IO.File]::ReadAllText($statePath)
+            ($content | ConvertFrom-Json -AsHashtable).apiUrl | Should -BeExactly 'https://api.example.test'
+            $content | Should -Not -Match 'fixture-user|fixture-password'
+            Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{
+                token = 'fake-installation-token'; permissions = @{ members = 'read' }
+            }
+        } -ParameterFilter { $Uri -like '*/access_tokens' }
+        (& $issuer @arguments).Verified | Should -BeTrue
+    }
+
     It 'blocks a <Case> pending record rather than treating it as success' -ForEach @(
         @{ Case = 'empty'; Content = '' }
         @{ Case = 'corrupt'; Content = '{invalid' }
@@ -129,6 +148,32 @@ Describe 'Installation token issuance recovery' {
         Test-Path -LiteralPath $statePath | Should -BeTrue
         $cloud.Issued | Should -Be 1
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'rejects a revocation response without HTTP 204: <Case>' -Tag RevocationStatus -ForEach @(
+        @{ Case = 'HTTP 200'; Reply = [pscustomobject]@{ StatusCode = 200 } }
+        @{ Case = 'HTTP 202'; Reply = [pscustomobject]@{ StatusCode = 202 } }
+        @{ Case = 'missing response'; Reply = $null }
+        @{ Case = 'missing status'; Reply = [pscustomobject]@{} }
+        @{ Case = 'null status'; Reply = [pscustomobject]@{ StatusCode = $null } }
+        @{ Case = 'string status'; Reply = [pscustomobject]@{ StatusCode = '204' } }
+    ) {
+        # These replies deliberately violate the documented DELETE HTTP 204 contract.
+        Mock Invoke-WebRequest { $Reply }
+        $events = [Collections.Generic.List[string]]::new()
+        $arguments.TokenLifecycle = {
+            param($LifecycleEvent)
+            $events.Add($LifecycleEvent.Event)
+            return $true
+        }.GetNewClosure()
+
+        { & $issuer @arguments } | Should -Throw '*revocation did not return HTTP 204*'
+        { & $issuer @arguments } | Should -Throw '*Unresolved*issuance*'
+
+        @($events) | Should -Be @('Issued', 'Revoking')
+        $cloud.Issued | Should -Be 1
+        Test-Path -LiteralPath $statePath | Should -BeTrue
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
     }
 
     It 'clears pending state after known cleanup when the supervisor rejects registration' {
@@ -202,8 +247,41 @@ Describe 'Installation token issuance recovery' {
         $link = Join-Path $TestDrive "link-$([guid]::NewGuid())"
         $null = New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $link -Target $target
         $arguments.IssuanceStatePath = Join-Path $link 'private/pending.json'
-        { & $issuer @arguments } | Should -Throw '*reparse-point ancestor*'
+        { & $issuer @arguments } | Should -Throw '*reparse-point*ancestor*'
         $cloud.Issued | Should -Be 0
+    }
+
+    It 'refuses a reparse-point <Entry> without issuing a token' -ForEach @(
+        @{ Entry = 'pending file' }
+        @{ Entry = 'lock file' }
+        @{ Entry = 'state directory' }
+    ) {
+        $null = & $issuer @arguments
+        $target = Join-Path $TestDrive "entry-target-$([guid]::NewGuid())"
+        $link = switch ($Entry) {
+            'pending file' { $statePath }
+            'lock file' { "$statePath.lock" }
+            'state directory' { Split-Path $statePath -Parent }
+        }
+        if ($Entry -ceq 'state directory') {
+            $null = [IO.Directory]::CreateDirectory($target)
+            Remove-Item -LiteralPath "$statePath.lock"
+            [IO.Directory]::Delete($link)
+            $null = New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $link -Target $target
+        }
+        else {
+            [IO.File]::WriteAllText($target, 'not a state file')
+            if (Test-Path -LiteralPath $link) { Remove-Item -LiteralPath $link }
+            # File hard links are not reparse points; file symbolic links require Windows developer privileges.
+            if ($IsWindows) {
+                $directoryTarget = "$target-dir"
+                $null = [IO.Directory]::CreateDirectory($directoryTarget)
+                $null = New-Item -ItemType Junction -Path $link -Target $directoryTarget
+            }
+            else { $null = New-Item -ItemType SymbolicLink -Path $link -Target $target }
+        }
+        { & $issuer @arguments } | Should -Throw '*reparse-point entry or ancestor*'
+        $cloud.Issued | Should -Be 1
     }
 
     It 'refuses a state ancestor with <Case> before issuing a token' -Tag AncestorBoundary -ForEach @(

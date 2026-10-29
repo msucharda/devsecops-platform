@@ -4,7 +4,7 @@
 
 ## Pending stav
 
-Issuer před každým `POST /app/installations/{installation_id}/access_tokens` atomicky uloží intent (záměr vydání). Soubor obsahuje pouze API URL, App ID, installation IDs, ID intentu a čas UTC. Neobsahuje token, JWT ani privátní klíč. Adresář smí číst a měnit jen aktuální uživatel.
+Issuer před každým `POST /app/installations/{installation_id}/access_tokens` atomicky uloží intent (záměr vydání). Soubor obsahuje pouze URL API serveru bez přihlašovacích údajů a query, App ID, installation IDs, ID intentu a čas UTC. Neobsahuje token, JWT ani privátní klíč. Adresář smí číst a měnit jen aktuální uživatel.
 
 Výchozí cesta na Windows je `%LOCALAPPDATA%\devsecops-platform\token-issuance\<hash>\pending.json`. Na Linuxu nástroj použije `$XDG_STATE_HOME/devsecops-platform/token-issuance/<hash>/pending.json`; bez `XDG_STATE_HOME` použije uživatelský adresář `LocalApplicationData`, obvykle `~/.local/share`. Hash vychází z API hostu včetně portu a App ID. Změna klíče, checkoutu ani installation ID blokaci neobejde.
 
@@ -15,6 +15,8 @@ Issuer drží exkluzivní souborový zámek po celý běh. Další issuer i reso
 Předkové stavového adresáře nesmí dovolit jinému neprivilegovanému uživateli přejmenovat nebo nahradit komponentu cesty. Na Linuxu musí předky vlastnit aktuální uživatel nebo root; sdílený zapisovatelný předek musí mít sticky bit. Na Windows nástroj důvěřuje aktuálnímu uživateli, SYSTEM, Administrators a TrustedInstaller a odmítne práva ostatních účtů k nahrazení adresáře. Samotný privátní koncový adresář ani otevřený file lock přejmenování nadřazené složky nebrání.
 
 Pending soubor zůstává až do úspěšné revokace všech známých validačních tokenů nebo do úspěšného předání známých tokenů do environment output. Při chybě revokace nebo pádu procesu zůstane. Prázdný, poškozený i nečitelný pending stav blokuje nový POST a `Verified = true`. Obyčejné opakování příkazu soubor nesmaže.
+
+Každá revokace musí vrátit dokumentovaný HTTP 204. Jiný nebo nečitelný status není potvrzená revokace a pending soubor zůstane. Volba `-VerifyRevocation` navíc vyžaduje, aby GitHub následný požadavek s revokovaným tokenem odmítl HTTP 401.
 
 ## Ruční vyřešení
 
@@ -40,7 +42,7 @@ Pending soubor nemaž ručně a neupravuj jeho čas. Chybnou identitu nebo neči
 
 ## Efemérní runnery
 
-Na efemérním runneru GitHub Actions journal zanikne s jobem. Fail-closed tam zajišťuje selhání jobu, nikoli zachování souboru do dalšího jobu. Nový job nemá důkaz cleanupu předchozího jobu. Před jeho ručním opakováním musí operátor vypořádat možné tokeny předchozího běhu.
+Na efemérním runneru GitHub Actions pending soubor zanikne s jobem. Fail-closed tam zajišťuje selhání jobu, nikoli zachování souboru do dalšího jobu. Nový job nemá důkaz cleanupu předchozího jobu. Před jeho ručním opakováním musí operátor vypořádat možné tokeny předchozího běhu.
 
 ## Primární kontrakt
 

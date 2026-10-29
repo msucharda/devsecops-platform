@@ -112,19 +112,30 @@ function Test-GitHubAppTokenCleanupComplete {
     return (-not $Uncertain -and @($tokens.PSBase.Values | Where-Object { -not $revokedTokens.Contains($_) }).Count -eq 0)
 }
 
+# security-check: token-issuance-revocation
+function Assert-GitHubAppRevocationStatus {
+    [CmdletBinding()]
+    param([AllowNull()][object] $Response)
+
+    $status = if ($null -ne $Response) { $Response.PSObject.Properties['StatusCode'] } else { $null }
+    if ($null -eq $status -or $status.Value -isnot [int] -or $status.Value -ne 204) {
+        throw 'Installation token revocation did not return HTTP 204; no retry.'
+    }
+}
+
 function Revoke-GitHubAppValidationToken {
     [CmdletBinding()]
     param([string] $Token)
 
     if (-not $revocationAttempts.Add($Token)) { throw 'Token revocation was already attempted; no blind retry.' }
     Send-GitHubAppTokenEvent -EventName Revoking -Token $Token
+    $uri = "$($ApiUrl.TrimEnd('/'))/installation/token"
+    Assert-PlatformBootstrapRequest -Uri $uri -Method DELETE -Kind TokenRevoke -RequestPolicy $requestPolicyCallback
+    $headers = @{ Authorization = "Bearer $Token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
+    $reply = Invoke-WebRequest -Uri $uri -Method DELETE -Headers $headers -SkipHttpErrorCheck `
+        -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
+    Assert-GitHubAppRevocationStatus -Response $reply
     if ($VerifyRevocation) {
-        $uri = "$($ApiUrl.TrimEnd('/'))/installation/token"
-        Assert-PlatformBootstrapRequest -Uri $uri -Method DELETE -Kind TokenRevoke -RequestPolicy $requestPolicyCallback
-        $headers = @{ Authorization = "Bearer $Token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
-        $reply = Invoke-WebRequest -Uri $uri -Method DELETE -Headers $headers -SkipHttpErrorCheck `
-            -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
-        if ($reply.StatusCode -ne 204) { throw 'Installation token revocation did not return HTTP 204; no retry.' }
         $proofPath = if ($enterpriseInstallation) {
             "/enterprises/$($expected['enterprise'])/apps/installable_organizations?per_page=1"
         } else { '/installation/repositories?per_page=1' }
@@ -134,9 +145,6 @@ function Revoke-GitHubAppValidationToken {
             -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
         if ($reply.StatusCode -ne 401) { throw 'A revoked installation token was not rejected with HTTP 401; stop.' }
         $script:revocationsVerified++
-    }
-    else {
-        $null = Invoke-GitHubAppRequest -Path '/installation/token' -Method DELETE -Token $Token
     }
     Send-GitHubAppTokenEvent -EventName Revoked -Token $Token
     $null = $revokedTokens.Add($Token)

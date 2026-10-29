@@ -301,6 +301,9 @@ Describe 'GitHub bootstrap public interface' {
                 $cloud.failPath = ''
                 return [pscustomobject]@{ StatusCode = 503; Content = '{"message":"Injected interruption."}' }
             }
+            if ($path -eq '/installation/token' -and $Method -eq 'DELETE') {
+                return [pscustomobject]@{ StatusCode = 204; Content = '' }
+            }
             if ($Method -ne 'GET' -and ($path -ne '/graphql' -or $data.query -like 'mutation*')) {
                 $cloud.writes.Add(@{ method = $Method; path = $path; body = $data })
             }
