@@ -88,10 +88,12 @@ $platform.GetField('CacheDirectory', [Reflection.BindingFlags]'Static,NonPublic,
     ) {
         $env:XDG_CACHE_HOME = $Value
         $env:PSModuleAnalysisCachePath = $Value
+        $expectedXdg = [Environment]::GetEnvironmentVariable('XDG_CACHE_HOME')
+        $expectedAnalysis = [Environment]::GetEnvironmentVariable('PSModuleAnalysisCachePath')
         {
             Invoke-TerraformTestProcess -Executable (Join-Path $TestDrive 'missing-executable') -ArgumentList @('unused') -CacheRoot $cacheRoot
         } | Should -Throw '*missing-executable*'
-        [Environment]::GetEnvironmentVariable('XDG_CACHE_HOME') | Should -BeExactly $Value
-        [Environment]::GetEnvironmentVariable('PSModuleAnalysisCachePath') | Should -BeExactly $Value
+        [Environment]::GetEnvironmentVariable('XDG_CACHE_HOME') | Should -BeExactly $expectedXdg
+        [Environment]::GetEnvironmentVariable('PSModuleAnalysisCachePath') | Should -BeExactly $expectedAnalysis
     }
 }
