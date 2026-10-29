@@ -179,6 +179,8 @@ Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. P
 
 ### Nový živý krok: časná Code Security fáze před prvním úplným deploy
 
+**Blokující předpoklad:** První živé nasazení `code-security` a `catalog` zůstává blokované do splnění živých kritérií [#157](https://github.com/msucharda/devsecops-platform/issues/157). Úspěšné offline testy ani tato dokumentační oprava živou akceptaci nenahrazují.
+
 Rozhodnutí koordinátora: První nasazení má pořadí `code-security` → `catalog` → import a povýšení workflow → `full`. Pro oba staged běhy otevři v repozitáři instance **Actions → Deploy instance → Run workflow** na chráněné větvi `main`. Jde o dva nové živé uživatelské kroky. Výchozí volba `full` spouští běžný deploy; `push` a PR dál používají úplný graf. Nepodporovanou, prázdnou nebo jinak velkými písmeny zapsanou hodnotu dispatch odmítne první job bez credentials ještě před autorizací.
 
 **Doporučená příprava custom patterns před prvním `deployment: code-security`.** Pokud `customPatterns` v `instance.yaml` není prázdné, operátor by měl ručně vytvořit a publikovat každý uvedený pattern ve všech organizacích z `target_organizations` modulu `enterprise-baseline`. Pokud organizace ještě neexistují, nejprve nasaď `organizations` podle předchozího postupu. Apply časné fáze postupuje po organizacích a skončí u první chyby; bez přípravy může vytvořit nepublikovaný pattern jen v první organizaci a k dalším se nedostat.
@@ -213,7 +215,9 @@ Při prvním běhu vyber `deployment: code-security`. Běh vybere pouze `enterpr
 
 Po úspěšném apply musí být `platform-baseline` výchozí pro nové repozitáře ve všech organizacích a připojená ke všem existujícím repozitářům včetně `instance`. Pak na `main` vyber `deployment: catalog`. Tento běh vybere časnou fázi, její předpoklady, `organization-rulesets` včetně odděleného ruleset planu a `actions-catalog`. Nevybere pozdní root `enterprise-baseline`, takže před importem a povýšením workflow nevyžaduje `liveWorkflowsPromoted` ani katalogový workflow preflight. Ruleset plan bez existující vzdálené konfigurace musí selhat, i když existuje plan časné fáze; nejdřív musí projít `code-security` apply. Oba staged běhy zachovávají autorizaci, společnou validaci konfigurace, úplný plan vybraných rootů, společnou bránu schválení a stávající environmenty. Po úspěšném `catalog` apply proveď schválený import a povýšení živých workflow. Teprve potom na `main` spusť `deployment: full` a potvrď `liveWorkflowsPromoted`. Pozdní root dál vyžaduje tento marker i katalogový workflow preflight; `full` je nesmí obejít.
 
-Všechny tři volby mají stejnou autorizační a validační cestu jako dosavadní `full`; omezený výběr ji nesmí obejít. Ověření schváleného release při bootstrapu zůstává beze změny. Deploy zatím samostatně neověřuje release marker ani provenance (původ release); tuto společnou hranici pro všechny volby řeší [#157](https://github.com/msucharda/devsecops-platform/issues/157). Nejde o novou záruku staged deploye.
+Všechny tři volby mají stejnou autorizační a validační cestu; omezený výběr ji nesmí obejít. Před načtením klíče autorizační App deploy spustí `tools/Test-DeploymentRelease.ps1` z důvěryhodné revize: pro PR z base commitu, jinak z aktuálního commitu. Nástroj stáhne release podle `.platform-bootstrap.json` ze zdroje `vars.PLATFORM_SOURCE_REPOSITORY` (výchozí `msucharda/devsecops-platform`), ověří attestaci release workflow a vazbu tagu na commit na `main`. Potom porovná marker s původními soubory release a `platform/` s původní nebo reprodukovaně vendorovanou kopií. Chybějící marker, neověřený původ nebo nesoulad obsahu zastaví všechny volby před App credentials.
+
+Ověření schváleného release při bootstrapu zůstává samostatným předpokladem. Starší živé workflow tuto kontrolu nezíská samotným importem release do `platform/`; vyžaduje samostatné povýšení workflow.
 
 Pokud starý state modulu `enterprise-baseline` ještě eviduje Code Security objekty, staged běh je převezme podle názvu do samostatného state. Následující `full` běh čtyři původní adresy ve starém state pouze zapomene pomocí deklarací `removed` s `destroy = false`. Runner před zapomenutím ověří převzetí každé identity. Starý pattern musí zůstat v `customPatterns` pod původním názvem; změněný nebo chybějící název blokuje pozdní plan i apply. Při blokované migraci obnov původní název, zopakuj `deployment: code-security` a dokonči `deployment: full`. Až potom pattern přejmenuj nebo odeber a spusť běžné nasazení; časný root provede odpovídající změnu nebo odstranění. Pozdní root nesmí spustit staré destroy provisionery ani odstranit převzatou konfiguraci nebo patterns. Při přerušení mezi oběma běhy zopakuj staged běh a potom úplný deploy; skripty dohledají již převzaté objekty. Tento konkrétní nedestruktivní přechod nepovoluje jiné migrace RC state.
 
@@ -256,16 +260,20 @@ Teprve po dokončení skript zapne Actions a vrátí `CredentialsConfigured: tru
 
 ### PR se změnou githubApps nebo credentials
 
-Změny sekcí `githubApps` a `credentials` v `instance.yaml` existující instance musí projít PR a požadovaným review. Cloudový plan nesmí použít změněná App metadata ani credential vazby před merge. Guard v `tools/Select-InstanceModules.ps1` proto porovná obě sekce kandidáta s důvěryhodnou konfigurací z base commitu `main`. I autorizovaný PR platformního autora s platnou konfigurací při změně těchto sekcí záměrně skončí dvěma červenými checky:
+Změny sekcí `githubApps` a `credentials` v `instance.yaml` existující instance musí projít PR a požadovaným review. Cloudový plan nesmí použít změněná App metadata ani credential vazby před merge. Guard v `tools/Select-InstanceModules.ps1` proto porovná obě sekce kandidáta s důvěryhodnou konfigurací z base commitu `main`. Pokud autorizace povolí PR platformního autora a validace konfigurace projde, změna těchto sekcí záměrně způsobí selhání dvou jobů ve workflow `Deploy instance`, `select` a `plan_complete`:
 
-| Check | Text, podle kterého reviewer pozná záměrné selhání |
+| Job | Text, podle kterého reviewer pozná záměrné selhání |
 |---|---|
 | `Select instance modules with trusted tools` | `PR changes protected githubApps bindings. Cloud plan must run from main after review and merge.` nebo `PR changes protected credentials bindings. Cloud plan must run from main after review and merge.` |
 | `Report complete or explicitly unperformed cloud plan` | `Cloud plan NOT PERFORMED: configuration validation or trusted module selection failed.` |
 
-Reviewer musí zároveň ověřit, že check `Validate configuration against the vendored release` prošel a diff skutečně mění `githubApps` nebo `credentials`. Samotný text `Cloud plan NOT PERFORMED` nedokazuje záměrné selhání guardu: stejný souhrn hlásí i chybu validace nebo jinou chybu výběru modulů. Jiné chyby vyřeš před merge; neoznačuj je za očekávaný výsledek tohoto postupu.
+Reviewer musí zároveň ověřit, že job `Validate configuration against the vendored release` prošel a diff skutečně mění `githubApps` nebo `credentials`. Samotný text `Cloud plan NOT PERFORMED` nedokazuje záměrné selhání guardu: stejný souhrn hlásí i chybu validace nebo jinou chybu výběru modulů. Jiné chyby vyřeš před merge; neoznačuj je za očekávaný výsledek tohoto postupu.
 
-Ruleset `platform-instance-main`, který vytváří `tools/Invoke-GitHubBootstrap.ps1`, neobsahuje pravidlo `required_status_checks`. Tyto dva červené checky tedy samy o sobě podle tohoto rulesetu merge neblokují. Nadále platí platformní CODEOWNER review, security review změny `instance.yaml` a ostatní pravidla review. Před merge ověř i další aktivní pravidla repozitáře a zděděné rulesety; bootstrapový ruleset nedokazuje, že merge dovolí celá instance. Tento postup neopravňuje k bypassu ani k vypnutí ochran.
+Dva neúspěšné joby nejsou podmínkou každého PR se změnou těchto sekcí. Importní PR vytvořený App nedostane cloudový plan: autorizační preflight vrátí `eligible=false` a `allowed=false`. Přeskočí se deploy kontrola release, načtení App klíče i výběr modulů. Deploy ověří marker a původ release až na chráněné `main` po merge, před App credentials. Ani zelený autorizační job, ani přeskočené navazující joby neprokazují ověření release nebo změněných vazeb v App PR. Reviewer musí zkontrolovat autora PR, výstup autorizace a skutečně provedené kroky.
+
+`pull_request_target` používá živé workflow a důvěryhodné nástroje z base revize; importovaná šablona v `platform/` je nenahrazuje. Při upgradu proto ověř také verzi těchto nástrojů a stav samostatného povýšení živých workflow.
+
+Ruleset `platform-instance-main`, který vytváří `tools/Invoke-GitHubBootstrap.ps1`, neobsahuje pravidlo `required_status_checks`. Tyto dva neúspěšné joby tedy samy o sobě podle tohoto rulesetu merge neblokují. Nadále platí platformní CODEOWNER review, security review změny `instance.yaml` a ostatní pravidla review. Před merge ověř i další aktivní pravidla repozitáře a zděděné rulesety; bootstrapový ruleset nedokazuje, že merge dovolí celá instance. Tento postup neopravňuje k bypassu ani k vypnutí ochran.
 
 Po review a merge proběhne nový cloudový plan z chráněné `main` před schválením apply. PR validace tento plan nenahrazuje. Pokud změna vyžaduje zapojení nových Apps nebo environmentů opakovaným bootstrapem, dokonči příslušný postup níže s konfigurací shodnou s `main`; neúspěšný plan z `main` nesmíš považovat za očekávané selhání PR guardu.
 
@@ -278,7 +286,7 @@ Parametry `-VendoringReleaseApp`, `-VendoringActionApp` a `-VendoringSourceApp` 
 Release writer lze zapojit při prvním dokončení GitHub bootstrapu. Action writer zapoj až po apply modulů `organizations` a `actions-catalog`, kdy existuje organizace akcí i cílové repozitáře. Každá App musí mít jinou identitu než autorizační App, moduly, drift reporter i ostatní vendoring Apps. Klíče přidej do stejného externího manifestu `keys.json`; platí stejná rotace do 90 dní.
 
 1. Zaregistruj a nainstaluj App s oprávněními a selected scope z tabulky. Veřejný import nepotřebuje source App.
-2. Pokud už instance existuje, doplň App metadata do `instance.yaml` přes PR a review security týmem. Dva záměrně červené checky rozpoznej podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials); cloudový plan proběhne až z `main` po merge. Po merge použij lokální kopii konfigurace shodnou s chráněnou `main`; bootstrap konfiguraci nepřepíše.
+2. Pokud už instance existuje, doplň App metadata do `instance.yaml` přes PR a review security týmem. Výsledek autorizace a případné záměrné selhání guardu rozpoznej podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials); cloudový plan proběhne až z `main` po merge. Po merge použij lokální kopii konfigurace shodnou s chráněnou `main`; bootstrap konfiguraci nepřepíše.
 3. Zopakuj bootstrap ze stejného schváleného release se stejným inventory, výstupem Azure bootstrapu a všemi již používanými App parametry:
 
 ```powershell
@@ -303,7 +311,7 @@ Bootstrap vytvoří environment `drift-report` bez reviewerů, jen z `main`. Iss
 |---|---|
 | App reportu driftu | Právě `issues: write`, jen repozitář `instance` organizace platformy. Samostatná identita; nesmí ji sdílet autorizace ani žádná fáze modulu. |
 
-Alias App patří do `githubApps` a klíč do `keys.json`. U existující instance doplň alias přes PR a požadované review podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials): dva checky záměrně skončí červeně a cloudový plan proběhne až z `main` po merge. Bootstrapu pak předej konfiguraci shodnou s `main` a alias přes `-DriftReportApp`:
+Alias App patří do `githubApps` a klíč do `keys.json`. U existující instance doplň alias přes PR a požadované review podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Cloudový plan změněných vazeb proběhne až z `main` po merge; výsledek PR workflow závisí i na autorizaci autora. Bootstrapu pak předej konfiguraci shodnou s `main` a alias přes `-DriftReportApp`:
 
 ```powershell
 .\tools\Invoke-GitHubBootstrap.ps1 @arguments `
@@ -336,7 +344,11 @@ Podporovaný přechod inventory vede z `0.1.0-rc.5` nebo novějšího release ř
 
 Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na cílový schválený release. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu.
 
-Vendoring aktualizuje `platform/**`, nikoli `.platform-bootstrap.json`. Marker vytvoř v lokálním checkoutu **větve tohoto PR**. `$release` musí označovat původní schválený release, `$releaseVersion` jeho přesnou verzi bez prefixu `v`, `$cfg` ověřený `instance.yaml` a `$instanceCheckout` checkout repozitáře instance. Nehashuj vendorovanou kopii: vendoring přepisuje odkazy na akce ve workflow šablonách, ale marker používá původní bytes release.
+Aktuální import release připraví `.platform-bootstrap.json` automaticky z původních souborů ověřeného release a publikuje ho ve stejném import commitu jako `platform/**` a `platform/.vendoring.json`. Marker obsahuje `instance`, `releaseVersion` a mapu `files` s SHA-256 původních souborů. Samotná shoda markeru s lokální kopií nedokazuje původ release. U App importního PR se deploy kontrola markeru a původu spustí až po merge na `main`, nikoli v PR běhu, který autorizace odmítla. Reviewer musí ověřit, že importní PR obsahuje marker i odpovídající `platform/`. Marker ručně nepřepočítávej z vendorované kopie ani jím nezakrývej nesoulad.
+
+Staré živé `vendor.yml` nelze kombinovat s novými publikačními nástroji. Například workflow z rc.12 nepředá požadovaný snapshot katalogu ani nevytvoří připravený marker; nové nástroje proto skončí chybou ještě před vytvořením PR. Ruční doplnění markeru tuto chybu neopraví. Před dalším importem musí platformní tým samostatným review PR povýšit odpovídající `vendor.yml` do živých `.github/workflows/` podle [postupu vendoringu](vendoring.md). Import šablony do `platform/` toto povýšení neprovede.
+
+**Pouze pro PR úspěšně vytvořený staršími importními nástroji bez root markeru:** marker vytvoř v lokálním checkoutu **větve tohoto PR** následujícím postupem. `$release` musí označovat původní schválený release s předem ověřeným původem a attestací, `$releaseVersion` jeho přesnou verzi bez prefixu `v`, `$cfg` ověřený `instance.yaml` a `$instanceCheckout` checkout repozitáře instance. Nehashuj vendorovanou kopii: vendoring přepisuje odkazy na akce ve workflow šablonách, ale marker používá původní bytes release.
 
 ```powershell
 # Generate the marker from the original approved release, not its vendored copy.
@@ -364,7 +376,7 @@ $marker = @{
     [Text.UTF8Encoding]::new($false))
 ```
 
-Commit markeru přidej do stejného PR. Po review a merge použij stejný release, inventory, výstup Azure bootstrapu a konfiguraci shodnou s `main`.
+Při použití staršího nástroje přidej marker do stejného PR jako aktualizaci `platform/`. Po review a merge použij stejný release, inventory, výstup Azure bootstrapu a konfiguraci shodnou s `main`.
 
 Do `$arguments` převezmi **všechny** parametry posledního úspěšného bootstrapu, včetně těch, které byly předané samostatně. Povinné `AuthorizationApp` a `AppKeysPath` musí zachovat původní alias a externí manifest klíčů. Pokud byly použité `DriftReportApp`, `VendoringActionApp`, `VendoringReleaseApp`, `VendoringSourceApp`, `VendoringSourceRepository` nebo `VendoringSourceApiUrl`, ponech je se stejnými hodnotami. Jejich vynechání není způsob, jak App odpojit.
 
@@ -399,7 +411,7 @@ Po úspěšném provisioningu bootstrap zapíše novou `releaseVersion` do stejn
 U existující instance nestačí aktualizovat release ani inventory. Platformní tým musí schválit změnu oprávnění App a každé její instalace:
 
 1. Připrav PR s cílovým release, markerem a změnou `githubApps.<alias>.permissions.administration` na `read` pro běžný plan `enterprise-baseline`. Zachovej `organization_administration: read`, `metadata: read` a všechny cílové organizace s výběrem `all`. Pokud stejnou App používá jiný plan s užším kontraktem, nejdřív pro `enterprise-baseline` připrav samostatnou App a v PR změň také jeho `credentials` binding. Ostatním planům, ruleset planům ani apply oprávnění nepřidávej.
-2. Získej review platformního a security týmu podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Dva záměrně červené checky nejsou cloudový plan. Po merge používej konfiguraci shodnou s chráněnou `main`. Běh `Deploy instance` vyvolaný mergem může selhat při vydání tokenu, dokud App nebo některá instalace nemá nový grant. Toto selhání není očekávaný PR guard; po dokončení bootstrapu obnov nasazení podle kroku 5.
+2. Získej review platformního a security týmu podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Záměrné selhání guardu ani odmítnutí App autora nejsou cloudový plan. Po merge používej konfiguraci shodnou s chráněnou `main`. Běh `Deploy instance` vyvolaný mergem může selhat při vydání tokenu, dokud App nebo některá instalace nemá nový grant. Toto selhání není očekávaný PR guard; po dokončení bootstrapu obnov nasazení podle kroku 5.
 3. V **Enterprise settings → GitHub Apps → příslušná App → Permissions & events → Repository permissions** nastav **Administration: Read-only**. V každé cílové organizaci otevři instalaci této App a schval požadovaná nová oprávnění. Schválení jen v organizaci platformy nestačí, pokud coverage běží i v organizaci akcí nebo workloadů.
 4. Ze stejného schváleného release zachovej úplné původní argumenty a inventory. Pokud zůstává stejná App i klíč, spusť bootstrap nejdřív s `-NoChanges`, potom s `-UpgradeInventory`. Pokud oddělení vyžaduje novou App nebo klíč, doplň nejdřív externí manifest klíčů se skutečným `createdAt` a `rotateBy`; proveď schválený `-UpgradeInventory` a až potom `-NoChanges`. Úvodní `-NoChanges` by v tomto případě odmítl vložení nového klíče, i kdyby oprávnění byla správná. `-NoChanges` ověří skutečná oprávnění App i všech instalací, ale nic neopraví; `-UpgradeInventory` oprávnění App ani souhlas instalace také neuděluje. Při chybě oprav konkrétní App nebo instalaci a zopakuj kontrolu.
 5. Po úspěšném bootstrapu ověř úplné nasazení z chráněné `main`. Pokud běh vyvolaný mergem selhal nebo úplné nasazení neproběhlo, v **Actions → Deploy instance → Run workflow** na `main` zvol `deployment: full`. Spusť celý nový běh včetně planu a standardního schválení apply; bootstrap původní běh neobnoví. Pokračuj až po úspěšném úplném nasazení.
