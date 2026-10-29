@@ -10,7 +10,7 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 
 | Cesta | Obsah |
 |---|---|
-| `modules/<name>/` | Manifest `module.yaml`, Terraform root a README se specifikací modulu. |
+| `modules/<name>/` | Manifest `module.yaml`, schéma parametrů `parameters.schema.json`, Terraform root a README se specifikací modulu. |
 | `schemas/module.schema.json` | JSON Schema Module manifest (manifest modulu). |
 | `schemas/instance.schema.json` | JSON Schema konfigurace instance. |
 | `tools/` | Lokální bootstrap Azure a GitHubu, průvodce přípravou referenční instance, runner modulu a generátor workflow v PowerShell 7, testy Pester. |
@@ -42,7 +42,11 @@ Sdílený helper `modules/shared/scripts/GitHubRetry.ps1` patří do releasu ved
 
 `schemas/instance.schema.json` popisuje soubor `instance.yaml`. Výchozí příklad je v `templates/instance/instance.yaml`. Validátor, výběr modulů i runner používají stejné schéma. Chyba uvádí cestu k položce, například `$.instance.name` nebo `$.credentials.organizations.plan.githubApp`.
 
-Validátor načítá pouze pevná schémata `instance.schema.json` a `module.schema.json` z adresáře `schemas/` vedle nástrojů. Před validací spojí jejich definice do jednoho schématu s lokálními odkazy. Povoluje jen `#/definitions/<name>` a `module.schema.json#/definitions/<name>` s existující definicí; odmítne jiné soubory, vzdálená URI, chybějící definice i `$id`, který by změnil význam odkazu. Nestahuje schémata podle URI z konfigurace a nezapíná `FetchExternalReference`. Tento postup zachovává kontrakt PowerShellu 7.4+ včetně 7.6. Pokud `Test-Json` odmítne data bez podrobností, validátor získá chybové cesty ze stejného schématu přes `JsonSchema.Net`, který je součástí podporovaného PowerShellu; odmítnutí dat tím nesmí změnit na úspěch.
+Validátor načítá pevná schémata `instance.schema.json` a `module.schema.json` z adresáře `schemas/` vedle nástrojů. Před validací spojí jejich definice do jednoho schématu s lokálními odkazy. Povoluje jen `#/definitions/<name>` a `module.schema.json#/definitions/<name>` s existující definicí; odmítne jiné soubory, vzdálená URI, chybějící definice i `$id`, který by změnil význam odkazu. Schémata parametrů přebírá pouze z pevné cesty `parameters.schema.json` vedle načteného manifestu modulu. V těchto schématech nepovoluje `$ref`, `$id`, `$anchor`, `$dynamicRef` ani `$recursiveRef`. Nestahuje schémata podle URI z konfigurace a nezapíná `FetchExternalReference`. Tento postup zachovává kontrakt PowerShellu 7.4+ včetně 7.6. Pokud `Test-Json` odmítne data bez podrobností, validátor získá chybové cesty ze stejného schématu přes `JsonSchema.Net`, který je součástí podporovaného PowerShellu; odmítnutí dat tím nesmí změnit na úspěch.
+
+Každý modul s `variables.tf` musí mít `parameters.schema.json` ve formátu JSON Schema draft-07. Schéma deklaruje objekt, `additionalProperties: false`, typy v `properties` a povinné parametry v `required`. Offline validace odmítne neznámý parametr, chybějící povinný parametr a chybný typ včetně vnořených položek ještě před planem. Výchozí hodnoty dál doplňuje Terraform; validátor je nezapisuje do konfigurace. Explicitní `vendoring_catalog_path: null` u `actions-catalog` zůstává platný.
+
+Schéma obsahuje pouze parametry z `modules.<name>.parameters`. Runner doplňuje `instance`, `prerequisites` a interní checkpoint `ruleset_destroy_started`; konfigurace je nesmí přepisovat. U parametrů z `organizationParameters` schéma popisuje mapu hodnot podle organizace, zatímco Terraform dostane hodnotu pro jednu organizaci. Test `tools/tests/ModuleParameters.Tests.ps1` porovnává názvy, povinnost a rekurzivní typy s `variables.tf` všech rootů modulu včetně deployment phases a `rulesets/`. Přitom zohledňuje toto zúžení mapy. Terraform validace hodnot a preconditions zůstávají zachované; schéma je nenahrazuje.
 
 | Položka | Kontrakt |
 |---|---|

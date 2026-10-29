@@ -131,6 +131,39 @@ function Get-PlatformModuleGraph {
         if ($manifest.name -cne $name) {
             throw "Module '$($manifest.name)' must match directory '$name' in '$manifestPath'."
         }
+        $parameterSchemaPath = Join-Path $ModulesPath "$name/parameters.schema.json"
+        if (Test-Path -LiteralPath $parameterSchemaPath -PathType Leaf) {
+            try {
+                $parameterSchema = Get-Content -LiteralPath $parameterSchemaPath -Raw -ErrorAction Stop |
+                    ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            }
+            catch { throw "Invalid module parameter schema '$parameterSchemaPath': $($_.Exception.Message)" }
+            if ($parameterSchema -isnot [System.Collections.IDictionary]) {
+                throw "Module parameter schema '$parameterSchemaPath' must be an object."
+            }
+            $checkSchema = {
+                param($Value)
+                if ($Value -is [System.Collections.IDictionary]) {
+                    foreach ($keyword in @('$ref', '$id', '$anchor', '$dynamicRef', '$recursiveRef')) {
+                        if ($Value.Contains($keyword)) { throw "Unsupported schema keyword '$keyword' in '$parameterSchemaPath'." }
+                    }
+                    foreach ($key in $Value.PSBase.Keys) { & $checkSchema $Value[$key] }
+                }
+                elseif ($Value -is [System.Collections.IList]) {
+                    foreach ($item in $Value) { & $checkSchema $item }
+                }
+            }
+            & $checkSchema $parameterSchema
+            if ($parameterSchema['type'] -cne 'object' -or
+                $parameterSchema['additionalProperties'] -isnot [bool] -or $parameterSchema['additionalProperties'] -or
+                $parameterSchema['properties'] -isnot [System.Collections.IDictionary]) {
+                throw "Module parameter schema '$parameterSchemaPath' must declare an object with properties and additionalProperties: false."
+            }
+            $manifest['parameterSchema'] = $parameterSchema
+        }
+        elseif (Test-Path -LiteralPath (Join-Path $ModulesPath "$name/variables.tf") -PathType Leaf) {
+            throw "Module '$name' is missing parameter schema '$parameterSchemaPath'."
+        }
         foreach ($phase in $manifest.permissions.githubApp.PSBase.Keys) {
             $declaration = $manifest.permissions.githubApp[$phase]
             if ($phase -eq 'plan' -and 'write' -cin @($declaration.permissions.PSBase.Values)) {
@@ -393,6 +426,22 @@ function Get-PlatformInstance {
         }
     }
     $schema = Get-PlatformJsonSchema -Name instance
+    foreach ($name in $Modules.PSBase.Keys) {
+        if (-not $Modules[$name].Contains('parameterSchema')) { continue }
+        $parameterSchema = $Modules[$name]['parameterSchema']
+        $entry = @{
+            allOf = @(
+                @{ '$ref' = '#/definitions/moduleEntry' }
+                @{
+                    properties = @{ parameters = $parameterSchema }
+                }
+            )
+        }
+        if ($parameterSchema.Contains('required') -and $parameterSchema['required'].Count -gt 0) {
+            $entry.allOf[1]['required'] = @('parameters')
+        }
+        $schema.properties.modules.properties[$name] = $entry
+    }
     $schemaJson = ConvertTo-Json -InputObject $schema -Depth 100
     $instanceJson = ConvertTo-Json -InputObject $instance -Depth 100 -Compress
     $validationErrors = @()

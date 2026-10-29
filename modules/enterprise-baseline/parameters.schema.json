@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["target_organizations", "secret_scanning_bypass_reviewers"],
+  "properties": {
+    "target_organizations": { "type": "array", "items": { "type": "string" } },
+    "secret_scanning_bypass_reviewers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["reviewer_type", "reviewer_id"],
+          "properties": {
+            "reviewer_type": { "type": "string" },
+            "reviewer_id": { "type": "number" }
+          }
+        }
+      }
+    }
+  }
+}
