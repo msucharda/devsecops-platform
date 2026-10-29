@@ -40,7 +40,8 @@
     'EnterpriseInstallationToken.Tests.ps1' = 5
     'OrganizationToken.Tests.ps1' = 2
     'ModuleOrder.Tests.ps1' = 5
-    'CodeSecurity.Tests.ps1' = 4
+    # Source CI run 40880936626: 4.45 seconds, rounded up.
+    'CodeSecurity.Tests.ps1' = 5
     'DriftIssue.Tests.ps1' = 3
     'GitHubApiFixture.Tests.ps1' = 3
     'DeadlineHttp.Tests.ps1' = 3
