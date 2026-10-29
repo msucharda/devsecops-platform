@@ -13,7 +13,8 @@ function Get-ReleaseFileHash {
     foreach ($item in Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction Stop) {
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Release tree contains symbolic link '$($item.FullName)'." }
         if ($item.PSIsContainer) { continue }
-        $relative = [IO.Path]::GetRelativePath($root.FullName, $item.FullName).Replace('\', '/')
+        $relative = [IO.Path]::GetRelativePath($root.FullName, $item.FullName).Replace([IO.Path]::DirectorySeparatorChar, '/')
+        if ($relative.Contains('\')) { throw "Release tree contains a literal backslash in '$relative'." }
         if ($RawRelease -and -not (Test-PlatformReleaseFile -RelativePath $relative)) { continue }
         $files.Add($relative, (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant())
     }

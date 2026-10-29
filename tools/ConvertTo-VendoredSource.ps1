@@ -19,9 +19,9 @@ Import-Module (Join-Path $PSScriptRoot 'VendoringCatalog.psm1')
 
 # security-check: vendoring-release-tag
 function Assert-VendoringReleaseTag {
-    param([AllowNull()][object] $CatalogTag, [string] $ExpectedTag, [string] $Upstream)
+    param([AllowNull()][string] $CatalogTag, [string] $ExpectedTag, [string] $Upstream)
 
-    if ($CatalogTag -isnot [string] -or $CatalogTag -cne $ExpectedTag) {
+    if ($CatalogTag -cne $ExpectedTag) {
         throw "Catalog tag for '$Upstream' must match release pin tag '$ExpectedTag'; update the action copy and catalog before importing this release."
     }
 }

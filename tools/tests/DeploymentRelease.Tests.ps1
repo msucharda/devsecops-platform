@@ -102,6 +102,17 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         { & $preflight @arguments } | Should -Throw '*Candidate hash differs*'
     }
 
+    It 'rejects a literal backslash filename in <Mode> mode' -Tag 'LiteralPathBoundary' -Skip:$IsWindows -ForEach @(
+        @{ Mode = 'raw' }
+        @{ Mode = 'transformed' }
+    ) {
+        [IO.File]::Move(
+            "$candidate/platform/templates/instance/.github/workflows/deploy.yml",
+            "$candidate/platform/templates\instance\.github\workflows\deploy.yml"
+        )
+        { & $preflight @arguments } | Should -Throw '*Release tree contains a literal backslash*'
+    }
+
     It 'accepts the installed release after the current action catalog advances' -Tag 'CatalogSnapshot' -ForEach @(@{ Mode = 'transformed' }) {
         $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
         @{ version = 2; kind = 'release'; catalog = $catalog } | ConvertTo-Json -Depth 10 |
