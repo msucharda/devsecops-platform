@@ -72,8 +72,8 @@ Describe 'GitHub request retry policy' {
         Mock Invoke-WebRequest {
             throw [Net.Http.HttpRequestException]::new([Net.Http.HttpRequestError]::ConnectionError, 'transport-secret')
         }
-        { Invoke-GitHubRetryRequest -Request $request } |
-            Should -Throw '*GET /orgs/example status=none attempt=3'
+        $failure = { Invoke-GitHubRetryRequest -Request $request } | Should -Throw -PassThru
+        $failure.Exception.Message | Should -BeExactly 'GET /orgs/example status=none attempt=3'
         Should -Invoke Invoke-WebRequest -Times 3 -Exactly
         Should -Invoke Start-Sleep -Times 2 -Exactly
     }
@@ -100,10 +100,19 @@ Describe 'GitHub request retry policy' {
 
     It 'does not retry an unclassified error or expose its message' {
         Mock Invoke-WebRequest { throw [InvalidOperationException]::new('transport-secret') }
-        { Invoke-GitHubRetryRequest -Request $request } |
-            Should -Throw '*GET /orgs/example status=none attempt=1'
+        $failure = { Invoke-GitHubRetryRequest -Request $request } | Should -Throw -PassThru
+        $failure.Exception.Message | Should -BeExactly 'GET /orgs/example status=none attempt=1'
         Should -Invoke Invoke-WebRequest -Times 1 -Exactly
         Should -Invoke Start-Sleep -Times 0 -Exactly
+    }
+
+    It 'rejects a sensitive <Position> in a sanitized error assertion' -ForEach @(
+        @{ Position = 'prefix'; Message = 'transport-secret GET /orgs/example status=none attempt=1' }
+        @{ Position = 'suffix'; Message = 'GET /orgs/example status=none attempt=1 transport-secret' }
+    ) {
+        $failure = { throw $Message } | Should -Throw -PassThru
+        { $failure.Exception.Message | Should -BeExactly 'GET /orgs/example status=none attempt=1' } |
+            Should -Throw -ErrorId 'PesterAssertionFailed'
     }
 
     It 'allows only the explicit token-revocation DELETE exception' {
@@ -184,8 +193,8 @@ Describe 'GitHub request retry policy' {
     It 'never exposes a malformed status or headers in a transport error' {
         # Deliberately invalid HTTP metadata, not a GitHub API response fixture.
         Mock Invoke-WebRequest { [pscustomobject]@{ StatusCode = 'response-secret'; Content = 'body-secret' } }
-        { Invoke-GitHubRetryRequest -Request $request } |
-            Should -Throw '*GET /orgs/example status=none attempt=1'
+        $failure = { Invoke-GitHubRetryRequest -Request $request } | Should -Throw -PassThru
+        $failure.Exception.Message | Should -BeExactly 'GET /orgs/example status=none attempt=1'
         Should -Invoke Invoke-WebRequest -Times 1 -Exactly
     }
 
