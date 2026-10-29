@@ -24,7 +24,7 @@ try {
         if ($resourceInput -isnot [System.Collections.IDictionary] -or -not $resourceInput[$key]) { throw "ACTIONS_POLICY_INPUT has no '$key'." }
     }
     Write-Verbose "$Action for $($resourceInput['organization'])."
-    Set-ActionsPolicy -ApiUrl $resourceInput['api_url'] -Organization $resourceInput['organization'] -Policy $resourceInput['policy']
+    Set-ActionsPolicy -ApiUrl $resourceInput['api_url'] -Organization $resourceInput['organization'] -Policy $resourceInput['policy'] -Reset:($Action -ceq 'ResetPolicy')
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

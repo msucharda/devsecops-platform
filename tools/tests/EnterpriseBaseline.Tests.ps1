@@ -859,6 +859,36 @@ locals {
         $policy.Workflow['can_approve_pull_request_reviews'] | Should -BeFalse
     }
 
+    It 'resumes destroy from a policy identity stored before SHA pinning was managed' -Tag 'ShaPinning' {
+        $overridePath = Join-Path $root 'stub_override.tf'
+        $currentOverride = Get-Content -LiteralPath $overridePath -Raw
+        # Reproduce the input saved by the pre-#82 resource, not a new identity with the SHA field.
+        Add-Content -LiteralPath $overridePath -Value @'
+locals {
+  actions_policy_github_defaults = {
+    enabled_repositories             = "all"
+    allowed_actions                  = "all"
+    default_workflow_permissions     = "read"
+    can_approve_pull_request_reviews = false
+  }
+}
+'@
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
+        Set-Content -LiteralPath $overridePath -Value $currentOverride
+        $policy = $stubState.ActionsPolicy
+        $policy.DropNext = '^PUT /orgs/demo/actions/permissions$'
+
+        $interrupted = Invoke-StubTerraform destroy -input=false -auto-approve
+        $resumed = Invoke-StubTerraform destroy -input=false -auto-approve
+
+        $policy.DropNext | Should -BeNullOrEmpty
+        $interrupted.ExitCode | Should -Not -Be 0
+        $resumed.ExitCode | Should -Be 0 -Because $resumed.Output
+        $policy.Actions['allowed_actions'] | Should -BeExactly 'all'
+        $policy.Actions['sha_pinning_required'] | Should -BeExactly $false
+    }
+
     It 'fails the plan when the actions policy drifts: <Case>' -ForEach @(
         @{ Case = 'all actions allowed'; Message = 'allowed actions policy of demo is not local_only'; Drift = { param($p) $p.Actions['allowed_actions'] = 'all' } }
         @{ Case = 'SHA pinning disabled'; Message = 'Required SHA pinning of demo is not true'; Drift = { param($p) $p.Actions['sha_pinning_required'] = $false } }

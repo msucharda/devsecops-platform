@@ -181,9 +181,16 @@ function Set-ActionsPolicy {
     param(
         [Parameter(Mandatory)][string] $ApiUrl,
         [Parameter(Mandatory)][string] $Organization,
-        [Parameter(Mandatory)][AllowNull()][object] $Policy
+        [Parameter(Mandatory)][AllowNull()][object] $Policy,
+        [switch] $Reset
     )
 
+    # Destroy provisioners replay self.input from state, including identities saved before SHA pinning was managed.
+    if ($Reset -and $Policy -is [System.Collections.IDictionary] -and -not $Policy.Contains('sha_pinning_required')) {
+        Write-Verbose 'Upgrading the legacy reset policy to restore the GitHub default of SHA pinning.'
+        $Policy = [ordered]@{} + $Policy
+        $Policy['sha_pinning_required'] = $false
+    }
     $managed = ConvertTo-ActionsPolicy -Policy $Policy
     $state = Get-ActionsPolicyState -ApiUrl $ApiUrl -Organization $Organization
     $actions = $state['actions_permissions']

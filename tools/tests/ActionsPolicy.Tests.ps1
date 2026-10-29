@@ -109,6 +109,26 @@ Describe 'Actions policy' {
             $stub.Workflow['can_approve_pull_request_reviews'] | Should -BeExactly $false
         }
 
+        It 'resets a legacy policy stored before SHA pinning was managed' {
+            Set-ActionsPolicy @target -Policy $managedPolicy
+            $legacy = @{} + $defaultPolicy
+            $legacy.Remove('sha_pinning_required')
+
+            Set-ActionsPolicy @target -Policy $legacy -Reset
+
+            $stub.Actions['sha_pinning_required'] | Should -BeExactly $false
+            $stub.Actions['allowed_actions'] | Should -BeExactly 'all'
+            $legacy.Contains('sha_pinning_required') | Should -BeFalse
+        }
+
+        It 'rejects a missing SHA field outside legacy reset' {
+            $legacy = @{} + $defaultPolicy
+            $legacy.Remove('sha_pinning_required')
+
+            { Set-ActionsPolicy @target -Policy $legacy } | Should -Throw '*missing or undocumented value*'
+            $stub.Requests | Should -BeNullOrEmpty
+        }
+
         It 'writes nothing when the organization already has the policy' {
             Set-ActionsPolicy @target -Policy $managedPolicy
             $stub.Requests.Clear()

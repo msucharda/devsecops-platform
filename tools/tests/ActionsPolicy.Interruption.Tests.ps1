@@ -56,18 +56,23 @@ Describe 'Actions policy interruption harness' -Tag 'Interruption' {
     It 'recovers from an interruption at every mutating step of <Name>' -ForEach @(
         @{ Name = 'the managed policy'; Policy = 'managed' }
         @{ Name = 'the GitHub defaults'; Policy = 'default' }
+        @{ Name = 'the legacy GitHub defaults'; Policy = 'legacy' }
     ) {
-        $policy = if ($Policy -ceq 'managed') { $managedPolicy } else { $defaultPolicy }
+        $desiredPolicy = if ($Policy -ceq 'managed') { $managedPolicy } else { $defaultPolicy }
+        if ($Policy -ceq 'legacy') {
+            $desiredPolicy = @{} + $defaultPolicy
+            $desiredPolicy.Remove('sha_pinning_required')
+        }
         $reset = {
             & $resetStub {
-                if ($Policy -ceq 'default') {
+                if ($Policy -cne 'managed') {
                     $stub.Actions['allowed_actions'] = 'local_only'
                     $stub.Actions['sha_pinning_required'] = $true
                     $stub.Workflow['can_approve_pull_request_reviews'] = $true
                 }
             }
         }
-        $run = { Set-ActionsPolicy @target -Policy $policy }
+        $run = { Set-ActionsPolicy @target -Policy $desiredPolicy -Reset:($Policy -cne 'managed') }
 
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
 

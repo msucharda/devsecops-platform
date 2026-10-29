@@ -97,6 +97,7 @@ Modul v každé organizaci z `target_organizations` nastaví tato pole (API verz
 - Zápis i čtení provádí skript `scripts/ActionsPolicy.psm1`. Oba `PUT` vrací `204` bez těla, proto modul nepoužívá provider `restapi`. Každý zápis je idempotentní `PUT` jen se spravovanými poli. Skript nejdřív přečte stav a zapíše jen rozdíl. Po zápisu stav znovu přečte a selže, když neodpovídá politice.
 - Data source `external.actions_policy_state` čte `GET /orgs/{org}/actions/permissions` a `GET /orgs/{org}/actions/permissions/workflow` při každém planu a po apply. Chybějící pole, jiný typ nebo jiná velikost písmen je porušení, ne shoda. Drift zastaví plan; oprava je ruční obnova nebo apply s `-replace=terraform_data.actions_policy_settings["<org>"]`.
 - Identitní prostředek `terraform_data.actions_policy` při destroy obnoví výchozí hodnoty GitHubu z tabulky. Obsahový prostředek `terraform_data.actions_policy_settings` politiku zapisuje; změna politiky nahradí jen jeho, takže mezi starou a novou politikou nevznikne okno s výchozími hodnotami.
+- Reset nastaví `sha_pinning_required: false`, protože obnovuje výchozí politiku GitHubu, nikoli původní stav organizace. Starší Terraform state pole neobsahuje; pouze `ResetPolicy` tento uložený vstup doplní o `false`. Přímý destroy ani opakování přerušeného destroy proto nevyžaduje předchozí apply nové verze. `SetPolicy` a kontrola readbacku chybějící pole dál odmítají.
 
 ### Preflight živých workflow
 
