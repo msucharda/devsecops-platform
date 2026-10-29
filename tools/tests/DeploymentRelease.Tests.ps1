@@ -179,6 +179,17 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
     }
 
+    It 'rejects an array-valued release receipt kind before selecting its snapshot' -Tag 'ScalarSnapshot' -ForEach @(
+        @{ Mode = 'transformed'; Kind = @('release') }
+    ) {
+        $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
+        @{ version = 2; kind = $Kind; catalog = $catalog } | ConvertTo-Json -Depth 10 |
+            Set-Content "$candidate/platform/.vendoring.json"
+
+        { & $preflight @arguments } | Should -Throw '*Invalid transformed release receipt*'
+        Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
     It 'uses the current catalog for a legacy transformed tree without a receipt' -Tag 'CatalogSnapshot' -ForEach @(@{ Mode = 'transformed' }) {
         Remove-Item "$candidate/platform/.vendoring.json"
         $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable

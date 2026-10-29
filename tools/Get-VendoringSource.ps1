@@ -89,17 +89,24 @@ function Get-SourceAttestationNextPage {
         foreach ($match in [regex]::Matches($value,
                 '\G\s*<(?<url>[^<>]+)>\s*;\s*rel\s*=\s*(?:"(?<rel>[^"]+)"|(?<rel>[A-Za-z]+))\s*(?:,\s*(?=<)|(?=\z))')) {
             $offset += $match.Length
-            if ($match.Groups['rel'].Value -ceq 'next') {
-                if ($null -ne $next) { throw 'Multiple next-page links in source attestation pagination.' }
-                $next = $match.Groups['url'].Value
+            $relationTypes = $match.Groups['rel'].Value
+            if ($relationTypes -notmatch '^[A-Za-z][A-Za-z0-9.-]*(?: +[A-Za-z][A-Za-z0-9.-]*)*$') {
+                throw 'Unreadable source attestation pagination Link header.'
+            }
+            foreach ($relation in ($relationTypes -split ' +')) {
+                if ($relation -ieq 'next') {
+                    if ($null -ne $next) { throw 'Multiple next-page links in source attestation pagination.' }
+                    $next = $match.Groups['url'].Value
+                }
             }
         }
         if ($offset -ne $value.Length -or $offset -eq 0) { throw 'Unreadable source attestation pagination Link header.' }
     }
     if ($null -eq $next) { return $null }
     $target = $null
+    # UriPartial.Authority includes scheme and user info; exact equality also excludes HTTP and embedded credentials.
     if (-not [uri]::TryCreate($next, [UriKind]::Absolute, [ref] $target) -or
-        $target.Scheme -ne 'https' -or $target.UserInfo -or $target.Fragment -or
+        $target.Fragment -or
         -not [string]::Equals($target.GetLeftPart([UriPartial]::Authority),
             ([uri] $DigestUri).GetLeftPart([UriPartial]::Authority), [StringComparison]::Ordinal) -or
         -not [string]::Equals($target.AbsolutePath, ([uri] $DigestUri).AbsolutePath, [StringComparison]::Ordinal)) {

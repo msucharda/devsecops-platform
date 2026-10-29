@@ -178,18 +178,78 @@ Describe 'Tagged vendoring source and attestation policy' {
         ($verifyCalls[30].Arguments -join ' ') | Should -Match '--source-ref refs/tags/v1\.2\.3 --source-digest 3{40} --deny-self-hosted-runners --signer-workflow upstream/action/\.github/workflows/release\.yml$'
     }
 
+    It 'follows a Link with combined <Relation> relations to verify a later attestation' -Tag AttestationRelations -ForEach @(
+        @{ Relation = 'next last' }
+        @{ Relation = 'NeXt last' }
+    ) {
+        $firstPage = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $secondPage = Get-AttestationList 'https://bundles.test/2.json.sn'
+        $verifyExitCodes = @(1, 0)
+        Mock Invoke-RestMethod {
+            param($Uri, $ResponseHeadersVariable)
+            if ($Uri -like '*/git/ref/tags/v1.2.3') {
+                return Get-GitHubApiFixture -Name git/get-ref -Set @{ 'object.type' = 'commit'; 'object.sha' = '3333333333333333333333333333333333333333' }
+            }
+            if ($Uri -like '*/compare/main...3333333333333333333333333333333333333333?per_page=1') { return $comparison }
+            if ($Uri -match '/attestations/sha256:[a-f0-9]{64}\?after=cursor-two$') { return $secondPage }
+            if ($Uri -match '/attestations/sha256:[a-f0-9]{64}$') {
+                if ($ResponseHeadersVariable) {
+                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable `
+                        -Link "<${Uri}?after=cursor-two>; rel=`"$Relation`""
+                }
+                return $firstPage
+            }
+            throw "Unexpected source API: $Uri"
+        }
+
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -SignerWorkflow upstream/action/.github/workflows/release.yml -RequireAttestation -ProtectedBranch main
+
+        $result.Attestation | Should -BeExactly 'verified'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -match '/attestations/sha256:[a-f0-9]{64}\?after=cursor-two$' }
+        Should -Invoke gh -Times 2 -Exactly
+        ($verifyCalls[1].Arguments -join ' ') | Should -Match '--source-ref refs/tags/v1\.2\.3 --source-digest 3{40} --deny-self-hosted-runners --signer-workflow upstream/action/\.github/workflows/release\.yml$'
+    }
+
+    It 'accepts the documented empty-object commit identities in a protected-branch comparison' -Tag ApiCommitVariant {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $comparison = Get-GitHubApiFixture -Name repos/compare-commits -Set @{
+            status = 'behind'
+            'merge_base_commit.sha' = '3333333333333333333333333333333333333333'
+            'merge_base_commit.author' = @{}
+            'merge_base_commit.committer' = @{}
+        }
+        $comparison.merge_base_commit.author.Count | Should -Be 0
+        $comparison.merge_base_commit.committer.Count | Should -Be 0
+
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -SignerWorkflow upstream/action/.github/workflows/release.yml -RequireAttestation -ProtectedBranch main
+
+        $result.Attestation | Should -BeExactly 'verified'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -like '*/compare/main...3333333333333333333333333333333333333333?per_page=1'
+        }
+    }
+
     It 'rejects unsafe attestation pagination with <Case>' -Tag AttestationPagination -ForEach @(
         @{ Case = 'an empty Link collection'; Link = @(); ErrorPattern = '*Unreadable source attestation pagination Link*' }
         @{ Case = 'an empty Link value'; Link = ''; ErrorPattern = '*Unreadable source attestation pagination Link*' }
         @{ Case = 'a whitespace Link value'; Link = '   '; ErrorPattern = '*Unreadable source attestation pagination Link*' }
         @{ Case = 'a malformed Link header'; Link = '<{digest}?after=one; rel="next"'; ErrorPattern = '*Unreadable source attestation pagination Link*' }
+        @{ Case = 'unsupported relation list syntax'; Link = '<{digest}?after=one>; rel="next;last"'; ErrorPattern = '*Unreadable source attestation pagination Link*' }
+        @{ Case = 'a valid Link followed by garbage'; Link = '<{digest}?after=one>; rel="next", <{digest}?after=two>; rel="last" garbage'; ErrorPattern = '*Unreadable source attestation pagination Link*' }
         @{ Case = 'duplicate next relations'; Link = '<{digest}?after=one>; rel="next", <{digest}?after=two>; rel="next"'; ErrorPattern = '*Multiple next-page links*' }
         @{ Case = 'a foreign API origin'; Link = '<https://other.invalid/repos/upstream/action/attestations/sha256:abc?after=one>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
+        @{ Case = 'a foreign HTTPS host with the same digest path'; Link = '<https://other.invalid{path}?after=one>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
+        @{ Case = 'an HTTP scheme with the same host and digest path'; Link = '<http://api.github.com{path}?after=one>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
+        @{ Case = 'userinfo with the same host and digest path'; Link = '<https://reader@api.github.com{path}?after=one>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
         @{ Case = 'a different digest path'; Link = '<{otherDigest}?after=one>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
         @{ Case = 'a URL fragment'; Link = '<{digest}?after=one#fragment>; rel="next"'; ErrorPattern = '*outside the digest endpoint*' }
         @{ Case = 'no cursor'; Link = '<{digest}>; rel="next"'; ErrorPattern = '*no cursor*' }
         @{ Case = 'only per_page without a cursor'; Link = '<{digest}?per_page=30>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
         @{ Case = 'an uppercase cursor key'; Link = '<{digest}?After=one>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
+        @{ Case = 'an uppercase optional per_page key'; Link = '<{digest}?after=one&PER_PAGE=30>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
+        @{ Case = 'both after and before cursors'; Link = '<{digest}?after=one&before=two>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
         @{ Case = 'a cursor with an extra query field'; Link = '<{digest}?after=one&access_token=secret>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
         @{ Case = 'duplicate cursor fields'; Link = '<{digest}?after=one&after=two>; rel="next"'; ErrorPattern = '*Invalid source attestation pagination cursor*' }
     ) {
@@ -208,7 +268,9 @@ Describe 'Tagged vendoring source and attestation policy' {
                 if ($ResponseHeadersVariable) {
                     $otherDigest = $Uri -replace '[a-f0-9]{64}$', ('a' * 64)
                     $linkValue = $Link
-                    if ($Link -is [string]) { $linkValue = $Link.Replace('{digest}', $Uri).Replace('{otherDigest}', $otherDigest) }
+                    if ($Link -is [string]) {
+                        $linkValue = $Link.Replace('{digest}', $Uri).Replace('{otherDigest}', $otherDigest).Replace('{path}', ([uri] $Uri).AbsolutePath)
+                    }
                     Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable `
                         -Link $linkValue
                 }

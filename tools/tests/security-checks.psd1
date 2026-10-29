@@ -44,7 +44,13 @@
             Tests = @(
                 @{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' }
                 @{ Path = 'tools/tests/Vendoring.Tests.ps1'; FullName = 'Vendored source preparation through the public command*' }
-                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = '*rejects catalog snapshot*at the public publisher boundary*' }
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*rejects catalog snapshot*at the public publisher boundary*', '*rejects array-valued catalog snapshot*at the public publisher boundary*') }
+            )
+        }
+        @{
+            Name = 'vendoring-source-receipt'
+            Tests = @(
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*rejects array-valued source receipt*before publication*', '*rejects malformed source receipt*before publication*', '*opens an App PR containing updated files*') }
             )
         }
         @{
@@ -439,7 +445,7 @@
         @{
             Name = 'vendoring-attestation-pagination'
             Tests = @(
-                @{ Path = 'tools/tests/VendoringSource.Tests.ps1'; FullName = @('*attestation pagination*', '*matching attestation on the next cursor page*', '*cyclic attestation next link*', '*later attestation page 404*') }
+                @{ Path = 'tools/tests/VendoringSource.Tests.ps1'; FullName = @('*attestation pagination*', '*matching attestation on the next cursor page*', '*follows a Link with combined*', '*cyclic attestation next link*', '*later attestation page 404*') }
             )
         }
         @{

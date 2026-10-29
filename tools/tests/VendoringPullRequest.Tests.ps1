@@ -222,6 +222,81 @@ Describe 'Vendoring diff and pull request publication' {
         Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
     }
 
+    It 'rejects array-valued catalog snapshot <Field> at the public publisher boundary' -Tag 'ScalarSnapshot' -ForEach @(
+        @{ Field = 'copy SHA'; Change = {
+            $catalog.actions['actions/checkout'].sha = @('1111111111111111111111111111111111111111')
+        }; Error = "*Invalid catalog entry 'actions/checkout'*" }
+        @{ Field = 'copy repository'; Change = {
+            $catalog.actions['actions/checkout'].repository = @('customer-actions/actions-checkout')
+        }; Error = "*Invalid catalog entry 'actions/checkout'*" }
+        @{ Field = 'upstream commit'; Change = {
+            $catalog.actions['actions/checkout'].upstreamCommit = @('3d3c42e5aac5ba805825da76410c181273ba90b1')
+        }; Error = "*Catalog upstreamCommit for 'actions/checkout' must be a full lowercase commit SHA*" }
+        @{ Field = 'annotated tag'; Change = {
+            $catalog.actions['actions/checkout'].tag = @('v7.0.1')
+        }; Error = "*Invalid catalog entry 'actions/checkout'*" }
+    ) {
+        Remove-Item (Join-Path $prepared 'action.yml')
+        $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+        'release content' | Set-Content (Join-Path $prepared 'platform/README.md')
+        '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+            Set-Content (Join-Path $prepared '.platform-bootstrap.json')
+        $catalog = Get-Content $releaseCatalogArgs.CatalogPath -Raw | ConvertFrom-Json -AsHashtable
+        . $Change
+        $catalogPath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '-scalar-catalog.json')
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content $catalogPath
+
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com `
+            -CatalogPath $catalogPath -ActionsOrganization customer-actions } | Should -Throw $Error
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'rejects array-valued source receipt <Field> before publication' -Tag 'ScalarSnapshot' -ForEach @(
+        @{ Field = 'repository'; Change = { $sourceReceipt.Repository = @('upstream/action') } }
+        @{ Field = 'tag'; Change = { $sourceReceipt.Tag = @('v1') } }
+        @{ Field = 'commit'; Change = { $sourceReceipt.Commit = @('3333333333333333333333333333333333333333') } }
+        @{ Field = 'digest'; Change = { $sourceReceipt.Sha256 = @('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') } }
+        @{ Field = 'attestation'; Change = { $sourceReceipt.Attestation = @('not-present') } }
+    ) {
+        $sourceReceipt = Get-Content $receipt -Raw | ConvertFrom-Json -AsHashtable
+        . $Change
+        $sourceReceipt | ConvertTo-Json -Depth 10 | Set-Content $receipt
+
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Invalid source receipt*'
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'rejects malformed source receipt <Field> before publication' -Tag 'ScalarSnapshot' -ForEach @(
+        @{ Field = 'root array'; Change = {
+            $sourceJson = '[' + ($sourceReceipt | ConvertTo-Json -Depth 10 -Compress) + ']'
+        } }
+        @{ Field = 'commit pin'; Change = { $sourceReceipt.Commit = 'not-a-commit' } }
+        @{ Field = 'commit capitalization'; Change = { $sourceReceipt.Commit = 'A' * 40 } }
+        @{ Field = 'digest'; Change = { $sourceReceipt.Sha256 = 'not-a-digest' } }
+        @{ Field = 'digest capitalization'; Change = { $sourceReceipt.Sha256 = 'A' * 64 } }
+        @{ Field = 'attestation'; Change = { $sourceReceipt.Attestation = 'unknown' } }
+        @{ Field = 'attestation capitalization'; Change = { $sourceReceipt.Attestation = 'VERIFIED' } }
+        @{ Field = 'repository'; Change = { $sourceReceipt.Repository = 'invalid' } }
+        @{ Field = 'tag'; Change = { $sourceReceipt.Tag = 'invalid tag' } }
+    ) {
+        $sourceReceipt = Get-Content $receipt -Raw | ConvertFrom-Json -AsHashtable
+        $sourceJson = $null
+        . $Change
+        if ($null -eq $sourceJson) { $sourceJson = $sourceReceipt | ConvertTo-Json -Depth 10 }
+        $sourceJson | Set-Content $receipt
+
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Invalid source receipt*'
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
     It 'requires an explicit catalog snapshot for every new release publication' -Tag 'CatalogSnapshot' {
         Remove-Item (Join-Path $prepared 'action.yml')
         $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')

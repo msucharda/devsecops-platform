@@ -42,7 +42,8 @@ function Resolve-DeploymentReleaseCatalog {
         return (Join-Path $Candidate 'vendoring/actions.json')
     }
     $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
-    if ($receipt -isnot [Collections.IDictionary] -or $receipt['kind'] -cne 'release' -or
+    if ($receipt -isnot [Collections.IDictionary] -or $receipt['kind'] -isnot [string] -or
+        $receipt['kind'] -cne 'release' -or
         $receipt['version'] -isnot [long]) {
         throw 'Invalid transformed release receipt.'
     }

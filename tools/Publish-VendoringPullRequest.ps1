@@ -39,13 +39,24 @@ if ($scope.total_count -ne 1 -or @($scope.repositories).Count -ne 1 -or $scope.r
 }
 $target = (Resolve-Path -LiteralPath $TargetPath).Path
 $prepared = (Resolve-Path -LiteralPath $PreparedPath).Path
-$receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json -AsHashtable
-if ($receipt['Commit'] -cnotmatch '^[a-f0-9]{40}$' -or $receipt['Sha256'] -cnotmatch '^[a-f0-9]{64}$' -or
-    $receipt['Attestation'] -cnotin @('verified', 'not-present', 'manual-not-verified') -or
-    $receipt['Repository'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$' -or
-    $receipt['Tag'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._/-]*$') {
-    throw 'Invalid source receipt.'
+$receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+# security-check: vendoring-source-receipt
+function Assert-VendoringSourceReceipt {
+    param([AllowNull()][object] $SourceReceipt)
+
+    if ($SourceReceipt -isnot [Collections.IDictionary] -or
+        $SourceReceipt['Commit'] -isnot [string] -or $SourceReceipt['Commit'] -cnotmatch '^[a-f0-9]{40}$' -or
+        $SourceReceipt['Sha256'] -isnot [string] -or $SourceReceipt['Sha256'] -cnotmatch '^[a-f0-9]{64}$' -or
+        $SourceReceipt['Attestation'] -isnot [string] -or
+        $SourceReceipt['Attestation'] -cnotin @('verified', 'not-present', 'manual-not-verified') -or
+        $SourceReceipt['Repository'] -isnot [string] -or
+        $SourceReceipt['Repository'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$' -or
+        $SourceReceipt['Tag'] -isnot [string] -or
+        $SourceReceipt['Tag'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._/-]*$') {
+        throw 'Invalid source receipt.'
+    }
 }
+Assert-VendoringSourceReceipt -SourceReceipt $receipt
 $receipt['Repository'] = $receipt['Repository'].ToLowerInvariant()
 # security-check: vendoring-publish-catalog-snapshot
 function Get-VendoringPublishCatalogSnapshot {
