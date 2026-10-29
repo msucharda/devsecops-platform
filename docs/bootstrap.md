@@ -258,14 +258,14 @@ Teprve po dokončení skript zapne Actions a vrátí `CredentialsConfigured: tru
 
 ### PR se změnou githubApps nebo credentials
 
-Změny sekcí `githubApps` a `credentials` v `instance.yaml` existující instance musí projít PR a požadovaným review. Cloudový plan nesmí použít změněná App metadata ani credential vazby před merge. Guard v `tools/Select-InstanceModules.ps1` proto porovná obě sekce kandidáta s důvěryhodnou konfigurací z base commitu `main`. Pokud autorizace povolí PR platformního autora a validace konfigurace projde, změna těchto sekcí záměrně způsobí selhání dvou kroků ve workflow `Deploy instance`, v jobech `select` a `plan_complete`:
+Změny sekcí `githubApps` a `credentials` v `instance.yaml` existující instance musí projít PR a požadovaným review. Cloudový plan nesmí použít změněná App metadata ani credential vazby před merge. Guard v `tools/Select-InstanceModules.ps1` proto porovná obě sekce kandidáta s důvěryhodnou konfigurací z base commitu `main`. Pokud autorizace povolí PR platformního autora a validace konfigurace projde, změna těchto sekcí záměrně způsobí selhání dvou jobů ve workflow `Deploy instance`, `select` a `plan_complete`:
 
-| Krok | Text, podle kterého reviewer pozná záměrné selhání |
+| Job | Text, podle kterého reviewer pozná záměrné selhání |
 |---|---|
 | `Select instance modules with trusted tools` | `PR changes protected githubApps bindings. Cloud plan must run from main after review and merge.` nebo `PR changes protected credentials bindings. Cloud plan must run from main after review and merge.` |
 | `Report complete or explicitly unperformed cloud plan` | `Cloud plan NOT PERFORMED: configuration validation or trusted module selection failed.` |
 
-Reviewer musí zároveň ověřit, že krok `Validate configuration against the vendored release` prošel a diff skutečně mění `githubApps` nebo `credentials`. Samotný text `Cloud plan NOT PERFORMED` nedokazuje záměrné selhání guardu: stejný souhrn hlásí i chybu validace nebo jinou chybu výběru modulů. Jiné chyby vyřeš před merge; neoznačuj je za očekávaný výsledek tohoto postupu.
+Reviewer musí zároveň ověřit, že job `Validate configuration against the vendored release` prošel a diff skutečně mění `githubApps` nebo `credentials`. Samotný text `Cloud plan NOT PERFORMED` nedokazuje záměrné selhání guardu: stejný souhrn hlásí i chybu validace nebo jinou chybu výběru modulů. Jiné chyby vyřeš před merge; neoznačuj je za očekávaný výsledek tohoto postupu.
 
 Dva neúspěšné joby nejsou podmínkou každého PR se změnou těchto sekcí. Importní PR vytvořený App nedostane cloudový plan: autorizace ho odmítne dřív, než se spustí výběr modulů. Ani zelený autorizační job s výsledkem `allowed=false`, ani přeskočené navazující joby neprokazují ověření změněných vazeb. Reviewer musí zkontrolovat autora PR, výstup autorizace a skutečně provedené kroky.
 
