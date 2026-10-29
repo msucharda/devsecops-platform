@@ -127,6 +127,8 @@ Describe 'Instance setup manual steps through the public wizard' {
         @{ Boundary = 'AfterPublish'; Termination = 'Error'; ExpectedStatus = 'Confirmed'; ExitCode = 78; TemporaryCount = 0 }
         @{ Boundary = 'AfterPublish'; Termination = 'Abrupt'; ExpectedStatus = 'Confirmed'; ExitCode = 77; TemporaryCount = 0 }
     ) {
+        $sourcePath = Join-Path $repoRoot 'tools/InstanceSetup.ManualSteps.ps1'
+        $sourceHash = (Get-FileHash -LiteralPath $sourcePath).Hash
         $start = [Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
         $start.UseShellExecute = $false
         $start.RedirectStandardOutput = $true
@@ -148,6 +150,7 @@ Describe 'Instance setup manual steps through the public wizard' {
             $process.ExitCode | Should -Be $ExitCode -Because $output
         }
         finally { $process.Dispose() }
+        (Get-FileHash -LiteralPath $sourcePath).Hash | Should -BeExactly $sourceHash
         $state = Get-Content -LiteralPath (Join-Path $work 'manual-steps-state.json') -Raw | ConvertFrom-Json -AsHashtable
         $state['steps']['application/verify-access']['status'] | Should -BeExactly $ExpectedStatus
         @(Get-ChildItem -LiteralPath $work -Filter '*.tmp').Count | Should -Be $TemporaryCount
