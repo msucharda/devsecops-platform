@@ -32,8 +32,11 @@
     'WorkflowGenerator.Tests.ps1' = 10
     'TeardownEnterpriseOwner.Tests.ps1' = 6
     'InstanceSetup.Tests.ps1' = 6
-    'GitHubAppToken.Tests.ps1' = 4
-    'EnterpriseInstallationToken.Tests.ps1' = 4
+    # Token suites measured in Source CI run 40819725706, rounded up.
+    'GitHubAppToken.Tests.ps1' = 10
+    'GitHubTokenIssuance.Tests.ps1' = 7
+    'EnterpriseInstallationToken.Tests.ps1' = 5
+    'OrganizationToken.Tests.ps1' = 2
     'ModuleOrder.Tests.ps1' = 5
     'CodeSecurity.Tests.ps1' = 4
     'DriftIssue.Tests.ps1' = 3
