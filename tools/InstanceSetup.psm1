@@ -2974,7 +2974,7 @@ function Invoke-InstanceSetup {
     if ($Phase -eq 'ManualSteps' -and $GitHubAcceptance) { throw 'ManualSteps and GitHubAcceptance cannot run together.' }
     if ($ManualStep -and $Phase -ne 'ManualSteps') { throw '-ManualStep requires -Phase ManualSteps.' }
     $setup = Initialize-SetupContext -RepoPath $RepoPath -WorkPath $WorkPath -ModulesPath $ModulesPath -Reconfirm:$Reconfirm
-    if ($Phase -eq 'ManualSteps') { return Invoke-SetupManualSteps -Setup $setup -ManualStep $ManualStep }
+    if ($Phase -eq 'ManualSteps') { return Invoke-SetupManualPhase -Setup $setup -ManualStep $ManualStep }
     if ($GitHubAcceptance) {
         return Invoke-SetupGitHubAcceptance -Setup $setup -ReleasePath $ReleasePath -ReleaseVersion $ReleaseVersion
     }

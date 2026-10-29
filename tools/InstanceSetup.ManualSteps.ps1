@@ -90,7 +90,7 @@ function Get-SetupManualBinding {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))).ToLowerInvariant()
 }
 
-function Invoke-SetupManualSteps {
+function Invoke-SetupManualPhase {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable] $Setup, [string] $ManualStep)
 
