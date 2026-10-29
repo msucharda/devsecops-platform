@@ -4,6 +4,22 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'vendoring-release-marker-preparation'
+            Tests = @(@{ Path = 'tools/tests/Vendoring.Tests.ps1'; FullName = @('*prepares a raw release marker*', '*rejects release marker preparation*') })
+        }
+        @{
+            Name = 'vendoring-publish-release-marker'
+            Tests = @(@{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*commits the root release marker*', '*rejects a release prepared without its root marker*', '*opens an App PR containing updated files*') })
+        }
+        @{
+            Name = 'deployment-release-marker-file'
+            Tests = @(@{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' })
+        }
+        @{
+            Name = 'deployment-release-tree'
+            Tests = @(@{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' })
+        }
+        @{
             Name = 'deployment-release-raw'
             Tests = @(@{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' })
         }

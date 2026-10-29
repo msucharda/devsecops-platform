@@ -4,20 +4,47 @@ BeforeAll {
 }
 
 Describe 'Vendored source preparation through the public command' {
-    It 'prepares a raw release marker alongside the transformed platform tree' -Tag 'DeploymentRelease' {
+    It 'prepares a raw release marker alongside the transformed platform tree for <Version>' -Tag 'DeploymentRelease' -ForEach @(
+        @{ Version = '1.2.3' }
+        @{ Version = '1.2.3-rc.1' }
+    ) {
         $markerPath = Join-Path $TestDrive 'old-marker.json'
         '{"instance":"demo","releaseVersion":"1.0.0","files":{}}' | Set-Content $markerPath
-        $output = Join-Path $TestDrive 'marked-release'
+        $output = Join-Path $TestDrive "marked-release-$Version"
         & $prepare -SourcePath (Join-Path $fixtures 'release') -OutputPath $output `
             -CatalogPath (Join-Path $fixtures 'catalog.json') -ActionsOrganization customer-actions -Kind release `
-            -ReleaseMarkerPath $markerPath -ReleaseVersion '1.2.3'
+            -ReleaseMarkerPath $markerPath -ReleaseVersion $Version
 
         $marker = Get-Content (Join-Path $output '.platform-bootstrap.json') -Raw | ConvertFrom-Json -AsHashtable
         $marker.instance | Should -BeExactly 'demo'
-        $marker.releaseVersion | Should -BeExactly '1.2.3'
+        $marker.releaseVersion | Should -BeExactly $Version
         $marker.files['README.md'] | Should -BeExactly (Get-FileHash (Join-Path $fixtures 'release/README.md')).Hash.ToLowerInvariant()
         $marker.files['templates/instance/.github/workflows/deploy.yml'] | Should -Not -BeExactly `
             (Get-FileHash (Join-Path $output 'platform/templates/instance/.github/workflows/deploy.yml')).Hash.ToLowerInvariant()
+    }
+
+    It 'rejects release marker preparation for <Case>' -Tag 'DeploymentRelease' -ForEach @(
+        @{ Case = 'action import'; Kind = 'action'; Version = '1.2.3'; Change = {}; Message = '*Only release preparation*' }
+        @{ Case = 'empty version'; Kind = 'release'; Version = ''; Change = {}; Message = '*SemVer version without v*' }
+        @{ Case = 'tag instead of version'; Kind = 'release'; Version = 'v1.2.3'; Change = {}; Message = '*SemVer version without v*' }
+        @{ Case = 'invalid version'; Kind = 'release'; Version = '1.2'; Change = {}; Message = '*SemVer version without v*' }
+        @{ Case = 'release candidate with different case'; Kind = 'release'; Version = '1.2.3-RC.1'; Change = {}; Message = '*SemVer version without v*' }
+        @{ Case = 'non-object marker'; Kind = 'release'; Version = '1.2.3'; Change = { $marker = 'invalid' }; Message = '*marker must be an object*' }
+        @{ Case = 'missing instance'; Kind = 'release'; Version = '1.2.3'; Change = { $marker.Remove('instance') }; Message = '*must identify the instance*' }
+        @{ Case = 'null instance'; Kind = 'release'; Version = '1.2.3'; Change = { $marker.instance = $null }; Message = '*must identify the instance*' }
+        @{ Case = 'non-string instance'; Kind = 'release'; Version = '1.2.3'; Change = { $marker.instance = 123 }; Message = '*must identify the instance*' }
+        @{ Case = 'empty instance'; Kind = 'release'; Version = '1.2.3'; Change = { $marker.instance = '' }; Message = '*must identify the instance*' }
+        @{ Case = 'whitespace instance'; Kind = 'release'; Version = '1.2.3'; Change = { $marker.instance = ' ' }; Message = '*must identify the instance*' }
+    ) {
+        $markerPath = Join-Path $TestDrive 'invalid-marker.json'
+        $marker = @{ instance = 'demo'; releaseVersion = '1.0.0'; files = @{} }
+        . $Change
+        $marker | ConvertTo-Json -Depth 10 | Set-Content $markerPath
+        $output = Join-Path $TestDrive 'invalid-marker-output'
+        { & $prepare -SourcePath (Join-Path $fixtures $Kind) -OutputPath $output `
+            -CatalogPath (Join-Path $fixtures 'catalog.json') -ActionsOrganization customer-actions -Kind $Kind `
+            -ReleaseMarkerPath $markerPath -ReleaseVersion $Version } | Should -Throw $Message
+        Test-Path $output | Should -BeFalse
     }
 
     It 'excludes platform caches only for release preparation: <Kind>' -ForEach @(

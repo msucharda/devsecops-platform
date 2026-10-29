@@ -19,6 +19,8 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         $sourceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $null = New-Item -ItemType Directory -Path "$sourceRoot/templates/instance/.github/workflows" -Force
         [IO.File]::WriteAllText("$sourceRoot/README.md", 'approved')
+        $null = New-Item -ItemType Directory -Path "$sourceRoot/tools/.dependencies" -Force
+        [IO.File]::WriteAllText("$sourceRoot/tools/.dependencies/cache.txt", 'excluded cache')
         $rawWorkflow = 'jobs: {build: {steps: [{uses: actions/checkout@v4}]}}'
         $vendoredWorkflow = "jobs: {build: {steps: [{uses: 'demo-actions/actions-checkout@1111111111111111111111111111111111111111'}]}}"
         foreach ($name in @('deploy.yml', 'vendor.yml')) {
@@ -83,8 +85,14 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         @{ Mode = 'transformed' }
     ) {
         if ($Mode -ceq 'raw') { '{"version":1,"actions":{}}' | Set-Content "$candidate/vendoring/actions.json" }
+        else { '{"version":1,"kind":"release"}' | Set-Content "$candidate/platform/.vendoring.json" }
         { & $preflight @arguments } | Should -Not -Throw
         Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
+    It 'rejects an extra receipt beside the untransformed raw release' -Tag 'ReceiptBoundary' -ForEach @(@{ Mode = 'raw' }) {
+        '{"version":1,"kind":"release"}' | Set-Content "$candidate/platform/.vendoring.json"
+        { & $preflight @arguments } | Should -Throw '*Candidate hash differs*'
     }
 
     It 'rejects a symbolic link in <Location>' -Skip:$IsWindows -ForEach @(
@@ -96,6 +104,7 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
             Move-Item "$candidate/.platform-bootstrap.json" $external
             $null = New-Item -ItemType SymbolicLink -Path "$candidate/.platform-bootstrap.json" -Target $external
         }
+
         else {
             $external = Join-Path $TestDrive 'external-file'
             [IO.File]::WriteAllText($external, 'approved')
@@ -105,11 +114,34 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         { & $preflight @arguments } | Should -Throw '*symbolic link*'
     }
 
+    It 'rejects a marker reported as a reparse point before reading its content' {
+        Mock Get-Item {
+            # Filesystem boundary: the existing marker differs only in the reported reparse attribute.
+            [pscustomobject]@{ Attributes = [IO.FileAttributes]::ReparsePoint }
+        } -ParameterFilter { $LiteralPath -eq (Join-Path $candidate '.platform-bootstrap.json') }
+        { & $preflight @arguments } | Should -Throw '*Release marker must not be a symbolic link*'
+    }
+
+    It 'rejects a Windows junction at <Location>' -Skip:(-not $IsWindows) -ForEach @(
+        @{ Location = 'platform root'; LinkRelative = 'platform' }
+        @{ Location = 'nested directory'; LinkRelative = 'platform/templates' }
+    ) {
+        $path = Join-Path $candidate $LinkRelative
+        $external = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        Move-Item $path $external
+        $null = New-Item -ItemType Junction -Path $path -Target $external
+        { & $preflight @arguments } | Should -Throw '*Release tree contains symbolic link*'
+    }
+
     It 'rejects <Case> in <Mode> mode' -ForEach @(
         foreach ($mode in @('raw', 'transformed')) {
         foreach ($case in @(
         @{ Case = 'modified file'; Change = { [IO.File]::WriteAllText("$candidate/platform/README.md", 'tampered') }; Error = '*Candidate hash differs*' }
         @{ Case = 'added file'; Change = { Set-Content "$candidate/platform/extra.ps1" 'unapproved' }; Error = '*Candidate file set differs*' }
+        @{ Case = 'added candidate cache'; Change = {
+            $null = New-Item -ItemType Directory -Path "$candidate/platform/tools/.dependencies" -Force
+            Set-Content "$candidate/platform/tools/.dependencies/extra.ps1" 'unapproved'
+        }; Error = '*Candidate file set differs*' }
         @{ Case = 'missing file'; Change = { Remove-Item "$candidate/platform/README.md" }; Error = '*Candidate file set differs*' }
         @{ Case = 'modified marker hash'; Change = { $marker.files['README.md'] = '0' * 64 }; Error = '*Marker hash differs*' }
         @{ Case = 'non-string marker hash'; Change = { $marker.files['README.md'] = @($hash) }; Error = '*Marker hash*must be a string*' }

@@ -43,6 +43,19 @@ function Assert-VendoringReleaseCommit {
     }
 }
 
+# security-check: vendoring-release-marker-preparation
+function Assert-VendoringReleaseMarkerPreparation {
+    param([string] $Kind, [string] $ReleaseVersion, [AllowNull()][object] $Marker)
+    if ($Kind -ne 'release') { throw 'Only release preparation can update a release marker.' }
+    if ($ReleaseVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$') {
+        throw 'A release marker requires a stable or release-candidate SemVer version without v.'
+    }
+    if ($Marker -isnot [Collections.IDictionary]) { throw 'The existing release marker must be an object.' }
+    if ($Marker['instance'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Marker['instance'])) {
+        throw 'The existing release marker must identify the instance.'
+    }
+}
+
 $catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
 if ($catalog -isnot [Collections.IDictionary] -or $catalog['version'] -isnot [long] -or
     $catalog['version'] -ne 2 -or $catalog['actions'] -isnot [Collections.IDictionary]) {
@@ -164,14 +177,8 @@ foreach ($file in $files) {
 }
 if (-not $pending.Count) { throw 'Source has no importable files.' }
 if ($ReleaseMarkerPath) {
-    if ($Kind -cne 'release') { throw 'Only release preparation can update a release marker.' }
-    if ($ReleaseVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$') {
-        throw 'A release marker requires a stable or release-candidate SemVer version without v.'
-    }
     $marker = Get-Content -LiteralPath $ReleaseMarkerPath -Raw | ConvertFrom-Json -AsHashtable
-    if ($marker['instance'] -isnot [string] -or [string]::IsNullOrWhiteSpace($marker['instance'])) {
-        throw 'The existing release marker must identify the instance.'
-    }
+    Assert-VendoringReleaseMarkerPreparation -Kind $Kind -ReleaseVersion $ReleaseVersion -Marker $marker
     Import-Module (Join-Path $PSScriptRoot 'ReleaseIntegrity.psm1')
     $rawFiles = Get-ReleaseFileHash -Path $source -RawRelease
     $updatedMarker = @{ instance = $marker['instance']; releaseVersion = $ReleaseVersion; files = $rawFiles }

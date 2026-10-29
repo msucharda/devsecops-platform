@@ -22,11 +22,17 @@ function Assert-DeploymentReleaseMarker {
     if ($Marker['releaseVersion'] -isnot [string]) { throw 'Release marker version must be a string.' }
 }
 
+# security-check: deployment-release-marker-file
+function Assert-DeploymentReleaseMarkerFile {
+    param([string] $Path)
+    if ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'Release marker must not be a symbolic link.'
+    }
+}
+
 $candidate = (Resolve-Path -LiteralPath $CandidatePath).Path
 $markerPath = Join-Path $candidate '.platform-bootstrap.json'
-if ((Get-Item -LiteralPath $markerPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
-    throw 'Release marker must not be a symbolic link.'
-}
+Assert-DeploymentReleaseMarkerFile -Path $markerPath
 $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json -AsHashtable
 $instancePath = Join-Path $candidate 'instance.yaml'
 $instance = Get-PlatformYaml -Path $instancePath
@@ -43,12 +49,12 @@ $source = & (Join-Path $PSScriptRoot 'Get-VendoringSource.ps1') `
 $raw = Get-ReleaseFileHash -Path $source.SourcePath -RawRelease
 Assert-ReleaseFileHash -Expected $raw -Actual $marker['files'] -Label Marker
 $actualFiles = Get-ReleaseFileHash -Path (Join-Path $candidate 'platform')
-# The receipt is publisher metadata, not executable release content or evidence used by this check.
-$null = $actualFiles.Remove('.vendoring.json')
 if (Test-RawReleaseCandidate -Raw $raw -Candidate $actualFiles) {
     Write-Information "Verified exact raw bootstrap release $($inputs.SourceRepository)@$($inputs.Tag), commit $($source.Commit), SHA256 $($source.Sha256)." -InformationAction Continue
     return
 }
+# Only transformed imports carry publisher metadata; a raw bootstrap must have the exact release file set.
+$null = $actualFiles.Remove('.vendoring.json')
 $expected = Join-Path $WorkPath 'expected'
 & (Join-Path $PSScriptRoot 'ConvertTo-VendoredSource.ps1') -SourcePath $source.SourcePath `
     -OutputPath $expected -CatalogPath (Join-Path $candidate 'vendoring/actions.json') `

@@ -2,6 +2,7 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
 
+# security-check: deployment-release-tree
 function Get-ReleaseFileHash {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Path, [switch] $RawRelease)

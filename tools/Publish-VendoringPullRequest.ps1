@@ -150,6 +150,14 @@ function Get-VendoringBoundaryDifference {
     Invoke-VendoringGit (@('diff', '--name-only', '--no-renames', $ReferenceSha, $TargetSha, '--') + $paths)
 }
 
+# security-check: vendoring-publish-release-marker
+function Assert-VendoringPreparedReleaseMarker {
+    param([Collections.Generic.List[string]] $Files)
+    if ($Kind -eq 'release' -and -not $Files.Contains('.platform-bootstrap.json')) {
+        throw 'Prepared release must include the root release marker in the same import commit.'
+    }
+}
+
 # security-check: vendoring-main-ref
 function Get-VendoringMainRef {
     $refs = @(Invoke-VendoringRemoteGit @('ls-remote', '--heads', $remote, 'refs/heads/main'))
@@ -199,9 +207,7 @@ foreach ($file in @($items | Where-Object { -not $_.PSIsContainer })) {
     $newFiles.Add($relative)
 }
 if (-not $newFiles.Count) { throw 'Prepared source is empty.' }
-if ($Kind -ceq 'release' -and -not $newFiles.Contains('.platform-bootstrap.json')) {
-    throw 'Prepared release must include the root release marker in the same import commit.'
-}
+Assert-VendoringPreparedReleaseMarker -Files $newFiles
 $modes = $null
 if ($ModeManifestPath) {
     $manifest = Get-Content -LiteralPath $ModeManifestPath -Raw | ConvertFrom-Json -AsHashtable
