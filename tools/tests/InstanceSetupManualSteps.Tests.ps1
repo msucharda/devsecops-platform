@@ -275,8 +275,35 @@ Describe 'Instance setup manual steps through the public wizard' {
         }
     }
 
-    It 'invalidates a saved confirmation when the <Change> changes' -ForEach @(
+    It 'retains human evidence when only manualSteps results change (<Change>)' -Tag ManualStepBinding -ForEach @(
+        @{ Change = 'value' }
+        @{ Change = 'addition' }
+        @{ Change = 'removal' }
+    ) {
+        $instance['manualSteps'] = if ($Change -ceq 'addition') { @{} } else { @{ application = @{ 'verify-access' = $false } } }
+        $instance | ConvertTo-Yaml | Set-Content -LiteralPath $instancePath
+        $answers.Enqueue('demo')
+        $answers.Enqueue('y')
+        $first = Invoke-InstanceSetup @arguments -ManualStep 'application/verify-access'
+        $before = [IO.File]::ReadAllText($first.ProgressPath)
+        if ($Change -ceq 'removal') { $instance.Remove('manualSteps') }
+        else { $instance['manualSteps'] = @{ application = @{ 'verify-access' = $true } } }
+        $instance | ConvertTo-Yaml | Set-Content -LiteralPath $instancePath
+
+        $resumed = Invoke-InstanceSetup @arguments -ManualStep 'application/verify-access'
+
+        $resumed.Completed | Should -BeTrue
+        $resumed.ManualSteps[0].Verified | Should -BeFalse
+        [IO.File]::ReadAllText($first.ProgressPath) | Should -BeExactly $before
+        $state = Get-Content -LiteralPath $first.ProgressPath -Raw | ConvertFrom-Json -AsHashtable
+        $state['steps']['application/verify-access']['method'] | Should -BeExactly 'human'
+        $state['steps']['application/verify-access']['verified'] | Should -BeFalse
+        Should -Invoke Read-Host -ModuleName InstanceSetup -Times 2 -Exactly
+    }
+
+    It 'invalidates a saved confirmation when the <Change> changes' -Tag ManualStepBinding -ForEach @(
         @{ Change = 'configuration' }
+        @{ Change = 'teams' }
         @{ Change = 'manifest' }
     ) {
         $answers.Enqueue('demo')
@@ -285,6 +312,10 @@ Describe 'Instance setup manual steps through the public wizard' {
         $before = Get-Content -LiteralPath $first.ProgressPath -Raw | ConvertFrom-Json -AsHashtable
         if ($Change -ceq 'configuration') {
             $instance['regions']['primary'] = 'northeurope'
+            $instance | ConvertTo-Yaml | Set-Content -LiteralPath $instancePath
+        }
+        elseif ($Change -ceq 'teams') {
+            $instance['teams']['platform'] = @('another@example.test')
             $instance | ConvertTo-Yaml | Set-Content -LiteralPath $instancePath
         }
         else {

@@ -86,7 +86,11 @@ function Get-SetupManualBinding {
         [Parameter(Mandatory)][System.Collections.IDictionary] $Manifest
     )
 
-    $json = ConvertTo-PlatformCanonicalJson @{ instance = $Instance; manifest = $Manifest }
+    $configuration = @{}
+    foreach ($key in $Instance.get_Keys()) {
+        if ($key -cne 'manualSteps') { $configuration[$key] = $Instance[$key] }
+    }
+    $json = ConvertTo-PlatformCanonicalJson @{ instance = $configuration; manifest = $Manifest }
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))).ToLowerInvariant()
 }
 
