@@ -121,6 +121,48 @@ Describe 'Instance setup manual steps through the public wizard' {
         @(Get-ChildItem -LiteralPath $work -Filter '*.tmp').Count | Should -Be 0
     }
 
+    It 'recovers publication interrupted <Boundary> with <Termination>' -ForEach @(
+        @{ Boundary = 'BeforePublish'; Termination = 'Error'; ExpectedStatus = 'Pending'; ExitCode = 78; TemporaryCount = 0 }
+        @{ Boundary = 'BeforePublish'; Termination = 'Abrupt'; ExpectedStatus = 'Pending'; ExitCode = 77; TemporaryCount = 1 }
+        @{ Boundary = 'AfterPublish'; Termination = 'Error'; ExpectedStatus = 'Confirmed'; ExitCode = 78; TemporaryCount = 0 }
+        @{ Boundary = 'AfterPublish'; Termination = 'Abrupt'; ExpectedStatus = 'Confirmed'; ExitCode = 77; TemporaryCount = 0 }
+    ) {
+        $start = [Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
+        $start.UseShellExecute = $false
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        foreach ($argument in @(
+                '-NoLogo', '-NoProfile', '-File', (Join-Path $PSScriptRoot 'fixtures/Invoke-ManualStepsInterruption.ps1'),
+                '-ToolsPath', (Join-Path $repoRoot 'tools'), '-WorkPath', $work, '-ModulesPath', $modules,
+                '-Boundary', $Boundary, '-Termination', $Termination
+            )) { $start.ArgumentList.Add($argument) }
+        $process = [Diagnostics.Process]::Start($start)
+        try {
+            $stdout = $process.StandardOutput.ReadToEndAsync()
+            $stderr = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(120000)) {
+                $process.Kill($true)
+                throw 'The manual-step interruption child did not finish within 120 seconds.'
+            }
+            $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+            $process.ExitCode | Should -Be $ExitCode -Because $output
+        }
+        finally { $process.Dispose() }
+        $state = Get-Content -LiteralPath (Join-Path $work 'manual-steps-state.json') -Raw | ConvertFrom-Json -AsHashtable
+        $state['steps']['application/verify-access']['status'] | Should -BeExactly $ExpectedStatus
+        @(Get-ChildItem -LiteralPath $work -Filter '*.tmp').Count | Should -Be $TemporaryCount
+        if ($ExpectedStatus -ceq 'Pending') {
+            $answers.Enqueue('demo')
+            $answers.Enqueue('y')
+        }
+
+        $resumed = Invoke-InstanceSetup @arguments -ManualStep 'application/verify-access'
+
+        $resumed.Completed | Should -BeTrue
+        $expectedPrompts = if ($ExpectedStatus -ceq 'Pending') { 2 } else { 0 }
+        Should -Invoke Read-Host -ModuleName InstanceSetup -Times $expectedPrompts -Exactly
+    }
+
     It 'does not confirm a declined step or the configured manualSteps flag without a new declaration' {
         $instance['manualSteps'] = @{ application = @{ 'verify-access' = $true } }
         $instance | ConvertTo-Yaml | Set-Content -LiteralPath $instancePath
