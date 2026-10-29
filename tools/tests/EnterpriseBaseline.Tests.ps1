@@ -69,10 +69,6 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $baselineOrganizationLogin = 'demo'
         $baselineReviewerId = 42
         $pwshPath = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
-        $pwshRuntime = & $pwshPath -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString(); [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription' 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0) { throw "Cannot inspect child pwsh '$pwshPath': $pwshRuntime" }
-        $runtimeContext = "pwsh=$pwshPath; runtime=$($pwshRuntime.Trim() -replace '\r?\n', '; '); PSModulePath=$env:PSModulePath; PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath"
-        Write-Information "[terraform-test] $runtimeContext" -InformationAction Continue
 
         function Invoke-StubTerraformAtRoot {
             param([string] $TerraformRoot, [string[]] $TerraformArguments)
@@ -80,8 +76,8 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
             $output = & terraform "-chdir=$TerraformRoot" @TerraformArguments -no-color 2>&1 | Out-String
             $code = $LASTEXITCODE
             if ($code -notin @(0, 2)) {
-                $childStatus = @([regex]::Matches($output, '(?im)exit status \d+|signal: [^\r\n]+') |
-                    ForEach-Object { $_.Value } | Sort-Object -Unique) -join '; '
+                $childStatus = @([regex]::Matches($output, '(?im)exit status (?:0x[0-9a-f]+|\d+)|signal: [^\r\n]+') |
+                        ForEach-Object { $_.Value } | Sort-Object -Unique) -join '; '
                 if (-not $childStatus) { $childStatus = 'not reported by Terraform' }
                 $output = "[terraform-test] root=$TerraformRoot; command=$($TerraformArguments -join ' '); terraformExit=$code; childStatus=$childStatus; $runtimeContext`n$output"
                 # A runtime crash is not the expected API failure of a lost-response scenario.
@@ -113,6 +109,11 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $previousTimeout = $env:CODE_SECURITY_ATTACHMENT_TIMEOUT
         $listener = $null
         $stub = $null
+        $pwshRuntime = & $pwshPath -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString(); [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription' 2>&1 | Out-String
+        $probeExitCode = $LASTEXITCODE
+        $runtimeContext = "pwsh=$pwshPath; runtime=$($pwshRuntime.Trim() -replace '\r?\n', '; '); PSModulePath=$env:PSModulePath; PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath; XDG_CACHE_HOME=$env:XDG_CACHE_HOME"
+        if ($probeExitCode -ne 0) { throw "Cannot inspect child pwsh (exit=$probeExitCode): $runtimeContext" }
+        Write-Information "[terraform-test] $runtimeContext" -InformationAction Continue
         $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); OrganizationPatches = [Collections.Generic.List[hashtable]]::new(); CodeSecurity = $null; ActionsPolicy = $null })
         $codeSecurityStub = Join-Path $PSScriptRoot 'CodeSecurityStub.psm1'
         Import-Module $codeSecurityStub -Force
@@ -125,95 +126,98 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $stub = Start-ThreadJob -ScriptBlock {
             $listener = $using:listener
             $state = $using:stubState
-            Import-Module $using:codeSecurityStub
-            while ($true) {
-                if (-not $listener.Pending()) { Start-Sleep -Milliseconds 10; continue }
-                $client = $listener.AcceptTcpClient()
-                try {
-                    $stream = $client.GetStream()
-                    $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $false, 1024, $true)
-                    $requestLine = $reader.ReadLine()
-                    $length = 0
-                    $headers = @{}
-                    while ($line = $reader.ReadLine()) {
-                        if ($line -match '^Content-Length:\s*(\d+)$') { $length = [int] $Matches[1] }
-                        if ($line -match '^(?<name>[^:]+):\s*(?<value>.*)$') { $headers[$Matches['name']] = $Matches['value'] }
-                    }
-                    $buffer = [char[]]::new($length)
-                    $read = 0
-                    while ($read -lt $length) {
-                        $count = $reader.Read($buffer, $read, $length - $read)
-                        if ($count -eq 0) { throw 'Stub client disconnected before sending the complete request body.' }
-                        $read += $count
-                    }
-                    $method, $path = $requestLine.Split(' ')[0, 1]
-                    $link = $null
-                    $policy = $state.ActionsPolicy
-                    if ($policy -and $policy.Paths.Contains($path)) {
-                        $policy.Requests.Add("$method $path")
-                        $resource = $policy.Paths[$path]
-                        if ($method -ceq 'PUT') {
-                            $changes = ([string]::new($buffer)) | ConvertFrom-Json -AsHashtable
-                            foreach ($key in $changes.Keys) { $policy[$resource][$key] = $changes[$key] }
-                            if ($policy.DropNext -and "$method $path" -cmatch $policy.DropNext) {
-                                $policy.DropNext = $null
-                                continue
-                            }
-                            $status = '204 No Content'
-                            $body = ''
+            try {
+                Import-Module $using:codeSecurityStub
+                while ($true) {
+                    if (-not $listener.Pending()) { Start-Sleep -Milliseconds 10; continue }
+                    $client = $listener.AcceptTcpClient()
+                    try {
+                        $stream = $client.GetStream()
+                        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $false, 1024, $true)
+                        $requestLine = $reader.ReadLine()
+                        $length = 0
+                        $headers = @{}
+                        while ($line = $reader.ReadLine()) {
+                            if ($line -match '^Content-Length:\s*(\d+)$') { $length = [int] $Matches[1] }
+                            if ($line -match '^(?<name>[^:]+):\s*(?<value>.*)$') { $headers[$Matches['name']] = $Matches['value'] }
                         }
-                        else {
-                            $status = '200 OK'
-                            $body = ConvertTo-Json -InputObject $policy[$resource] -Depth 5 -Compress
+                        $buffer = [char[]]::new($length)
+                        $read = 0
+                        while ($read -lt $length) {
+                            $count = $reader.Read($buffer, $read, $length - $read)
+                            if ($count -eq 0) { throw 'Stub client disconnected before sending the complete request body.' }
+                            $read += $count
                         }
-                    }
-                    elseif ($path -cne "/orgs/$($state.Organization.login)" -and $state.CodeSecurity) {
-                        $reply = Invoke-CodeSecurityStubRequest -State $state.CodeSecurity -Method $method -PathAndQuery $path -Headers $headers -Body ([string]::new($buffer))
-                        if ($reply.Drop) { continue }
-                        $status = "$($reply.Status) Stub"
-                        $body = [string] $reply.Body
-                        $link = $reply.Link
-                    }
-                    elseif ($path -cne "/orgs/$($state.Organization.login)" -or $method -notin @('GET', 'PATCH')) {
-                        $state.Requests.Add("$method $path")
-                        $status = '404 Not Found'
-                        $body = '{"message":"Not Found"}'
-                    }
-                    else {
-                        $state.Requests.Add("$method $path")
-                        $status = '200 OK'
-                        if ($method -eq 'PATCH') {
-                            $changes = ([string]::new($buffer)) | ConvertFrom-Json -AsHashtable
-                            $state.OrganizationPatches.Add($changes)
-                            # Issue #147: enterprise policy rejects even an unchanged fork setting.
-                            if ($changes.ContainsKey('members_can_fork_private_repositories')) {
-                                $status = '422 Unprocessable Entity'
-                                $body = '{"message":"Validation Failed","errors":"Forking policy has been set by enterprise administrators."}'
-                            }
-                            else {
-                                foreach ($key in $changes.Keys) { $state.Organization[$key] = $changes[$key] }
-                                if ($state.DropNextPatch) {
-                                    $state.DropNextPatch = $false
+                        $method, $path = $requestLine.Split(' ')[0, 1]
+                        $link = $null
+                        $policy = $state.ActionsPolicy
+                        if ($policy -and $policy.Paths.Contains($path)) {
+                            $policy.Requests.Add("$method $path")
+                            $resource = $policy.Paths[$path]
+                            if ($method -ceq 'PUT') {
+                                $changes = ([string]::new($buffer)) | ConvertFrom-Json -AsHashtable
+                                foreach ($key in $changes.Keys) { $policy[$resource][$key] = $changes[$key] }
+                                if ($policy.DropNext -and "$method $path" -cmatch $policy.DropNext) {
+                                    $policy.DropNext = $null
                                     continue
                                 }
+                                $status = '204 No Content'
+                                $body = ''
+                            }
+                            else {
+                                $status = '200 OK'
+                                $body = ConvertTo-Json -InputObject $policy[$resource] -Depth 5 -Compress
                             }
                         }
-                        if ($status -ceq '200 OK') {
-                            $body = ConvertTo-Json -InputObject $state.Organization -Depth 20 -Compress
+                        elseif ($path -cne "/orgs/$($state.Organization.login)" -and $state.CodeSecurity) {
+                            $reply = Invoke-CodeSecurityStubRequest -State $state.CodeSecurity -Method $method -PathAndQuery $path -Headers $headers -Body ([string]::new($buffer))
+                            if ($reply.Drop) { continue }
+                            $status = "$($reply.Status) Stub"
+                            $body = [string] $reply.Body
+                            $link = $reply.Link
                         }
+                        elseif ($path -cne "/orgs/$($state.Organization.login)" -or $method -notin @('GET', 'PATCH')) {
+                            $state.Requests.Add("$method $path")
+                            $status = '404 Not Found'
+                            $body = '{"message":"Not Found"}'
+                        }
+                        else {
+                            $state.Requests.Add("$method $path")
+                            $status = '200 OK'
+                            if ($method -eq 'PATCH') {
+                                $changes = ([string]::new($buffer)) | ConvertFrom-Json -AsHashtable
+                                $state.OrganizationPatches.Add($changes)
+                                # Issue #147: enterprise policy rejects even an unchanged fork setting.
+                                if ($changes.ContainsKey('members_can_fork_private_repositories')) {
+                                    $status = '422 Unprocessable Entity'
+                                    $body = '{"message":"Validation Failed","errors":"Forking policy has been set by enterprise administrators."}'
+                                }
+                                else {
+                                    foreach ($key in $changes.Keys) { $state.Organization[$key] = $changes[$key] }
+                                    if ($state.DropNextPatch) {
+                                        $state.DropNextPatch = $false
+                                        continue
+                                    }
+                                }
+                            }
+                            if ($status -ceq '200 OK') {
+                                $body = ConvertTo-Json -InputObject $state.Organization -Depth 20 -Compress
+                            }
+                        }
+                        $bytes = [Text.Encoding]::UTF8.GetBytes($body)
+                        $linkHeader = if ($link) { "Link: $link`r`n" } else { '' }
+                        $header = "HTTP/1.1 $status`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`n$($linkHeader)Connection: close`r`n`r`n"
+                        $headerBytes = [Text.Encoding]::ASCII.GetBytes($header)
+                        $stream.Write($headerBytes, 0, $headerBytes.Length)
+                        $stream.Write($bytes, 0, $bytes.Length)
+                        $stream.Flush()
                     }
-                    $bytes = [Text.Encoding]::UTF8.GetBytes($body)
-                    $linkHeader = if ($link) { "Link: $link`r`n" } else { '' }
-                    $header = "HTTP/1.1 $status`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`n$($linkHeader)Connection: close`r`n`r`n"
-                    $headerBytes = [Text.Encoding]::ASCII.GetBytes($header)
-                    $stream.Write($headerBytes, 0, $headerBytes.Length)
-                    $stream.Write($bytes, 0, $bytes.Length)
-                    $stream.Flush()
-                }
-                finally {
-                    $client.Close()
+                    finally {
+                        $client.Close()
+                    }
                 }
             }
+            finally { $listener.Stop() }
         }
 
         $env:REST_API_BEARER = 'stub-token'
@@ -266,14 +270,14 @@ data "external" "code_security_state" {
         $testOrganization = $baselineOrganizationLogin
         $testReviewer = $baselineReviewerId
         Set-Content -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Value (ConvertTo-Json -Depth 10 -InputObject @{
-            instance = @{
-                name = 'demo'; github = @{ host = 'example.ghe.com'; enterprise = 'example' }
-                customPatterns = @(@{ name = 'Internal token'; secretRegex = 'itk_[0-9a-f]{32}' })
-            }
-            target_organizations = @($testOrganization)
-            prerequisites = @{}
-            secret_scanning_bypass_reviewers = @(@{ reviewer_type = 'TEAM'; reviewer_id = $testReviewer })
-        })
+                instance = @{
+                    name = 'demo'; github = @{ host = 'example.ghe.com'; enterprise = 'example' }
+                    customPatterns = @(@{ name = 'Internal token'; secretRegex = 'itk_[0-9a-f]{32}' })
+                }
+                target_organizations = @($testOrganization)
+                prerequisites = @{}
+                secret_scanning_bypass_reviewers = @(@{ reviewer_type = 'TEAM'; reviewer_id = $testReviewer })
+            })
         Copy-Item -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Destination $securityRoot
         $stubState.CodeSecurity = Initialize-CodeSecurityStub -Organization $testOrganization -Origin "http://127.0.0.1:$port" -Token stub-token
         $stubState.Organization = Get-GitHubApiFixture -Name orgs/get -Set @{
@@ -282,13 +286,13 @@ data "external" "code_security_state" {
             members_can_delete_repositories = $false
         }
         $stubState.ActionsPolicy = [hashtable]::Synchronized(@{
-            Paths = @{ "/orgs/$testOrganization/actions/permissions" = 'Actions'; "/orgs/$testOrganization/actions/permissions/workflow" = 'Workflow' }
-            # A new organization: GitHub defaults with the enterprise default of read-only workflow permissions.
-            Actions = Get-GitHubApiFixture -Name actions/get-github-actions-permissions-organization -Set @{ allowed_actions = 'all'; sha_pinning_required = $false }
-            Workflow = Get-GitHubApiFixture -Name actions/get-github-actions-default-workflow-permissions-organization -Set @{ can_approve_pull_request_reviews = $false }
-            DropNext = $null
-            Requests = [Collections.Generic.List[string]]::new()
-        })
+                Paths = @{ "/orgs/$testOrganization/actions/permissions" = 'Actions'; "/orgs/$testOrganization/actions/permissions/workflow" = 'Workflow' }
+                # A new organization: GitHub defaults with the enterprise default of read-only workflow permissions.
+                Actions = Get-GitHubApiFixture -Name actions/get-github-actions-permissions-organization -Set @{ allowed_actions = 'all'; sha_pinning_required = $false }
+                Workflow = Get-GitHubApiFixture -Name actions/get-github-actions-default-workflow-permissions-organization -Set @{ can_approve_pull_request_reviews = $false }
+                DropNext = $null
+                Requests = [Collections.Generic.List[string]]::new()
+            })
         $stubState.ActionsPolicy.Actions.Remove('selected_actions_url')
         $stubState.DropNextPatch = $false
         $stubState.Requests.Clear()
@@ -363,6 +367,49 @@ exit 73
         }
     }
 
+    It 'closes the listener when a client disconnects before sending its body' -Tag 'ChildProcessIsolation', 'StubDisconnect' {
+        $failedJob = $stub
+        # This test owns the intentionally failed job; AfterEach still owns the listener.
+        $stub = $null
+        try {
+            $client = [Net.Sockets.TcpClient]::new()
+            try {
+                $client.Connect([Net.IPAddress]::Loopback, $port)
+                $bytes = [Text.Encoding]::ASCII.GetBytes("PATCH /orgs/demo HTTP/1.1`r`nContent-Length: 5`r`n`r`n{")
+                $client.GetStream().Write($bytes)
+                $client.Client.Shutdown([Net.Sockets.SocketShutdown]::Send)
+            }
+            finally { $client.Dispose() }
+            $failedJob | Wait-Job | Out-Null
+
+            $failedJob.State | Should -BeExactly 'Failed'
+            $failedJob.JobStateInfo.Reason.Message | Should -Match 'disconnected before sending the complete request body'
+            $listener.Server.IsBound | Should -BeFalse -Because 'later Terraform requests must not connect to a dead server'
+            $connection = [Net.Sockets.TcpClient]::new()
+            try {
+                { $connection.Connect([Net.IPAddress]::Loopback, $port) } | Should -Throw
+            }
+            finally { $connection.Dispose() }
+        }
+        finally { $failedJob | Stop-Job -PassThru | Remove-Job -Force }
+    }
+
+    It 'preserves a reported child status in diagnostic context: <ChildStatus>' -Tag 'ChildProcessDiagnostic' -ForEach @(
+        @{ ChildStatus = 'exit status 0xc0000005' }
+        @{ ChildStatus = 'exit status 139' }
+    ) {
+        # Replay status text from Terraform on either host without crashing a process.
+        Set-Content -LiteralPath (Join-Path $root 'scripts/Invoke-CodeSecurityChange.ps1') -Value @"
+[Console]::Error.WriteLine('$ChildStatus')
+exit 73
+"@
+        $failed = Invoke-StubTerraform apply -input=false -auto-approve
+
+        $failed.ExitCode | Should -Be 1 -Because $failed.Output
+        $context = ($failed.Output -split '\r?\n')[0]
+        $context | Should -Match ([regex]::Escape($ChildStatus))
+    }
+
     It 'reports a runtime crash before checking an unconsumed POST: <Failure>' -Tag 'ChildProcessCrash' -ForEach @(
         @{ Failure = 'SIGSEGV'; Message = 'signal: segmentation fault (core dumped)' }
         @{ Failure = 'SIGABRT'; Message = 'signal: aborted (core dumped)' }
@@ -384,6 +431,7 @@ exit 139
         $failure.Exception.Message | Should -Match 'exit status 139'
         $failure.Exception.Message | Should -Match 'PSModulePath='
         $failure.Exception.Message | Should -Match 'PSModuleAnalysisCachePath='
+        $failure.Exception.Message | Should -Match 'XDG_CACHE_HOME='
         $codeSecurity.DropNext | Should -Not -BeNullOrEmpty
         @($codeSecurity.Requests | Where-Object { $_ -match '^POST ' }) | Should -BeNullOrEmpty
         $stubState.Requests | Should -BeNullOrEmpty -Because 'a crashed early root must not start the late root'
@@ -633,24 +681,24 @@ locals {
 
     It 'fails the plan when the code security state drifts: <Case>' -ForEach @(
         @{ Case = 'configuration deleted'; Message = 'has no organization code security configuration'; Drift = {
-            param($s)
-            # Deleting a configuration also removes its default role and its attachments.
-            $c = $s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }
-            $null = $s.Configurations.Remove($c)
-            $s.Defaults.public = $null; $s.Defaults.private_and_internal = $null
-            foreach ($repository in $s.Repositories.Values) { $repository.configuration = $null; $repository.status = $null } } }
+                param($s)
+                # Deleting a configuration also removes its default role and its attachments.
+                $c = $s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }
+                $null = $s.Configurations.Remove($c)
+                $s.Defaults.public = $null; $s.Defaults.private_and_internal = $null
+                foreach ($repository in $s.Repositories.Values) { $repository.configuration = $null; $repository.status = $null } } }
         @{ Case = 'bypass reviewer changed'; Message = 'bypass reviewers'; Drift = {
-            param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['secret_scanning_delegated_bypass_options']['reviewers'][0]['reviewer_id'] = 43 } }
+                param($s) ($s.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['secret_scanning_delegated_bypass_options']['reviewers'][0]['reviewer_id'] = 43 } }
         @{ Case = 'default removed for public repositories'; Message = 'not the only default'; Drift = { param($s) $s.Defaults.public = $null } }
         @{ Case = 'repository attachment failed'; Message = 'pending or failed'; Drift = { param($s) $s.Repositories['demo/app'].status = 'failed' } }
         @{ Case = 'repository without any configuration'; Message = 'has no successful attachment'; Drift = { param($s) $s.Repositories['demo/app'].configuration = $null; $s.Repositories['demo/app'].status = $null } }
         @{ Case = 'repository moved to another configuration'; Message = 'attached to another code security configuration'; Drift = {
-            param($s) $s.Repositories['demo/lib'].configuration = 17 } }
+                param($s) $s.Repositories['demo/lib'].configuration = 17 } }
         @{ Case = 'pattern regex changed'; Message = 'missing or differs from customPatterns'; Drift = { param($s) $s.Patterns[0]['pattern'] = 'itk_.*' } }
         @{ Case = 'pattern deleted'; Message = 'missing or differs from customPatterns'; Drift = { param($s) $s.Patterns.RemoveAt(0) } }
         @{ Case = 'push protection disabled'; Message = 'push protection disabled'; Drift = { param($s) $s.Patterns[0]['push_protection_enabled'] = $false } }
         @{ Case = 'pattern unpublished'; Message = 'is not published or has push protection disabled'; Drift = {
-            param($s) $s.Patterns[0]['state'] = 'unpublished'; $s.Patterns[0]['push_protection_enabled'] | Should -BeTrue } }
+                param($s) $s.Patterns[0]['state'] = 'unpublished'; $s.Patterns[0]['push_protection_enabled'] | Should -BeTrue } }
     ) {
         $apply = Invoke-StubTerraform apply -input=false -auto-approve
         $apply.ExitCode | Should -Be 0 -Because $apply.Output
@@ -698,9 +746,9 @@ locals {
         @{ Case = 'reviewer type changed'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'][0]['reviewer_type'] = 'ROLE' } }
         @{ Case = 'mode EXEMPT'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'][0]['mode'] = 'EXEMPT' } }
         @{ Case = 'extra reviewer'; Drift = {
-            param($c) $o = $c['secret_scanning_delegated_bypass_options']; $o['reviewers'] = @($o['reviewers']) + @(@{ reviewer_type = 'ROLE'; reviewer_id = 4; mode = 'ALWAYS' }) } }
+                param($c) $o = $c['secret_scanning_delegated_bypass_options']; $o['reviewers'] = @($o['reviewers']) + @(@{ reviewer_type = 'ROLE'; reviewer_id = 4; mode = 'ALWAYS' }) } }
         @{ Case = 'duplicate reviewer'; Drift = {
-            param($c) $o = $c['secret_scanning_delegated_bypass_options']; $o['reviewers'] = @($o['reviewers']) + @(@{} + $o['reviewers'][0]) } }
+                param($c) $o = $c['secret_scanning_delegated_bypass_options']; $o['reviewers'] = @($o['reviewers']) + @(@{} + $o['reviewers'][0]) } }
         @{ Case = 'reviewer removed'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'] = @() } }
         @{ Case = 'reviewer_type missing'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'][0].Remove('reviewer_type') } }
         @{ Case = 'reviewer_id missing'; Drift = { param($c) $c['secret_scanning_delegated_bypass_options']['reviewers'][0].Remove('reviewer_id') } }
