@@ -8,7 +8,7 @@ function Get-PlatformGitHubTokenIssuancePath {
     param([Parameter(Mandatory)][uri] $ApiUrl, [Parameter(Mandatory)][string] $AppId)
 
     $root = if (-not $IsWindows -and $env:XDG_STATE_HOME) { $env:XDG_STATE_HOME }
-    else { [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData) }
+    else { [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData, [Environment+SpecialFolderOption]::DoNotVerify) }
     if (-not $root -or -not [IO.Path]::IsPathFullyQualified($root)) {
         throw 'Installation token issuance requires an absolute private user state directory.'
     }

@@ -57,6 +57,34 @@ Describe 'Installation token issuance recovery' {
         }
     }
 
+    It 'initializes the default path under a nonexistent Linux data home when state home is unset' -Tag FreshLinuxState -Skip:(-not $IsLinux) {
+        $previousStateHome = $env:XDG_STATE_HOME
+        $previousDataHome = $env:XDG_DATA_HOME
+        $dataHome = Join-Path $TestDrive "fresh-data-$([guid]::NewGuid())"
+        try {
+            $env:XDG_STATE_HOME = $null
+            $env:XDG_DATA_HOME = $dataHome
+            $arguments.IssuanceStatePath = ''
+            $cloud.LoseResponse = $true
+            [IO.Directory]::Exists($dataHome) | Should -BeFalse
+
+            { & $issuer @arguments } | Should -Throw '*Injected token response loss*'
+
+            $pending = @(Get-ChildItem -LiteralPath $dataHome -Recurse -Filter pending.json)
+            $pending.Count | Should -Be 1
+            $record = [IO.File]::ReadAllText($pending[0].FullName) | ConvertFrom-Json -AsHashtable
+            $record.appId | Should -BeExactly '101'
+            @($record.installationIds) | Should -Be @('201')
+            { & $issuer @arguments } | Should -Throw '*Unresolved*issuance*'
+            $cloud.Issued | Should -Be 1
+            $cloud.Revoked | Should -Be 0
+        }
+        finally {
+            $env:XDG_STATE_HOME = $previousStateHome
+            $env:XDG_DATA_HOME = $previousDataHome
+        }
+    }
+
     It 'publishes a secret-free private intent before POST and clears it after known cleanup' {
         Mock Invoke-RestMethod {
             Test-Path -LiteralPath $statePath | Should -BeTrue
@@ -86,6 +114,21 @@ Describe 'Installation token issuance recovery' {
             $rules[0].IdentityReference.Value | Should -BeExactly ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
         }
         else { [int] [IO.File]::GetUnixFileMode($directory) | Should -Be 448 }
+    }
+
+    It 'reports publication failure without claiming that a POST may have issued a token' -Tag PersistenceFailure {
+        $arguments.RequestPolicy = {
+            param($Request)
+            if ($Request.Kind -ceq 'TokenIssue') { $null = [IO.Directory]::CreateDirectory($statePath) }
+            return $true
+        }.GetNewClosure()
+
+        $failure = { & $issuer @arguments } | Should -Throw -PassThru
+
+        $failure.Exception.Message | Should -Not -Match 'may have been created|Unresolved installation token issuance'
+        $failure.Exception.Message | Should -Match 'Move'
+        $cloud.Issued | Should -Be 0
+        [IO.File]::Exists($statePath) | Should -BeFalse
     }
 
     It 'retains uncertainty without a blind retry or a fabricated revocation' {
@@ -139,10 +182,12 @@ Describe 'Installation token issuance recovery' {
         (& $issuer @arguments).Verified | Should -BeTrue
     }
 
-    It 'retains pending state after an uncertain revocation and never retries it' {
+    It 'retains pending state after an uncertain revocation and never retries it' -Tag RevocationGuidance {
         Mock Invoke-RestMethod { throw 'Injected revocation response loss.' } -ParameterFilter { $Method -eq 'DELETE' }
 
-        { & $issuer @arguments } | Should -Throw '*Injected revocation response loss*'
+        $failure = { & $issuer @arguments } | Should -Throw '*Injected revocation response loss*' -PassThru
+        $failure.Exception.Message | Should -Match ([regex]::Escape($statePath))
+        $failure.Exception.Message | Should -Match '201.*recorded UTC.*Use Resolve-PlatformGitHubTokenIssuance.ps1'
         { & $issuer @arguments } | Should -Throw '*Unresolved*issuance*'
 
         Test-Path -LiteralPath $statePath | Should -BeTrue
@@ -167,7 +212,9 @@ Describe 'Installation token issuance recovery' {
             return $true
         }.GetNewClosure()
 
-        { & $issuer @arguments } | Should -Throw '*revocation did not return HTTP 204*'
+        $failure = { & $issuer @arguments } | Should -Throw '*revocation did not return HTTP 204*' -PassThru
+        $failure.Exception.Message | Should -Match ([regex]::Escape($statePath))
+        $failure.Exception.Message | Should -Match 'Use Resolve-PlatformGitHubTokenIssuance.ps1'
         { & $issuer @arguments } | Should -Throw '*Unresolved*issuance*'
 
         @($events) | Should -Be @('Issued', 'Revoking')

@@ -58,21 +58,18 @@ function Invoke-GitHubAppRequest {
         $arguments.Body = ConvertTo-Json -InputObject $Body -Depth 100 -Compress
         $arguments.ContentType = 'application/json'
     }
+    if ($kind -ceq 'TokenIssue') {
+        Save-PlatformGitHubTokenIssuance -Context $issuanceContext -ApiUrl $ApiUrl -AppId $expected['appId'] `
+            -InstallationIds @($installations | ForEach-Object { [string] $_['id'] })
+        $script:issuanceUncertain = $true
+    }
     try {
-        if ($kind -ceq 'TokenIssue') {
-            Save-PlatformGitHubTokenIssuance -Context $issuanceContext -ApiUrl $ApiUrl -AppId $expected['appId'] `
-                -InstallationIds @($installations | ForEach-Object { [string] $_['id'] })
-            $script:issuanceUncertain = $true
-        }
         $response = Invoke-RestMethod @arguments
         if ($null -ne $response) {
             ConvertTo-Json -InputObject $response -Depth 100 -Compress | ConvertFrom-Json -AsHashtable
         }
     }
     catch {
-        if ($kind -ceq 'TokenIssue') {
-            throw "$issuanceUncertaintyMessage $(Get-PlatformGitHubTokenPendingDescription -Context $issuanceContext) GitHub App API $Method $Path failed. $($_.Exception.Message)"
-        }
         throw "GitHub App API $Method $Path failed. Verify GHE.com API availability and declared permissions. $($_.Exception.Message)"
     }
 }
@@ -84,7 +81,7 @@ function Assert-GitHubAppIssuedToken {
 
     if ($Response -isnot [System.Collections.IDictionary] -or $Response['token'] -isnot [string] -or
         [string]::IsNullOrWhiteSpace($Response['token'])) {
-        throw "$issuanceUncertaintyMessage $(Get-PlatformGitHubTokenPendingDescription -Context $issuanceContext) GitHub did not return a usable installation token."
+        throw 'GitHub did not return a usable installation token.'
     }
 }
 
@@ -464,13 +461,19 @@ try {
 }
 catch {
     $failure = $_
+    $failureMessage = $failure.Exception.Message
     foreach ($token in $tokens.PSBase.Values) {
         if ($revocationAttempts.Contains($token)) { continue }
         try { Revoke-GitHubAppValidationToken -Token $token }
         catch { Write-Warning "Failed to revoke an installation token after issuance failed: $($_.Exception.Message)" }
     }
     if ($issuanceContext -and (Test-GitHubAppTokenCleanupComplete -Uncertain $issuanceUncertain)) {
-        Complete-PlatformGitHubTokenIssuance -Context $issuanceContext
+        try { Complete-PlatformGitHubTokenIssuance -Context $issuanceContext }
+        catch { $failureMessage += " Pending cleanup failed: $($_.Exception.Message)" }
+    }
+    if ($issuanceContext -and $issuanceContext.Started) {
+        $uncertainty = if ($issuanceUncertain) { "$issuanceUncertaintyMessage " } else { '' }
+        throw "$uncertainty$(Get-PlatformGitHubTokenPendingDescription -Context $issuanceContext) Use Resolve-PlatformGitHubTokenIssuance.ps1 after establishing expiry or independent revocation. $failureMessage"
     }
     throw $failure
 }

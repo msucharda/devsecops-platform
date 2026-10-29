@@ -192,8 +192,12 @@ BeforeAll {
 
 Describe 'GitHub bootstrap public interface' {
     BeforeEach {
+        $savedGlobalPSDefaultParameterValues = $global:PSDefaultParameterValues
         $PSDefaultParameterValues = @{} + $PSDefaultParameterValues
         $PSDefaultParameterValues['New-PlatformGitHubToken.ps1:IssuanceStatePath'] = Join-Path $TestDrive "issuance-$([guid]::NewGuid())/pending.json"
+        $global:PSDefaultParameterValues = $PSDefaultParameterValues
+        $setupModule = $null
+        $savedSetupPSDefaultParameterValues = $null
         $savedTokens = @{}
         foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
             $savedTokens[$name] = [Environment]::GetEnvironmentVariable($name)
@@ -684,6 +688,9 @@ Describe 'GitHub bootstrap public interface' {
                 }
             }
             if ($Uri -like '*/access_tokens') {
+                if ($cloud.ContainsKey('expectedIssuanceStatePath')) {
+                    [IO.File]::Exists($cloud.expectedIssuanceStatePath) | Should -BeTrue
+                }
                 return Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{ token = "installation-test-$appId"; permissions = $permissions }
             }
             throw "Unexpected App request: $Method $Uri"
@@ -692,6 +699,8 @@ Describe 'GitHub bootstrap public interface' {
     }
 
     AfterEach {
+        if ($setupModule) { $setupModule.SessionState.PSVariable.Set('PSDefaultParameterValues', $savedSetupPSDefaultParameterValues) }
+        $global:PSDefaultParameterValues = $savedGlobalPSDefaultParameterValues
         foreach ($name in $savedTokens.Keys) { [Environment]::SetEnvironmentVariable($name, $savedTokens[$name]) }
         if (Test-Path -LiteralPath $sourceInventory) { Remove-Item -LiteralPath $sourceInventory }
     }
@@ -3045,7 +3054,8 @@ Describe 'GitHub bootstrap public interface' {
         $cloud.writes.Count | Should -Be 0
     }
 
-    It 'drives the public acceptance wizard through publication and real-run evidence without accepting missing nightly or rotation checks' {
+    It 'drives the public acceptance wizard through publication and real-run evidence without accepting missing nightly or rotation checks' -Tag StateIsolation {
+        $cloud.expectedIssuanceStatePath = $PSDefaultParameterValues['New-PlatformGitHubToken.ps1:IssuanceStatePath']
         $sourceRoot = Split-Path $tools -Parent
         Copy-Item (Join-Path $tools 'acceptance') -Destination (Join-Path $release 'tools') -Recurse
         foreach ($name in @('bootstrap-probe', 'enterprise-baseline', 'organization-rulesets')) {
@@ -3092,7 +3102,9 @@ Get-Content '$($azureResult.Replace("'", "''"))' -Raw | ConvertFrom-Json -AsHash
         $cloud.dispatchRecovery = $false
         $cloud.retryUsed = $false
         $cloud.failDownload = $false
-        Import-Module (Join-Path $sourceRoot 'tools/InstanceSetup.psm1') -Force
+        $setupModule = Import-Module (Join-Path $sourceRoot 'tools/InstanceSetup.psm1') -Force -PassThru
+        $savedSetupPSDefaultParameterValues = $setupModule.SessionState.PSVariable.GetValue('PSDefaultParameterValues')
+        $setupModule.SessionState.PSVariable.Set('PSDefaultParameterValues', @{} + $PSDefaultParameterValues)
         Mock Invoke-WebRequest -ModuleName InstanceSetup $cloudTransport
         Mock Invoke-RestMethod -ModuleName InstanceSetup $appTransport
         Mock az -ModuleName InstanceSetup {
