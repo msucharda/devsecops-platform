@@ -1,0 +1,19 @@
+{
+  "source": {
+    "operation": "POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
+    "operationId": "actions/create-workflow-dispatch",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/actions/workflows#create-a-workflow-dispatch-event",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/workflow-dispatch-response"
+  },
+  "required": {
+    "": ["workflow_run_id", "run_url", "html_url"]
+  },
+  "body": {
+    "workflow_run_id": 1,
+    "run_url": "https://api.github.com/repos/octo-org/octo-repo/actions/runs/1",
+    "html_url": "https://github.com/octo-org/octo-repo/actions/runs/1"
+  }
+}
