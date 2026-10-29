@@ -4,6 +4,22 @@ BeforeAll {
 }
 
 Describe 'Vendored source preparation through the public command' {
+    It 'prepares a raw release marker alongside the transformed platform tree' -Tag 'DeploymentRelease' {
+        $markerPath = Join-Path $TestDrive 'old-marker.json'
+        '{"instance":"demo","releaseVersion":"1.0.0","files":{}}' | Set-Content $markerPath
+        $output = Join-Path $TestDrive 'marked-release'
+        & $prepare -SourcePath (Join-Path $fixtures 'release') -OutputPath $output `
+            -CatalogPath (Join-Path $fixtures 'catalog.json') -ActionsOrganization customer-actions -Kind release `
+            -ReleaseMarkerPath $markerPath -ReleaseVersion '1.2.3'
+
+        $marker = Get-Content (Join-Path $output '.platform-bootstrap.json') -Raw | ConvertFrom-Json -AsHashtable
+        $marker.instance | Should -BeExactly 'demo'
+        $marker.releaseVersion | Should -BeExactly '1.2.3'
+        $marker.files['README.md'] | Should -BeExactly (Get-FileHash (Join-Path $fixtures 'release/README.md')).Hash.ToLowerInvariant()
+        $marker.files['templates/instance/.github/workflows/deploy.yml'] | Should -Not -BeExactly `
+            (Get-FileHash (Join-Path $output 'platform/templates/instance/.github/workflows/deploy.yml')).Hash.ToLowerInvariant()
+    }
+
     It 'excludes platform caches only for release preparation: <Kind>' -ForEach @(
         @{ Kind = 'release'; Prefix = 'platform/'; IncludesCache = $false }
         @{ Kind = 'action'; Prefix = ''; IncludesCache = $true }

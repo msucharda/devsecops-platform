@@ -526,7 +526,7 @@ Describe 'Deployment workflow generation' {
         $workflow.jobs.select.ContainsKey('environment') | Should -BeFalse
     }
 
-    It 'uses immutable base tools for authorization and gates every candidate credential job' {
+    It 'uses immutable base tools for authorization and gates every candidate credential job' -Tag 'DeploymentRelease' {
         $output = Join-Path $TestDrive 'authorization.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
@@ -535,13 +535,36 @@ Describe 'Deployment workflow generation' {
         $authorization.steps[0].with.ref | Should -Be '${{ github.event.pull_request.base.sha || github.sha }}'
         $authorization.steps[0].with.'persist-credentials' | Should -BeFalse
         $authorization.steps[1].run | Should -Match '-Preflight'
-        $authorization.steps[3].if | Should -Be '${{ steps.preflight.outputs.eligible == ''true'' }}'
-        @($authorization.steps | Where-Object { $_['uses'] -like 'actions/checkout@*' }).Count | Should -Be 1
+        ($authorization.steps | Where-Object name -EQ 'Issue the isolated membership-reader token').if |
+            Should -Be '${{ steps.preflight.outputs.eligible == ''true'' }}'
+        @($authorization.steps | Where-Object { $_['uses'] -like 'actions/checkout@*' }).Count | Should -Be 2
         $workflow.jobs.validate.steps[-1].run | Should -Match 'candidate/platform/tools/Test-InstanceConfiguration'
         $workflow.jobs.select.needs | Should -Contain 'validate'
         foreach ($id in @($workflow.jobs.Keys | Where-Object { $_ -match '^(module_|apply_|ruleset_plan_)' })) {
             $workflow.jobs[$id].needs | Should -Contain 'authorize'
             $workflow.jobs[$id].if | Should -Match "needs.authorize.outputs.allowed == 'true'"
+        }
+
+        It 'verifies release data with trusted tools before any App key for every scope' -Tag 'DeploymentRelease' {
+            $output = Join-Path $TestDrive 'release-preflight.yml'
+            & $generator -ModulesPath $fixtures -OutputPath $output
+            $workflow = ConvertFrom-Yaml (Get-Content $output -Raw)
+            $steps = @($workflow.jobs.authorize.steps)
+            $guard = @($steps | Where-Object { $_['run'] -like '*Test-DeploymentRelease.ps1*' })
+            $guard.Count | Should -Be 1
+            $guard[0].run | Should -Match '^\./trusted/platform/tools/'
+            $guard[0].env.PLATFORM_SOURCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+            $guard[0].if | Should -Be '${{ steps.preflight.outputs.allowed == ''true'' || steps.preflight.outputs.eligible == ''true'' }}'
+            $guard[0].if | Should -Not -Match 'deployment'
+            $candidate = $steps | Where-Object { $_['name'] -eq 'Check out release candidate as data before credentials' }
+            $candidate.with.ref | Should -Be '${{ steps.preflight.outputs.revision }}'
+            $candidate.with.'persist-credentials' | Should -BeFalse
+            $index = [array]::IndexOf($steps, $guard[0])
+            foreach ($step in @($steps | Where-Object { $_['env'] -and $_['env'].Contains('PLATFORM_APP_PRIVATE_KEY') })) {
+                [array]::IndexOf($steps, $step) | Should -BeGreaterThan $index
+            }
+            $workflow.jobs.validate.needs | Should -Be 'authorize'
+            $workflow.jobs.select.needs | Should -Contain 'validate'
         }
     }
 

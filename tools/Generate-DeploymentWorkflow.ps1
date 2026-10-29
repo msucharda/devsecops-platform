@@ -294,6 +294,19 @@ Add-WorkflowBlock @'
         if: ${{ steps.preflight.outputs.eligible == 'true' }}
         shell: pwsh
         run: ./trusted/platform/tools/Install-ToolDependencies.ps1
+      - name: Check out release candidate as data before credentials
+        if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.preflight.outputs.revision }}
+          path: candidate
+          persist-credentials: false
+      - name: Verify release marker and provenance before credentials for every deployment scope
+        if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
+        shell: pwsh
+        env:
+          PLATFORM_SOURCE_REPOSITORY: ${{ vars.PLATFORM_SOURCE_REPOSITORY }}
+        run: ./trusted/platform/tools/Test-DeploymentRelease.ps1 -CandidatePath ./candidate -WorkPath ./release-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY
       - name: Issue the isolated membership-reader token
         if: ${{ steps.preflight.outputs.eligible == 'true' }}
         shell: pwsh

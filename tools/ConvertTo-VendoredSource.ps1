@@ -5,6 +5,8 @@ param(
     [Parameter(Mandatory)][string] $OutputPath,
     [Parameter(Mandatory)][string] $CatalogPath,
     [string] $ModeManifestPath,
+    [string] $ReleaseMarkerPath,
+    [string] $ReleaseVersion,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string] $ActionsOrganization,
     [Parameter(Mandatory)][ValidateSet('action', 'release')][string] $Kind
 )
@@ -161,16 +163,34 @@ foreach ($file in $files) {
     $pending.Add(@{ Path = $destinationPath; Bytes = $bytes; Source = $file.FullName })
 }
 if (-not $pending.Count) { throw 'Source has no importable files.' }
+if ($ReleaseMarkerPath) {
+    if ($Kind -cne 'release') { throw 'Only release preparation can update a release marker.' }
+    if ($ReleaseVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$') {
+        throw 'A release marker requires a stable or release-candidate SemVer version without v.'
+    }
+    $marker = Get-Content -LiteralPath $ReleaseMarkerPath -Raw | ConvertFrom-Json -AsHashtable
+    if ($marker['instance'] -isnot [string] -or [string]::IsNullOrWhiteSpace($marker['instance'])) {
+        throw 'The existing release marker must identify the instance.'
+    }
+    Import-Module (Join-Path $PSScriptRoot 'ReleaseIntegrity.psm1')
+    $rawFiles = Get-ReleaseFileHash -Path $source -RawRelease
+    $updatedMarker = @{ instance = $marker['instance']; releaseVersion = $ReleaseVersion; files = $rawFiles }
+    $pending.Add(@{
+        Path = '.platform-bootstrap.json'
+        Bytes = [Text.UTF8Encoding]::new($false).GetBytes(($updatedMarker | ConvertTo-Json -Depth 10) + "`n")
+        Source = $null
+    })
+}
 foreach ($item in $pending) {
     $destination = Join-Path $output $item.Path
     $null = New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force
     [IO.File]::WriteAllBytes($destination, $item.Bytes)
-    if (-not $IsWindows) { [IO.File]::SetUnixFileMode($destination, [IO.File]::GetUnixFileMode($item.Source)) }
+    if (-not $IsWindows -and $item.Source) { [IO.File]::SetUnixFileMode($destination, [IO.File]::GetUnixFileMode($item.Source)) }
 }
 if ($ModeManifestPath) {
     $modes = [ordered]@{}
     foreach ($item in $pending) {
-        $modes[$item.Path] = -not $IsWindows -and (([int] [IO.File]::GetUnixFileMode($item.Source) -band 73) -ne 0)
+        $modes[$item.Path] = -not $IsWindows -and $item.Source -and (([int] [IO.File]::GetUnixFileMode($item.Source) -band 73) -ne 0)
     }
     @{ version = 1; files = $modes } | ConvertTo-Json -Depth 10 |
         Set-Content -LiteralPath $ModeManifestPath -Encoding utf8NoBOM

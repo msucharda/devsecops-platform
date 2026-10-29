@@ -26,6 +26,8 @@ Describe 'Vendoring publication interruption harness' -Tag 'Interruption' {
             Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
             $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
             'release content' | Set-Content -LiteralPath (Join-Path $prepared 'platform/README.md')
+            '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+                Set-Content -LiteralPath (Join-Path $prepared '.platform-bootstrap.json')
         }
         $plan = Get-InterruptionPlan
         Mock git {
@@ -62,6 +64,9 @@ Describe 'Vendoring publication interruption harness' -Tag 'Interruption' {
         $snapshot = {
             @{
                 branches = @(& $gitExecutable --git-dir=$remotePath for-each-ref '--format=%(refname) %(tree)' refs/heads)
+                marker = if ($ImportKind -ceq 'release') {
+                    & $gitExecutable -C $target show HEAD:.platform-bootstrap.json
+                } else { $null }
                 pulls = @(foreach ($pull in $cloud.pulls) { @{ head = $pull.head.ref; base = $pull.base.ref; url = $pull.html_url; state = $pull.state } })
                 result = @{ branch = $cloud.result.Branch; url = $cloud.result.PullRequest; changes = $cloud.result.HasChanges }
             }

@@ -4,6 +4,18 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'deployment-release-raw'
+            Tests = @(@{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' })
+        }
+        @{
+            Name = 'deployment-release-files'
+            Tests = @(@{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' })
+        }
+        @{
+            Name = 'deployment-release-marker'
+            Tests = @(@{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = 'Deployment release preflight*' })
+        }
+        @{
             Name = 'token-issuance-revocation'
             Tests = @(@{
                 Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'

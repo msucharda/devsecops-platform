@@ -24,6 +24,10 @@ Describe 'Vendoring diff and pull request publication' {
         & $gitExecutable -C $target add .
         & $gitExecutable -C $target commit --quiet -m fixture
         'updated' | Set-Content -LiteralPath (Join-Path $prepared 'action.yml')
+        if ((Get-Variable ImportKind -ErrorAction SilentlyContinue) -and $ImportKind -ceq 'release') {
+            '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+                Set-Content -LiteralPath (Join-Path $prepared '.platform-bootstrap.json')
+        }
         $receipt = Join-Path $TestDrive 'receipt.json'
         '{"Repository":"upstream/action","Tag":"v1","Commit":"3333333333333333333333333333333333333333","Sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Attestation":"not-present","Asset":""}' |
             Set-Content -LiteralPath $receipt
@@ -104,6 +108,39 @@ Describe 'Vendoring diff and pull request publication' {
     AfterEach {
         $env:GH_TOKEN = $savedToken
         $env:PLATFORM_GITHUB_TOKENS = $savedMap
+    }
+
+    It 'commits the root release marker and platform together without changing instance configuration' -Tag 'DeploymentRelease' {
+        Remove-Item (Join-Path $prepared 'action.yml')
+        $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+        'new release' | Set-Content (Join-Path $prepared 'platform/README.md')
+        '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+            Set-Content (Join-Path $prepared '.platform-bootstrap.json')
+        'instance configuration' | Set-Content (Join-Path $target 'instance.yaml')
+        '{"instance":"demo","releaseVersion":"1.0.0","files":{}}' | Set-Content (Join-Path $target '.platform-bootstrap.json')
+        & $gitExecutable -C $target add .
+        & $gitExecutable -C $target commit --quiet -m initial-marker
+        & $gitExecutable -C $target push --quiet $remotePath main
+        $before = & $gitExecutable -C $target rev-parse HEAD
+
+        $result = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com
+
+        $result.HasChanges | Should -BeTrue
+        @(& $gitExecutable -C $target diff --name-only $before HEAD) |
+            Should -Be @('.platform-bootstrap.json', 'platform/.vendoring.json', 'platform/README.md')
+        & $gitExecutable -C $target rev-list --count "$before..HEAD" | Should -Be 1
+        Get-Content (Join-Path $target 'instance.yaml') | Should -Be 'instance configuration'
+    }
+
+    It 'rejects a release prepared without its root marker before publishing' -Tag 'DeploymentRelease' {
+        Remove-Item (Join-Path $prepared 'action.yml')
+        $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
+        'release' | Set-Content (Join-Path $prepared 'platform/README.md')
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*include the root release marker*'
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
     }
 
     It 'opens an App PR containing updated files and deletion of obsolete vendored files' {
@@ -373,6 +410,7 @@ Describe 'Vendoring diff and pull request publication' {
     It 'resumes an orphaned <ImportKind> import with main changes <Change>' -ForEach @(
         @{ ImportKind = 'action'; Change = 'inside (added file)'; Inside = $true; Mode = $false }
         @{ ImportKind = 'release'; Change = 'inside (added file)'; Inside = $true; Mode = $false }
+        @{ ImportKind = 'release'; Change = 'inside (root marker)'; Inside = $true; Mode = $false }
         @{ ImportKind = 'action'; Change = 'inside (executable bit)'; Inside = $true; Mode = $true }
         @{ ImportKind = 'release'; Change = 'inside (executable bit)'; Inside = $true; Mode = $true }
         @{ ImportKind = 'action'; Change = 'outside'; Inside = $false; Mode = $false }
@@ -422,7 +460,8 @@ Describe 'Vendoring diff and pull request publication' {
         }
         else {
             $changedPath = if ($Inside) {
-                if ($ImportKind -ceq 'release') { 'platform/extra.yml' } else { 'extra.js' }
+                if ($Change -ceq 'inside (root marker)') { '.platform-bootstrap.json' }
+                elseif ($ImportKind -ceq 'release') { 'platform/extra.yml' } else { 'extra.js' }
             }
             else {
                 if ($ImportKind -ceq 'release') { 'instance.yaml' } else { '.github/CODEOWNERS' }
@@ -713,6 +752,7 @@ Describe 'Vendoring diff and pull request publication' {
     It 'checks a merged import after changes outside and inside the <ImportKind> boundary' -ForEach @(
         @{ ImportKind = 'action'; Owned = 'action.yml'; Outside = '.github/CODEOWNERS' }
         @{ ImportKind = 'release'; Owned = 'platform/README.md'; Outside = 'instance.yaml' }
+        @{ ImportKind = 'release'; Owned = '.platform-bootstrap.json'; Outside = 'instance.yaml' }
     ) {
         if ($ImportKind -ceq 'release') {
             Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
@@ -914,6 +954,8 @@ Describe 'Vendoring diff and pull request publication' {
         Remove-Item -LiteralPath (Join-Path $prepared 'action.yml')
         $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')
         'new release' | Set-Content -LiteralPath (Join-Path $prepared 'platform/README.md')
+        '{"instance":"demo","releaseVersion":"1.2.3","files":{"README.md":"approved"}}' |
+            Set-Content -LiteralPath (Join-Path $prepared '.platform-bootstrap.json')
 
         $null = & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind release `
             -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com -RunIdentifier fixture

@@ -141,7 +141,11 @@ jobs:
             $verification = @{ RequireAttestation = $true; SignerWorkflow = "$env:SOURCE_REPOSITORY/.github/workflows/release.yml"; ProtectedBranch = 'main' }
           }
           $source = ./platform/tools/Get-VendoringSource.ps1 -Repository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -ApiUrl $env:SOURCE_API_URL -AssetName $env:SOURCE_ASSET -WorkPath ./vendor/source @verification
-          ./platform/tools/ConvertTo-VendoredSource.ps1 -SourcePath $source.SourcePath -OutputPath ./vendor/prepared -CatalogPath ./vendoring/actions.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND -ModeManifestPath ./vendor/modes.json
+          $marker = @{}
+          if ($env:IMPORT_KIND -ceq 'release') {
+            $marker = @{ ReleaseMarkerPath = './.platform-bootstrap.json'; ReleaseVersion = $env:SOURCE_TAG.Substring(1) }
+          }
+          ./platform/tools/ConvertTo-VendoredSource.ps1 -SourcePath $source.SourcePath -OutputPath ./vendor/prepared -CatalogPath ./vendoring/actions.json -ActionsOrganization $env:ACTIONS_ORGANIZATION -Kind $env:IMPORT_KIND -ModeManifestPath ./vendor/modes.json @marker
       - name: Revoke source installation token
         if: ${{ always() && inputs.private-source && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh

@@ -146,7 +146,7 @@ function Assert-VendoringPublishHead {
 
 function Get-VendoringBoundaryDifference {
     param([string] $ReferenceSha, [string] $TargetSha)
-    $paths = if ($Kind -eq 'release') { @('platform') } else { @('.', ':(top,exclude).github') }
+    $paths = if ($Kind -eq 'release') { @('platform', '.platform-bootstrap.json') } else { @('.', ':(top,exclude).github') }
     Invoke-VendoringGit (@('diff', '--name-only', '--no-renames', $ReferenceSha, $TargetSha, '--') + $paths)
 }
 
@@ -193,12 +193,15 @@ foreach ($file in @($items | Where-Object { -not $_.PSIsContainer })) {
     $relative = [IO.Path]::GetRelativePath($prepared, $file.FullName).Replace('\', '/')
     if ($relative -match '(^|/)\.git(/|$)' -or $relative -eq '.vendoring.json' -or
         ($Kind -eq 'action' -and $relative.StartsWith('.github/')) -or
-        ($Kind -eq 'release' -and -not $relative.StartsWith('platform/'))) {
+        ($Kind -eq 'release' -and -not $relative.StartsWith('platform/') -and $relative -cne '.platform-bootstrap.json')) {
         throw "Prepared file '$relative' is outside the $Kind vendoring boundary."
     }
     $newFiles.Add($relative)
 }
 if (-not $newFiles.Count) { throw 'Prepared source is empty.' }
+if ($Kind -ceq 'release' -and -not $newFiles.Contains('.platform-bootstrap.json')) {
+    throw 'Prepared release must include the root release marker in the same import commit.'
+}
 $modes = $null
 if ($ModeManifestPath) {
     $manifest = Get-Content -LiteralPath $ModeManifestPath -Raw | ConvertFrom-Json -AsHashtable
@@ -230,7 +233,8 @@ $null = Invoke-VendoringGit @('switch', '--quiet', '--detach', $start)
 foreach ($item in @(Get-ChildItem -LiteralPath $target -Recurse -Force |
     Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })) {
     $relative = [IO.Path]::GetRelativePath($target, $item.FullName).Replace('\', '/')
-    if (($Kind -eq 'release' -and $relative.StartsWith('platform/')) -or
+    if (($Kind -eq 'release' -and $relative -ceq '.platform-bootstrap.json') -or
+        ($Kind -eq 'release' -and $relative.StartsWith('platform/')) -or
         ($Kind -eq 'release' -and $relative -ceq 'platform') -or
         ($Kind -eq 'action' -and -not $relative.StartsWith('.github/'))) {
         throw "Target vendoring boundary contains symbolic link '$relative'."
