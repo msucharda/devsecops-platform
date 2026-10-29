@@ -14,7 +14,7 @@ BeforeAll {
         foreach ($url in $BundleUrl) { $item = @{} + $template; $item.bundle_url = $url; $list.attestations.Add($item) }
         return $list
     }
-    function Set-MockedSourceResponseHeaders([string] $Name, $Link) {
+    function Invoke-SourceResponseHeaderMock([string] $Name, $Link) {
         for ($scope = 1; $scope -le 16; $scope++) {
             $variable = Get-Variable -Name $Name -Scope $scope -ErrorAction SilentlyContinue
             if ($null -eq $variable) { continue }
@@ -161,7 +161,7 @@ Describe 'Tagged vendoring source and attestation policy' {
             if ($Uri -match '/attestations/sha256:[a-f0-9]{64}\?after=cursor-two$') { return $secondPage }
             if ($Uri -match '/attestations/sha256:[a-f0-9]{64}$') {
                 if ($ResponseHeadersVariable) {
-                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable `
+                    Invoke-SourceResponseHeaderMock -Name $ResponseHeadersVariable `
                         -Link "<${Uri}?after=cursor-two>; rel=`"next`", <${Uri}?after=cursor-two>; rel=`"last`""
                 }
                 return $firstPage
@@ -194,7 +194,7 @@ Describe 'Tagged vendoring source and attestation policy' {
             if ($Uri -match '/attestations/sha256:[a-f0-9]{64}\?after=cursor-two$') { return $secondPage }
             if ($Uri -match '/attestations/sha256:[a-f0-9]{64}$') {
                 if ($ResponseHeadersVariable) {
-                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable `
+                    Invoke-SourceResponseHeaderMock -Name $ResponseHeadersVariable `
                         -Link "<${Uri}?after=cursor-two>; rel=`"$Relation`""
                 }
                 return $firstPage
@@ -271,7 +271,7 @@ Describe 'Tagged vendoring source and attestation policy' {
                     if ($Link -is [string]) {
                         $linkValue = $Link.Replace('{digest}', $Uri).Replace('{otherDigest}', $otherDigest).Replace('{path}', ([uri] $Uri).AbsolutePath)
                     }
-                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable `
+                    Invoke-SourceResponseHeaderMock -Name $ResponseHeadersVariable `
                         -Link $linkValue
                 }
                 return $fakeAttestations
@@ -306,7 +306,7 @@ Describe 'Tagged vendoring source and attestation policy' {
                     elseif ($Uri -match '\?after=one$' -and $Cycle -eq 'prior') { $next = $Uri -replace 'after=one$', 'after=two' }
                     elseif ($Uri -match '\?after=one$') { $next = $Uri }
                     else { $next = "${Uri}?after=one" }
-                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable -Link "<$next>; rel=`"next`""
+                    Invoke-SourceResponseHeaderMock -Name $ResponseHeadersVariable -Link "<$next>; rel=`"next`""
                 }
                 return $fakeAttestations
             }
@@ -334,7 +334,7 @@ Describe 'Tagged vendoring source and attestation policy' {
             }
             if ($Uri -match '/attestations/sha256:[a-f0-9]{64}$') {
                 if ($ResponseHeadersVariable) {
-                    Set-MockedSourceResponseHeaders -Name $ResponseHeadersVariable -Link "<${Uri}?after=one>; rel=`"next`""
+                    Invoke-SourceResponseHeaderMock -Name $ResponseHeadersVariable -Link "<${Uri}?after=one>; rel=`"next`""
                 }
                 return $fakeAttestations
             }
