@@ -97,7 +97,7 @@ Describe 'Bundled module GitHub retry integration' {
         try {
             $stdoutTask = $process.StandardOutput.ReadToEndAsync()
             $stderrTask = $process.StandardError.ReadToEndAsync()
-            $process.StandardInput.Write('{"api_url":"https://api.example.test","organization":"example","enabled_repositories":"all","allowed_actions":"all","default_workflow_permissions":"read","can_approve_pull_request_reviews":"false"}')
+            $process.StandardInput.Write('{"api_url":"https://api.example.test","organization":"example","enabled_repositories":"all","allowed_actions":"all","sha_pinning_required":"true","default_workflow_permissions":"read","can_approve_pull_request_reviews":"false"}')
             $process.StandardInput.Close()
             $process.WaitForExit()
             $stdout = $stdoutTask.GetAwaiter().GetResult()
