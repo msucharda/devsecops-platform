@@ -396,6 +396,26 @@ function Assert-PlatformAppManifestScope {
     }
 }
 
+function Add-PlatformCredentialDefaults {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.IDictionary] $Credentials,
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.IDictionary] $Modules
+    )
+
+    foreach ($name in $Modules.PSBase.Keys) {
+        if (-not $Credentials.Contains($name)) {
+            $Credentials[$name] = @{
+                plan = @{ environment = "$name-plan" }
+                apply = @{ environment = "$name-apply" }
+            }
+        }
+        if ($Modules[$name].permissions.githubApp.Contains('rulesetPlan') -and -not $Credentials[$name].Contains('rulesetPlan')) {
+            $Credentials[$name]['rulesetPlan'] = @{ environment = "$name-ruleset-plan" }
+        }
+    }
+}
+
 function Get-PlatformInstance {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     [OutputType([System.Collections.IDictionary])]
@@ -543,16 +563,8 @@ function Get-PlatformInstance {
             throw "Invalid instance configuration '$Path': $.modules.$name is required by the selected prerequisites and must declare its required parameters."
         }
     }
+    Add-PlatformCredentialDefaults -Credentials $instance['credentials'] -Modules $Modules
     foreach ($name in $Modules.PSBase.Keys) {
-        if (-not $instance['credentials'].Contains($name)) {
-            $instance['credentials'][$name] = @{
-                plan = @{ environment = "$name-plan" }
-                apply = @{ environment = "$name-apply" }
-            }
-        }
-        if ($Modules[$name].permissions.githubApp.Contains('rulesetPlan') -and -not $instance['credentials'][$name].Contains('rulesetPlan')) {
-            $instance['credentials'][$name]['rulesetPlan'] = @{ environment = "$name-ruleset-plan" }
-        }
         foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
             if (-not $instance['credentials'][$name].Contains($phase)) {
                 continue
@@ -920,4 +932,4 @@ function Get-PlatformOrganizationToken {
     return $tokens
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformModulePhaseGraph, Get-PlatformInstance, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken, Test-PlatformReleaseFile
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformModulePhaseGraph, Get-PlatformInstance, Add-PlatformCredentialDefaults, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken, Test-PlatformReleaseFile

@@ -21,8 +21,18 @@ $instance = Get-PlatformInstance -Path $InstancePath -Modules $modules
 if ($TrustedInstancePath) {
     $trustedModules = Get-PlatformModuleGraph -ModulesPath $TrustedModulesPath
     $trusted = Get-PlatformInstance -Path $TrustedInstancePath -Modules $trustedModules
+    # Compare common implicit defaults without changing either validated instance.
+    $comparisonCredentials = @(foreach ($configuration in @($instance, $trusted)) {
+        $credentials = ConvertFrom-Json -InputObject (ConvertTo-PlatformCanonicalJson $configuration['credentials']) `
+            -AsHashtable -Depth 100 -NoEnumerate
+        Add-PlatformCredentialDefaults -Credentials $credentials -Modules $modules
+        Add-PlatformCredentialDefaults -Credentials $credentials -Modules $trustedModules
+        $credentials
+    })
     foreach ($field in @('credentials', 'githubApps')) {
-        if ((ConvertTo-PlatformCanonicalJson $instance[$field]) -cne (ConvertTo-PlatformCanonicalJson $trusted[$field])) {
+        $candidateValue = if ($field -ceq 'credentials') { $comparisonCredentials[0] } else { $instance[$field] }
+        $trustedValue = if ($field -ceq 'credentials') { $comparisonCredentials[1] } else { $trusted[$field] }
+        if ((ConvertTo-PlatformCanonicalJson $candidateValue) -cne (ConvertTo-PlatformCanonicalJson $trustedValue)) {
             throw "PR changes protected $field bindings. Cloud plan must run from main after review and merge."
         }
     }
