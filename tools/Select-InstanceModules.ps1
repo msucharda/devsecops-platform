@@ -25,8 +25,8 @@ if ($TrustedInstancePath) {
     $comparisonCredentials = @(foreach ($configuration in @($instance, $trusted)) {
         $credentials = ConvertFrom-Json -InputObject (ConvertTo-PlatformCanonicalJson $configuration['credentials']) `
             -AsHashtable -Depth 100 -NoEnumerate
-        Add-PlatformCredentialDefaults -Credentials $credentials -Modules $modules
-        Add-PlatformCredentialDefaults -Credentials $credentials -Modules $trustedModules
+        Add-PlatformCredentialDefault -Credentials $credentials -Modules $modules
+        Add-PlatformCredentialDefault -Credentials $credentials -Modules $trustedModules
         $credentials
     })
     foreach ($field in @('credentials', 'githubApps')) {

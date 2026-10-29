@@ -396,7 +396,7 @@ function Assert-PlatformAppManifestScope {
     }
 }
 
-function Add-PlatformCredentialDefaults {
+function Add-PlatformCredentialDefault {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.IDictionary] $Credentials,
@@ -563,7 +563,7 @@ function Get-PlatformInstance {
             throw "Invalid instance configuration '$Path': $.modules.$name is required by the selected prerequisites and must declare its required parameters."
         }
     }
-    Add-PlatformCredentialDefaults -Credentials $instance['credentials'] -Modules $Modules
+    Add-PlatformCredentialDefault -Credentials $instance['credentials'] -Modules $Modules
     foreach ($name in $Modules.PSBase.Keys) {
         foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
             if (-not $instance['credentials'][$name].Contains($phase)) {
@@ -932,4 +932,4 @@ function Get-PlatformOrganizationToken {
     return $tokens
 }
 
-Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformModulePhaseGraph, Get-PlatformInstance, Add-PlatformCredentialDefaults, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken, Test-PlatformReleaseFile
+Export-ModuleMember -Function Get-PlatformYaml, Get-PlatformModuleGraph, Get-PlatformModulePhaseGraph, Get-PlatformInstance, Add-PlatformCredentialDefault, Get-PlatformModuleSelection, Get-PlatformAppInstallationRequirement, ConvertTo-PlatformCanonicalJson, Get-PlatformSortedString, Get-PlatformManualPrerequisite, Assert-PlatformManualPrerequisite, Test-PlatformGitHubAppOwner, Assert-PlatformBootstrapRequest, Get-RandomPlatformDeploymentIdentifier, Get-PlatformOrganizationName, Get-PlatformInstanceOrganization, Get-PlatformModuleOrganization, Get-PlatformOrganizationToken, Test-PlatformReleaseFile
