@@ -282,7 +282,9 @@ Describe 'Vendoring diff and pull request publication' {
         @{ Field = 'attestation'; Change = { $sourceReceipt.Attestation = 'unknown' } }
         @{ Field = 'attestation capitalization'; Change = { $sourceReceipt.Attestation = 'VERIFIED' } }
         @{ Field = 'repository'; Change = { $sourceReceipt.Repository = 'invalid' } }
+        @{ Field = 'repository Unicode case folding'; Change = { $sourceReceipt.Repository = 'upstream/a' + [char]0x212A } }
         @{ Field = 'tag'; Change = { $sourceReceipt.Tag = 'invalid tag' } }
+        @{ Field = 'tag Unicode case folding'; Change = { $sourceReceipt.Tag = 'v' + [char]0x212A } }
     ) {
         $sourceReceipt = Get-Content $receipt -Raw | ConvertFrom-Json -AsHashtable
         $sourceJson = $null
