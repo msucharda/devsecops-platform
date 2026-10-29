@@ -3,7 +3,7 @@
 .SYNOPSIS
 Program of the Terraform external data source: reads the actions policy of one organization and lists its violations.
 .DESCRIPTION
-Reads the query {api_url, organization, enabled_repositories, allowed_actions, default_workflow_permissions,
+Reads the query {api_url, organization, enabled_repositories, allowed_actions, sha_pinning_required, default_workflow_permissions,
 can_approve_pull_request_reviews} from standard input and writes {"state": "<JSON>", "violations": "<JSON array>"}.
 Any read error exits non-zero, so the plan fails instead of treating an unknown state as compliant.
 #>
