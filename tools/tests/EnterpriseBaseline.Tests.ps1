@@ -69,6 +69,8 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $baselineOrganizationLogin = 'demo'
         $baselineReviewerId = 42
         $pwshPath = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+        $script:failedTestListener = $null
+        $script:failedTestJob = $null
 
         function Invoke-StubTerraformAtRoot {
             param([string] $TerraformRoot, [string[]] $TerraformArguments)
@@ -81,7 +83,7 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
                 if (-not $childStatus) { $childStatus = 'not reported by Terraform' }
                 $output = "[terraform-test] root=$TerraformRoot; command=$($TerraformArguments -join ' '); terraformExit=$code; childStatus=$childStatus; $runtimeContext`n$output"
                 # A runtime crash is not the expected API failure of a lost-response scenario.
-                if ($output -match '(?im)signal:\s|Unhandled exception\.|The PowerShell process will exit') {
+                if ($output -match '(?im)signal:\s|Unhandled exception\.|The PowerShell process will exit|exit status 0x[89a-f][0-9a-f]{7}(?![0-9a-f])') {
                     throw "Terraform child process crashed.`n$output"
                 }
             }
@@ -333,9 +335,14 @@ data "external" "code_security_state" {
     }
 
     It 'isolates an unconsumed POST after a child failure: <Case>' -Tag 'ChildProcessIsolation' -ForEach @(
-        @{ Case = 'child fails before POST'; FailChild = $true }
-        @{ Case = 'next test starts healthy'; FailChild = $false }
+        @{ Case = 'child fails before POST'; FailChild = $true; DiscardPrevious = $false }
+        @{ Case = 'next test starts healthy'; FailChild = $false; DiscardPrevious = $false }
+        @{ Case = 'previous test did not initialize its fixtures'; FailChild = $false; DiscardPrevious = $true }
     ) {
+        if ($DiscardPrevious) {
+            $script:failedTestJob = $null
+            $script:failedTestListener = $null
+        }
         $codeSecurity = $stubState.CodeSecurity
         $codeSecurity.DropNext | Should -BeNullOrEmpty
         @($codeSecurity.Requests) | Should -BeNullOrEmpty
@@ -358,9 +365,10 @@ exit 73
             @($codeSecurity.Requests | Where-Object { $_ -match '^POST ' }) | Should -BeNullOrEmpty
         }
         else {
-            # A request failure must not leave the shared server alive for the next test.
-            $script:failedTestJob.State | Should -BeExactly 'Stopped'
-            $script:failedTestListener.Server.IsBound | Should -BeFalse
+            if ($script:failedTestJob) {
+                $script:failedTestJob.State | Should -BeExactly 'Stopped'
+                $script:failedTestListener.Server.IsBound | Should -BeFalse
+            }
             $apply = Invoke-StubTerraform apply -input=false -auto-approve
             $apply.ExitCode | Should -Be 0 -Because $apply.Output
             @($codeSecurity.Requests | Where-Object { $_ -ceq 'POST /orgs/demo/code-security/configurations' }).Count | Should -Be 1
@@ -395,19 +403,31 @@ exit 73
     }
 
     It 'preserves a reported child status in diagnostic context: <ChildStatus>' -Tag 'ChildProcessDiagnostic' -ForEach @(
-        @{ ChildStatus = 'exit status 0xc0000005' }
-        @{ ChildStatus = 'exit status 139' }
+        @{ ChildStatus = 'exit status 0xc0000005'; Fatal = $true }
+        @{ ChildStatus = 'exit status 0xe0434352'; Fatal = $true }
+        @{ ChildStatus = 'exit status 139'; Fatal = $false }
     ) {
         # Replay status text from Terraform on either host without crashing a process.
         Set-Content -LiteralPath (Join-Path $root 'scripts/Invoke-CodeSecurityChange.ps1') -Value @"
 [Console]::Error.WriteLine('$ChildStatus')
 exit 73
 "@
-        $failed = Invoke-StubTerraform apply -input=false -auto-approve
-
-        $failed.ExitCode | Should -Be 1 -Because $failed.Output
-        $context = ($failed.Output -split '\r?\n')[0]
+        $codeSecurity = $stubState.CodeSecurity
+        $codeSecurity.DropNext = '^POST /orgs/demo/code-security/configurations$'
+        if ($Fatal) {
+            $failure = { Invoke-StubTerraform apply -input=false -auto-approve } |
+                Should -Throw '*Terraform child process crashed*' -PassThru
+            $context = ($failure.Exception.Message -split '\r?\n')[1]
+            $stubState.Requests | Should -BeNullOrEmpty -Because 'a fatal Windows status must not start the late root'
+        }
+        else {
+            $failed = Invoke-StubTerraform apply -input=false -auto-approve
+            $failed.ExitCode | Should -Be 1 -Because $failed.Output
+            $context = ($failed.Output -split '\r?\n')[0]
+        }
         $context | Should -Match ([regex]::Escape($ChildStatus))
+        $codeSecurity.DropNext | Should -Not -BeNullOrEmpty
+        @($codeSecurity.Requests | Where-Object { $_ -match '^POST ' }) | Should -BeNullOrEmpty
     }
 
     It 'reports a runtime crash before checking an unconsumed POST: <Failure>' -Tag 'ChildProcessCrash' -ForEach @(
