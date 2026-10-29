@@ -200,3 +200,9 @@ Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu
 - Apply nadále schvaluje platformní tým a navíc security tým.
 - Před nasazením se musí na GHE.com ověřit potřebná API a oprávnění. Nepodporovaná operace není důvod přidat PAT.
 - Plan a apply Apps musí být ručně nainstalované přesně do všech organizací z manifestu a na všechny jejich repozitáře. Token issuer zkontroluje všechny instalace; neočekávaná organizace nebo chybný výběr repozitářů běh zastaví.
+
+## Izolace runtime v offline testech
+
+Pester suite `tools/tests/EnterpriseBaseline.Tests.ps1` spouští každý runtime probe a každý příkaz Terraformu s vlastními `XDG_CACHE_HOME` a `PSModuleAnalysisCachePath` v `TestDrive`. Launcher po návratu i výjimce obnoví původní proměnné prostředí. Na Unixu tak child `pwsh` nečte startup JIT profil předchozího příkazu; `-NoProfile` tento profil sám nevypíná. Diagnostika chyby obsahuje privátní cesty cache vedle verze runtime, exit code, signálu a stderr.
+
+Jde o omezení dopadu [#158](https://github.com/msucharda/devsecops-platform/issues/158), nikoli o důkaz příčiny původních pádů. Upstream [PowerShell/PowerShell#26528](https://github.com/PowerShell/PowerShell/issues/26528) popisuje poškození sdíleného startup profilu při souběhu. Child procesy uvnitř jedné Terraform operace stále sdílejí její cache a mohou zasáhnout stejný problém; chyba musí nadále shodit daný test. Následující příkaz dostane novou cache bez retry. Na Windows `XDG_CACHE_HOME` startup profil nepřesměruje; launcher tam izoluje jen module analysis cache. Produkční modul, paralelismus, limity a pokrytí testovaných scénářů se nemění.

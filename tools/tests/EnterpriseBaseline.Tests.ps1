@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'TerraformTestProcess.psm1') -Force
     $mainPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline/main.tf'
     $main = Get-Content -LiteralPath $mainPath -Raw
     $patchAllowList = Get-Content -LiteralPath (Join-Path (Split-Path $mainPath -Parent) 'organization-patch-allowlist.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -69,21 +70,23 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $baselineOrganizationLogin = 'demo'
         $baselineReviewerId = 42
         $pwshPath = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+        $runtimeCacheRoot = Join-Path $TestDrive 'child-cache'
         $script:failedTestListener = $null
         $script:failedTestJob = $null
 
         function Invoke-StubTerraformAtRoot {
             param([string] $TerraformRoot, [string[]] $TerraformArguments)
 
-            $output = & terraform "-chdir=$TerraformRoot" @TerraformArguments -no-color 2>&1 | Out-String
-            $code = $LASTEXITCODE
+            $processResult = Invoke-TerraformTestProcess -Executable terraform -ArgumentList @("-chdir=$TerraformRoot"; $TerraformArguments; '-no-color') -CacheRoot $runtimeCacheRoot
+            $output = $processResult.Output
+            $code = $processResult.ExitCode
             if ($code -notin @(0, 2)) {
                 $childStatus = @([regex]::Matches($output, '(?im)exit status (?:0x[0-9a-f]+|\d+)|signal: [^\r\n]+') |
                         ForEach-Object { $_.Value } | Sort-Object -Unique) -join '; '
                 if (-not $childStatus) { $childStatus = 'not reported by Terraform' }
-                $output = "[terraform-test] root=$TerraformRoot; command=$($TerraformArguments -join ' '); terraformExit=$code; childStatus=$childStatus; $runtimeContext`n$output"
+                $output = "[terraform-test] root=$TerraformRoot; command=$($TerraformArguments -join ' '); terraformExit=$code; childStatus=$childStatus; childCache=$($processResult.CachePath); childAnalysisCache=$($processResult.AnalysisCachePath); $runtimeContext`n$output"
                 # A runtime crash is not the expected API failure of a lost-response scenario.
-                if ($output -match '(?im)signal:\s|Unhandled exception\.|The PowerShell process will exit|exit status 0x[89a-f][0-9a-f]{7}(?![0-9a-f])') {
+                if ($output -match '(?im)signal:\s|Unhandled exception\.|Stack overflow\.|The PowerShell process will exit|exit status 0x[89a-f][0-9a-f]{7}(?![0-9a-f])') {
                     throw "Terraform child process crashed.`n$output"
                 }
             }
@@ -111,9 +114,10 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $previousTimeout = $env:CODE_SECURITY_ATTACHMENT_TIMEOUT
         $listener = $null
         $stub = $null
-        $pwshRuntime = & $pwshPath -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString(); [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription' 2>&1 | Out-String
-        $probeExitCode = $LASTEXITCODE
-        $runtimeContext = "pwsh=$pwshPath; runtime=$($pwshRuntime.Trim() -replace '\r?\n', '; '); PSModulePath=$env:PSModulePath; PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath; XDG_CACHE_HOME=$env:XDG_CACHE_HOME"
+        $probe = Invoke-TerraformTestProcess -Executable $pwshPath -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString(); [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription') -CacheRoot $runtimeCacheRoot
+        $pwshRuntime = $probe.Output
+        $probeExitCode = $probe.ExitCode
+        $runtimeContext = "pwsh=$pwshPath; runtime=$($pwshRuntime.Trim() -replace '\r?\n', '; '); PSModulePath=$env:PSModulePath; PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath; XDG_CACHE_HOME=$env:XDG_CACHE_HOME; probeCache=$($probe.CachePath); probeAnalysisCache=$($probe.AnalysisCachePath); unixStartupCacheIsolated=$(-not $IsWindows)"
         if ($probeExitCode -ne 0) { throw "Cannot inspect child pwsh (exit=$probeExitCode): $runtimeContext" }
         Write-Information "[terraform-test] $runtimeContext" -InformationAction Continue
         $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); OrganizationPatches = [Collections.Generic.List[hashtable]]::new(); CodeSecurity = $null; ActionsPolicy = $null })
@@ -434,12 +438,15 @@ exit 73
         @{ Failure = 'SIGSEGV'; Message = 'signal: segmentation fault (core dumped)' }
         @{ Failure = 'SIGABRT'; Message = 'signal: aborted (core dumped)' }
         @{ Failure = 'FileLoadException'; Message = 'Unhandled exception. System.IO.FileLoadException: The given assembly name was invalid.' }
+        @{ Failure = 'StackOverflow'; Message = 'Stack overflow.' }
     ) {
         $codeSecurity = $stubState.CodeSecurity
         $codeSecurity.DropNext = '^POST /orgs/demo/code-security/configurations$'
         # Replay the historical crash text, without actually signalling pwsh or creating a core dump.
         Set-Content -LiteralPath (Join-Path $root 'scripts/Invoke-CodeSecurityChange.ps1') -Value @"
 [Console]::Error.WriteLine('$Message')
+[Console]::Error.WriteLine('testChildCache=' + `$env:XDG_CACHE_HOME)
+[Console]::Error.WriteLine('testChildAnalysisCache=' + `$env:PSModuleAnalysisCachePath)
 exit 139
 "@
 
@@ -452,6 +459,12 @@ exit 139
         $failure.Exception.Message | Should -Match 'PSModulePath='
         $failure.Exception.Message | Should -Match 'PSModuleAnalysisCachePath='
         $failure.Exception.Message | Should -Match 'XDG_CACHE_HOME='
+        $failure.Exception.Message | Should -Match 'childCache='
+        $failure.Exception.Message | Should -Match 'childAnalysisCache='
+        $contextCache = [regex]::Match($failure.Exception.Message, 'childCache=([^;]+);').Groups[1].Value
+        $contextAnalysisCache = [regex]::Match($failure.Exception.Message, 'childAnalysisCache=([^;]+);').Groups[1].Value
+        $failure.Exception.Message | Should -Match ([regex]::Escape("testChildCache=$contextCache"))
+        $failure.Exception.Message | Should -Match ([regex]::Escape("testChildAnalysisCache=$contextAnalysisCache"))
         $codeSecurity.DropNext | Should -Not -BeNullOrEmpty
         @($codeSecurity.Requests | Where-Object { $_ -match '^POST ' }) | Should -BeNullOrEmpty
         $stubState.Requests | Should -BeNullOrEmpty -Because 'a crashed early root must not start the late root'
