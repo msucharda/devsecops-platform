@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][string] $ModulesPath,
     [Parameter(Mandatory)][string] $ReportPath,
     [Parameter(Mandatory)][string] $GitHubOutputPath,
+    [string] $CodeSecurityCoveragePath = './artifacts/code-security-coverage/code-security-coverage.json',
     [string] $PlatformOrganization = $env:GITHUB_REPOSITORY_OWNER,
     [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY,
     [string] $RunUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
@@ -18,6 +19,74 @@ Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $incomplete = [System.Collections.Generic.List[string]]::new()
 $drift = [System.Collections.Generic.List[string]]::new()
 $uncovered = [System.Collections.Generic.List[string]]::new()
+$codeSecuritySummaries = [System.Collections.Generic.List[string]]::new()
+$coverageArtifactUrl = "$RunUrl#artifacts"
+
+# security-check: code-security-coverage-artifact
+function Test-CodeSecurityArtifactId {
+    param([AllowNull()][object] $Value)
+
+    return $Value -is [string] -and $Value -match '^[1-9][0-9]*$'
+}
+
+function Add-CodeSecurityCoverage {
+    [CmdletBinding()]
+    param([string] $Path, [string[]] $Organizations)
+
+    $coverage = $null
+    try { $coverage = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText([IO.Path]::GetFullPath($Path))) -AsHashtable -ErrorAction Stop } catch { $coverage = $null }
+    if ($coverage -isnot [Collections.IDictionary] -or $coverage['organizations'] -isnot [Collections.IDictionary]) {
+        $incomplete.Add('Code Security coverage artifact did not publish a readable organization map.')
+        return
+    }
+    $results = $coverage['organizations']
+    if ((ConvertTo-PlatformCanonicalJson @($results.Keys | Sort-Object -CaseSensitive)) -cne
+        (ConvertTo-PlatformCanonicalJson @($Organizations | Sort-Object -CaseSensitive))) {
+        $incomplete.Add('Code Security coverage organization keys differ from the complete instance scope.')
+    }
+    foreach ($organization in $Organizations) {
+        $result = $results[$organization]
+        if ($result -isnot [Collections.IDictionary] -or $result['repositories'] -isnot [array]) {
+            $incomplete.Add("Code Security coverage of '$organization' has no repository results.")
+            continue
+        }
+        $counts = @{ compliant = 0; drift = 0; unverified = 0 }
+        $directUnverified = 0
+        $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($repository in $result['repositories']) {
+            if ($repository -isnot [Collections.IDictionary] -or $repository['repository'] -isnot [string] -or
+                $repository['repository'] -cnotmatch "^$([regex]::Escape($organization))/[A-Za-z0-9_.-]+$" -or
+                $repository['status'] -isnot [string] -or $repository['status'] -cnotin @('compliant', 'drift', 'unverified') -or
+                $repository['security_status'] -isnot [string] -or $repository['security_status'] -cnotin @('enabled', 'disabled', 'unverified')) {
+                $incomplete.Add("Code Security coverage of '$organization' contains an invalid repository result.")
+                continue
+            }
+            $name = $repository['repository']
+            if (-not $seen.Add($name)) {
+                $incomplete.Add("Code Security coverage repeats repository '$name'.")
+                continue
+            }
+            $status = $repository['status']
+            $counts[$status]++
+            if ($repository['security_status'] -ceq 'unverified') { $directUnverified++ }
+            if ($status -ceq 'unverified' -or $repository['security_status'] -ceq 'unverified') {
+                $incomplete.Add("Code Security of repository '$name' is unverified; configuration coverage does not prove enabled repository security.")
+            }
+            if ($status -ceq 'drift') {
+                $drift.Add("- Code Security coverage: ``$name`` (missing/unsuccessful attachment, configuration without Code Security or CodeQL, or disabled repository security; direct state: $($repository['security_status'])).")
+            }
+            elseif ($status -ceq 'compliant' -and $repository['security_status'] -cne 'enabled') {
+                $incomplete.Add("Code Security coverage incorrectly labels repository '$name' compliant without readable enabled security.")
+            }
+        }
+        foreach ($status in $counts.Keys) {
+            if (($result[$status] -isnot [int] -and $result[$status] -isnot [long]) -or $result[$status] -ne $counts[$status]) {
+                $incomplete.Add("Code Security coverage of '$organization' has an invalid '$status' counter.")
+            }
+        }
+        $codeSecuritySummaries.Add("- ``$organization``: compliant $($counts.compliant), drift $($counts.drift), unverified $($counts.unverified); direct state unverified $directUnverified.")
+    }
+}
 
 function Get-NeedValue {
     [CmdletBinding()]
@@ -64,6 +133,7 @@ if ($needs -isnot [System.Collections.IDictionary]) {
 }
 
 $revision = [string] (Get-NeedValue $needs 'authorize' 'revision')
+$selectedPhaseNodes = $null
 if ($needs) {
     if ((Get-NeedValue $needs 'authorize') -cne 'success' -or (Get-NeedValue $needs 'authorize' 'allowed') -cne 'true' -or
         $revision -cnotmatch '^[a-f0-9]{40}$') {
@@ -80,7 +150,10 @@ if ($needs) {
         }
         elseif ($instance) {
             $expected = Get-PlatformModuleSelection -Instance $instance -Modules $modules
-            [string[]] $expectedRulesets = @($expected | Where-Object { $modules[$_]['permissions']['githubApp'].Contains('rulesetPlan') })
+            $selectedPhaseNodes = Get-PlatformModuleSelection -Instance $instance -Modules $modules -PhaseNodes
+            [string[]] $expectedRulesets = @($expected | Where-Object {
+                $_ -cin $selectedPhaseNodes -and $modules[$_]['permissions']['githubApp'].Contains('rulesetPlan')
+            })
             if ((ConvertTo-Json -InputObject $selected -Compress) -cne (ConvertTo-Json -InputObject @($expected) -Compress) -or
                 (ConvertTo-Json -InputObject $rulesetModules -Compress) -cne (ConvertTo-Json -InputObject @($expectedRulesets) -Compress)) {
                 $incomplete.Add('The module selection differs from the trusted instance configuration and module manifests.')
@@ -96,9 +169,38 @@ if ($needs) {
                     }
                     catch { $incomplete.Add("Organization scope of '$module' could not be verified: $($_.Exception.Message)") }
                 }
-                $roots = @(@{ Job = 'module_' + $module.Replace('-', '_'); Label = 'Terraform plan' })
+                $roots = @()
+                if ($null -eq $selectedPhaseNodes -or $module -cin $selectedPhaseNodes) {
+                    $roots += @{ Job = 'module_' + $module.Replace('-', '_'); Label = 'Terraform plan' }
+                }
+                if ($modules -and $modules.Contains($module) -and $modules[$module].Contains('phases')) {
+                    foreach ($phase in $modules[$module]['phases'].Keys) {
+                        if ($null -ne $selectedPhaseNodes -and "${module}:$phase" -cnotin $selectedPhaseNodes) { continue }
+                        $roots += @{
+                            Job = 'module_' + $module.Replace('-', '_') + '_' + $phase.Replace('-', '_')
+                            Label = "phase $phase"
+                            CodeSecurity = $module -ceq 'enterprise-baseline' -and $phase -ceq 'code-security'
+                        }
+                    }
+                }
                 if ($module -cin $rulesetModules) { $roots += @{ Job = 'ruleset_plan_' + $module.Replace('-', '_'); Label = 'rulesets' } }
                 foreach ($root in $roots) {
+                    if ($root.Contains('CodeSecurity') -and $root.CodeSecurity) {
+                        $coverageOrganizations = $expectedOrganizations
+                        if (-not $organizationScoped) {
+                            $coverageOrganizations = @($instance['modules'][$module]['parameters']['target_organizations'])
+                        }
+                        if (-not (Test-CodeSecurityArtifactId (Get-NeedValue $needs $root.Job 'codeSecurityCoverage'))) {
+                            $incomplete.Add("Code Security coverage artifact was not published by job $($root.Job); a previous attempt is not evidence.")
+                        }
+                        else {
+                            Add-CodeSecurityCoverage -Path $CodeSecurityCoveragePath -Organizations $coverageOrganizations
+                            $publishedUrl = Get-NeedValue $needs $root.Job 'codeSecurityCoverageUrl'
+                            if ($publishedUrl -is [string] -and -not [string]::IsNullOrWhiteSpace($publishedUrl)) {
+                                $coverageArtifactUrl = $publishedUrl
+                            }
+                        }
+                    }
                     $changes = Get-NeedValue $needs $root.Job 'changes'
                     # A plan can report changes before a later step fails the job; keep that drift visible.
                     if ($changes -ceq 'true' -and -not $organizationScoped) { $drift.Add("- ``$module`` ($($root.Label))") }
@@ -187,6 +289,13 @@ $report.Add('')
 $report.Add("Run: $RunUrl")
 if ($revision -cmatch '^[a-f0-9]{40}$') { $report.Add("Revision: ``$revision``") }
 $report.Add('')
+if ($codeSecuritySummaries.Count) {
+    $report.Add('### Repository Code Security coverage')
+    $report.Add('')
+    $report.AddRange($codeSecuritySummaries)
+    $report.Add('Configuration attachment and readable repository security are separate evidence. Missing or forbidden security_and_analysis is unverified, never compliant.')
+    $report.Add('')
+}
 if ($drift.Count) {
     $report.Add('### Drift detected')
     $report.Add('')
@@ -209,6 +318,19 @@ $report.Add('')
 $report.AddRange($uncovered)
 $content = ($report -join "`n") + "`n"
 $encoding = [System.Text.UTF8Encoding]::new($false)
+$bytes = $encoding.GetByteCount($content)
+if ($bytes -gt 50000) {
+    $complete = $false
+    $omitted = 0
+    do {
+        $last = $report.Count - 1
+        $bytes -= $encoding.GetByteCount($report[$last] + "`n")
+        $report.RemoveAt($last)
+        $omitted++
+        $notice = "`n### Drift detection INCOMPLETE: TRUNCATED`n$omitted omitted lines. Counts and actual drift precede unverified details. Full repository details: [code-security-coverage artifact]($coverageArtifactUrl), retained for 1 day. [Run]($RunUrl).`n"
+    } while ($report.Count -gt 0 -and $bytes + $encoding.GetByteCount($notice) -gt 50000)
+    $content = ($report -join "`n") + "`n" + $notice
+}
 [System.IO.File]::WriteAllText([System.IO.Path]::GetFullPath($ReportPath), $content, $encoding)
 if ($JobSummaryPath) {
     [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($JobSummaryPath), $content, $encoding)

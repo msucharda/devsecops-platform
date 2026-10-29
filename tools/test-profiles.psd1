@@ -16,10 +16,12 @@
         'ActionUpdates.Tests.ps1'
         'BootstrapExecutionPolicy.Tests.ps1'
         'CredentialContract.Tests.ps1'
+        'CodeSecurityCoverage.Tests.ps1'
         'GitHubApiFixture.Tests.ps1'
         'GitHubRetryIntegration.Tests.ps1'
         'LocalCiConcurrency.Tests.ps1'
         'MicrosoftApiFixture.Tests.ps1'
+        'RulesetCodeSecurity.Tests.ps1'
         'SourceCi.Tests.ps1'
     )
     # Full CI retains these setup, stateful scenario-matrix, and Terraform suites unchanged.

@@ -10,8 +10,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
+$phaseGraph = Get-PlatformModulePhaseGraph -Modules $modules
 $lines = [System.Collections.Generic.List[string]]::new()
-$modulesExpression = 'fromJSON(needs.select.outputs.modules)'
+$nodesExpression = 'fromJSON(needs.select.outputs.phaseNodes)'
 
 function Add-WorkflowBlock {
     [CmdletBinding()]
@@ -105,8 +106,8 @@ function Add-ModuleJobPreamble {
 $gateCondition = "needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success'"
 $runnerArguments = '-InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules'
 $prerequisiteModules = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-foreach ($manifest in $modules.PSBase.Values) {
-    foreach ($prerequisite in $manifest['prerequisites']) { $null = $prerequisiteModules.Add($prerequisite) }
+foreach ($node in $phaseGraph.PSBase.Values) {
+    foreach ($prerequisite in $node.Prerequisites) { $null = $prerequisiteModules.Add($prerequisite) }
 }
 
 Add-WorkflowBlock @'
@@ -133,6 +134,7 @@ jobs:
       contents: read
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
     steps:
@@ -150,7 +152,7 @@ Add-WorkflowBlock @'
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
-        run: ./instance/platform/tools/Select-InstanceModules.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./instance/platform/tools/Select-InstanceModules.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT -DeploymentScope full
   approve_teardown_platform:
     name: Platform-team approval for the teardown
     needs: [select]
@@ -200,29 +202,31 @@ Add-WorkflowBlock @'
         run: ./instance/platform/tools/Test-TeardownEnterpriseOwner.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
 '@
 
-foreach ($manifest in $modules.PSBase.Values) {
-    $name = $manifest['name']
-    if (-not $prerequisiteModules.Contains($name)) { continue }
-    $suffix = $name.Replace('-', '_')
-    Add-ModuleJobPreamble -Job "outputs_$suffix" -Title "$name (read outputs before teardown)" -Needs @('select', 'enterprise_owner') `
-        -Condition "!cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains($modulesExpression, '$name')" `
+foreach ($node in $phaseGraph.PSBase.Values) {
+    $name = $node.Module
+    $key = $node.Name
+    if (-not $prerequisiteModules.Contains($key)) { continue }
+    $suffix = $key.Replace('-', '_').Replace(':', '_')
+    $phaseArgument = if ($node.Phase) { " -DeploymentPhase $($node.Phase)" } else { '' }
+    Add-ModuleJobPreamble -Job "outputs_$suffix" -Title "$key (read outputs before teardown)" -Needs @('select', 'enterprise_owner') `
+        -Condition "!cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains($nodesExpression, '$key')" `
         -Environment "fromJSON(needs.select.outputs.environments)['$name']"
     Add-WorkflowBlock @"
       - name: Read public outputs from state without planning
         shell: pwsh
-        run: ./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action output $runnerArguments -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action output $runnerArguments -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER$phaseArgument
       - name: Upload public module outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: teardown-outputs-$name
-          path: ./artifacts/module-outputs/$name.json
+          name: teardown-outputs-$($key.Replace(':', '-'))
+          path: ./artifacts/module-outputs/$($key.Replace(':', '.')).json
           if-no-files-found: error
           retention-days: 1
 "@
 }
 
 $reversed = [System.Collections.Generic.List[object]]::new()
-$remaining = [System.Collections.Generic.List[string]]::new([string[]] @($modules.PSBase.Keys | Sort-Object -CaseSensitive))
+$remaining = [System.Collections.Generic.List[string]]::new([string[]] @($phaseGraph.PSBase.Keys | Sort-Object -CaseSensitive))
 # The identity module owns the teams whose approvals the apply environments of every other module require.
 $identityModule = 'emu-identity'
 while ($remaining.Count -gt 0) {
@@ -230,38 +234,41 @@ while ($remaining.Count -gt 0) {
     $next = $remaining | Where-Object {
         $candidate = $_
         ($candidate -cne $identityModule -or $remaining.Count -eq 1) -and
-        -not ($remaining | Where-Object { $modules[$_]['prerequisites'] -contains $candidate })
+        -not ($remaining | Where-Object { $phaseGraph[$_].Prerequisites -contains $candidate })
     } | Select-Object -First 1
     if (-not $next) { throw 'Module prerequisites contain a cycle.' }
-    $reversed.Add($modules[$next])
+    $reversed.Add($phaseGraph[$next])
     $null = $remaining.Remove($next)
 }
-foreach ($manifest in $reversed) {
-    $name = $manifest['name']
-    $suffix = $name.Replace('-', '_')
-    $dependents = @($modules.PSBase.Values | Where-Object { $_['prerequisites'] -contains $name } | ForEach-Object { $_['name'] })
-    if ($name -ceq $identityModule) {
-        $dependents = @($modules.PSBase.Keys | Where-Object { $_ -cne $identityModule } | Sort-Object -CaseSensitive)
+foreach ($node in $reversed) {
+    $name = $node.Module
+    $key = $node.Name
+    $manifest = $node.Manifest
+    $suffix = $key.Replace('-', '_').Replace(':', '_')
+    $phaseArgument = if ($node.Phase) { " -DeploymentPhase $($node.Phase)" } else { '' }
+    $dependents = @($phaseGraph.PSBase.Values | Where-Object { $_.Prerequisites -contains $key } | ForEach-Object { $_.Name })
+    if ($key -ceq $identityModule) {
+        $dependents = @($phaseGraph.PSBase.Keys | Where-Object { $_ -cne $identityModule } | Sort-Object -CaseSensitive)
     }
     $needs = @('select', 'approve_teardown', 'enterprise_owner')
-    $needs += @($manifest['prerequisites'] | ForEach-Object { 'outputs_' + $_.Replace('-', '_') })
-    $needs += @($dependents | ForEach-Object { 'destroy_' + $_.Replace('-', '_') })
-    $condition = "!cancelled() && $gateCondition && contains($modulesExpression, '$name')"
-    foreach ($prerequisite in $manifest['prerequisites']) {
-        $condition += " && needs.outputs_$($prerequisite.Replace('-', '_')).result == 'success'"
+    $needs += @($node.Prerequisites | ForEach-Object { 'outputs_' + $_.Replace('-', '_').Replace(':', '_') })
+    $needs += @($dependents | ForEach-Object { 'destroy_' + $_.Replace('-', '_').Replace(':', '_') })
+    $condition = "!cancelled() && $gateCondition && contains($nodesExpression, '$key')"
+    foreach ($prerequisite in $node.Prerequisites) {
+        $condition += " && needs.outputs_$($prerequisite.Replace('-', '_').Replace(':', '_')).result == 'success'"
     }
     foreach ($dependent in $dependents) {
-        $job = 'destroy_' + $dependent.Replace('-', '_')
-        $condition += " && (needs.$job.result == 'success' || (needs.$job.result == 'skipped' && !contains($modulesExpression, '$dependent')))"
+        $job = 'destroy_' + $dependent.Replace('-', '_').Replace(':', '_')
+        $condition += " && (needs.$job.result == 'success' || (needs.$job.result == 'skipped' && !contains($nodesExpression, '$dependent')))"
     }
-    Add-ModuleJobPreamble -Job "destroy_$suffix" -Title "$name (destroy)" -Needs $needs -Condition $condition `
+    Add-ModuleJobPreamble -Job "destroy_$suffix" -Title "$key (destroy)" -Needs $needs -Condition $condition `
         -Environment "fromJSON(needs.select.outputs.applyEnvironments)['$name']"
-    $hasRulesets = $manifest['permissions']['githubApp'].Contains('rulesetPlan')
+    $hasRulesets = -not $node.Phase -and $manifest['permissions']['githubApp'].Contains('rulesetPlan')
     # Organization-scoped tokens fail once the organizations are deleted; a repeated teardown must still pass an already destroyed module.
     $organizationScoped = @($manifest['permissions']['githubApp'].PSBase.Values |
         Where-Object { $_['resources'].Contains('organizations') }).Count -gt 0
     if ($organizationScoped) {
-        $stateRunner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action state $runnerArguments -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER"
+        $stateRunner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action state $runnerArguments -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER$phaseArgument"
         $stateCalls = @($stateRunner)
         if ($hasRulesets) { $stateCalls += "$stateRunner -Rulesets" }
         Add-WorkflowBlock @"
@@ -287,16 +294,16 @@ $(($stateCalls | ForEach-Object { "            $_" }) -join "`n")
           PLATFORM_APP_PRIVATE_KEY: `${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
         run: ./instance/platform/tools/New-PlatformGitHubToken.ps1 -Module '$name' -Phase apply $runnerArguments
 "@
-    foreach ($prerequisite in $manifest['prerequisites']) {
+    foreach ($prerequisite in $node.Prerequisites) {
         Add-WorkflowBlock @"
       - name: Download outputs of $prerequisite
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: teardown-outputs-$prerequisite
+          name: teardown-outputs-$($prerequisite.Replace(':', '-'))
           path: ./artifacts/prerequisites
 "@
     }
-    $runner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action destroy $runnerArguments -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER"
+    $runner = "./instance/platform/tools/Invoke-Module.ps1 -Module '$name' -Action destroy $runnerArguments -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER$phaseArgument"
     if ($hasRulesets) {
         Add-TeardownMainCheck
         Add-WorkflowBlock @"

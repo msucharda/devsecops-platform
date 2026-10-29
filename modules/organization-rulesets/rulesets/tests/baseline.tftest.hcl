@@ -1,6 +1,6 @@
 mock_provider "external" {
   mock_data "external" {
-    defaults = { result = { state = "null", remote_id = "" } }
+    defaults = { result = { state = "null", remote_id = "", code_security_ready = "true" } }
   }
 }
 mock_provider "restapi" {}

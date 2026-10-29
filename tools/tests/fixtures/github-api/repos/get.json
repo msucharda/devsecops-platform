@@ -6,7 +6,8 @@
     "apiVersion": "2026-03-10",
     "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
-    "schema": "#/components/schemas/full-repository"
+    "schema": "#/components/schemas/full-repository",
+    "note": "The documented example is extended with the optional root security_and_analysis object from the pinned security-and-analysis schema, including the code_security and legacy advanced_security product status variants."
   },
   "required": {
     "": [
@@ -112,6 +113,14 @@
     "node_id": "MDEwOlJlcG9zaXRvcnkxMjk2MjY5",
     "name": "Hello-World",
     "full_name": "octocat/Hello-World",
+    "security_and_analysis": {
+      "code_security": {
+        "status": "enabled"
+      },
+      "advanced_security": {
+        "status": "enabled"
+      }
+    },
     "owner": {
       "login": "octocat",
       "id": 1,

@@ -196,4 +196,59 @@ function Get-OrganizationRulesetState {
     return $state
 }
 
-Export-ModuleMember -Function Get-OrganizationRulesetState
+# security-check: ruleset-code-security-prerequisite
+function Assert-RulesetCodeSecurityPrerequisite {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $ApiUrl, [Parameter(Mandatory)][string] $Organization)
+
+    # GET /orgs/{org}/code-security/configurations/defaults, API version 2026-03-10.
+    # https://docs.github.com/en/enterprise-cloud@latest/rest/code-security/configurations#get-default-code-security-configurations
+    $defaults = Invoke-OrganizationRulesetApi -ApiUrl $ApiUrl -Organization $Organization -Method GET `
+        -Path "/orgs/$Organization/code-security/configurations/defaults"
+    $remedy = 'Deploy the enterprise-baseline Code Security phase before applying organization-rulesets.'
+    if ($defaults -isnot [array]) { throw "Code Security defaults of '$Organization' are not an array. $remedy" }
+    $coverage = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $configurationId = $null
+    foreach ($entry in $defaults) {
+        if ($entry -isnot [Collections.IDictionary]) { throw "Code Security defaults of '$Organization' contain an invalid entry. $remedy" }
+        $visibility = $entry['default_for_new_repos']
+        if ($visibility -isnot [string] -or $visibility -cnotin @('all', 'public', 'private_and_internal')) {
+            throw "Code Security defaults of '$Organization' have an unknown visibility. $remedy"
+        }
+        $configuration = $entry['configuration']
+        if ($configuration -isnot [Collections.IDictionary]) {
+            throw "Code Security defaults of '$Organization' have no configuration object. $remedy"
+        }
+        $id = $configuration['id']
+        if (($id -isnot [int] -and $id -isnot [long]) -or $id -le 0) {
+            throw "Code Security defaults of '$Organization' have no valid configuration ID. $remedy"
+        }
+        if ($null -ne $configurationId -and $id -ne $configurationId) {
+            throw "Code Security defaults of '$Organization' refer to different configuration IDs. $remedy"
+        }
+        $configurationId = $id
+        $required = @{
+            name = 'platform-baseline'
+            target_type = 'organization'
+            enforcement = 'enforced'
+            advanced_security = 'enabled'
+            code_scanning_default_setup = 'enabled'
+        }
+        foreach ($field in $required.Keys) {
+            if ($configuration[$field] -isnot [string] -or $configuration[$field] -cne $required[$field]) {
+                throw "Code Security default of '$Organization' has invalid '$field'; expected '$($required[$field])'. $remedy"
+            }
+        }
+        $visibilities = if ($visibility -ceq 'all') { @('public', 'private_and_internal') } else { @($visibility) }
+        foreach ($scope in $visibilities) {
+            if (-not $coverage.Add($scope)) {
+                throw "Code Security defaults of '$Organization' overlap for '$scope'. $remedy"
+            }
+        }
+    }
+    if ($coverage.Count -ne 2) {
+        throw "Organization '$Organization' has no enforced platform-baseline Code Security default for every new public, private and internal repository. $remedy"
+    }
+}
+
+Export-ModuleMember -Function Get-OrganizationRulesetState, Assert-RulesetCodeSecurityPrerequisite

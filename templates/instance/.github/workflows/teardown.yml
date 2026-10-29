@@ -21,6 +21,7 @@ jobs:
       contents: read
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
     steps:
@@ -41,7 +42,7 @@ jobs:
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
-        run: ./instance/platform/tools/Select-InstanceModules.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./instance/platform/tools/Select-InstanceModules.ps1 -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT -DeploymentScope full
   approve_teardown_platform:
     name: Platform-team approval for the teardown
     needs: [select]
@@ -96,7 +97,7 @@ jobs:
     name: 'actions-catalog (read outputs before teardown)'
     runs-on: ubuntu-latest
     needs: [select, enterprise_owner]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'actions-catalog') }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['actions-catalog'] }}
     permissions:
       contents: read
@@ -143,11 +144,62 @@ jobs:
           path: ./artifacts/module-outputs/actions-catalog.json
           if-no-files-found: error
           retention-days: 1
+  outputs_enterprise_baseline_code_security:
+    name: 'enterprise-baseline:code-security (read outputs before teardown)'
+    runs-on: ubuntu-latest
+    needs: [select, enterprise_owner]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') }}
+    environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: 'true'
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
+      PLATFORM_STATE_RESOURCE_GROUP: ${{ vars.PLATFORM_STATE_RESOURCE_GROUP }}
+    steps:
+      - name: Check out the dispatched main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: instance
+          persist-credentials: false
+      - name: Install runtime dependencies
+        shell: pwsh
+        run: ./instance/platform/tools/Install-ToolDependencies.ps1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - name: Verify Terraform checksum
+        shell: pwsh
+        run: ./instance/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Sign in to Azure with the phase managed identity
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Read public outputs from state without planning
+        shell: pwsh
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action output -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -DeploymentPhase code-security
+      - name: Upload public module outputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: teardown-outputs-enterprise-baseline-code-security
+          path: ./artifacts/module-outputs/enterprise-baseline.code-security.json
+          if-no-files-found: error
+          retention-days: 1
   outputs_organization_rulesets:
     name: 'organization-rulesets (read outputs before teardown)'
     runs-on: ubuntu-latest
     needs: [select, enterprise_owner]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-rulesets') }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['organization-rulesets'] }}
     permissions:
       contents: read
@@ -198,7 +250,7 @@ jobs:
     name: 'organizations (read outputs before teardown)'
     runs-on: ubuntu-latest
     needs: [select, enterprise_owner]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organizations') }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['organizations'] }}
     permissions:
       contents: read
@@ -249,7 +301,7 @@ jobs:
     name: 'enterprise-baseline (destroy)'
     runs-on: ubuntu-latest
     needs: [select, approve_teardown, enterprise_owner, outputs_actions_catalog, outputs_organizations]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline') && needs.outputs_actions_catalog.result == 'success' && needs.outputs_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.outputs_actions_catalog.result == 'success' && needs.outputs_organizations.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
     permissions:
       contents: read
@@ -336,7 +388,7 @@ jobs:
     name: 'actions-catalog (destroy)'
     runs-on: ubuntu-latest
     needs: [select, approve_teardown, enterprise_owner, outputs_organization_rulesets, outputs_organizations, destroy_enterprise_baseline]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'actions-catalog') && needs.outputs_organization_rulesets.result == 'success' && needs.outputs_organizations.result == 'success' && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline'))) }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && needs.outputs_organization_rulesets.result == 'success' && needs.outputs_organizations.result == 'success' && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline'))) }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['actions-catalog'] }}
     permissions:
       contents: read
@@ -423,7 +475,7 @@ jobs:
     name: 'organization-roles (destroy)'
     runs-on: ubuntu-latest
     needs: [select, approve_teardown, enterprise_owner, outputs_organizations]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-roles') && needs.outputs_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && needs.outputs_organizations.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organization-roles'] }}
     permissions:
       contents: read
@@ -503,8 +555,8 @@ jobs:
   destroy_organization_rulesets:
     name: 'organization-rulesets (destroy)'
     runs-on: ubuntu-latest
-    needs: [select, approve_teardown, enterprise_owner, outputs_organizations, destroy_actions_catalog]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organization-rulesets') && needs.outputs_organizations.result == 'success' && (needs.destroy_actions_catalog.result == 'success' || (needs.destroy_actions_catalog.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'actions-catalog'))) }}
+    needs: [select, approve_teardown, enterprise_owner, outputs_enterprise_baseline_code_security, outputs_organizations, destroy_actions_catalog]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && needs.outputs_enterprise_baseline_code_security.result == 'success' && needs.outputs_organizations.result == 'success' && (needs.destroy_actions_catalog.result == 'success' || (needs.destroy_actions_catalog.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog'))) }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organization-rulesets'] }}
     permissions:
       contents: read
@@ -560,6 +612,12 @@ jobs:
           PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
         run: ./instance/platform/tools/New-PlatformGitHubToken.ps1 -Module 'organization-rulesets' -Phase apply -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+      - name: Download outputs of enterprise-baseline:code-security
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: teardown-outputs-enterprise-baseline-code-security
+          path: ./artifacts/prerequisites
       - name: Download outputs of organizations
         if: ${{ steps.state.outputs.empty != 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -594,11 +652,92 @@ jobs:
         if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh
         run: ./instance/platform/tools/Remove-PlatformGitHubToken.ps1
+  destroy_enterprise_baseline_code_security:
+    name: 'enterprise-baseline:code-security (destroy)'
+    runs-on: ubuntu-latest
+    needs: [select, approve_teardown, enterprise_owner, outputs_organizations, destroy_organization_rulesets]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && needs.outputs_organizations.result == 'success' && (needs.destroy_organization_rulesets.result == 'success' || (needs.destroy_organization_rulesets.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets'))) }}
+    environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: 'true'
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
+      PLATFORM_STATE_RESOURCE_GROUP: ${{ vars.PLATFORM_STATE_RESOURCE_GROUP }}
+    steps:
+      - name: Check out the dispatched main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: instance
+          persist-credentials: false
+      - name: Install runtime dependencies
+        shell: pwsh
+        run: ./instance/platform/tools/Install-ToolDependencies.ps1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+      - name: Verify Terraform checksum
+        shell: pwsh
+        run: ./instance/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Sign in to Azure with the phase managed identity
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Read whether every module state is empty before issuing GitHub tokens
+        id: state
+        shell: pwsh
+        run: |
+          $results = @(
+            ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action state -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -DeploymentPhase code-security
+          )
+          $empty = $results.Count -eq 1 -and @($results | Where-Object { $_.Empty -isnot [bool] -or -not $_.Empty }).Count -eq 0
+          "empty=$($empty.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+      - name: Issue an apply-scoped enterprise App installation token
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        shell: pwsh
+        env:
+          PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
+          PLATFORM_APP_INSTALLATION_ID: ${{ vars.PLATFORM_APP_INSTALLATION_ID }}
+          PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
+          PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+        run: ./instance/platform/tools/New-PlatformGitHubToken.ps1 -Module 'enterprise-baseline' -Phase apply -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules
+      - name: Download outputs of organizations
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: teardown-outputs-organizations
+          path: ./artifacts/prerequisites
+      - name: Require main to still point to the dispatched commit
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        shell: pwsh
+        env:
+          TEARDOWN_MAIN_TOKEN: ${{ github.token }}
+        run: ./instance/platform/tools/Assert-TeardownMainCommit.ps1
+      - name: Destroy module
+        if: ${{ steps.state.outputs.empty != 'true' }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ env.GH_TOKEN }}
+        run: ./instance/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action destroy -InstancePath ./instance/instance.yaml -ModulesPath ./instance/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -DeploymentPhase code-security
+      - name: Revoke the job installation tokens
+        if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
+        shell: pwsh
+        run: ./instance/platform/tools/Remove-PlatformGitHubToken.ps1
   destroy_organizations:
     name: 'organizations (destroy)'
     runs-on: ubuntu-latest
-    needs: [select, approve_teardown, enterprise_owner, destroy_actions_catalog, destroy_enterprise_baseline, destroy_organization_roles, destroy_organization_rulesets]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'organizations') && (needs.destroy_actions_catalog.result == 'success' || (needs.destroy_actions_catalog.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'actions-catalog'))) && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline'))) && (needs.destroy_organization_roles.result == 'success' || (needs.destroy_organization_roles.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'organization-roles'))) && (needs.destroy_organization_rulesets.result == 'success' || (needs.destroy_organization_rulesets.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'organization-rulesets'))) }}
+    needs: [select, approve_teardown, enterprise_owner, destroy_actions_catalog, destroy_enterprise_baseline_code_security, destroy_enterprise_baseline, destroy_organization_roles, destroy_organization_rulesets]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && (needs.destroy_actions_catalog.result == 'success' || (needs.destroy_actions_catalog.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog'))) && (needs.destroy_enterprise_baseline_code_security.result == 'success' || (needs.destroy_enterprise_baseline_code_security.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security'))) && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline'))) && (needs.destroy_organization_roles.result == 'success' || (needs.destroy_organization_roles.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles'))) && (needs.destroy_organization_rulesets.result == 'success' || (needs.destroy_organization_rulesets.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets'))) }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organizations'] }}
     permissions:
       contents: read
@@ -660,8 +799,8 @@ jobs:
   destroy_emu_identity:
     name: 'emu-identity (destroy)'
     runs-on: ubuntu-latest
-    needs: [select, approve_teardown, enterprise_owner, destroy_actions_catalog, destroy_enterprise_baseline, destroy_organization_roles, destroy_organization_rulesets, destroy_organizations]
-    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.modules), 'emu-identity') && (needs.destroy_actions_catalog.result == 'success' || (needs.destroy_actions_catalog.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'actions-catalog'))) && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'enterprise-baseline'))) && (needs.destroy_organization_roles.result == 'success' || (needs.destroy_organization_roles.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'organization-roles'))) && (needs.destroy_organization_rulesets.result == 'success' || (needs.destroy_organization_rulesets.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'organization-rulesets'))) && (needs.destroy_organizations.result == 'success' || (needs.destroy_organizations.result == 'skipped' && !contains(fromJSON(needs.select.outputs.modules), 'organizations'))) }}
+    needs: [select, approve_teardown, enterprise_owner, destroy_actions_catalog, destroy_enterprise_baseline, destroy_enterprise_baseline_code_security, destroy_organization_roles, destroy_organization_rulesets, destroy_organizations]
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.approve_teardown.result == 'success' && needs.enterprise_owner.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && (needs.destroy_actions_catalog.result == 'success' || (needs.destroy_actions_catalog.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog'))) && (needs.destroy_enterprise_baseline.result == 'success' || (needs.destroy_enterprise_baseline.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline'))) && (needs.destroy_enterprise_baseline_code_security.result == 'success' || (needs.destroy_enterprise_baseline_code_security.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security'))) && (needs.destroy_organization_roles.result == 'success' || (needs.destroy_organization_roles.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles'))) && (needs.destroy_organization_rulesets.result == 'success' || (needs.destroy_organization_rulesets.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets'))) && (needs.destroy_organizations.result == 'success' || (needs.destroy_organizations.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations'))) }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['emu-identity'] }}
     permissions:
       contents: read

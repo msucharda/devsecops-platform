@@ -172,8 +172,19 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $env:CODE_SECURITY_ATTACHMENT_TIMEOUT = '0'
 
         function Invoke-StubTerraform {
-            $output = & terraform "-chdir=$root" @args -no-color 2>&1 | Out-String
-            [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
+            $roots = if (@($args | Where-Object { $_ -like '-target=*' }).Count) { @($root) }
+            elseif ($args[0] -ceq 'destroy') { @($root, $securityRoot) }
+            else { @($securityRoot, $root) }
+            $text = [Text.StringBuilder]::new()
+            $exitCode = 0
+            foreach ($terraformRoot in $roots) {
+                $output = & terraform "-chdir=$terraformRoot" @args -no-color 2>&1 | Out-String
+                $code = $LASTEXITCODE
+                $null = $text.Append($output)
+                if ($code -notin @(0, 2)) { return [pscustomobject]@{ ExitCode = $code; Output = $text.ToString() } }
+                $exitCode = [Math]::Max($exitCode, $code)
+            }
+            [pscustomobject]@{ ExitCode = $exitCode; Output = $text.ToString() }
         }
     }
 
@@ -188,10 +199,21 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $modules = Join-Path $parent 'modules'
         $root = Join-Path $modules 'enterprise-baseline'
+        $securityRoot = Join-Path $root 'code-security'
         New-Item -ItemType Directory -Path $root -Force | Out-Null
+        New-Item -ItemType Directory -Path $securityRoot | Out-Null
         Copy-Item -LiteralPath (Join-Path $moduleRoot '../shared') -Destination $modules -Recurse
         Copy-Item -Path (Join-Path $moduleRoot '*.tf'), (Join-Path $moduleRoot '.terraform.lock.hcl') -Destination $root
         Copy-Item -Path (Join-Path $moduleRoot 'scripts') -Destination $root -Recurse
+        Copy-Item -Path (Join-Path $moduleRoot 'code-security/*.tf'), (Join-Path $moduleRoot 'code-security/.terraform.lock.hcl') -Destination $securityRoot
+        Set-Content -LiteralPath (Join-Path $securityRoot 'stub_override.tf') -Value @"
+terraform {
+  backend "local" {}
+}
+locals {
+  github_api_url = "http://127.0.0.1:$port"
+}
+"@
         Set-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @"
 terraform {
   backend "local" {}
@@ -208,12 +230,13 @@ locals {
         if ($IsWindows) {
             # The external provider cannot start the Microsoft Store app execution alias of pwsh directly.
             Add-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @'
-data "external" "code_security_state" {
-  program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "./scripts/Read-CodeSecurityState.ps1"]
-}
-
 data "external" "actions_policy_state" {
   program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "./scripts/Read-ActionsPolicyState.ps1"]
+}
+'@
+            Add-Content -LiteralPath (Join-Path $securityRoot 'stub_override.tf') -Value @'
+data "external" "code_security_state" {
+  program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "../scripts/Read-CodeSecurityState.ps1"]
 }
 '@
         }
@@ -228,6 +251,7 @@ data "external" "actions_policy_state" {
             prerequisites = @{}
             secret_scanning_bypass_reviewers = @(@{ reviewer_type = 'TEAM'; reviewer_id = $testReviewer })
         })
+        Copy-Item -LiteralPath (Join-Path $root 'terraform.tfvars.json') -Destination $securityRoot
         $stubState.CodeSecurity = Initialize-CodeSecurityStub -Organization $testOrganization -Origin "http://127.0.0.1:$port" -Token stub-token
         $stubState.Organization = Get-GitHubApiFixture -Name orgs/get -Set @{
             login = $testOrganization
@@ -265,6 +289,66 @@ data "external" "actions_policy_state" {
         }
         $init = Invoke-StubTerraform init -input=false
         $init.ExitCode | Should -Be 0 -Because $init.Output
+    }
+
+    It 'adopts legacy Code Security state without deleting or recreating remote objects when <Case>' -Tag 'CodeSecurityTransition' -ForEach @(
+        @{ Case = 'uninterrupted'; RepeatEarly = $false }
+        @{ Case = 'interrupted after early adoption'; RepeatEarly = $true }
+    ) {
+        $removedPath = Join-Path $root 'removed.tf'
+        Remove-Item -LiteralPath $removedPath
+        $legacySource = Get-Content -LiteralPath (Join-Path $moduleRoot 'code-security/code_security.tf') -Raw
+        $legacySource.Replace('${path.module}/../scripts/', '${path.module}/scripts/') |
+            Set-Content -LiteralPath (Join-Path $root 'code_security.tf')
+        $legacyWindowsOverride = Join-Path $root 'legacy_external_override.tf'
+        if ($IsWindows) {
+            Set-Content -LiteralPath $legacyWindowsOverride -Value @'
+data "external" "code_security_state" {
+  program = ["cmd", "/c", "pwsh", "-NoProfile", "-NonInteractive", "-File", "./scripts/Read-CodeSecurityState.ps1"]
+}
+'@
+        }
+        $legacyOutput = & terraform "-chdir=$root" apply -input=false -auto-approve -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $legacyOutput
+        $codeSecurity = $stubState.CodeSecurity
+        $configuration = @($codeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })
+        $configuration.Count | Should -Be 1
+        $configurationId = $configuration[0]['id']
+        $patternId = $codeSecurity.Patterns[0]['id']
+        $createdConfigurations = @($codeSecurity.Requests | Where-Object { $_ -ceq 'POST /orgs/demo/code-security/configurations' }).Count
+        $createdPatterns = @($codeSecurity.Requests | Where-Object { $_ -ceq 'POST /orgs/demo/secret-scanning/custom-patterns' }).Count
+        $createdConfigurations | Should -Be 1
+        $createdPatterns | Should -Be 1
+
+        Remove-Item -LiteralPath (Join-Path $root 'code_security.tf')
+        if ($IsWindows) { Remove-Item -LiteralPath $legacyWindowsOverride }
+        Copy-Item -LiteralPath (Join-Path $moduleRoot 'removed.tf') -Destination $removedPath
+        $early = & terraform "-chdir=$securityRoot" apply -input=false -auto-approve -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $early
+        if ($RepeatEarly) {
+            # The previous run ended after the early root adopted the objects, before the late state was updated.
+            $earlyRetry = & terraform "-chdir=$securityRoot" apply -input=false -auto-approve -no-color 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $earlyRetry
+        }
+        $late = & terraform "-chdir=$root" apply -input=false -auto-approve -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $late
+        $lateRetry = & terraform "-chdir=$root" apply -input=false -auto-approve -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $lateRetry
+
+        @($codeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }).Count | Should -Be 1
+        ($codeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['id'] | Should -Be $configurationId
+        @($codeSecurity.Patterns).Count | Should -Be 1
+        $codeSecurity.Patterns[0]['id'] | Should -Be $patternId
+        @($codeSecurity.Requests | Where-Object { $_ -match '^DELETE ' }).Count | Should -Be 0
+        @($codeSecurity.Requests | Where-Object { $_ -ceq 'POST /orgs/demo/code-security/configurations' }).Count | Should -Be $createdConfigurations
+        @($codeSecurity.Requests | Where-Object { $_ -ceq 'POST /orgs/demo/secret-scanning/custom-patterns' }).Count | Should -Be $createdPatterns
+        $lateState = & terraform "-chdir=$root" state list -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $lateState
+        $lateState | Should -Not -Match 'terraform_data\.(code_security_configuration|code_security_configuration_settings|custom_pattern|custom_pattern_content)'
+        $earlyState = & terraform "-chdir=$securityRoot" state list -no-color 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $earlyState
+        $earlyState | Should -Match 'terraform_data\.code_security_configuration'
+        $earlyState | Should -Match 'terraform_data\.custom_pattern'
     }
 
     It 'omits enterprise-controlled fields from create, update and destroy PATCH requests: <Case>' -Tag 'ForkPolicy' -ForEach @(

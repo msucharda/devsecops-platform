@@ -3,6 +3,31 @@ BeforeAll {
 }
 
 Describe 'Deployment plan status' {
+    It 'accepts only successful plans for every selected staged phase before apply' {
+        $needs = @{
+            authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
+            validate = @{ result = 'success' }
+            select = @{ result = 'success'; outputs = @{
+                modules = '["enterprise-baseline","organizations"]'
+                phaseNodes = '["enterprise-baseline:code-security","organizations"]'
+                rulesetModules = '[]'
+            } }
+            module_enterprise_baseline_code_security = @{ result = 'success' }
+            module_organizations = @{ result = 'success' }
+            module_enterprise_baseline = @{ result = 'skipped' }
+        }
+        $summary = Join-Path $TestDrive 'stage.md'
+
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath $summary 6>$null } |
+            Should -Not -Throw
+        $needs.module_enterprise_baseline_code_security.result = 'failure'
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath $summary 6>$null } |
+            Should -Throw '*INCOMPLETE*module_enterprise_baseline_code_security*'
+        $needs.select.outputs.phaseNodes = 'not-json'
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath $summary 6>$null } |
+            Should -Throw '*invalid selected deployment phases*'
+    }
+
     It 'explicitly marks denied PR plans as unperformed, not verified' {
         $summary = Join-Path $TestDrive 'denied.md'
         $needs = @{ authorize = @{ result = 'success'; outputs = @{ allowed = 'false' } } }

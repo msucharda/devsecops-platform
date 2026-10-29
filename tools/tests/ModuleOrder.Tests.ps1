@@ -21,6 +21,11 @@ BeforeAll {
             $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
             if (@($manifest.prerequisites) -cnotcontains 'organizations') { continue }
             $manifest.prerequisites = @($manifest.prerequisites | ForEach-Object { if ($_ -ceq 'organizations') { $OrganizationsName } else { $_ } })
+            if ($manifest.Contains('phases')) {
+                foreach ($phase in $manifest.phases.Values) {
+                    $phase.prerequisites = @($phase.prerequisites | ForEach-Object { if ($_ -ceq 'organizations') { $OrganizationsName } else { $_ } })
+                }
+            }
             ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
         }
         return $modules
@@ -28,6 +33,109 @@ BeforeAll {
 }
 
 Describe 'Released module order' {
+    It 'rejects the reserved rulesets phase before generating any workflow' {
+        Import-Module (Join-Path $toolsPath 'PlatformTools.psm1') -Force
+        $modules = Join-Path $TestDrive 'reserved-phase-modules'
+        Copy-Item -LiteralPath $released -Destination $modules -Recurse
+        $manifestPath = Join-Path $modules 'enterprise-baseline/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.phases['rulesets'] = @{ prerequisites = @('organizations') }
+        New-Item -ItemType Directory -Path (Join-Path $modules 'enterprise-baseline/rulesets') -Force | Out-Null
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $deploy = Join-Path $TestDrive 'reserved-deploy.yml'
+        $teardown = Join-Path $TestDrive 'reserved-teardown.yml'
+
+        { Get-PlatformModuleGraph -ModulesPath $modules } | Should -Throw '*Invalid module manifest*'
+        { & (Join-Path $toolsPath 'Test-ModuleManifests.ps1') -ModulesPath $modules } | Should -Throw '*Invalid module manifest*'
+        { & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $modules -OutputPath $deploy } | Should -Throw '*Invalid module manifest*'
+        { & (Join-Path $toolsPath 'Generate-TeardownWorkflow.ps1') -ModulesPath $modules -OutputPath $teardown } | Should -Throw '*Invalid module manifest*'
+        Test-Path -LiteralPath $deploy | Should -BeFalse
+        Test-Path -LiteralPath $teardown | Should -BeFalse
+    }
+
+    It 'places the early baseline before rulesets and the late baseline after the catalog in all three workflows' {
+        $deployPath = Join-Path $TestDrive 'deploy-phases.yml'
+        $driftPath = Join-Path $TestDrive 'drift-phases.yml'
+        $teardownPath = Join-Path $TestDrive 'teardown-phases.yml'
+        & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $released -OutputPath $deployPath -DriftOutputPath $driftPath
+        & (Join-Path $toolsPath 'Generate-TeardownWorkflow.ps1') -ModulesPath $released -OutputPath $teardownPath
+        $deploy = ConvertFrom-Yaml (Get-Content -LiteralPath $deployPath -Raw)
+        $drift = ConvertFrom-Yaml (Get-Content -LiteralPath $driftPath -Raw)
+        $teardown = ConvertFrom-Yaml (Get-Content -LiteralPath $teardownPath -Raw)
+
+        foreach ($workflow in @($deploy, $drift)) {
+            $workflow.jobs.module_enterprise_baseline_code_security.needs | Should -Contain 'module_organizations'
+            $workflow.jobs.module_enterprise_baseline_code_security.needs | Should -Not -Contain 'module_actions_catalog'
+            $workflow.jobs.module_organization_rulesets.needs | Should -Contain 'module_enterprise_baseline_code_security'
+            $workflow.jobs.module_enterprise_baseline.needs | Should -Contain 'module_actions_catalog'
+            $workflow.jobs.module_enterprise_baseline_code_security.environment | Should -Be $workflow.jobs.module_enterprise_baseline.environment
+            $workflow.jobs.module_enterprise_baseline_code_security.steps |
+                Where-Object { $_.Contains('run') -and $_.run -match '-DeploymentPhase code-security' } | Should -Not -BeNullOrEmpty
+        }
+        $deploy.jobs.plan_complete.needs | Should -Contain 'module_enterprise_baseline_code_security'
+        $deploy.jobs.apply_organization_rulesets.needs | Should -Contain 'apply_enterprise_baseline_code_security'
+        $coverageJob = $drift.jobs.module_enterprise_baseline_code_security
+        $coverageJob.outputs.codeSecurityCoverage | Should -BeExactly '${{ steps.code_security_artifact.outputs.artifact-id }}'
+        $coverage = @($coverageJob.steps | Where-Object { $_.Contains('id') -and $_.id -eq 'code_security' })
+        $coverage.Count | Should -Be 1
+        $coverage[0].if | Should -Be '${{ !cancelled() && env.PLATFORM_GITHUB_TOKENS != '''' }}'
+        $coverage[0].run | Should -Be './trusted/platform/tools/Test-CodeSecurityCoverage.ps1 -ReportPath ./artifacts/code-security-coverage.json'
+        $coverageUpload = @($coverageJob.steps | Where-Object { $_.Contains('with') -and $_.with.Contains('name') -and $_.with.name -ceq 'code-security-coverage' })
+        $coverageUpload.Count | Should -Be 1
+        $coverageUpload[0]['continue-on-error'] | Should -BeTrue
+        $coverageUpload[0].with['retention-days'] | Should -Be 1
+        $coverageUpload[0].with.overwrite | Should -BeTrue
+        $reportSteps = @($drift.jobs.report_drift.steps)
+        $download = @($reportSteps | Where-Object { $_.Contains('uses') -and $_.uses -like 'actions/download-artifact@*' })
+        $download.Count | Should -Be 1
+        $download[0]['continue-on-error'] | Should -BeTrue
+        $download[0].with['artifact-ids'] | Should -BeExactly '${{ needs.module_enterprise_baseline_code_security.outputs.codeSecurityCoverage }}'
+        $download[0].with['merge-multiple'] | Should -BeTrue
+        [array]::IndexOf($reportSteps, $download[0]) | Should -BeLessThan (
+            [array]::FindIndex($reportSteps, [Predicate[object]] { param($s) $s.Contains('id') -and $s.id -ceq 'evaluate' }))
+        $steps = @($coverageJob.steps)
+        $coverageIndex = [array]::IndexOf($steps, $coverage[0])
+        $coverageIndex | Should -BeGreaterThan ([array]::FindIndex($steps, [Predicate[object]] { param($s) $s.Contains('run') -and $s.run -match 'Invoke-Module\.ps1' }))
+        $coverageIndex | Should -BeLessThan ($steps.Count - 1)
+        $teardown.jobs.destroy_enterprise_baseline_code_security.needs | Should -Contain 'destroy_organization_rulesets'
+        $teardown.jobs.destroy_organization_rulesets.needs | Should -Contain 'destroy_actions_catalog'
+        $teardown.jobs.destroy_enterprise_baseline.needs | Should -Not -Contain 'destroy_organization_rulesets'
+    }
+
+    It 'continues drift plans after a Code Security coverage read fails, leaving coverage absent for the report' {
+        $deployPath = Join-Path $TestDrive 'coverage-deploy.yml'
+        $driftPath = Join-Path $TestDrive 'coverage-drift.yml'
+        & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $released -OutputPath $deployPath -DriftOutputPath $driftPath
+        $drift = ConvertFrom-Yaml (Get-Content -LiteralPath $driftPath -Raw)
+        $early = $drift.jobs.module_enterprise_baseline_code_security
+        $coverage = @($early.steps | Where-Object { $_.Contains('id') -and $_.id -eq 'code_security' })
+
+        $coverage.Count | Should -Be 1
+        $coverage[0]['continue-on-error'] | Should -BeTrue
+        $coverage[0].if | Should -Be '${{ !cancelled() && env.PLATFORM_GITHUB_TOKENS != '''' }}'
+        $early.outputs.codeSecurityCoverage | Should -BeExactly '${{ steps.code_security_artifact.outputs.artifact-id }}'
+        $drift.jobs.module_organization_rulesets.needs | Should -Contain 'module_enterprise_baseline_code_security'
+        $drift.jobs.module_organization_rulesets.if | Should -Match "needs.module_enterprise_baseline_code_security.result == 'success'"
+        $drift.jobs.module_actions_catalog.needs | Should -Contain 'module_organization_rulesets'
+        $drift.jobs.module_enterprise_baseline.needs | Should -Contain 'module_actions_catalog'
+    }
+
+    It 'rejects a cycle introduced only by an early-phase dependency before writing workflows' {
+        $modules = Join-Path $TestDrive 'phase-cycle-modules'
+        Copy-Item -LiteralPath $released -Destination $modules -Recurse
+        $manifestPath = Join-Path $modules 'enterprise-baseline/module.yaml'
+        $manifest = ConvertFrom-Yaml (Get-Content -LiteralPath $manifestPath -Raw)
+        $manifest.phases['code-security'].prerequisites = @('organization-rulesets')
+        ConvertTo-Yaml $manifest | Set-Content -LiteralPath $manifestPath
+        $output = Join-Path $TestDrive 'invalid-phase.yml'
+
+        { & (Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1') -ModulesPath $modules -OutputPath $output } |
+            Should -Throw '*cycle*'
+        { & (Join-Path $toolsPath 'Test-ModuleManifests.ps1') -ModulesPath $modules } |
+            Should -Throw '*cycle*'
+        Test-Path -LiteralPath $output | Should -BeFalse
+    }
+
     It 'keeps organization execution inside one job and publishes complete per-organization drift results' {
         $deployPath = Join-Path $TestDrive 'deploy-organizations.yml'
         $driftPath = Join-Path $TestDrive 'drift-organizations.yml'

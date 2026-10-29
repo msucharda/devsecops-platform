@@ -46,11 +46,13 @@ BeforeAll {
     $recovery = Join-Path (Split-Path $PSScriptRoot -Parent) 'Restore-RulesetState.ps1'
 
     function Invoke-RulesetTerraform {
+        $terraformArguments = @($args)
         if ($args[0] -ceq 'destroy') {
             try { & $recovery -TerraformRoot $root -VariableFile (Join-Path $root 'terraform.tfvars.json') }
             catch { return @{ Code = 1; Text = $_.Exception.Message } }
+            $terraformArguments += '-var=ruleset_destroy_started=true'
         }
-        $output = & terraform "-chdir=$root" @args -no-color 2>&1 | Out-String
+        $output = & terraform "-chdir=$root" @terraformArguments -no-color 2>&1 | Out-String
         return @{ Code = $LASTEXITCODE; Text = $output }
     }
 }
@@ -144,6 +146,57 @@ data "external" "ruleset_plan_state" {
                 else { $rule['type'] | Should -BeIn @('deletion', 'non_fast_forward') }
             }
         }
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 0 -Because $destroy.Text
+        $server.State.Items.Count | Should -Be 0
+    }
+
+    It 'rejects the first plan before any write without an enforced Code Security default' -Tag CodeSecurityPrerequisite {
+        $server.State.CodeSecurityDefaults = @()
+        $plan = Invoke-RulesetTerraform plan -input=false -detailed-exitcode
+        $plan.Code | Should -Be 1 -Because $plan.Text
+        $plan.Text | Should -Match 'no enforced platform-baseline Code\s+Security default'
+        $plan.Text | Should -Match 'Deploy the enterprise-baseline Code Security phase'
+        $server.State.Items.Count | Should -Be 0
+        $server.State.Writes.Count | Should -Be 0
+    }
+
+    It 'rejects disabled Code Security before modifying an existing ruleset' -Tag CodeSecurityPrerequisite {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.CodeSecurityDefaults[0]['configuration']['advanced_security'] = 'disabled'
+        $writes = $server.State.Writes.Count
+
+        $plan = Invoke-RulesetTerraform plan -input=false -detailed-exitcode
+        $plan.Code | Should -Be 1 -Because $plan.Text
+        $plan.Text | Should -Match "invalid\s+'advanced_security'"
+        $server.State.Writes.Count | Should -Be $writes
+    }
+
+    It 'can destroy rulesets after the Code Security default was removed' -Tag CodeSecurityPrerequisite {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $server.State.CodeSecurityDefaults = @()
+
+        $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
+        $destroy.Code | Should -Be 0 -Because $destroy.Text
+        $server.State.Items.Count | Should -Be 0
+    }
+
+    It 'cannot bypass the prerequisite by using the teardown flag for deploy' -Tag CodeSecurityPrerequisite {
+        $server.State.CodeSecurityDefaults = @()
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve -var=ruleset_destroy_started=true
+        $apply.Code | Should -Be 1 -Because $apply.Text
+        $apply.Text | Should -Match 'reserved for teardown recovery'
+        $server.State.Writes.Count | Should -Be 0
+    }
+
+    It 'recovers and removes an interrupted create after the security default was removed' -Tag CodeSecurityPrerequisite {
+        $server.State.DropNext = '^POST /orgs/demo/rulesets$'
+        (Invoke-RulesetTerraform apply -input=false -auto-approve).Code | Should -Not -Be 0
+        $server.State.Items.Count | Should -Be 1
+        $server.State.CodeSecurityDefaults = @()
+
         $destroy = Invoke-RulesetTerraform destroy -input=false -auto-approve
         $destroy.Code | Should -Be 0 -Because $destroy.Text
         $server.State.Items.Count | Should -Be 0

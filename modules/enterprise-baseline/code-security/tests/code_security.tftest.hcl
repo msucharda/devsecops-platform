@@ -1,10 +1,5 @@
 # Plan-only tests of the code security objects. Provisioners and the state reader run in the Pester stub tests
 # (tools/tests/EnterpriseBaseline.Tests.ps1); a plan defers the reader while the managed objects have pending changes.
-mock_provider "restapi" {
-  override_during = plan
-  source          = "./tests/mocks"
-}
-
 mock_provider "external" {}
 
 variables {
@@ -29,18 +24,6 @@ variables {
 
 run "manages_one_configuration_per_organization" {
   command = plan
-
-  assert {
-    condition = alltrue([
-      for settings in restapi_object.organization_settings :
-      settings.api_data == tomap({
-        for field, value in jsondecode(settings.api_response) :
-        field => value == null ? "<nil>" : tostring(value)
-        if contains(keys(jsondecode(file("tests/fixtures/organization-settings.json"))), field)
-      })
-    ])
-    error_message = "The mock api_data must be the provider's string projection of the same api_response, including omitted fields."
-  }
 
   assert {
     condition = (

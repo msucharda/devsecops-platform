@@ -35,7 +35,7 @@ foreach ($intent in $intents) {
         $existing = Get-OrganizationRulesetState @target
         if ($null -ne $existing) {
             $remotePath = "/orgs/$organization/rulesets/$($existing['id'])"
-            $output = & terraform "-chdir=$TerraformRoot" import -input=false -no-color "-var-file=$VariableFile" $address $remotePath 2>&1 | Out-String
+            $output = & terraform "-chdir=$TerraformRoot" import -input=false -no-color "-var-file=$VariableFile" '-var=ruleset_destroy_started=true' $address $remotePath 2>&1 | Out-String
             if ($LASTEXITCODE -ne 0) { throw "Cannot restore the remote ID of '$address' before destroy: $output" }
             Write-Information "Restored the remote ID of '$address' before destroy." -InformationAction Continue
         }

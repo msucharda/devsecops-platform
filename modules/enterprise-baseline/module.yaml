@@ -6,6 +6,11 @@ organizationParameters:
 prerequisites:
   - organizations
   - actions-catalog
+phases:
+  code-security:
+    prerequisites:
+      - organizations
+    manualPrerequisites: []
 manualPrerequisites:
   - privateInternalForksDisabled
   - repositoryManagementPoliciesEnforced

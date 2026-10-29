@@ -11,6 +11,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
+$phaseGraph = Get-PlatformModulePhaseGraph -Modules $modules
 $lines = [System.Collections.Generic.List[string]]::new()
 if (-not $DriftOutputPath) {
     $DriftOutputPath = Join-Path ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($OutputPath))) 'drift.yml'
@@ -52,39 +53,43 @@ function Add-WorkflowCheckout {
 function Add-DeploymentJob {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][System.Collections.IDictionary] $Manifest,
+        [Parameter(Mandatory)][pscustomobject] $Node,
         [Parameter(Mandatory)][ValidateSet('plan', 'apply', 'rulesetPlan')][string] $Phase,
         [switch] $Drift
     )
 
-    $name = $Manifest['name']
-    $suffix = $name.Replace('-', '_')
+    $Manifest = $Node.Manifest
+    $name = $Node.Module
+    $key = $Node.Name
+    $deploymentPhase = $Node.Phase
+    $suffix = $key.Replace('-', '_').Replace(':', '_')
     $prefix = if ($Phase -eq 'apply') { 'apply_' } elseif ($Phase -eq 'rulesetPlan') { 'ruleset_plan_' } else { 'module_' }
     $prerequisitePrefix = if ($Phase -eq 'apply') { 'apply_' } else { 'module_' }
     $needs = @('authorize', 'select')
     if ($Phase -eq 'apply') { $needs += @('approve_apply', "module_$suffix") }
-    $needs += @($Manifest['prerequisites'] | ForEach-Object { $prerequisitePrefix + $_.Replace('-', '_') })
+    $needs += @($Node.Prerequisites | ForEach-Object { $prerequisitePrefix + $_.Replace('-', '_').Replace(':', '_') })
     $prerequisiteRulesetJobs = @()
     if ($Phase -ne 'apply') {
-        $prerequisiteRulesetJobs = @($Manifest['prerequisites'] |
-            Where-Object { $modules[$_]['permissions']['githubApp'].Contains('rulesetPlan') } |
+        $prerequisiteRulesetJobs = @($Node.Prerequisites |
+            Where-Object { -not $phaseGraph[$_].Phase -and $phaseGraph[$_].Manifest['permissions']['githubApp'].Contains('rulesetPlan') } |
             ForEach-Object { 'ruleset_plan_' + $_.Replace('-', '_') })
         $needs += $prerequisiteRulesetJobs
     }
     if ($Phase -eq 'rulesetPlan') { $needs += "module_$suffix" }
-    $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.modules), '$name')"
+    $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), '$key')"
     if ($Phase -eq 'apply') { $condition += " && needs.approve_apply.result == 'success' && needs.module_$suffix.result == 'success'" }
-    foreach ($prerequisite in $Manifest['prerequisites']) {
-        $condition += " && needs.$prerequisitePrefix$($prerequisite.Replace('-', '_')).result == 'success'"
+    foreach ($prerequisite in $Node.Prerequisites) {
+        $condition += " && needs.$prerequisitePrefix$($prerequisite.Replace('-', '_').Replace(':', '_')).result == 'success'"
     }
     foreach ($job in $prerequisiteRulesetJobs) {
         $condition += " && needs.$job.result == 'success'"
     }
     if ($Phase -eq 'rulesetPlan') { $condition += " && needs.module_$suffix.result == 'success'" }
     $environmentOutput = if ($Phase -eq 'apply') { 'applyEnvironments' } elseif ($Phase -eq 'rulesetPlan') { 'rulesetEnvironments' } else { 'environments' }
+    $title = if ($deploymentPhase) { "$name / $deploymentPhase" } else { $name }
     Add-WorkflowBlock @"
   $prefix${suffix}:
-    name: '$name$(if ($Phase -ne 'plan') { " ($Phase)" })'
+    name: '$title$(if ($Phase -ne 'plan') { " ($Phase)" })'
     runs-on: ubuntu-latest
     needs: [$($needs -join ', ')]
 "@
@@ -99,6 +104,10 @@ function Add-DeploymentJob {
         $lines.Add('      changes: ${{ steps.run.outputs.changes }}')
         if ($Manifest.Contains('organizationScoped')) {
             $lines.Add('      organizations: ${{ steps.run.outputs.organizations }}')
+        }
+        if ($name -ceq 'enterprise-baseline' -and $deploymentPhase -ceq 'code-security') {
+            $lines.Add('      codeSecurityCoverage: ${{ steps.code_security_artifact.outputs.artifact-id }}')
+            $lines.Add('      codeSecurityCoverageUrl: ${{ steps.code_security_artifact.outputs.artifact-url }}')
         }
         if ($Phase -eq 'rulesetPlan') { $lines.Add('      inheritedRulesets: ${{ steps.bypass.outputs.inheritedRulesets }}') }
     }
@@ -146,18 +155,18 @@ function Add-DeploymentJob {
 '@
     $lines.Add("        run: ./trusted/platform/tools/New-PlatformGitHubToken.ps1 -Module '$name' -Phase $Phase -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules")
     $artifactPhase = if ($Phase -eq 'apply') { 'apply' } else { 'plan' }
-    foreach ($prerequisite in $Manifest['prerequisites']) {
+    foreach ($prerequisite in $Node.Prerequisites) {
         Add-WorkflowBlock @"
       - name: Download outputs of $prerequisite
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: $artifactPhase-outputs-$prerequisite
+          name: $artifactPhase-outputs-$($prerequisite.Replace(':', '-'))
           path: ./artifacts/prerequisites
 "@
     }
     $action = if ($Phase -eq 'apply') { 'apply' } else { 'plan' }
     $runner = "./candidate/platform/tools/Invoke-Module.ps1 -Module '$name' -Action $action -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER"
-    $rulesetArgument = if ($Phase -eq 'rulesetPlan') { ' -Rulesets' } else { '' }
+    $rulesetArgument = if ($Phase -eq 'rulesetPlan') { ' -Rulesets' } elseif ($deploymentPhase) { " -DeploymentPhase $deploymentPhase" } else { '' }
     if ($Drift) { $rulesetArgument += ' -GitHubOutputPath $env:GITHUB_OUTPUT' }
     $lines.Add('      - name: Run module')
     if ($Drift) { $lines.Add('        id: run') }
@@ -167,7 +176,7 @@ function Add-DeploymentJob {
           GITHUB_TOKEN: `${{ env.GH_TOKEN }}
         run: $runner$rulesetArgument
 "@
-    if ($Phase -eq 'apply' -and $Manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
+    if ($Phase -eq 'apply' -and -not $deploymentPhase -and $Manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
         Add-WorkflowBlock @"
       - name: Apply the complete rulesets root including bypass configuration
         shell: pwsh
@@ -176,8 +185,8 @@ function Add-DeploymentJob {
         run: $runner -Rulesets
 "@
     }
-    $artifactName = if ($Phase -eq 'rulesetPlan') { "plan-ruleset-outputs-$name" } else { "$artifactPhase-outputs-$name" }
-    $outputName = if ($Phase -eq 'rulesetPlan') { "$name.rulesets" } else { $name }
+    $artifactName = if ($Phase -eq 'rulesetPlan') { "plan-ruleset-outputs-$name" } else { "$artifactPhase-outputs-$($key.Replace(':', '-'))" }
+    $outputName = if ($Phase -eq 'rulesetPlan') { "$name.rulesets" } else { $key.Replace(':', '.') }
     Add-WorkflowBlock @"
       - name: Upload public module outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -195,6 +204,27 @@ function Add-DeploymentJob {
         env:
           PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         run: ./trusted/platform/tools/Test-RulesetBypassVisibility.ps1 -GitHubOutputPath $env:GITHUB_OUTPUT
+'@
+    }
+    if ($Drift -and $Phase -eq 'plan' -and $name -ceq 'enterprise-baseline' -and $deploymentPhase -ceq 'code-security') {
+        Add-WorkflowBlock @'
+      - name: Check repository Code Security coverage
+        id: code_security
+        if: ${{ !cancelled() && env.PLATFORM_GITHUB_TOKENS != '' }}
+        continue-on-error: true
+        shell: pwsh
+        run: ./trusted/platform/tools/Test-CodeSecurityCoverage.ps1 -ReportPath ./artifacts/code-security-coverage.json
+      - name: Upload repository Code Security coverage
+        id: code_security_artifact
+        if: ${{ !cancelled() && steps.code_security.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: code-security-coverage
+          path: ./artifacts/code-security-coverage.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
 '@
     }
     Add-WorkflowBlock @'
@@ -215,15 +245,39 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deployment:
+        description: Deployment scope
+        required: true
+        type: choice
+        default: full
+        options: [full, code-security, catalog]
 permissions:
   contents: read
 concurrency:
   group: deploy-instance-${{ github.event.pull_request.number || 'main' }}
   cancel-in-progress: false
 jobs:
+  validate_scope:
+    name: Reject unsupported deployment scope before authorization
+    runs-on: ubuntu-latest
+    env:
+      DEPLOYMENT_SCOPE: ${{ inputs.deployment }}
+    steps:
+      - name: Validate workflow input without loading credentials
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            if ($env:DEPLOYMENT_SCOPE -cnotin @('full', 'code-security', 'catalog')) {
+              throw 'Unsupported deployment scope.'
+            }
+          } elseif (-not [string]::IsNullOrEmpty($env:DEPLOYMENT_SCOPE)) {
+            throw 'Unexpected deployment scope outside workflow_dispatch.'
+          }
   authorize:
     name: Authorize deployment from trusted main
     runs-on: ubuntu-latest
+    needs: validate_scope
     environment: pr-authorization
     outputs:
       allowed: ${{ steps.authorize.outputs.allowed }}
@@ -280,6 +334,7 @@ Add-WorkflowBlock @'
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       applyEnvironments: ${{ steps.modules.outputs.applyEnvironments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
@@ -295,28 +350,31 @@ Add-WorkflowBlock @'
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
+        env:
+          DEPLOYMENT_SCOPE: ${{ inputs.deployment }}
         run: |
           $arguments = @{
             InstancePath = './candidate/instance.yaml'
             ModulesPath = './candidate/platform/modules'
             GitHubOutputPath = $env:GITHUB_OUTPUT
+            DeploymentScope = if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { $env:DEPLOYMENT_SCOPE } else { 'full' }
           }
           if ($env:GITHUB_EVENT_NAME -eq 'pull_request_target') {
             $arguments.TrustedInstancePath = './trusted/instance.yaml'
           }
           ./trusted/platform/tools/Select-InstanceModules.ps1 @arguments
 '@
-foreach ($manifest in $modules.PSBase.Values) {
-    Add-DeploymentJob -Manifest $manifest -Phase plan
-    if ($manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
-        Add-DeploymentJob -Manifest $manifest -Phase rulesetPlan
+foreach ($node in $phaseGraph.PSBase.Values) {
+    Add-DeploymentJob -Node $node -Phase plan
+    if (-not $node.Phase -and $node.Manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
+        Add-DeploymentJob -Node $node -Phase rulesetPlan
     }
 }
-$planNeeds = @('authorize', 'validate', 'select')
-foreach ($name in $modules.PSBase.Keys) {
-    $planNeeds += 'module_' + $name.Replace('-', '_')
-    if ($modules[$name]['permissions']['githubApp'].Contains('rulesetPlan')) {
-        $planNeeds += 'ruleset_plan_' + $name.Replace('-', '_')
+$planNeeds = @('validate_scope', 'authorize', 'validate', 'select')
+foreach ($node in $phaseGraph.PSBase.Values) {
+    $planNeeds += 'module_' + $node.Name.Replace('-', '_').Replace(':', '_')
+    if (-not $node.Phase -and $node.Manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
+        $planNeeds += 'ruleset_plan_' + $node.Module.Replace('-', '_')
     }
 }
 Add-WorkflowBlock @"
@@ -339,7 +397,7 @@ Add-WorkflowBlock @'
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.modules != '[]' }}
+    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.phaseNodes != '[]' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:
@@ -347,7 +405,7 @@ Add-WorkflowBlock @'
         shell: pwsh
         run: '"Platform-team approval granted for this immutable main deployment." >> $env:GITHUB_STEP_SUMMARY'
 '@
-foreach ($manifest in $modules.PSBase.Values) { Add-DeploymentJob -Manifest $manifest -Phase apply }
+foreach ($node in $phaseGraph.PSBase.Values) { Add-DeploymentJob -Node $node -Phase apply }
 $deployContent = ($lines -join "`n") + "`n"
 
 $lines.Clear()
@@ -400,6 +458,7 @@ Add-WorkflowBlock @'
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.modules.outputs.modules }}
+      phaseNodes: ${{ steps.modules.outputs.phaseNodes }}
       environments: ${{ steps.modules.outputs.environments }}
       rulesetEnvironments: ${{ steps.modules.outputs.rulesetEnvironments }}
       rulesetModules: ${{ steps.modules.outputs.rulesetModules }}
@@ -414,18 +473,19 @@ Add-WorkflowBlock @'
       - name: Select modules and validate protected credential bindings
         id: modules
         shell: pwsh
-        run: ./trusted/platform/tools/Select-InstanceModules.ps1 -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT
+        run: ./trusted/platform/tools/Select-InstanceModules.ps1 -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -GitHubOutputPath $env:GITHUB_OUTPUT -DeploymentScope full
 '@
-foreach ($manifest in $modules.PSBase.Values) {
-    Add-DeploymentJob -Manifest $manifest -Phase plan -Drift
-    if ($manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
-        Add-DeploymentJob -Manifest $manifest -Phase rulesetPlan -Drift
+foreach ($node in $phaseGraph.PSBase.Values) {
+    Add-DeploymentJob -Node $node -Phase plan -Drift
+    if (-not $node.Phase -and $node.Manifest['permissions']['githubApp'].Contains('rulesetPlan')) {
+        Add-DeploymentJob -Node $node -Phase rulesetPlan -Drift
     }
 }
+$driftPlanNeeds = @($planNeeds | Where-Object { $_ -cne 'validate_scope' })
 Add-WorkflowBlock @"
   report_drift:
     name: Open or update the drift issue
-    needs: [$($planNeeds -join ', ')]
+    needs: [$($driftPlanNeeds -join ', ')]
 "@
 Add-WorkflowBlock @'
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
@@ -440,6 +500,20 @@ Add-WorkflowBlock @'
       - name: Install trusted runtime dependencies
         shell: pwsh
         run: ./trusted/platform/tools/Install-ToolDependencies.ps1
+'@
+if ($phaseGraph.Contains('enterprise-baseline:code-security')) {
+    Add-WorkflowBlock @'
+      - name: Download repository Code Security coverage
+        if: ${{ needs.module_enterprise_baseline_code_security.outputs.codeSecurityCoverage != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.module_enterprise_baseline_code_security.outputs.codeSecurityCoverage }}
+          path: ./artifacts/code-security-coverage
+          merge-multiple: true
+'@
+}
+Add-WorkflowBlock @'
       - name: Evaluate drift without any credential
         id: evaluate
         shell: pwsh

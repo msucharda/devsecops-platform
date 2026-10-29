@@ -45,15 +45,19 @@ Jedna samostatně nasaditelná schopnost platformy, například baseline organiz
 _Avoid_: akcelerátor, komponenta
 
 **Module manifest** (manifest modulu):
-Soubor `module.yaml` v adresáři modulu. Deklaruje předpoklady a ruční kroky modulu.
+Soubor `module.yaml` v adresáři modulu. Deklaruje předpoklady, deployment phases a ruční kroky modulu.
 _Avoid_: metadata
+
+**Deployment phase** (nasazovací fáze):
+Pojmenovaná část nasazení modulu s vlastními předpoklady. Umožňuje nasadit část modulu před jinými moduly a zbytek až po nich. Nejde o fázi oprávnění plan nebo apply.
+_Avoid_: fáze bez upřesnění
 
 **Manual step** (ruční krok):
 Krok modulu, který platforma neumí provést přes API, například nastavení politiky Copilotu. Na rozdíl od ručního předpokladu patří ruční krok k modulu a platformní tým ho provede po nasazení modulu.
 _Avoid_: checklist, TODO
 
 **Prerequisite** (předpoklad):
-Modul, který jiný modul vyžaduje. Výběr modulu přidá do instance i jeho předpoklady.
+Modul nebo deployment phase, které jiný modul či deployment phase vyžaduje. Výběr nasazované části zahrne i její předpoklady.
 _Avoid_: závislost
 
 **Manual prerequisite** (ruční předpoklad):
