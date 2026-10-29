@@ -23,9 +23,28 @@ function Assert-VendoringReleaseTag {
     }
 }
 
-$catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable
-if ($catalog['version'] -ne 1 -or $catalog['actions'] -isnot [Collections.IDictionary]) {
-    throw 'Action catalog must declare version 1 and an actions mapping.'
+# security-check: vendoring-upstream-commit
+function Assert-VendoringUpstreamCommit {
+    param([AllowNull()][object] $Commit, [string] $Upstream)
+
+    if ($Commit -isnot [string] -or $Commit -cnotmatch '^[a-f0-9]{40}\z') {
+        throw "Catalog upstreamCommit for '$Upstream' must be a full lowercase commit SHA from its approved receipt."
+    }
+}
+
+# security-check: vendoring-release-commit
+function Assert-VendoringReleaseCommit {
+    param([string] $CatalogCommit, [string] $Pin, [string] $Upstream)
+
+    if ($CatalogCommit -cne $Pin) {
+        throw "Upstream commit for '$Upstream' must match release pin '$Pin'; use a version 2 catalog with the approved upstreamCommit and a full lowercase release pin."
+    }
+}
+
+$catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+if ($catalog -isnot [Collections.IDictionary] -or $catalog['version'] -isnot [long] -or
+    $catalog['version'] -ne 2 -or $catalog['actions'] -isnot [Collections.IDictionary]) {
+    throw 'Action catalog must declare version 2 and an actions mapping; migrate upstreamCommit from approved receipts.'
 }
 foreach ($entry in $catalog['actions'].PSBase.Keys) {
     $copy = $catalog['actions'][$entry]
@@ -35,6 +54,7 @@ foreach ($entry in $catalog['actions'].PSBase.Keys) {
         $copy['sha'] -cnotmatch '^[a-f0-9]{40}$') {
         throw "Invalid catalog entry '$entry': expected $ActionsOrganization/owner-repo and a full commit SHA."
     }
+    Assert-VendoringUpstreamCommit -Commit $copy['upstreamCommit'] -Upstream $entry
 }
 $source = (Resolve-Path -LiteralPath $SourcePath).Path
 $output = [IO.Path]::GetFullPath($OutputPath)
@@ -117,11 +137,13 @@ foreach ($file in $files) {
             }
             $upstream = $Matches[1].ToLowerInvariant()
             $subpath = $Matches[2]
+            $pin = $Matches[3]
             if (-not $catalog['actions'].Contains($upstream)) {
                 throw "Action '$upstream' is missing from the catalog (uses '$reference' in '$relative')."
             }
             $copy = $catalog['actions'][$upstream]
             if ($Kind -eq 'release') {
+                Assert-VendoringReleaseCommit -CatalogCommit $copy['upstreamCommit'] -Pin $pin -Upstream $upstream
                 $lineEnd = $text.IndexOf("`n", $node.End.Index)
                 if ($lineEnd -lt 0) { $lineEnd = $text.Length }
                 $comment = $text.Substring($node.End.Index, $lineEnd - $node.End.Index)

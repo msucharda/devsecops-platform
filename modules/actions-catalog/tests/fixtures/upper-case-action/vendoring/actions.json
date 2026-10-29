@@ -1,8 +1,9 @@
 {
-  "version": 1,
+  "version": 2,
   "actions": {
     "Actions/Checkout": {
       "repository": "demo-a1b2c3-actions/Actions-Checkout",
+      "upstreamCommit": "11bd71901bbe5b1630ceea73d27597364c9af683",
       "tag": "v4.2.2",
       "sha": "11bd71901bbe5b1630ceea73d27597364c9af683"
     }

@@ -85,7 +85,7 @@ BeforeAll {
     Copy-Item -LiteralPath (Join-Path $moduleRoot 'scripts') -Destination $root -Recurse
     $vendoring = Join-Path $root 'vendoring'
     $null = New-Item -ItemType Directory -Path $vendoring
-    Set-Content -LiteralPath (Join-Path $vendoring 'actions.json') -Value '{"version":1,"actions":{}}'
+    Set-Content -LiteralPath (Join-Path $vendoring 'actions.json') -Value '{"version":2,"actions":{}}'
     # Only the provisioner is replaced: the external reader and its postcondition remain production code.
     Set-Content -LiteralPath (Join-Path $root 'stub_override.tf') -Value @"
 terraform {
@@ -138,7 +138,7 @@ Describe 'Actions catalog real reader and plan postcondition' -Tag Terraform {
     It 'returns only the main-branch violation for master through the external-program protocol' {
         $query = @{
             api_url = $apiUrl; organization = $organization; upstream = 'actions/checkout'
-            security_team = 'actions-security'; tag = ''; commit = ''
+            security_team = 'actions-security'; tag = ''; commit = ''; upstream_commit = ''
         } | ConvertTo-Json -Compress
         $reader = Join-Path $root 'scripts/Read-CatalogState.ps1'
         foreach ($branch in @('main', 'master')) {

@@ -21,7 +21,7 @@ try {
     if (-not $env:CATALOG_INPUT) { throw 'CATALOG_INPUT is not set.' }
     $resourceInput = $env:CATALOG_INPUT | ConvertFrom-Json -AsHashtable
     $required = @('api_url', 'organization', 'upstream', 'security_team')
-    if ($Action -eq 'CreateReleaseTag') { $required += @('tag', 'commit') }
+    if ($Action -eq 'CreateReleaseTag') { $required += @('tag', 'commit', 'upstream_commit') }
     foreach ($key in $required) {
         if ($resourceInput -isnot [System.Collections.IDictionary] -or $resourceInput[$key] -isnot [string] -or -not $resourceInput[$key]) {
             throw "CATALOG_INPUT has no '$key'."
@@ -33,7 +33,7 @@ try {
     }
     switch ($Action) {
         'InitializeRepository' { Initialize-CatalogRepository @target }
-        'CreateReleaseTag' { New-CatalogReleaseTag @target -Tag $resourceInput['tag'] -Commit $resourceInput['commit'] }
+        'CreateReleaseTag' { New-CatalogReleaseTag @target -Tag $resourceInput['tag'] -Commit $resourceInput['commit'] -UpstreamCommit $resourceInput['upstream_commit'] }
     }
 }
 catch {

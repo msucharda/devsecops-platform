@@ -100,12 +100,41 @@ Describe 'Actions catalog interruption harness' -Tag 'Interruption' {
         }
         $run = {
             $release = $stub.Repositories[$repositoryName].heads['main']
-            New-CatalogReleaseTag @target -Tag 'v4.2.2' -Commit $release
+            New-CatalogReleaseTag @target -Tag 'v4.2.2' -Commit $release -UpstreamCommit $upstreamCommit
         }
 
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
 
         $report = Format-InterruptionResult -Name 'New-CatalogReleaseTag' -Result $result
+        Write-Information $report -InformationAction Continue
+        @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
+    }
+
+    It 'recovers a catalog update after an older tag is already published' {
+        $nextUpstream = 'a' * 40
+        $reset = {
+            & $resetStub {
+                $repository = Add-StubCompliantRepository -Files @{
+                    '.vendoring.json' = (Get-StubReceipt); 'action.yml' = 'name: checkout'
+                }
+                $repository.tags['v4.2.2'] = $repository.heads['main']
+                $null = Add-StubCommit -Files @{
+                    '.vendoring.json' = (Get-StubReceipt -Tag 'v5.0.0' -Commit $nextUpstream)
+                    'action.yml' = 'name: updated checkout'
+                }
+            }
+        }
+        $run = {
+            $release = $stub.Repositories[$repositoryName].heads['main']
+            New-CatalogReleaseTag @target -Tag 'v5.0.0' -Commit $release -UpstreamCommit $nextUpstream
+            $state = Get-CatalogRepositoryState @target -Tag 'v5.0.0' -Commit $release -UpstreamCommit $nextUpstream
+            $violations = @(Get-CatalogStateViolation -State $state -Organization $organization -SecurityTeam $securityTeam -Tag 'v5.0.0' -Commit $release)
+            if ($violations.Count) { throw ($violations -join ' ') }
+        }
+
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
+
+        $report = Format-InterruptionResult -Name 'New-CatalogReleaseTag (catalog update)' -Result $result
         Write-Information $report -InformationAction Continue
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
     }

@@ -47,8 +47,9 @@ Modul čte schválené importy jen z katalogu `vendoring/actions.json` v repozit
 - `repository` rovné `{organizace akcí}/{owner}-{repo}`,
 - `tag` upstreamu, například `v4.2.2`; prosté jméno tagu bez `..`, bez koncového `.lock` nebo `.`, nejvýše 100 znaků,
 - `sha` jako plné SHA (40 znaků hex, malá písmena) commitu importu na `main`.
+- `upstreamCommit` jako plné lowercase SHA upstream commitu z `.vendoring.json` na tomto `sha`.
 
-Nečitelný katalog, jiná verze než `1` nebo neplatná položka ukončí plan chybou ještě před změnou prostředků (precondition výstupu `releases`).
+Nečitelný katalog, jiná verze než `2` nebo neplatná položka ukončí plan chybou ještě před změnou prostředků (precondition výstupu `releases`). [Migrace verze 1](../../docs/vendoring.md#migrace-katalogu-z-verze-1-na-2) vyžaduje reviewovaný PR a následný plan → approval → apply přes `deploy.yml` s `deployment: catalog`. Živá migrace v #136 neproběhla.
 
 ## Výstupy
 
@@ -56,7 +57,7 @@ Nečitelný katalog, jiná verze než `1` nebo neplatná položka ukončí plan 
 |---|---|
 | `organization` | Login organizace akcí. |
 | `repositories` | Upstream → `organizace/repozitář` vendorované kopie. |
-| `releases` | Upstream → `{ tag, commit }` ověřeného releasu. Workflow použije `uses: {repozitář}@{commit}`. |
+| `releases` | Upstream → `{ tag, commit, upstream_commit }` ověřeného releasu. `commit` označuje kopii; `upstream_commit` její zdroj. Workflow použije `uses: {repozitář}@{commit}`. |
 
 Výstupy `repositories` a `releases` závisí na kontrole stavu. Terraform je vrátí jen po kontrole bez porušení.
 
@@ -77,12 +78,12 @@ Prostředek `terraform_data.repository` pro každou akci katalogu spustí `Invok
 
 Prostředek `terraform_data.release_tag` pro každou položku katalogu vendoringu spustí `-Action CreateReleaseTag`:
 
-1. Pokud tag existuje a ukazuje přímo na `commit`, modul nic nemění. Tag na jiný objekt, včetně anotovaného tagu, ukončí běh chybou. Modul tag nikdy nepřesune.
+1. Pokud tag existuje a ukazuje přímo na `commit`, modul ho nemění, ale pokračuje ověřením receiptu a governance. Tag na jiný objekt, včetně anotovaného tagu, ukončí běh chybou. Modul tag nikdy nepřesune.
 2. Modul přečte stav repozitáře jako [kontrola stavu](#kontrola-stavu) bez tagu. Každé porušení ukončí běh chybou před tvorbou tagu. Schvalovací pravidlo, CODEOWNERS a push security týmu zajišťují, že `main` obsahuje jen schválené změny.
 3. Modul ověří, že SHA `main` z kroku 2 obsahuje `commit` (`GET /repos/{org}/{repo}/compare/{commit}...{main_sha}`, stav `identical` nebo `ahead`). Commit mimo `main` neprošel schváleným PR.
-4. Modul přečte receipt `.vendoring.json` v daném commitu. Receipt musí mít `version: 1`, `kind: action`, `source` rovné upstreamu katalogu a `tag` rovné tagu releasu. Hodnoty musí být řetězce a porovnání rozlišuje velikost písmen.
+4. Modul přečte receipt `.vendoring.json` přes Contents API s `ref` rovným pevnému SHA kopie. Receipt musí mít `version: 1`, `kind: action`, `source` rovné upstreamu katalogu, `tag` rovné tagu releasu a `commit` rovné katalogovému `upstreamCommit`. Hodnoty musí být řetězce a porovnání rozlišuje velikost písmen. Directory, symlink, submodule, nečitelný nebo chybějící receipt běh zastaví. Verze receiptu se migrací katalogu nemění.
 5. Modul znovu přečte SHA `main`. Pokud se od kroku 2 změnilo, běh skončí chybou a tag nevznikne.
-6. Modul vytvoří lightweight tag (`POST /repos/{org}/{repo}/git/refs`). Odpověď HTTP 422 vede k opakovanému čtení tagu podle kroku 1.
+6. Pokud tag chybí, modul vytvoří lightweight tag (`POST /repos/{org}/{repo}/git/refs`). Odpověď HTTP 422 vede k opakovanému čtení tagu podle kroku 1.
 
 Nový release je změna položky katalogu vendoringu na nový tag a commit. Starý tag zůstává.
 
@@ -105,7 +106,7 @@ Chyba čtení nebo nečitelná odpověď API ukončí program chybou. Neznámý 
 
 ### Obnova po přerušení
 
-Každý krok apply nejdřív čte stav. Opakovaný apply po přerušení proto pokračuje bez druhé tvorby objektu. Harness přerušení (`tools/tests/ActionsCatalog.Interruption.Tests.ps1`) ověřuje každý zapisující krok tvorby, převzetí repozitáře a tvorby tagu ve variantách `BeforeApply` a `LoseResponse`.
+Každý krok apply nejdřív čte stav. Opakovaný apply po přerušení proto pokračuje bez druhé tvorby objektu a znovu ověří receipt proti upstream commitu, i když se odpověď vytvoření tagu ztratila. Harness přerušení (`tools/tests/ActionsCatalog.Interruption.Tests.ps1`) ověřuje každý zapisující krok tvorby, převzetí repozitáře a tvorby tagu ve variantách `BeforeApply` a `LoseResponse`.
 
 ### Destroy a teardown
 
