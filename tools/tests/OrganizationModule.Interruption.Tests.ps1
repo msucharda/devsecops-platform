@@ -258,12 +258,26 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
                 foreach ($organizationName in $organizations) {
                     $stateDirectory = Join-Path $runnerArguments.StatePath "scoped/organizations/$organizationName"
                     $null = New-Item -ItemType Directory -Path $stateDirectory -Force
-                    $identity = "$organizationName/terraform.code-security.tfstate"
-                    $remoteOrganizations[$identity] = "id-$identity"
-                    Set-Content -LiteralPath (Join-Path $stateDirectory 'terraform.code-security.tfstate') -Value "id-$identity"
+                    foreach ($stateName in @('terraform.code-security.tfstate', 'terraform.tfstate', 'terraform.rulesets.tfstate')) {
+                        $identity = "$organizationName/$stateName"
+                        $remoteOrganizations[$identity] = "id-$identity"
+                        Set-Content -LiteralPath (Join-Path $stateDirectory $stateName) -Value "id-$identity"
+                    }
                 }
             }
             $run = { $null = & $runner -Action destroy -DeploymentPhase code-security @runnerArguments 6>$null }
+            $assertSiblingState = {
+                $remoteOrganizations.Count | Should -Be ($organizations.Count * 2)
+                foreach ($stateName in @('terraform.tfstate', 'terraform.rulesets.tfstate')) {
+                    foreach ($organizationName in $organizations) {
+                        $identity = "$organizationName/$stateName"
+                        $statePath = Join-Path $runnerArguments.StatePath "scoped/organizations/$identity"
+                        Test-Path -LiteralPath $statePath | Should -BeTrue
+                        (Get-Content -LiteralPath $statePath -Raw).Trim() | Should -Be "id-$identity"
+                        $remoteOrganizations[$identity] | Should -Be "id-$identity"
+                    }
+                }
+            }
 
             $result = @(Invoke-InterruptionMatrix -Plan $interruptionPlan -Reset $reset -Run $run -Snapshot $snapshot `
                 -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -ShardByInterruption @shard)
@@ -274,7 +288,7 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
             $expectedRequests = @($organizations | ForEach-Object { "destroy $_/terraform.code-security.tfstate" })
             $context.ReferenceRequests | Should -Be $expectedRequests
             $result.Count | Should -Be ([Math]::Max(0, [Math]::Ceiling((12 - $shard.ShardIndex) / $shard.ShardCount)))
-            $remoteOrganizations.Count | Should -Be 0
+            & $assertSiblingState
             $outputsPath = Join-Path $runnerArguments.ArtifactsPath 'scoped.code-security.json'
             $outputs = Get-Content -LiteralPath $outputsPath -Raw | ConvertFrom-Json -AsHashtable
             ($outputs.organizations -join ',') | Should -Be ($organizations -join ',')
@@ -286,8 +300,6 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
                 Test-Path -LiteralPath $statePath | Should -BeFalse
                 $backendRoots[$statePath] | Should -Be (Join-Path $fixtureRoot 'code-security')
                 $outputs.organization_outputs[$organizationName].Count | Should -Be 0
-                Test-Path -LiteralPath (Join-Path $stateDirectory 'terraform.tfstate') | Should -BeFalse
-                Test-Path -LiteralPath (Join-Path $stateDirectory 'terraform.rulesets.tfstate') | Should -BeFalse
             }
             Test-Path -LiteralPath (Join-Path $runnerArguments.ArtifactsPath 'scoped.json') | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $runnerArguments.ArtifactsPath 'scoped.rulesets.json') | Should -BeFalse
@@ -295,7 +307,7 @@ Describe 'Organization runner interruption harness' -Tag 'Interruption' {
             $env:PLATFORM_GITHUB_TOKENS = $null
             & $run
             $interruptionPlan.Requests.Count | Should -Be $requestCount
-            $remoteOrganizations.Count | Should -Be 0
+            & $assertSiblingState
             Test-Path -LiteralPath $outputsPath | Should -BeTrue
         }
     }
