@@ -7,6 +7,7 @@
         'DeploymentSummary.Tests.ps1'
         'GitHubRetry.Tests.ps1'
         'GitHubTokenRevocation.Tests.ps1'
+        'InstanceSetupManualSteps.Tests.ps1'
         'LocalCiGate.Unit.Tests.ps1'
         'LocalCiRuntimeProbe.Tests.ps1'
         'ModuleOrder.Tests.ps1'

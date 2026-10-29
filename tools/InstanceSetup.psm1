@@ -2851,6 +2851,7 @@ function Invoke-StepPreflight {
 #region Wizard
 
 . (Join-Path $PSScriptRoot 'InstanceSetup.GitHub.ps1')
+. (Join-Path $PSScriptRoot 'InstanceSetup.ManualSteps.ps1')
 
 $script:StagePlan = @(
     @{ Id = 'tools'; Step = 'A1'; Title = 'Command-line tools'; Handler = 'Tool'; Requires = @() }
@@ -2962,13 +2963,18 @@ function Invoke-InstanceSetup {
         [Parameter(Mandatory)][string] $RepoPath,
         [Parameter(Mandatory)][string] $WorkPath,
         [Parameter(Mandatory)][string] $ModulesPath,
+        [ValidateSet('Prerequisites', 'ManualSteps')][string] $Phase = 'Prerequisites',
+        [string] $ManualStep,
         [switch] $GitHubAcceptance,
         [string] $ReleasePath,
         [string] $ReleaseVersion,
         [switch] $Reconfirm
     )
 
+    if ($Phase -eq 'ManualSteps' -and $GitHubAcceptance) { throw 'ManualSteps and GitHubAcceptance cannot run together.' }
+    if ($ManualStep -and $Phase -ne 'ManualSteps') { throw '-ManualStep requires -Phase ManualSteps.' }
     $setup = Initialize-SetupContext -RepoPath $RepoPath -WorkPath $WorkPath -ModulesPath $ModulesPath -Reconfirm:$Reconfirm
+    if ($Phase -eq 'ManualSteps') { return Invoke-SetupManualPhase -Setup $setup -ManualStep $ManualStep }
     if ($GitHubAcceptance) {
         return Invoke-SetupGitHubAcceptance -Setup $setup -ReleasePath $ReleasePath -ReleaseVersion $ReleaseVersion
     }
