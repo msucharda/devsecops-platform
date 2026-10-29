@@ -112,7 +112,7 @@ Describe 'Enterprise App key and installation token isolation' {
         }
 
         { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
-            -ApiUrl https://api.example.test } | Should -Throw '*unresolved*issuance*cannot be revoked*'
+            -ApiUrl https://api.example.test } | Should -Throw '*unresolved*issuance*cannot be revoked*GitHub did not return a usable installation token*'
 
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -like '*/access_tokens' }
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
