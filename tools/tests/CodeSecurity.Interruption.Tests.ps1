@@ -204,11 +204,15 @@ Describe 'CodeSecurity lifecycle interruption harness' -Tag 'Interruption' {
         $restoreLocal = { param($CapturedState) $null = $CapturedState }
 
         $result = @(Invoke-InterruptionMatrix -Plan $context.Plan -Reset $reset -Run $run `
-                -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
+                -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -ShardByInterruption @shard)
         $report = Format-InterruptionResult -Name $Case -Result $result
         Write-Information $report -InformationAction Continue
         @($context.ReferenceRequests | ForEach-Object { $_ -replace '/[0-9]+(?=/|$)', '/{id}' }) |
             Should -Be $Expected -Because "the reference run must exercise each mutating step of $Case"
+        $expectedCaseCount = [Math]::Max(0, [Math]::Ceiling(($Expected.Count * 4 - $shard.ShardIndex) / $shard.ShardCount))
+        $result.Count | Should -Be $expectedCaseCount -Because 'each shard must receive its balanced share of all step/kind/stop cases'
+        @($result | Group-Object Step, Kind, Stop | Where-Object Count -NE 1).Count |
+            Should -Be 0 -Because 'each interruption case must run exactly once'
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
     }
 }
