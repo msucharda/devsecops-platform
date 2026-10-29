@@ -5,7 +5,7 @@
     Checks = @(
         @{
             Name = 'legacy-code-security-transition'
-            Tests = @(@{ Path = 'tools/tests/ModuleRunner.Tests.ps1'; FullName = @('*protects legacy pattern migration when <Case>*', 'Legacy Code Security transition identity validation*') })
+            Tests = @(@{ Path = 'tools/tests/ModuleRunner.Tests.ps1'; FullName = @('Legacy Code Security transition identity validation*') })
         }
         @{
             Name = 'code-security-coverage-artifact'

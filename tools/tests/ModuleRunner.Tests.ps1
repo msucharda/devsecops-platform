@@ -40,6 +40,8 @@ Describe 'Legacy Code Security transition identity validation' -Tag 'CodeSecurit
         @{ Case = 'configured pattern type'; Expected = '*unique configured customPatterns names*' }
         @{ Case = 'configured pattern name type'; Expected = '*unique configured customPatterns names*' }
         @{ Case = 'configured pattern whitespace'; Expected = '*unique configured customPatterns names*' }
+        @{ Case = 'configured pattern duplicate'; Expected = '*unique configured customPatterns names*' }
+        @{ Case = 'configured pattern renamed'; Expected = "*pattern 'Old token'*absent from customPatterns*" }
         @{ Case = 'early state type'; Expected = '*readable adopted early root state*' }
         @{ Case = 'early values type'; Expected = '*readable adopted early root state*' }
         @{ Case = 'early root type'; Expected = '*readable adopted early root state*' }
@@ -54,6 +56,8 @@ Describe 'Legacy Code Security transition identity validation' -Tag 'CodeSecurit
         @{ Case = 'legacy configuration name'; Expected = '*differs from the managed platform-baseline*' }
         @{ Case = 'legacy configuration name case'; Expected = '*differs from the managed platform-baseline*' }
         @{ Case = 'adopted input type'; Expected = '*different identity in the early root state*' }
+        @{ Case = 'adopted pattern missing'; Expected = "*Legacy Code Security pattern 'Old token'*no matching identity in the early root state*" }
+        @{ Case = 'adopted pattern duplicate'; Expected = "*Legacy Code Security pattern 'Old token'*no matching identity in the early root state*" }
         @{ Case = 'adopted organization case'; Expected = '*different identity in the early root state*' }
         @{ Case = 'adopted pattern name'; Expected = '*different identity in the early root state*' }
         @{ Case = 'adopted pattern name case'; Expected = '*different identity in the early root state*' }
@@ -70,6 +74,8 @@ Describe 'Legacy Code Security transition identity validation' -Tag 'CodeSecurit
                 $early['values'].root_module.resources[1].index = 'demo/42'
             }
             'configured pattern whitespace' { $configured[0].name = ' ' }
+            'configured pattern duplicate' { $configured += @{ name = 'Old token' } }
+            'configured pattern renamed' { $configured[0].name = 'Renamed token' }
             'early state type' { $early = 'invalid' }
             'early values type' { $early['values'] = 'invalid' }
             'early root type' { $early['values'].root_module = 'invalid' }
@@ -115,6 +121,8 @@ Describe 'Legacy Code Security transition identity validation' -Tag 'CodeSecurit
                 $early['values'].root_module.resources[0]['values'].input.name = 'PLATFORM-BASELINE'
             }
             'adopted input type' { $early['values'].root_module.resources[1]['values'].input = 'invalid' }
+            'adopted pattern missing' { $early['values'].root_module.resources = @($early['values'].root_module.resources[0]) }
+            'adopted pattern duplicate' { $early['values'].root_module.resources += $early['values'].root_module.resources[1] }
             'adopted organization case' { $early['values'].root_module.resources[1]['values'].input.organization = 'DEMO' }
             'adopted pattern name' { $early['values'].root_module.resources[1]['values'].input.name = 'Other token' }
             'adopted pattern name case' { $early['values'].root_module.resources[1]['values'].input.name = 'OLD TOKEN' }
