@@ -17,8 +17,8 @@
     # Source CI run 40583010425: 22.597 seconds.
     'MutationRunner.Tests.ps1' = 23
     'Organizations.Tests.ps1' = 18
-    # Source CI run 40668755075: 16.691 seconds.
-    'MergeGate.Tests.ps1' = 17
+    # Source CI run 40785638540: 77.2658 seconds, rounded up.
+    'MergeGate.Tests.ps1' = 78
     # Source CI run 40661148420: 14.539 seconds.
     'WorkflowPreflight.Tests.ps1' = 15
     'ModuleRunner.Tests.ps1' = 20

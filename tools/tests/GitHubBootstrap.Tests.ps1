@@ -431,7 +431,7 @@ Describe 'GitHub bootstrap public interface' {
                     foreach ($key in @('path', 'mode', 'type', 'sha')) { $copy[$key] = $item[$key] }
                     $copy
                 })
-                $reply = Get-GitHubApiFixture -Name git/get-tree -Set @{ tree = $entries }
+                $reply = Get-GitHubApiFixture -Name git/get-tree -Set @{ tree = $entries; sha = $path.Split('/')[-1] }
                 # Deliberately invalid or incomplete trees must not prove the protected file paths.
                 switch ($cloud.protectedTreeMutation) {
                     'non-object' { $reply = @('invalid tree') }
