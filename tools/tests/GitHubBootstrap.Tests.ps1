@@ -107,15 +107,15 @@ BeforeAll {
     $rsa.Dispose()
 
     function Initialize-TestInventoryUpgrade {
-        param($Arguments, $Cloud, $Inventory, $Bootstrap)
+        param($Arguments, $Cloud, $Inventory, $Bootstrap, $From = '0.1.0-rc.5', $To = '0.1.0-rc.10')
 
         $Arguments.ResourcesOnly = $false
         $Cloud.commitShaOverride = $upgradeMainSha
         $null = & $Bootstrap @Arguments
         $record = Get-Content -LiteralPath $Inventory -Raw | ConvertFrom-Json -AsHashtable
-        $record.releaseVersion = '0.1.0-rc.5'
+        $record.releaseVersion = $From
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $Inventory
-        $Arguments.ReleaseVersion = '0.1.0-rc.10'
+        $Arguments.ReleaseVersion = $To
         $Arguments.UpgradeInventory = $true
         $Cloud.requiredContentRef = $upgradeMainSha
         $markerBlob = $Cloud.tree | Where-Object path -CEQ '.platform-bootstrap.json'
@@ -1035,7 +1035,9 @@ Describe 'GitHub bootstrap public interface' {
         finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
     }
 
-    It 'upgrades initialized historical inventory only after protected main proves the current release' -Tag 'HistoricalInventory', 'BootstrapUpgrade', 'ReleaseVersionUpgrade' -ForEach $upgradeVersionCases {
+    It 'upgrades initialized historical inventory only after protected main proves the current release' -Tag 'HistoricalInventory', 'BootstrapUpgrade', 'ReleaseVersionUpgrade' {
+        $From = '0.1.0-rc.5'
+        $To = '0.1.0-rc.12'
         $originalCulture = [Globalization.CultureInfo]::CurrentCulture
         $arguments.ResourcesOnly = $false
         try {
@@ -1099,6 +1101,19 @@ Describe 'GitHub bootstrap public interface' {
             $cloud.writes.Count | Should -BeGreaterThan 0
         }
         finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
+    }
+
+    It 'upgrades supported release transition <From> to <To>' -Tag 'BootstrapUpgrade', 'ReleaseVersionUpgrade' -ForEach $upgradeVersionCases {
+        Initialize-TestInventoryUpgrade -Arguments $arguments -Cloud $cloud -Inventory $inventory -Bootstrap $bootstrap -From $From -To $To
+        $expected = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        $expected.releaseVersion = $To
+
+        $result = & $bootstrap @arguments
+
+        $result.ReleaseVersion | Should -BeExactly $To
+        $actual = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
+        (ConvertTo-PlatformCanonicalJson $actual) | Should -BeExactly (ConvertTo-PlatformCanonicalJson $expected)
+        $cloud.writes.Count | Should -Be 0
     }
 
     It 'rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request' -Tag 'BootstrapUpgrade', 'ReleaseVersionUpgrade' -ForEach $unsupportedUpgradeVersionCases {
@@ -1531,6 +1546,7 @@ Describe 'GitHub bootstrap public interface' {
         $example = [regex]::Match($documentation,
             '(?s)```powershell\r?\n(# Generate the marker from the original approved release,.*?)(?:\r?\n)```')
         $example.Success | Should -BeTrue
+        $releaseVersion = $arguments.ReleaseVersion
         $cfg = $instancePath
         $instanceCheckout = Join-Path $casePath 'instance-checkout'
         $null = New-Item -ItemType Directory -Path $instanceCheckout

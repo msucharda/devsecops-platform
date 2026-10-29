@@ -8,7 +8,7 @@
     'EnterpriseBaseline.Tests.ps1' = 349
     'EnterpriseBaselinePatchContract.Tests.ps1' = 5
     # Source CI run 40771671425: 543.7233 seconds, rounded up.
-    'GitHubBootstrap.Tests.ps1' = 544
+    'GitHubBootstrap.Tests.ps1' = 656
     'RulesetsTerraform.Tests.ps1' = 178
     'OrganizationRolePrograms.Tests.ps1' = 105
     'RemoveBootstrap.Tests.ps1' = 45
