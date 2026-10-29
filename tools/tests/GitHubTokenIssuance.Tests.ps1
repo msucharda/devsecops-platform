@@ -1,6 +1,7 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $tools = Split-Path $PSScriptRoot -Parent
+    Import-Module (Join-Path $tools 'GitHubTokenIssuance.psm1')
     $issuer = Join-Path $tools 'New-PlatformGitHubToken.ps1'
     $resolver = Join-Path $tools 'Resolve-PlatformGitHubTokenIssuance.ps1'
     $rsa = [Security.Cryptography.RSA]::Create(2048)
@@ -202,6 +203,36 @@ Describe 'Installation token issuance recovery' {
         $null = New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $link -Target $target
         $arguments.IssuanceStatePath = Join-Path $link 'private/pending.json'
         { & $issuer @arguments } | Should -Throw '*reparse-point ancestor*'
+        $cloud.Issued | Should -Be 0
+    }
+
+    It 'refuses a state ancestor with <Case> before issuing a token' -Tag AncestorBoundary -ForEach @(
+        @{ Case = 'untrusted ownership'; OwnerChanged = $true; ExpectedError = '*state ancestor*untrusted owner*' }
+        @{ Case = 'shared replacement rights'; OwnerChanged = $false; ExpectedError = '*state ancestor*replace pending state*' }
+    ) {
+        $ancestor = Join-Path $TestDrive "ancestor-$([guid]::NewGuid())"
+        $null = [IO.Directory]::CreateDirectory($ancestor)
+        $arguments.IssuanceStatePath = Join-Path $ancestor 'private/pending.json'
+        if ($IsWindows) {
+            $acl = Get-Acl -LiteralPath $ancestor
+            if ($OwnerChanged) {
+                $acl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-21-0-0-0-1234567'))
+                Mock Get-Acl { $acl } -ModuleName GitHubTokenIssuance -ParameterFilter { $LiteralPath -eq $ancestor }
+            }
+            else {
+                $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+                    [Security.Principal.SecurityIdentifier]::new('S-1-1-0'),
+                    [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles,
+                    [Security.AccessControl.AccessControlType]::Allow))
+                [IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($ancestor), $acl)
+            }
+        }
+        elseif ($OwnerChanged) {
+            Mock stat { '999999999' } -ModuleName GitHubTokenIssuance
+        }
+        else { [IO.File]::SetUnixFileMode($ancestor, [IO.UnixFileMode] 511) }
+
+        { & $issuer @arguments } | Should -Throw $ExpectedError
         $cloud.Issued | Should -Be 0
     }
 

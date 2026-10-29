@@ -4,6 +4,13 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'token-issuance-ancestor'
+            Tests = @(@{
+                Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'
+                FullName = @('Installation token issuance recovery*private intent*', 'Installation token issuance recovery*state ancestor*')
+            })
+        }
+        @{
             Name = 'legacy-code-security-transition'
             Tests = @(@{ Path = 'tools/tests/ModuleRunner.Tests.ps1'; FullName = @('Legacy Code Security transition identity validation*') })
         }

@@ -40,10 +40,68 @@ function Assert-PlatformGitHubTokenStateAccess {
     }
 }
 
+# security-check: token-issuance-ancestor
+function Assert-PlatformGitHubTokenStateAncestorAccess {
+    [CmdletBinding()]
+    param([bool] $TrustedOwner, [bool] $Replaceable, [string] $Path)
+
+    if (-not $TrustedOwner) {
+        throw "Installation token state ancestor '$Path' has an untrusted owner."
+    }
+    if ($Replaceable) {
+        throw "Installation token state ancestor '$Path' grants rights that can replace pending state."
+    }
+}
+
+function Assert-PlatformGitHubTokenStateAncestors {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Path)
+
+    if ($IsWindows) {
+        $trusted = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544',
+            'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+        $replacementRights = [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+            [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [Security.AccessControl.FileSystemRights]::TakeOwnership
+    }
+    else {
+        $currentUser = & id -u
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot determine the current user for installation token state.' }
+        $trusted = @("$currentUser", '0')
+    }
+    $ancestor = [IO.DirectoryInfo]::new($Path).Parent
+    while ($null -ne $ancestor) {
+        if ($ancestor.Exists) {
+            if ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw 'Installation token state cannot use a symlink or reparse-point ancestor.'
+            }
+            if ($IsWindows) {
+                $acl = Get-Acl -LiteralPath $ancestor.FullName
+                $actualOwner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+                $replaceable = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {
+                    $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+                    -not ($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -and
+                    $_.IdentityReference.Value -notin $trusted -and ($_.FileSystemRights -band $replacementRights)
+                }).Count -gt 0
+            }
+            else {
+                $actualOwner = & stat -c '%u' -- $ancestor.FullName
+                if ($LASTEXITCODE -ne 0) { throw 'Cannot determine the installation token state ancestor owner.' }
+                $mode = [IO.File]::GetUnixFileMode($ancestor.FullName)
+                $replaceable = [bool] ($mode -band ([IO.UnixFileMode]::GroupWrite -bor [IO.UnixFileMode]::OtherWrite)) -and
+                    -not ($mode -band [IO.UnixFileMode]::StickyBit)
+            }
+            Assert-PlatformGitHubTokenStateAncestorAccess -TrustedOwner ("$actualOwner" -in $trusted) -Replaceable $replaceable -Path $ancestor.FullName
+        }
+        $ancestor = $ancestor.Parent
+    }
+}
+
 function Initialize-PlatformGitHubTokenStateDirectory {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Path)
 
+    Assert-PlatformGitHubTokenStateAncestors -Path $Path
     $ancestor = [IO.DirectoryInfo]::new($Path)
     while ($null -ne $ancestor) {
         if ($ancestor.Exists -and ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -78,6 +136,7 @@ function Initialize-PlatformGitHubTokenStateDirectory {
         if ($LASTEXITCODE -ne 0) { throw 'Cannot determine the installation token state owner.' }
         $private = [IO.File]::GetUnixFileMode($Path) -eq $mode
     }
+    Assert-PlatformGitHubTokenStateAncestors -Path $Path
     $directory = Get-Item -LiteralPath $Path -Force
     Assert-PlatformGitHubTokenStateAccess -Owner "$ownerId" -Access @{
         Directory = $directory.PSIsContainer

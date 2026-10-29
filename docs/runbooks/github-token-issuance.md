@@ -12,6 +12,8 @@ Nepovinný parametr `-IssuanceStatePath` určí vlastní cestu mimo checkout. Pr
 
 Issuer drží exkluzivní souborový zámek po celý běh. Další issuer i resolver při obsazeném zámku skončí chybou. Existující adresář s širším přístupem ani cestu přes symlink nástroj neopravuje; odmítne je. Linux vyžaduje standardní příkazy `id` a GNU `stat`.
 
+Předkové stavového adresáře nesmí dovolit jinému neprivilegovanému uživateli přejmenovat nebo nahradit komponentu cesty. Na Linuxu musí předky vlastnit aktuální uživatel nebo root; sdílený zapisovatelný předek musí mít sticky bit. Na Windows nástroj důvěřuje aktuálnímu uživateli, SYSTEM, Administrators a TrustedInstaller a odmítne práva ostatních účtů k nahrazení adresáře. Samotný privátní koncový adresář ani otevřený file lock přejmenování nadřazené složky nebrání.
+
 Pending soubor zůstává až do úspěšné revokace všech známých validačních tokenů nebo do úspěšného předání známých tokenů do environment output. Při chybě revokace nebo pádu procesu zůstane. Prázdný, poškozený i nečitelný pending stav blokuje nový POST a `Verified = true`. Obyčejné opakování příkazu soubor nesmaže.
 
 ## Ruční vyřešení
