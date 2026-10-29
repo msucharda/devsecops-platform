@@ -151,13 +151,13 @@ Modul v každé organizaci z `target_organizations` vytvoří organizační code
 
 ## Custom patterns
 
-Seznam patterns je v `customPatterns` v `instance.yaml`. Výchozí seznam je prázdný. Modul každý pattern vytvoří v každé organizaci a zapne pro něj push protection. Endpointy jsou v dokumentaci [custom patterns](https://docs.github.com/en/enterprise-cloud@latest/rest/secret-scanning/custom-patterns) a [push protection](https://docs.github.com/en/enterprise-cloud@latest/rest/secret-scanning/push-protection), API verze `2026-03-10`.
+Seznam patterns je v `customPatterns` v `instance.yaml`. Výchozí seznam je prázdný. Modul každý pattern vytvoří nebo převezme v každé cílové organizaci a po publikaci pro něj zapne push protection. Endpointy jsou v dokumentaci [custom patterns](https://docs.github.com/en/enterprise-cloud@latest/rest/secret-scanning/custom-patterns) a [push protection](https://docs.github.com/en/enterprise-cloud@latest/rest/secret-scanning/push-protection), API verze `2026-03-10`.
 
-- Modul hledá pattern podle `name`. Název musí být v seznamu jedinečný.
+- Modul hledá pattern podle `name` včetně velikosti písmen. Název musí být v seznamu jedinečný. Existující pattern stejného názvu převezme bez vytvoření duplikátu; rozdílný obsah upraví přes PATCH.
 - `secretRegex` je `pattern`. `beforeSecret` a `afterSecret` jsou `start_delimiter` a `end_delimiter`. Chybějící nebo prázdná hodnota znamená dokumentovanou výchozí hodnotu `\A|[^0-9A-Za-z]`, resp. `\z|[^0-9A-Za-z]`.
 - Modul nespravuje `must_match` ani `must_not_match`. Plan vyžaduje, aby oba seznamy byly prázdné.
 - Push protection modul zapne přes `PATCH /orgs/{org}/secret-scanning/pattern-configurations`. Pattern najde v `custom_pattern_overrides` podle `slug`.
-- API nemá operaci pro publikování patternu. Pokud GitHub vytvoří pattern ve stavu `unpublished`, apply selže. Operátor pattern publikuje v UI a apply zopakuje.
+- API nemá operaci pro publikování patternu. `PATCH /orgs/{org}/secret-scanning/custom-patterns/{pattern_id}` mění jen regex, oddělovače, `must_match`, `must_not_match` a `custom_pattern_version`, nikoli stav `published`/`unpublished`. Před prvním `deployment: code-security` by měl operátor každý nakonfigurovaný pattern vytvořit a publikovat v UI ve všech cílových organizacích podle [postupu staged deploye](../../docs/bootstrap.md#nový-živý-krok-časná-code-security-fáze-před-prvním-úplným-deploy). Apply pak převezme patterns a zapne push protection. Pokud GitHub při apply vytvoří pattern ve stavu `unpublished`, apply selže u první takové položky a další organizace nemusí patterns dostat. Záložní postup ve stejném návodu popisuje publikaci i opakování apply. Ruční příprava platí také pro nové patterns a po teardownu a opětovném nasazení.
 - Patterns organizace, které nejsou v `customPatterns`, modul ignoruje a nemaže.
 
 ## Implementace a obnova po přerušení
