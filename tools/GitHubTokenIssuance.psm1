@@ -53,7 +53,7 @@ function Assert-PlatformGitHubTokenStateAncestorAccess {
     }
 }
 
-function Assert-PlatformGitHubTokenStateAncestors {
+function Assert-PlatformGitHubTokenStateAncestorChain {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Path)
 
@@ -101,7 +101,7 @@ function Initialize-PlatformGitHubTokenStateDirectory {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Path)
 
-    Assert-PlatformGitHubTokenStateAncestors -Path $Path
+    Assert-PlatformGitHubTokenStateAncestorChain -Path $Path
     $ancestor = [IO.DirectoryInfo]::new($Path)
     while ($null -ne $ancestor) {
         if ($ancestor.Exists -and ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -136,7 +136,7 @@ function Initialize-PlatformGitHubTokenStateDirectory {
         if ($LASTEXITCODE -ne 0) { throw 'Cannot determine the installation token state owner.' }
         $private = [IO.File]::GetUnixFileMode($Path) -eq $mode
     }
-    Assert-PlatformGitHubTokenStateAncestors -Path $Path
+    Assert-PlatformGitHubTokenStateAncestorChain -Path $Path
     $directory = Get-Item -LiteralPath $Path -Force
     Assert-PlatformGitHubTokenStateAccess -Owner "$ownerId" -Access @{
         Directory = $directory.PSIsContainer
