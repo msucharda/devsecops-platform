@@ -17,16 +17,19 @@ param(
     [string] $ApiUrl = $env:GITHUB_API_URL,
     [scriptblock] $RequestPolicy,
     [scriptblock] $TokenLifecycle,
-    [switch] $VerifyRevocation
+    [switch] $VerifyRevocation,
+    [string] $IssuanceStatePath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
+Import-Module (Join-Path $PSScriptRoot 'GitHubTokenIssuance.psm1')
 if (($TokenLifecycle -or $VerifyRevocation) -and -not $ValidateOnly) {
     throw 'Token lifecycle supervision and revocation proof require ValidateOnly.'
 }
 $requestPolicyCallback = $RequestPolicy
+$issuanceUncertaintyMessage = "Unresolved installation token issuance: a token may have been created and cannot be revoked without the response token. Do not retry issuance. Stop the issuing process and wait until the possible token's one hour lifetime has elapsed; cleanup is not verified."
 
 function Invoke-GitHubAppRequest {
     [CmdletBinding()]
@@ -56,13 +59,32 @@ function Invoke-GitHubAppRequest {
         $arguments.ContentType = 'application/json'
     }
     try {
+        if ($kind -ceq 'TokenIssue') {
+            Save-PlatformGitHubTokenIssuance -Context $issuanceContext -ApiUrl $ApiUrl -AppId $expected['appId'] `
+                -InstallationIds @($installations | ForEach-Object { [string] $_['id'] })
+            $script:issuanceUncertain = $true
+        }
         $response = Invoke-RestMethod @arguments
         if ($null -ne $response) {
             ConvertTo-Json -InputObject $response -Depth 100 -Compress | ConvertFrom-Json -AsHashtable
         }
     }
     catch {
+        if ($kind -ceq 'TokenIssue') {
+            throw "$issuanceUncertaintyMessage $(Get-PlatformGitHubTokenPendingDescription -Context $issuanceContext) GitHub App API $Method $Path failed. $($_.Exception.Message)"
+        }
         throw "GitHub App API $Method $Path failed. Verify GHE.com API availability and declared permissions. $($_.Exception.Message)"
+    }
+}
+
+# security-check: token-issuance-response
+function Assert-GitHubAppIssuedToken {
+    [CmdletBinding()]
+    param([AllowNull()][object] $Response)
+
+    if ($Response -isnot [System.Collections.IDictionary] -or $Response['token'] -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($Response['token'])) {
+        throw "$issuanceUncertaintyMessage $(Get-PlatformGitHubTokenPendingDescription -Context $issuanceContext) GitHub did not return a usable installation token."
     }
 }
 
@@ -80,6 +102,14 @@ function Send-GitHubAppTokenEvent {
             throw "The token lifecycle supervisor did not acknowledge '$EventName'."
         }
     }
+}
+
+# security-check: token-issuance-cleanup
+function Test-GitHubAppTokenCleanupComplete {
+    [CmdletBinding()]
+    param([bool] $Uncertain)
+
+    return (-not $Uncertain -and @($tokens.PSBase.Values | Where-Object { -not $revokedTokens.Contains($_) }).Count -eq 0)
 }
 
 function Revoke-GitHubAppValidationToken {
@@ -109,6 +139,7 @@ function Revoke-GitHubAppValidationToken {
         $null = Invoke-GitHubAppRequest -Path '/installation/token' -Method DELETE -Token $Token
     }
     Send-GitHubAppTokenEvent -EventName Revoked -Token $Token
+    $null = $revokedTokens.Add($Token)
 }
 
 function ConvertTo-JwtSegment {
@@ -272,9 +303,17 @@ $jwt = "$unsigned.$(ConvertTo-JwtSegment $signature)"
 if (-not $ValidateOnly) { Write-Information "::add-mask::$jwt" -InformationAction Continue }
 $tokens = @{}
 $revocationAttempts = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+$revokedTokens = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+$issuanceContext = $null
+$issuanceUncertain = $false
 $revocationsVerified = 0
 $inheritedRulesetsNotDetailValidated = 0
 try {
+    if (-not $IssuanceStatePath) {
+        $IssuanceStatePath = Get-PlatformGitHubTokenIssuancePath -ApiUrl $ApiUrl -AppId $expected['appId']
+    }
+    $issuanceContext = Open-PlatformGitHubTokenIssuance -Path $IssuanceStatePath
+    Assert-PlatformGitHubTokenIssuanceClear -Context $issuanceContext
     $app = Invoke-GitHubAppRequest -Path '/app' -Token $jwt
     if ([string] $app['id'] -cne $expected['appId'] -or -not (Test-PlatformGitHubAppOwner -Owner $app['owner'] -Enterprise $expected['enterprise'])) {
         throw 'GitHub App is not owned by the declared enterprise.'
@@ -331,8 +370,9 @@ try {
         if ($VendoringRepository) { $tokenRequest['repositories'] = @($repositories[$organization]) }
         $issued = Invoke-GitHubAppRequest -Path "/app/installations/$($installation['id'])/access_tokens" -Method POST `
             -Token $jwt -Body $tokenRequest
-        if (-not $issued['token']) { throw "GitHub did not issue an installation token for '$organization'." }
+        Assert-GitHubAppIssuedToken -Response $issued
         $tokens[$organization] = $issued['token']
+        $issuanceUncertain = $false
         Send-GitHubAppTokenEvent -EventName Issued -Token $issued['token']
         if (-not $ValidateOnly) { Write-Information "::add-mask::$($issued['token'])" -InformationAction Continue }
         Assert-AppPermission -Actual $issued['permissions']
@@ -395,6 +435,7 @@ try {
             Revoke-GitHubAppValidationToken -Token $token
         }
         $tokens.Clear()
+        Complete-PlatformGitHubTokenIssuance -Context $issuanceContext
         return [pscustomobject]@{
             AppId = $expected['appId']
             Installations = @($installations | ForEach-Object { [string] $_['id'] })
@@ -411,6 +452,7 @@ try {
         $content += "GH_TOKEN=$token`n"
     }
     [IO.File]::AppendAllText([IO.Path]::GetFullPath($EnvironmentPath), $content, [Text.UTF8Encoding]::new($false))
+    Complete-PlatformGitHubTokenIssuance -Context $issuanceContext
 }
 catch {
     $failure = $_
@@ -419,5 +461,11 @@ catch {
         try { Revoke-GitHubAppValidationToken -Token $token }
         catch { Write-Warning "Failed to revoke an installation token after issuance failed: $($_.Exception.Message)" }
     }
+    if ($issuanceContext -and (Test-GitHubAppTokenCleanupComplete -Uncertain $issuanceUncertain)) {
+        Complete-PlatformGitHubTokenIssuance -Context $issuanceContext
+    }
     throw $failure
+}
+finally {
+    if ($issuanceContext) { $issuanceContext.Lock.Dispose() }
 }

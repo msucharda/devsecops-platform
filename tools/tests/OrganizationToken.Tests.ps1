@@ -9,6 +9,8 @@ BeforeAll {
 
 Describe 'Organization-scoped App token issuance' {
     BeforeEach {
+        $PSDefaultParameterValues = @{} + $PSDefaultParameterValues
+        $PSDefaultParameterValues['New-PlatformGitHubToken.ps1:IssuanceStatePath'] = Join-Path $TestDrive "issuance-$([guid]::NewGuid())/pending.json"
         $savedEnvironment = @{}
         foreach ($name in @('PLATFORM_APP_ID', 'PLATFORM_APP_INSTALLATION_ID', 'PLATFORM_APP_ENTERPRISE', 'GITHUB_REPOSITORY_OWNER')) {
             $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)

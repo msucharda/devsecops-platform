@@ -398,6 +398,36 @@
             )
         }
         @{
+            Name = 'token-issuance-response'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubAppToken.Tests.ps1'; FullName = @('*reports unresolved issuance for a <Case> token response*', '*issues a members-only token after verifying enterprise ownership*') }
+            )
+        }
+        @{
+            Name = 'token-issuance-location'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*refuses to store issuance state*', '*publishes a secret-free private intent*') })
+        }
+        @{
+            Name = 'token-issuance-storage'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*existing state directory grants broader access*', '*publishes a secret-free private intent*') })
+        }
+        @{
+            Name = 'token-issuance-pending'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*retains uncertainty without a blind retry*', '*blocks a <Case> pending record*', '*publishes a secret-free private intent*') })
+        }
+        @{
+            Name = 'token-issuance-content'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*does not discard a pending record changed*', '*publishes a secret-free private intent*') })
+        }
+        @{
+            Name = 'token-issuance-cleanup'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*retains uncertainty without a blind retry*', '*retains pending state after an uncertain revocation*', '*clears pending state after known cleanup*') })
+        }
+        @{
+            Name = 'token-issuance-resolution'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*requires explicit operator confirmation for a <Case> pending timestamp*', '*allows manual resolution after the seventy-minute wait*') })
+        }
+        @{
             Name = 'azure-unconditional-role'
             Tests = @(
                 @{ Path = 'tools/tests/Bootstrap.Tests.ps1'; FullName = @('*conditional*state grant*', '*conditional assignment returned by resource GET*') }

@@ -192,6 +192,8 @@ BeforeAll {
 
 Describe 'GitHub bootstrap public interface' {
     BeforeEach {
+        $PSDefaultParameterValues = @{} + $PSDefaultParameterValues
+        $PSDefaultParameterValues['New-PlatformGitHubToken.ps1:IssuanceStatePath'] = Join-Path $TestDrive "issuance-$([guid]::NewGuid())/pending.json"
         $savedTokens = @{}
         foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
             $savedTokens[$name] = [Environment]::GetEnvironmentVariable($name)

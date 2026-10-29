@@ -9,6 +9,8 @@ BeforeAll {
 
 Describe 'Enterprise installation credentials' {
     BeforeEach {
+        $PSDefaultParameterValues = @{} + $PSDefaultParameterValues
+        $PSDefaultParameterValues['New-PlatformGitHubToken.ps1:IssuanceStatePath'] = Join-Path $TestDrive "issuance-$([guid]::NewGuid())/pending.json"
         $savedEnvironment = @{}
         foreach ($name in @('PLATFORM_APP_ID', 'PLATFORM_APP_INSTALLATION_ID', 'PLATFORM_APP_ENTERPRISE')) {
             $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)

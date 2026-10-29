@@ -8,6 +8,8 @@ BeforeAll {
 
 Describe 'Enterprise App key and installation token isolation' {
     BeforeEach {
+        $PSDefaultParameterValues = @{} + $PSDefaultParameterValues
+        $PSDefaultParameterValues['New-PlatformGitHubToken.ps1:IssuanceStatePath'] = Join-Path $TestDrive "issuance-$([guid]::NewGuid())\pending.json"
         $savedEnvironment = @{}
         foreach ($name in @('PLATFORM_APP_ID', 'PLATFORM_APP_INSTALLATION_ID', 'PLATFORM_APP_ENTERPRISE', 'PLATFORM_APP_PRIVATE_KEY', 'GITHUB_REPOSITORY')) {
             $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
@@ -78,6 +80,63 @@ Describe 'Enterprise App key and installation token isolation' {
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
             $Method -eq 'POST' -and $Body -eq '{"permissions":{"members":"read"}}'
         }
+    }
+
+    It 'reports unresolved issuance for a <Case> token response' -Tag 'Resume' -ForEach @(
+        @{ Case = 'missing'; Value = $null; Remove = $true }
+        @{ Case = 'null'; Value = $null; Remove = $false }
+        @{ Case = 'empty'; Value = ''; Remove = $false }
+        @{ Case = 'whitespace'; Value = ' '; Remove = $false }
+        @{ Case = 'non-string'; Value = 123; Remove = $false }
+        @{ Case = 'null-body'; Value = $null; Remove = $false }
+        @{ Case = 'scalar-body'; Value = $null; Remove = $false }
+    ) {
+        Mock Invoke-RestMethod {
+            if ($Case -ceq 'null-body') { return $null }
+            if ($Case -ceq 'scalar-body') { return 'not-a-token-response' }
+            # Deliberately invalid response: the required token must be a non-empty string.
+            $response = Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{ permissions = $actualPermissions }
+            if ($Remove) { $response.Remove('token') } else { $response['token'] = $Value }
+            return $response
+        } -ParameterFilter { $Uri -like '*/access_tokens' }
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ members = 'read' }
+            resources = @{ organizations = @('platform'); repositories = @{} }
+        }
+
+        { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test } | Should -Throw '*unresolved*issuance*cannot be revoked*'
+
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -like '*/access_tokens' }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+    }
+
+    It 'blocks verification after an installation token response is lost' -Tag 'Resume' {
+        $issuance = @{ Issued = 0; Revoked = 0 }
+        Mock Invoke-RestMethod {
+            $issuance.Issued++
+            if ($issuance.Issued -eq 1) { throw 'Injected token response loss.' }
+            Get-GitHubApiFixture -Name apps/create-installation-access-token -Set @{
+                token = "fake-installation-token-$($issuance.Issued)"; permissions = $actualPermissions
+            }
+        } -ParameterFilter { $Uri -like '*/access_tokens' }
+        Mock Invoke-RestMethod { $issuance.Revoked++ } -ParameterFilter {
+            $Uri -like '*/installation/token' -and $Method -eq 'DELETE'
+        }
+        $app = @{
+            appId = '101'; installationId = '201'; enterprise = 'example'
+            permissions = @{ members = 'read' }
+            resources = @{ organizations = @('platform'); repositories = @{} }
+        }
+
+        { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test } | Should -Throw '*unresolved*issuance*may have been created*cannot be revoked*one hour*Injected token response loss*'
+        { & $issuer -BootstrapApp $app -Authorization -PrivateKey $privateKey -ValidateOnly `
+            -ApiUrl https://api.example.test } | Should -Throw '*unresolved*issuance*'
+
+        $issuance.Issued | Should -Be 1
+        $issuance.Revoked | Should -Be 0
     }
 
     It 'registers validation tokens before use and confirms revocation rejection without exposing the token' -Tag 'Resume' {
