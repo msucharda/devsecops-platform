@@ -5,7 +5,9 @@ param(
     [Parameter(Mandatory)][string] $WorkPath,
     [Parameter(Mandatory)][string] $ModulesPath,
     [Parameter(Mandatory)][ValidateSet('BeforePublish', 'AfterPublish')][string] $Boundary,
-    [Parameter(Mandatory)][ValidateSet('Error', 'Abrupt')][string] $Termination
+    [Parameter(Mandatory)][ValidateSet('Error', 'Abrupt')][string] $Termination,
+    [ValidateSet('Pending', 'Confirmed')][string] $PublicationStatus = 'Confirmed',
+    [switch] $Reconfirm
 )
 
 Set-StrictMode -Version Latest
@@ -28,11 +30,11 @@ $offset = if ($Boundary -ceq 'BeforePublish') { $publication.Extent.StartOffset 
 $fault = if ($Termination -ceq 'Abrupt') { '[Environment]::Exit(77)' } else { "throw 'Injected publication interruption.'" }
 $injection = @'
 
-if ($State['steps']['application/verify-access']['status'] -ceq 'Confirmed') { __FAULT__ }
+if ($State['steps']['application/verify-access']['status'] -ceq '__STATUS__') { __FAULT__ }
 
 '@
 $instrumented = $definition.Extent.Text.Insert(
-    ($offset - $definition.Extent.StartOffset), $injection.Replace('__FAULT__', $fault))
+    ($offset - $definition.Extent.StartOffset), $injection.Replace('__FAULT__', $fault).Replace('__STATUS__', $PublicationStatus))
 $instrumented = $instrumented.Replace('function Save-SetupManualProgress', 'function script:Save-SetupManualProgress')
 & (Get-Module InstanceSetup) {
     param($Definition)
@@ -49,7 +51,7 @@ $instrumented = $instrumented.Replace('function Save-SetupManualProgress', 'func
 } $instrumented
 try {
     $null = Invoke-InstanceSetup -RepoPath (Split-Path $ToolsPath -Parent) -WorkPath $WorkPath -ModulesPath $ModulesPath `
-        -Phase ManualSteps -ManualStep 'application/verify-access'
+        -Phase ManualSteps -ManualStep 'application/verify-access' -Reconfirm:$Reconfirm
 }
 catch {
     if ($_.Exception.Message -cne 'Injected publication interruption.') { throw }

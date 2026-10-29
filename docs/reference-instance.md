@@ -137,20 +137,29 @@ Průvodce zapíše do `$work` tyto soubory:
 
 ## Ruční kroky modulů
 
-Fáze `ManualSteps` načte `$work\instance.yaml` a `manualSteps` z manifestů vybraných modulů včetně jejich předpokladů. Nenavazuje na uložený úspěch fáze A a znovu ji nespouští. Runbook a README modulu zůstávají zdrojem pravdy pro pořadí, předpoklady a schválení.
+Fáze `ManualSteps` načte `instance.yaml` z adresáře `-WorkPath` a `manualSteps` z manifestů vybraných modulů včetně jejich předpokladů. Nenavazuje na uložený úspěch fáze A a znovu ji nespouští. Runbook a README modulu zůstávají zdrojem pravdy pro pořadí, předpoklady a schválení.
+
+Použij samostatný pracovní adresář mimo source checkout, pracovní kopii konfigurace skutečné instance a odpovídající manifesty z jejího vendorovaného release. Následující příklad předpokládá existující checkout repozitáře instance po #11. Konfiguraci z B1 nepoužívej: vybírá testovací modul `application`, který ve skutečných manifestech není. Původní `$work\instance.yaml` zachovej pro akceptaci.
 
 ```powershell
+$instanceRepo = Read-Host 'Path to the instance repository checkout'
+$manualWork = Join-Path $HOME 'platform-manual-steps'
+$manualModules = Join-Path $instanceRepo 'platform\modules'
+$null = New-Item -ItemType Directory -Path $manualWork -Force
+Copy-Item -LiteralPath (Join-Path $instanceRepo 'instance.yaml') `
+  -Destination (Join-Path $manualWork 'instance.yaml') -Confirm
+
 # Choose a step; Enter selects the first pending step, q stops the wizard.
-.\tools\Start-InstanceSetup.ps1 -WorkPath $work -Phase ManualSteps -PassThru
+.\tools\Start-InstanceSetup.ps1 -WorkPath $manualWork -ModulesPath $manualModules -Phase ManualSteps -PassThru
 
 # Select this step only at the required point of the teardown runbook.
-.\tools\Start-InstanceSetup.ps1 -WorkPath $work -Phase ManualSteps `
+.\tools\Start-InstanceSetup.ps1 -WorkPath $manualWork -ModulesPath $manualModules -Phase ManualSteps `
   -ManualStep organizations/delete-instance-organizations -PassThru
 ```
 
 Manifest neoznačuje životní fázi ani nevratnost kroku. Průvodce proto žádný krok nespustí automaticky a před pokyny ke **každému** kroku vyžádá přesné opsání `instance.name`, včetně velikosti písmen. Potom vypíše popis, vlastníka, omezení pro plan, drift a teardown a cestu k dokumentaci modulu. Ruční operaci provedeš sám podle runbooku. Průvodce ji neprovádí, nespouští externí proces a nevolá API.
 
-Průvodce uloží záměr před zobrazením pokynů a výsledek až po samostatném potvrzení dokončení. Soubor `$work\manual-steps-state.json` drží stavy `Pending` a `Confirmed`; `Confirmed` znamená pouze lidské potvrzení (`method: human`, `verified: false`). Po přerušení nejdřív zkontroluj skutečný stav. Nevratnou operaci neopakuj jen proto, že v progress chybí potvrzení.
+Pro každou instanci použij vlastní `$manualWork`. Po změně konfigurace obnov její pracovní kopii z repozitáře instance. Průvodce uloží záměr před zobrazením pokynů a výsledek až po samostatném potvrzení dokončení. Soubor `$manualWork\manual-steps-state.json` drží stavy `Pending` a `Confirmed`; `Confirmed` znamená pouze lidské potvrzení (`method: human`, `verified: false`). Po přerušení nejdřív zkontroluj skutečný stav. Nevratnou operaci neopakuj jen proto, že v progress chybí potvrzení.
 
 Další běh převezme potvrzení jen pro stejnou konfiguraci instance a stejný manifest modulu. Změna vstupů vyžádá nové potvrzení; `-Reconfirm` ho vyžádá i beze změny. Nečitelný nebo neplatný progress průvodce odmítne, nesmaže ho a nepovažuje ho za úspěch. Souběžné běhy nad stejným progress nepovolí. Fázi nelze kombinovat s `-GitHubAcceptance`.
 

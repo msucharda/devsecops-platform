@@ -121,12 +121,66 @@ Describe 'Instance setup manual steps through the public wizard' {
         @(Get-ChildItem -LiteralPath $work -Filter '*.tmp').Count | Should -Be 0
     }
 
-    It 'recovers publication interrupted <Boundary> with <Termination>' -ForEach @(
-        @{ Boundary = 'BeforePublish'; Termination = 'Error'; ExpectedStatus = 'Pending'; ExitCode = 78; TemporaryCount = 0 }
-        @{ Boundary = 'BeforePublish'; Termination = 'Abrupt'; ExpectedStatus = 'Pending'; ExitCode = 77; TemporaryCount = 1 }
-        @{ Boundary = 'AfterPublish'; Termination = 'Error'; ExpectedStatus = 'Confirmed'; ExitCode = 78; TemporaryCount = 0 }
-        @{ Boundary = 'AfterPublish'; Termination = 'Abrupt'; ExpectedStatus = 'Confirmed'; ExitCode = 77; TemporaryCount = 0 }
+    It 'opens the documented separate work folder with matching real module manifests' {
+        $instanceRepo = Join-Path $directory 'instance-repo'
+        $null = New-Item -ItemType Directory -Path (Join-Path $instanceRepo 'platform') -Force
+        $configuration = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $repoRoot 'templates/instance/instance.yaml') -Raw)
+        $configuration['modules'] = @{
+            organizations = @{ parameters = @{ admin_logins = @('platform-admin'); billing_email = 'platform@example.test' } }
+        }
+        $repositoryConfiguration = Join-Path $instanceRepo 'instance.yaml'
+        $configuration | ConvertTo-Yaml | Set-Content -LiteralPath $repositoryConfiguration
+        $manualModules = Join-Path $instanceRepo 'platform/modules'
+        Copy-Item -LiteralPath (Join-Path $repoRoot 'modules') -Destination $manualModules -Recurse
+        Copy-Item -LiteralPath $repositoryConfiguration -Destination $instancePath
+        $before = [IO.File]::ReadAllText($repositoryConfiguration)
+        $answers.Enqueue('q')
+
+        $result = & (Join-Path $repoRoot 'tools/Start-InstanceSetup.ps1') -WorkPath $work -ModulesPath $manualModules `
+            -Phase ManualSteps -PassThru
+
+        $result.ManualSteps.Id | Should -BeExactly 'organizations/delete-instance-organizations'
+        $result.Completed | Should -BeFalse
+        [IO.File]::ReadAllText($repositoryConfiguration) | Should -BeExactly $before
+        Should -Invoke Read-Host -ModuleName InstanceSetup -Times 1 -Exactly
+        Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 0
+        Should -Invoke Start-Process -ModuleName InstanceSetup -Times 0
+    }
+
+    It 'recovers <Scenario> publication interrupted <Boundary> with <Termination>' -ForEach @(
+        foreach ($scenario in @('Confirmation', 'InitialPending', 'ReconfirmPending')) {
+            foreach ($boundary in @('BeforePublish', 'AfterPublish')) {
+                foreach ($termination in @('Error', 'Abrupt')) {
+                    $expected = if ($scenario -ceq 'Confirmation') {
+                        if ($boundary -ceq 'BeforePublish') { 'Pending' } else { 'Confirmed' }
+                    }
+                    elseif ($scenario -ceq 'InitialPending') {
+                        if ($boundary -ceq 'BeforePublish') { 'Missing' } else { 'Pending' }
+                    }
+                    else {
+                        if ($boundary -ceq 'BeforePublish') { 'Confirmed' } else { 'Pending' }
+                    }
+                    @{
+                        Scenario = $scenario; Boundary = $boundary; Termination = $termination
+                        PublicationStatus = $(if ($scenario -ceq 'Confirmation') { 'Confirmed' } else { 'Pending' })
+                        Reconfirm = $scenario -ceq 'ReconfirmPending'; ExpectedStatus = $expected
+                        ExitCode = $(if ($termination -ceq 'Error') { 78 } else { 77 })
+                        TemporaryCount = $(if ($boundary -ceq 'BeforePublish' -and $termination -ceq 'Abrupt') { 1 } else { 0 })
+                    }
+                }
+            }
+        }
     ) {
+        $path = Join-Path $work 'manual-steps-state.json'
+        $initialPrompts = 0
+        $originalProgress = $null
+        if ($Reconfirm) {
+            $answers.Enqueue('demo')
+            $answers.Enqueue('y')
+            $null = Invoke-InstanceSetup @arguments -ManualStep 'application/verify-access'
+            $originalProgress = [IO.File]::ReadAllText($path)
+            $initialPrompts = 2
+        }
         $sourcePath = Join-Path $repoRoot 'tools/InstanceSetup.ManualSteps.ps1'
         $sourceHash = (Get-FileHash -LiteralPath $sourcePath).Hash
         $start = [Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
@@ -136,8 +190,9 @@ Describe 'Instance setup manual steps through the public wizard' {
         foreach ($argument in @(
                 '-NoLogo', '-NoProfile', '-File', (Join-Path $PSScriptRoot 'fixtures/Invoke-ManualStepsInterruption.ps1'),
                 '-ToolsPath', (Join-Path $repoRoot 'tools'), '-WorkPath', $work, '-ModulesPath', $modules,
-                '-Boundary', $Boundary, '-Termination', $Termination
+                '-Boundary', $Boundary, '-Termination', $Termination, '-PublicationStatus', $PublicationStatus
             )) { $start.ArgumentList.Add($argument) }
+        if ($Reconfirm) { $start.ArgumentList.Add('-Reconfirm') }
         $process = [Diagnostics.Process]::Start($start)
         try {
             $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -151,10 +206,24 @@ Describe 'Instance setup manual steps through the public wizard' {
         }
         finally { $process.Dispose() }
         (Get-FileHash -LiteralPath $sourcePath).Hash | Should -BeExactly $sourceHash
-        $state = Get-Content -LiteralPath (Join-Path $work 'manual-steps-state.json') -Raw | ConvertFrom-Json -AsHashtable
-        $state['steps']['application/verify-access']['status'] | Should -BeExactly $ExpectedStatus
+        if ($ExpectedStatus -ceq 'Missing') {
+            Test-Path -LiteralPath $path | Should -BeFalse
+        }
+        else {
+            $state = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+            $record = $state['steps']['application/verify-access']
+            $record['status'] | Should -BeExactly $ExpectedStatus
+            if ($ExpectedStatus -ceq 'Pending') {
+                $record.Contains('confirmedAt') | Should -BeFalse
+                $record.Contains('method') | Should -BeFalse
+                $record.Contains('verified') | Should -BeFalse
+            }
+            elseif ($Reconfirm) {
+                [IO.File]::ReadAllText($path) | Should -BeExactly $originalProgress
+            }
+        }
         @(Get-ChildItem -LiteralPath $work -Filter '*.tmp').Count | Should -Be $TemporaryCount
-        if ($ExpectedStatus -ceq 'Pending') {
+        if ($ExpectedStatus -cne 'Confirmed') {
             $answers.Enqueue('demo')
             $answers.Enqueue('y')
         }
@@ -162,7 +231,7 @@ Describe 'Instance setup manual steps through the public wizard' {
         $resumed = Invoke-InstanceSetup @arguments -ManualStep 'application/verify-access'
 
         $resumed.Completed | Should -BeTrue
-        $expectedPrompts = if ($ExpectedStatus -ceq 'Pending') { 2 } else { 0 }
+        $expectedPrompts = $initialPrompts + $(if ($ExpectedStatus -ceq 'Confirmed') { 0 } else { 2 })
         Should -Invoke Read-Host -ModuleName InstanceSetup -Times $expectedPrompts -Exactly
     }
 
