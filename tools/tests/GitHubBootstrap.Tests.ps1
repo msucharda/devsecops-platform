@@ -1003,7 +1003,14 @@ Describe 'GitHub bootstrap public interface' {
         finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
     }
 
-    It 'upgrades initialized historical inventory only after protected main proves the current release' -Tag 'HistoricalInventory', 'BootstrapUpgrade' {
+    It 'upgrades initialized historical inventory only after protected main proves the current release' -Tag 'HistoricalInventory', 'BootstrapUpgrade' -ForEach @(
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.6'; To = '0.1.0-rc.8' }
+        @{ From = '0.1.0-rc.9'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.12'; To = '0.1.0' }
+        @{ From = '0.1.0-rc.2147483648'; To = '0.1.0-rc.2147483649' }
+    ) {
         $originalCulture = [Globalization.CultureInfo]::CurrentCulture
         $arguments.ResourcesOnly = $false
         try {
@@ -1013,7 +1020,7 @@ Describe 'GitHub bootstrap public interface' {
             Set-Content -LiteralPath (Join-Path (Join-Path $release 'tools') 'hotel.txt') -Value 'ordinal order'
             $null = & $bootstrap @arguments
             $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
-            $record.releaseVersion = '0.1.0-rc.5'
+            $record.releaseVersion = $From
             $record.apps.authorization.previousKeys = @(@{
                 appId = '99'; fingerprint = 'previous-fingerprint'; createdAt = '2026-01-01T00:00:00Z'
                 rotateBy = '2026-03-31T00:00:00Z'; revocationRequired = $false
@@ -1025,7 +1032,7 @@ Describe 'GitHub bootstrap public interface' {
 
             $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
             $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-            $arguments.ReleaseVersion = '0.1.0-rc.10'
+            $arguments.ReleaseVersion = $To
             $arguments.UpgradeInventory = $true
             $cloud.requiredContentRef = $upgradeMainSha
             $marker.releaseVersion = $arguments.ReleaseVersion
@@ -1041,9 +1048,9 @@ Describe 'GitHub bootstrap public interface' {
 
             $result = & $bootstrap @arguments
 
-            $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
+            $result.ReleaseVersion | Should -BeExactly $To
             $record = Get-Content $inventory -Raw | ConvertFrom-Json -AsHashtable
-            $record.releaseVersion | Should -BeExactly '0.1.0-rc.10'
+            $record.releaseVersion | Should -BeExactly $To
             $record.deploymentIdentifier | Should -BeExactly $deploymentIdentifier
             (ConvertTo-PlatformCanonicalJson $record.resources) | Should -BeExactly $resources
             (ConvertTo-PlatformCanonicalJson $record.apps) | Should -BeExactly $apps
@@ -1072,12 +1079,26 @@ Describe 'GitHub bootstrap public interface' {
     It 'rejects unsupported inventory upgrade pair <From> to <To> before any GitHub request' -Tag 'BootstrapUpgrade' -ForEach @(
         @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.5' }
         @{ From = '0.1.0-rc.4'; To = '0.1.0-rc.10' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.8' }
-        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.9' }
-        @{ From = '0.1.0-rc.6'; To = '0.1.0-rc.10' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.9' }
         @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.10' }
         @{ From = '0.1.0-RC.5'; To = '0.1.0-rc.10' }
         @{ From = '0.1.0-rc.5'; To = '0.1.0-RC.10' }
+        @{ From = '0.1.0'; To = '0.1.0' }
+        @{ From = '0.1.0'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.4' }
+        @{ From = '0.1.1-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.1-rc.12' }
+        @{ From = '0.2.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.2.0-rc.12' }
+        @{ From = '0.1.0-beta.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-beta.12' }
+        @{ From = '0.1.0-rc.05'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.012' }
+        @{ From = '0.1.0-rc.0'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.0' }
+        @{ From = "0.1.0-rc.5`n"; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.5'; To = "0.1.0-rc.12`n" }
+        @{ From = '0.1.0-rc.2147483649'; To = '0.1.0-rc.2147483648' }
     ) {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
@@ -1096,7 +1117,12 @@ Describe 'GitHub bootstrap public interface' {
             return $true
         }.GetNewClosure()
 
-        { & $bootstrap @arguments } | Should -Throw '*Unsupported bootstrap inventory upgrade*'
+        $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('cs-CZ')
+            { & $bootstrap @arguments } | Should -Throw '*Unsupported bootstrap inventory upgrade*'
+        }
+        finally { [Globalization.CultureInfo]::CurrentCulture = $originalCulture }
 
         $operations.Count | Should -Be 0
         $cloud.writes.Count | Should -Be 0
@@ -1877,15 +1903,19 @@ Describe 'GitHub bootstrap public interface' {
         (Get-FileHash $inventory).Hash | Should -BeExactly $before
     }
 
-    It 'allows the sole supported inventory pair during read-only verification' -Tag 'NoChanges', 'BootstrapUpgrade' {
+    It 'allows supported inventory upgrades during read-only verification from <From> to <To>' -Tag 'NoChanges', 'BootstrapUpgrade', 'ReadOnlyUpgrade' -ForEach @(
+        @{ From = '0.1.0-rc.5'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.10'; To = '0.1.0-rc.12' }
+        @{ From = '0.1.0-rc.12'; To = '0.1.0' }
+    ) {
         $arguments.ResourcesOnly = $false
         $null = & $bootstrap @arguments
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
-        $record.releaseVersion = '0.1.0-rc.5'
+        $record.releaseVersion = $From
         $record | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $inventory
         $markerBlob = $cloud.tree | Where-Object { $_.path -ceq '.platform-bootstrap.json' }
         $marker = [Text.Encoding]::UTF8.GetString($cloud.blobs[$markerBlob.sha]) | ConvertFrom-Json -AsHashtable
-        $arguments.ReleaseVersion = '0.1.0-rc.10'
+        $arguments.ReleaseVersion = $To
         $marker.releaseVersion = $arguments.ReleaseVersion
         $cloud.blobs[$markerBlob.sha] = [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlatformCanonicalJson $marker))
         $before = (Get-FileHash -LiteralPath $inventory).Hash
@@ -1894,7 +1924,7 @@ Describe 'GitHub bootstrap public interface' {
 
         $result = & $bootstrap @arguments
 
-        $result.ReleaseVersion | Should -BeExactly '0.1.0-rc.10'
+        $result.ReleaseVersion | Should -BeExactly $To
         $result.HasChanges | Should -BeFalse
         $cloud.writes.Count | Should -Be 0
         (Get-FileHash -LiteralPath $inventory).Hash | Should -BeExactly $before

@@ -301,11 +301,11 @@ Opakovaný běh se stejným release, konfigurací a klíči neprovádí zápisy 
 
 #### Upgrade GitHub bootstrapu
 
-Jediný podporovaný přechod inventory je `0.1.0-rc.5` → `0.1.0-rc.10`. Vyžaduje inicializované inventory a výslovný příznak `-UpgradeInventory`. Ostatní dvojice verzí, včetně `0.1.0-rc.5` → `0.1.0-rc.9` a stejné verze, bootstrap odmítne před prvním požadavkem na GitHub API. Běžné opakování se stejnou verzí příznak nepoužívá.
+Podporovaný přechod inventory vede z `0.1.0-rc.5` nebo novějšího release řady `0.1.0` na striktně novější spuštěný release stejné řady. Podporované formáty jsou `0.1.0-rc.N` (kladné celé `N` bez úvodních nul) a stabilní `0.1.0`, který následuje po všech rc verzích. Čísla rc bootstrap porovnává číselně, nezávisle na culture. Přechod vyžaduje inicializované inventory a výslovný příznak `-UpgradeInventory`. Stejnou verzi, downgrade, zdroj starší než rc.5, jinou řadu a neplatný formát bootstrap odmítne před prvním požadavkem na GitHub API. Běžné opakování se stejnou verzí příznak nepoužívá.
 
-Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na release `0.1.0-rc.10`. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu.
+Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na cílový schválený release. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu.
 
-Vendoring aktualizuje `platform/**`, nikoli `.platform-bootstrap.json`. Marker vytvoř v lokálním checkoutu **větve tohoto PR**. `$release` musí označovat původní schválený release rc.10, `$cfg` ověřený `instance.yaml` a `$instanceCheckout` checkout repozitáře instance. Nehashuj vendorovanou kopii: vendoring přepisuje odkazy na akce ve workflow šablonách, ale marker používá původní bytes release.
+Vendoring aktualizuje `platform/**`, nikoli `.platform-bootstrap.json`. Marker vytvoř v lokálním checkoutu **větve tohoto PR**. `$release` musí označovat původní schválený release, `$releaseVersion` jeho přesnou verzi bez prefixu `v`, `$cfg` ověřený `instance.yaml` a `$instanceCheckout` checkout repozitáře instance. Nehashuj vendorovanou kopii: vendoring přepisuje odkazy na akce ve workflow šablonách, ale marker používá původní bytes release.
 
 ```powershell
 # Generate the marker from the original approved release, not its vendored copy.
@@ -324,7 +324,7 @@ Get-ChildItem -LiteralPath $release -Recurse -Force -File |
     }
 $marker = @{
     instance = $configuration['instance']['name']
-    releaseVersion = '0.1.0-rc.10'
+    releaseVersion = $releaseVersion
     files = $hashes
 }
 [IO.File]::WriteAllText(
@@ -340,7 +340,7 @@ Do `$arguments` převezmi **všechny** parametry posledního úspěšného boots
 ```powershell
 $upgradeArguments = @{} + $arguments
 $upgradeArguments.ReleasePath = $release
-$upgradeArguments.ReleaseVersion = '0.1.0-rc.10'
+$upgradeArguments.ReleaseVersion = $releaseVersion
 foreach ($name in @('AuthorizationApp', 'AppKeysPath')) {
     if (-not $upgradeArguments.ContainsKey($name) -or
         [string]::IsNullOrWhiteSpace($upgradeArguments[$name])) {
@@ -359,7 +359,7 @@ Před uložením inventory a prvním reconcile requestem bootstrap read-only ov�
 
 Po ověření chráněného `main` bootstrap uloží aktualizované deklarace Apps ještě před prvním reconcile requestem. Zachová původní App IDs v historii a zatím nezmění verzi inventory. Přerušení tak neztratí evidenci ručně registrované App.
 
-Po úspěšném provisioningu bootstrap zapíše novou `releaseVersion` do stejného inventory. Do té doby ponechá zaznamenanou verzi. Zachová identifikátor nasazení, záznamy prostředků, Apps, otisky klíčů, termíny rotace a historii klíčů. Pokud běh selže, oprav příčinu a spusť znovu bootstrap se stejným inventory a release. `-NoChanges` zůstává read-only: ověřuje inventory stejné verze nebo jediný podporovaný pár `0.1.0-rc.5` → `0.1.0-rc.10` proti markeru, Git tree a konfiguraci na `main`, ale inventory ani prostředky nemění. Chybějící, prázdnou či nepodporovanou verzi inventory odmítne před prvním GitHub API požadavkem.
+Po úspěšném provisioningu bootstrap zapíše novou `releaseVersion` do stejného inventory. Do té doby ponechá zaznamenanou verzi. Zachová identifikátor nasazení, záznamy prostředků, Apps, otisky klíčů, termíny rotace a historii klíčů. Pokud běh selže, oprav příčinu a spusť znovu bootstrap se stejným inventory a release. `-NoChanges` zůstává read-only: ověřuje inventory stejné verze nebo podporovaný přechod podle pravidla výše proti markeru, Git tree a konfiguraci na `main`, ale inventory ani prostředky nemění. Chybějící, prázdnou či nepodporovanou verzi inventory odmítne před prvním GitHub API požadavkem.
 
 `-NoChanges` nelze kombinovat s `-UpgradeInventory`; slouží pouze k ověření bez zápisů.
 
