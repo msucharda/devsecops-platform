@@ -545,27 +545,28 @@ Describe 'Deployment workflow generation' {
             $workflow.jobs[$id].if | Should -Match "needs.authorize.outputs.allowed == 'true'"
         }
 
-        It 'verifies release data with trusted tools before any App key for every scope' -Tag 'DeploymentRelease' {
-            $output = Join-Path $TestDrive 'release-preflight.yml'
-            & $generator -ModulesPath $fixtures -OutputPath $output
-            $workflow = ConvertFrom-Yaml (Get-Content $output -Raw)
-            $steps = @($workflow.jobs.authorize.steps)
-            $guard = @($steps | Where-Object { $_['run'] -like '*Test-DeploymentRelease.ps1*' })
-            $guard.Count | Should -Be 1
-            $guard[0].run | Should -Match '^\./trusted/platform/tools/'
-            $guard[0].env.PLATFORM_SOURCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
-            $guard[0].if | Should -Be '${{ steps.preflight.outputs.allowed == ''true'' || steps.preflight.outputs.eligible == ''true'' }}'
-            $guard[0].if | Should -Not -Match 'deployment'
-            $candidate = $steps | Where-Object { $_['name'] -eq 'Check out release candidate as data before credentials' }
-            $candidate.with.ref | Should -Be '${{ steps.preflight.outputs.revision }}'
-            $candidate.with.'persist-credentials' | Should -BeFalse
-            $index = [array]::IndexOf($steps, $guard[0])
-            foreach ($step in @($steps | Where-Object { $_['env'] -and $_['env'].Contains('PLATFORM_APP_PRIVATE_KEY') })) {
-                [array]::IndexOf($steps, $step) | Should -BeGreaterThan $index
-            }
-            $workflow.jobs.validate.needs | Should -Be 'authorize'
-            $workflow.jobs.select.needs | Should -Contain 'validate'
+    }
+
+    It 'verifies release data with trusted tools before any App key for every scope' -Tag 'DeploymentRelease' {
+        $output = Join-Path $TestDrive 'release-preflight.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content $output -Raw)
+        $steps = @($workflow.jobs.authorize.steps)
+        $guard = @($steps | Where-Object { $_['run'] -like '*Test-DeploymentRelease.ps1*' })
+        $guard.Count | Should -Be 1
+        $guard[0].run | Should -Match '^\./trusted/platform/tools/'
+        $guard[0].env.PLATFORM_SOURCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+        $guard[0].if | Should -Be '${{ steps.preflight.outputs.allowed == ''true'' || steps.preflight.outputs.eligible == ''true'' }}'
+        $guard[0].if | Should -Not -Match 'deployment'
+        $candidate = $steps | Where-Object { $_['name'] -eq 'Check out release candidate as data before credentials' }
+        $candidate.with.ref | Should -Be '${{ steps.preflight.outputs.revision }}'
+        $candidate.with.'persist-credentials' | Should -BeFalse
+        $index = [array]::IndexOf($steps, $guard[0])
+        foreach ($step in @($steps | Where-Object { $_['env'] -and $_['env'].Contains('PLATFORM_APP_PRIVATE_KEY') })) {
+            [array]::IndexOf($steps, $step) | Should -BeGreaterThan $index
         }
+        $workflow.jobs.validate.needs | Should -Be 'authorize'
+        $workflow.jobs.select.needs | Should -Contain 'validate'
     }
 
     It 'rejects a ruleset exception with undeclared broader privileges' {
