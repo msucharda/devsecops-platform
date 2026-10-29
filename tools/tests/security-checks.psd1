@@ -4,6 +4,27 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'token-issuance-revocation'
+            Tests = @(@{
+                Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'
+                FullName = @('Installation token issuance recovery*private intent*', 'Installation token issuance recovery*without HTTP 204*')
+            })
+        }
+        @{
+            Name = 'token-issuance-reparse'
+            Tests = @(@{
+                Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'
+                FullName = @('Installation token issuance recovery*private intent*', 'Installation token issuance recovery*reparse-point*')
+            })
+        }
+        @{
+            Name = 'token-issuance-ancestor'
+            Tests = @(@{
+                Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'
+                FullName = @('Installation token issuance recovery*private intent*', 'Installation token issuance recovery*state ancestor*')
+            })
+        }
+        @{
             Name = 'legacy-code-security-transition'
             Tests = @(@{ Path = 'tools/tests/ModuleRunner.Tests.ps1'; FullName = @('Legacy Code Security transition identity validation*') })
         }
@@ -396,6 +417,36 @@
             Tests = @(
                 @{ Path = 'tools/tests/GitHubAppToken.Tests.ps1'; FullName = @('*rejects a drift report App with broader permissions*', '*rejects a drift report App permission level that differs only in case*', '*issues a members-only token after verifying enterprise ownership*') }
             )
+        }
+        @{
+            Name = 'token-issuance-response'
+            Tests = @(
+                @{ Path = 'tools/tests/GitHubAppToken.Tests.ps1'; FullName = @('*reports unresolved issuance for a <Case> token response*', '*issues a members-only token after verifying enterprise ownership*') }
+            )
+        }
+        @{
+            Name = 'token-issuance-location'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*refuses to store issuance state*', '*publishes a secret-free private intent*') })
+        }
+        @{
+            Name = 'token-issuance-storage'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*existing state directory grants broader access*', '*publishes a secret-free private intent*') })
+        }
+        @{
+            Name = 'token-issuance-pending'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*retains uncertainty without a blind retry*', '*blocks a <Case> pending record*', '*publishes a secret-free private intent*') })
+        }
+        @{
+            Name = 'token-issuance-content'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*does not discard a pending record changed*', '*publishes a secret-free private intent*') })
+        }
+        @{
+            Name = 'token-issuance-cleanup'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*retains uncertainty without a blind retry*', '*retains pending state after an uncertain revocation*', '*clears pending state after known cleanup*') })
+        }
+        @{
+            Name = 'token-issuance-resolution'
+            Tests = @(@{ Path = 'tools/tests/GitHubTokenIssuance.Tests.ps1'; FullName = @('*requires explicit operator confirmation for a <Case> pending timestamp*', '*allows manual resolution after the seventy-minute wait*') })
         }
         @{
             Name = 'azure-unconditional-role'

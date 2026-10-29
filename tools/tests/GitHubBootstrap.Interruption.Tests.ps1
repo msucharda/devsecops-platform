@@ -80,7 +80,9 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
                 $published = if ($ref -ceq 'main') { $main -and $main.object.sha -ceq $publishedSha } else { $ref -ceq $publishedSha }
                 if (-not ($cloud.commit -and $published)) { return [pscustomobject]@{ StatusCode = 404; Content = '{"message":"Not Found"}' } }
             }
-            if ($Method -eq 'GET' -or ($path -eq '/graphql' -and $data.query -notlike 'mutation*')) { return & $stubTransport @call }
+            # Token lifecycle interruptions have their own real-process recovery matrix.
+            if ($Method -eq 'GET' -or ($path -eq '/installation/token' -and $Method -eq 'DELETE') -or
+                ($path -eq '/graphql' -and $data.query -notlike 'mutation*')) { return & $stubTransport @call }
             # Variables and workflow dispatches document no conflict response; a repeated creation is a duplicate.
             $identity = if ($Method -eq 'POST' -and $path -like '*/variables') { "variable $path/$($data.name)" }
             elseif ($Method -eq 'POST' -and $path -like '*/dispatches') { "dispatch $path" }

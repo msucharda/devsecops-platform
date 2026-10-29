@@ -8,6 +8,14 @@ BeforeAll {
 
 Describe 'Vendoring App installation scope' {
     BeforeEach {
+        Mock Invoke-WebRequest {
+            param($Uri, $Method, $Headers, $MaximumRedirection, $TimeoutSec, $MaximumRetryCount)
+            $null = Invoke-RestMethod -Uri $Uri -Method $Method -Headers $Headers -MaximumRedirection $MaximumRedirection `
+                -TimeoutSec $TimeoutSec -MaximumRetryCount $MaximumRetryCount
+            [pscustomobject]@{ StatusCode = 204 }
+        }
+        $PSDefaultParameterValues = @{} + $PSDefaultParameterValues
+        $PSDefaultParameterValues['New-PlatformGitHubToken.ps1:IssuanceStatePath'] = Join-Path $TestDrive "issuance-$([guid]::NewGuid())/pending.json"
         $savedEnvironment = @{}
         foreach ($name in @('PLATFORM_APP_ID', 'PLATFORM_APP_INSTALLATION_ID', 'PLATFORM_APP_ENTERPRISE', 'PLATFORM_APP_PRIVATE_KEY')) {
             $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
