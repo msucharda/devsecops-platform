@@ -68,6 +68,51 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
         $moduleRoot = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'modules/enterprise-baseline'
         $baselineOrganizationLogin = 'demo'
         $baselineReviewerId = 42
+        $pwshPath = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+        $pwshRuntime = & $pwshPath -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString(); [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription' 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "Cannot inspect child pwsh '$pwshPath': $pwshRuntime" }
+        $runtimeContext = "pwsh=$pwshPath; runtime=$($pwshRuntime.Trim() -replace '\r?\n', '; '); PSModulePath=$env:PSModulePath; PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath"
+        Write-Information "[terraform-test] $runtimeContext" -InformationAction Continue
+
+        function Invoke-StubTerraformAtRoot {
+            param([string] $TerraformRoot, [string[]] $TerraformArguments)
+
+            $output = & terraform "-chdir=$TerraformRoot" @TerraformArguments -no-color 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            if ($code -notin @(0, 2)) {
+                $childStatus = @([regex]::Matches($output, '(?im)exit status \d+|signal: [^\r\n]+') |
+                    ForEach-Object { $_.Value } | Sort-Object -Unique) -join '; '
+                if (-not $childStatus) { $childStatus = 'not reported by Terraform' }
+                $output = "[terraform-test] root=$TerraformRoot; command=$($TerraformArguments -join ' '); terraformExit=$code; childStatus=$childStatus; $runtimeContext`n$output"
+                # A runtime crash is not the expected API failure of a lost-response scenario.
+                if ($output -match '(?im)signal:\s|Unhandled exception\.|The PowerShell process will exit') {
+                    throw "Terraform child process crashed.`n$output"
+                }
+            }
+            [pscustomobject]@{ ExitCode = $code; Output = $output }
+        }
+
+        function Invoke-StubTerraform {
+            $roots = if (@($args | Where-Object { $_ -like '-target=*' }).Count) { @($root) }
+            elseif ($args[0] -ceq 'destroy') { @($root, $securityRoot) }
+            else { @($securityRoot, $root) }
+            $text = [Text.StringBuilder]::new()
+            $exitCode = 0
+            foreach ($terraformRoot in $roots) {
+                $result = Invoke-StubTerraformAtRoot -TerraformRoot $terraformRoot -TerraformArguments $args
+                $null = $text.Append($result.Output)
+                if ($result.ExitCode -notin @(0, 2)) { return [pscustomobject]@{ ExitCode = $result.ExitCode; Output = $text.ToString() } }
+                $exitCode = [Math]::Max($exitCode, $result.ExitCode)
+            }
+            [pscustomobject]@{ ExitCode = $exitCode; Output = $text.ToString() }
+        }
+    }
+
+    BeforeEach {
+        $previousBearer = $env:REST_API_BEARER
+        $previousTimeout = $env:CODE_SECURITY_ATTACHMENT_TIMEOUT
+        $listener = $null
+        $stub = $null
         $stubState = [hashtable]::Synchronized(@{ Organization = $null; DropNextPatch = $false; Requests = [Collections.Generic.List[string]]::new(); OrganizationPatches = [Collections.Generic.List[hashtable]]::new(); CodeSecurity = $null; ActionsPolicy = $null })
         $codeSecurityStub = Join-Path $PSScriptRoot 'CodeSecurityStub.psm1'
         Import-Module $codeSecurityStub -Force
@@ -82,6 +127,7 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
             $state = $using:stubState
             Import-Module $using:codeSecurityStub
             while ($true) {
+                if (-not $listener.Pending()) { Start-Sleep -Milliseconds 10; continue }
                 $client = $listener.AcceptTcpClient()
                 try {
                     $stream = $client.GetStream()
@@ -95,7 +141,11 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
                     }
                     $buffer = [char[]]::new($length)
                     $read = 0
-                    while ($read -lt $length) { $read += $reader.Read($buffer, $read, $length - $read) }
+                    while ($read -lt $length) {
+                        $count = $reader.Read($buffer, $read, $length - $read)
+                        if ($count -eq 0) { throw 'Stub client disconnected before sending the complete request body.' }
+                        $read += $count
+                    }
                     $method, $path = $requestLine.Split(' ')[0, 1]
                     $link = $null
                     $policy = $state.ActionsPolicy
@@ -166,36 +216,9 @@ Describe 'enterprise-baseline against a local GitHub API stub' -Tag 'Terraform' 
             }
         }
 
-        $previousBearer = $env:REST_API_BEARER
-        $previousTimeout = $env:CODE_SECURITY_ATTACHMENT_TIMEOUT
         $env:REST_API_BEARER = 'stub-token'
         $env:CODE_SECURITY_ATTACHMENT_TIMEOUT = '0'
 
-        function Invoke-StubTerraform {
-            $roots = if (@($args | Where-Object { $_ -like '-target=*' }).Count) { @($root) }
-            elseif ($args[0] -ceq 'destroy') { @($root, $securityRoot) }
-            else { @($securityRoot, $root) }
-            $text = [Text.StringBuilder]::new()
-            $exitCode = 0
-            foreach ($terraformRoot in $roots) {
-                $output = & terraform "-chdir=$terraformRoot" @args -no-color 2>&1 | Out-String
-                $code = $LASTEXITCODE
-                $null = $text.Append($output)
-                if ($code -notin @(0, 2)) { return [pscustomobject]@{ ExitCode = $code; Output = $text.ToString() } }
-                $exitCode = [Math]::Max($exitCode, $code)
-            }
-            [pscustomobject]@{ ExitCode = $exitCode; Output = $text.ToString() }
-        }
-    }
-
-    AfterAll {
-        $env:REST_API_BEARER = $previousBearer
-        $env:CODE_SECURITY_ATTACHMENT_TIMEOUT = $previousTimeout
-        $listener.Stop()
-        $stub | Stop-Job -PassThru | Remove-Job -Force
-    }
-
-    BeforeEach {
         $parent = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $modules = Join-Path $parent 'modules'
         $root = Join-Path $modules 'enterprise-baseline'
@@ -291,6 +314,81 @@ data "external" "code_security_state" {
         $init.ExitCode | Should -Be 0 -Because $init.Output
     }
 
+    AfterEach {
+        $env:REST_API_BEARER = $previousBearer
+        $env:CODE_SECURITY_ATTACHMENT_TIMEOUT = $previousTimeout
+        $serverFailed = $stub -and $stub.State -eq 'Failed'
+        $serverError = if ($serverFailed) { "$($stub.JobStateInfo.Reason)`n$($stub.Error | Out-String)" } else { '' }
+        try {
+            if ($stub) { $stub | Stop-Job -PassThru | Remove-Job -Force }
+        }
+        finally {
+            if ($listener) { $listener.Stop() }
+        }
+        if ($serverFailed) { throw "GitHub API stub failed: $serverError" }
+    }
+
+    It 'isolates an unconsumed POST after a child failure: <Case>' -Tag 'ChildProcessIsolation' -ForEach @(
+        @{ Case = 'child fails before POST'; FailChild = $true }
+        @{ Case = 'next test starts healthy'; FailChild = $false }
+    ) {
+        $codeSecurity = $stubState.CodeSecurity
+        $codeSecurity.DropNext | Should -BeNullOrEmpty
+        @($codeSecurity.Requests) | Should -BeNullOrEmpty
+        $stub.State | Should -BeExactly 'Running'
+        if ($FailChild) {
+            $script:failedTestListener = $listener
+            $script:failedTestJob = $stub
+            $codeSecurity.DropNext = '^POST /orgs/demo/code-security/configurations$'
+            # Only the disposable module copy fails; production code is unchanged.
+            Set-Content -LiteralPath (Join-Path $root 'scripts/Invoke-CodeSecurityChange.ps1') -Value @'
+[Console]::Error.WriteLine('injected child failure before POST')
+exit 73
+'@
+            $failed = Invoke-StubTerraform apply -input=false -auto-approve
+            $failed.ExitCode | Should -Be 1 -Because $failed.Output
+            $failed.Output | Should -Match 'injected child failure before POST'
+            $failed.Output | Should -Match 'exit status 73'
+            $failed.Output | Should -Match '\[terraform-test\].*pwsh='
+            $codeSecurity.DropNext | Should -Not -BeNullOrEmpty
+            @($codeSecurity.Requests | Where-Object { $_ -match '^POST ' }) | Should -BeNullOrEmpty
+        }
+        else {
+            # A request failure must not leave the shared server alive for the next test.
+            $script:failedTestJob.State | Should -BeExactly 'Stopped'
+            $script:failedTestListener.Server.IsBound | Should -BeFalse
+            $apply = Invoke-StubTerraform apply -input=false -auto-approve
+            $apply.ExitCode | Should -Be 0 -Because $apply.Output
+            @($codeSecurity.Requests | Where-Object { $_ -ceq 'POST /orgs/demo/code-security/configurations' }).Count | Should -Be 1
+        }
+    }
+
+    It 'reports a runtime crash before checking an unconsumed POST: <Failure>' -Tag 'ChildProcessCrash' -ForEach @(
+        @{ Failure = 'SIGSEGV'; Message = 'signal: segmentation fault (core dumped)' }
+        @{ Failure = 'SIGABRT'; Message = 'signal: aborted (core dumped)' }
+        @{ Failure = 'FileLoadException'; Message = 'Unhandled exception. System.IO.FileLoadException: The given assembly name was invalid.' }
+    ) {
+        $codeSecurity = $stubState.CodeSecurity
+        $codeSecurity.DropNext = '^POST /orgs/demo/code-security/configurations$'
+        # Replay the historical crash text, without actually signalling pwsh or creating a core dump.
+        Set-Content -LiteralPath (Join-Path $root 'scripts/Invoke-CodeSecurityChange.ps1') -Value @"
+[Console]::Error.WriteLine('$Message')
+exit 139
+"@
+
+        $failure = { Invoke-StubTerraform apply -input=false -auto-approve } |
+            Should -Throw '*Terraform child process crashed*' -PassThru
+
+        $failure.Exception.Message | Should -Match ([regex]::Escape($Message))
+        $failure.Exception.Message | Should -Match 'terraformExit=1'
+        $failure.Exception.Message | Should -Match 'exit status 139'
+        $failure.Exception.Message | Should -Match 'PSModulePath='
+        $failure.Exception.Message | Should -Match 'PSModuleAnalysisCachePath='
+        $codeSecurity.DropNext | Should -Not -BeNullOrEmpty
+        @($codeSecurity.Requests | Where-Object { $_ -match '^POST ' }) | Should -BeNullOrEmpty
+        $stubState.Requests | Should -BeNullOrEmpty -Because 'a crashed early root must not start the late root'
+    }
+
     It 'adopts legacy Code Security state without deleting or recreating remote objects when <Case>' -Tag 'CodeSecurityTransition' -ForEach @(
         @{ Case = 'uninterrupted'; RepeatEarly = $false }
         @{ Case = 'interrupted after early adoption'; RepeatEarly = $true }
@@ -308,8 +406,8 @@ data "external" "code_security_state" {
 }
 '@
         }
-        $legacyOutput = & terraform "-chdir=$root" apply -input=false -auto-approve -no-color 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be 0 -Because $legacyOutput
+        $legacy = Invoke-StubTerraformAtRoot -TerraformRoot $root -TerraformArguments @('apply', '-input=false', '-auto-approve')
+        $legacy.ExitCode | Should -Be 0 -Because $legacy.Output
         $codeSecurity = $stubState.CodeSecurity
         $configuration = @($codeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })
         $configuration.Count | Should -Be 1
@@ -323,17 +421,17 @@ data "external" "code_security_state" {
         Remove-Item -LiteralPath (Join-Path $root 'code_security.tf')
         if ($IsWindows) { Remove-Item -LiteralPath $legacyWindowsOverride }
         Copy-Item -LiteralPath (Join-Path $moduleRoot 'removed.tf') -Destination $removedPath
-        $early = & terraform "-chdir=$securityRoot" apply -input=false -auto-approve -no-color 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be 0 -Because $early
+        $early = Invoke-StubTerraformAtRoot -TerraformRoot $securityRoot -TerraformArguments @('apply', '-input=false', '-auto-approve')
+        $early.ExitCode | Should -Be 0 -Because $early.Output
         if ($RepeatEarly) {
             # The previous run ended after the early root adopted the objects, before the late state was updated.
-            $earlyRetry = & terraform "-chdir=$securityRoot" apply -input=false -auto-approve -no-color 2>&1 | Out-String
-            $LASTEXITCODE | Should -Be 0 -Because $earlyRetry
+            $earlyRetry = Invoke-StubTerraformAtRoot -TerraformRoot $securityRoot -TerraformArguments @('apply', '-input=false', '-auto-approve')
+            $earlyRetry.ExitCode | Should -Be 0 -Because $earlyRetry.Output
         }
-        $late = & terraform "-chdir=$root" apply -input=false -auto-approve -no-color 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be 0 -Because $late
-        $lateRetry = & terraform "-chdir=$root" apply -input=false -auto-approve -no-color 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be 0 -Because $lateRetry
+        $late = Invoke-StubTerraformAtRoot -TerraformRoot $root -TerraformArguments @('apply', '-input=false', '-auto-approve')
+        $late.ExitCode | Should -Be 0 -Because $late.Output
+        $lateRetry = Invoke-StubTerraformAtRoot -TerraformRoot $root -TerraformArguments @('apply', '-input=false', '-auto-approve')
+        $lateRetry.ExitCode | Should -Be 0 -Because $lateRetry.Output
 
         @($codeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' }).Count | Should -Be 1
         ($codeSecurity.Configurations | Where-Object { $_['target_type'] -ceq 'organization' })['id'] | Should -Be $configurationId
@@ -342,13 +440,13 @@ data "external" "code_security_state" {
         @($codeSecurity.Requests | Where-Object { $_ -match '^DELETE ' }).Count | Should -Be 0
         @($codeSecurity.Requests | Where-Object { $_ -ceq 'POST /orgs/demo/code-security/configurations' }).Count | Should -Be $createdConfigurations
         @($codeSecurity.Requests | Where-Object { $_ -ceq 'POST /orgs/demo/secret-scanning/custom-patterns' }).Count | Should -Be $createdPatterns
-        $lateState = & terraform "-chdir=$root" state list -no-color 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be 0 -Because $lateState
-        $lateState | Should -Not -Match 'terraform_data\.(code_security_configuration|code_security_configuration_settings|custom_pattern|custom_pattern_content)'
-        $earlyState = & terraform "-chdir=$securityRoot" state list -no-color 2>&1 | Out-String
-        $LASTEXITCODE | Should -Be 0 -Because $earlyState
-        $earlyState | Should -Match 'terraform_data\.code_security_configuration'
-        $earlyState | Should -Match 'terraform_data\.custom_pattern'
+        $lateState = Invoke-StubTerraformAtRoot -TerraformRoot $root -TerraformArguments @('state', 'list')
+        $lateState.ExitCode | Should -Be 0 -Because $lateState.Output
+        $lateState.Output | Should -Not -Match 'terraform_data\.(code_security_configuration|code_security_configuration_settings|custom_pattern|custom_pattern_content)'
+        $earlyState = Invoke-StubTerraformAtRoot -TerraformRoot $securityRoot -TerraformArguments @('state', 'list')
+        $earlyState.ExitCode | Should -Be 0 -Because $earlyState.Output
+        $earlyState.Output | Should -Match 'terraform_data\.code_security_configuration'
+        $earlyState.Output | Should -Match 'terraform_data\.custom_pattern'
     }
 
     It 'omits enterprise-controlled fields from create, update and destroy PATCH requests: <Case>' -Tag 'ForkPolicy' -ForEach @(
@@ -463,7 +561,8 @@ locals {
     }
 
     It 'restores only the managed defaults when a destroy loses the PATCH response and is repeated' {
-        (Invoke-StubTerraform apply -input=false -auto-approve).ExitCode | Should -Be 0
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
         $stubState.DropNextPatch = $true
 
         $interrupted = Invoke-StubTerraform destroy -input=false -auto-approve
@@ -478,7 +577,8 @@ locals {
     }
 
     It 'fails the plan instead of reporting no changes when a managed field drifts' {
-        (Invoke-StubTerraform apply -input=false -auto-approve).ExitCode | Should -Be 0
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
         $stubState.Organization['default_repository_permission'] = 'read'
 
         $plan = Invoke-StubTerraform plan -input=false -detailed-exitcode
@@ -514,7 +614,8 @@ locals {
     }
 
     It 'removes the configuration and patterns when a destroy loses a DELETE response and is repeated' {
-        (Invoke-StubTerraform apply -input=false -auto-approve).ExitCode | Should -Be 0
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
         $codeSecurity = $stubState.CodeSecurity
         $codeSecurity.DropNext = '^DELETE /orgs/demo/code-security/configurations/[0-9]+$'
 
@@ -670,7 +771,8 @@ locals {
     }
 
     It 'restores the GitHub defaults when a destroy loses the PUT response and is repeated' {
-        (Invoke-StubTerraform apply -input=false -auto-approve).ExitCode | Should -Be 0
+        $apply = Invoke-StubTerraform apply -input=false -auto-approve
+        $apply.ExitCode | Should -Be 0 -Because $apply.Output
         $policy = $stubState.ActionsPolicy
         $policy.DropNext = '^PUT /orgs/demo/actions/permissions$'
 
