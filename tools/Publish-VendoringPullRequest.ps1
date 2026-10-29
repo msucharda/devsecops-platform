@@ -45,14 +45,14 @@ function Assert-VendoringSourceReceipt {
     param([AllowNull()][object] $SourceReceipt)
 
     if ($SourceReceipt -isnot [Collections.IDictionary] -or
-        $SourceReceipt['Commit'] -isnot [string] -or $SourceReceipt['Commit'] -cnotmatch '^[a-f0-9]{40}$' -or
-        $SourceReceipt['Sha256'] -isnot [string] -or $SourceReceipt['Sha256'] -cnotmatch '^[a-f0-9]{64}$' -or
+        $SourceReceipt['Commit'] -isnot [string] -or $SourceReceipt['Commit'] -cnotmatch '\A[a-f0-9]{40}\z' -or
+        $SourceReceipt['Sha256'] -isnot [string] -or $SourceReceipt['Sha256'] -cnotmatch '\A[a-f0-9]{64}\z' -or
         $SourceReceipt['Attestation'] -isnot [string] -or
         $SourceReceipt['Attestation'] -cnotin @('verified', 'not-present', 'manual-not-verified') -or
         $SourceReceipt['Repository'] -isnot [string] -or
-        $SourceReceipt['Repository'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$' -or
+        $SourceReceipt['Repository'] -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+\z' -or
         $SourceReceipt['Tag'] -isnot [string] -or
-        $SourceReceipt['Tag'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._/-]*$') {
+        $SourceReceipt['Tag'] -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9._/-]*\z') {
         throw 'Invalid source receipt.'
     }
 }

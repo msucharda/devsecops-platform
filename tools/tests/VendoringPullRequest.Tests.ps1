@@ -297,6 +297,23 @@ Describe 'Vendoring diff and pull request publication' {
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 
+    It 'rejects a trailing LF in source receipt <Field> before publication' -Tag 'StrictPinAnchor' -ForEach @(
+        @{ Field = 'commit'; Change = { $sourceReceipt.Commit += "`n" } }
+        @{ Field = 'digest'; Change = { $sourceReceipt.Sha256 += "`n" } }
+        @{ Field = 'repository'; Change = { $sourceReceipt.Repository += "`n" } }
+        @{ Field = 'tag'; Change = { $sourceReceipt.Tag += "`n" } }
+    ) {
+        $sourceReceipt = Get-Content $receipt -Raw | ConvertFrom-Json -AsHashtable
+        . $Change
+        $sourceReceipt | ConvertTo-Json -Depth 10 | Set-Content $receipt
+
+        { & $publisher -PreparedPath $prepared -TargetPath $target -ReceiptPath $receipt -Kind action `
+            -Repository customer-actions/upstream-action -ApiUrl https://api.example.ghe.com } |
+            Should -Throw '*Invalid source receipt*'
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $Arguments -contains 'push' }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
     It 'requires an explicit catalog snapshot for every new release publication' -Tag 'CatalogSnapshot' {
         Remove-Item (Join-Path $prepared 'action.yml')
         $null = New-Item -ItemType Directory -Path (Join-Path $prepared 'platform')

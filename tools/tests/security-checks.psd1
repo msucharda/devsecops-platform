@@ -50,7 +50,7 @@
         @{
             Name = 'vendoring-source-receipt'
             Tests = @(
-                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*rejects array-valued source receipt*before publication*', '*rejects malformed source receipt*before publication*', '*opens an App PR containing updated files*') }
+                @{ Path = 'tools/tests/VendoringPullRequest.Tests.ps1'; FullName = @('*rejects array-valued source receipt*before publication*', '*rejects malformed source receipt*before publication*', '*rejects a trailing LF in source receipt*before publication*', '*opens an App PR containing updated files*') }
             )
         }
         @{

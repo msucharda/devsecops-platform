@@ -176,9 +176,15 @@ jobs:
                 Should -Match "customer-actions/actions-checkout@1111111111111111111111111111111111111111' # v7.0.1"
         }
         else {
+            $expectedError = if ($Case -ceq 'null tag') {
+                "*Invalid catalog entry 'actions/checkout'*"
+            }
+            else {
+                "*Catalog tag for 'actions/checkout' must match release pin tag 'v7.0.1'*"
+            }
             { & $prepare -SourcePath $source -OutputPath $output -CatalogPath $catalogPath `
                     -ActionsOrganization customer-actions -Kind release } |
-                Should -Throw "*Catalog tag for 'actions/checkout' must match release pin tag 'v7.0.1'*"
+                Should -Throw $expectedError
             Test-Path $output | Should -BeFalse
         }
     }

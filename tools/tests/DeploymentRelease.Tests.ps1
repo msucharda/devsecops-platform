@@ -137,6 +137,35 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
     }
 
+    It 'rejects a trailing LF in unused snapshot <Field> before accepting unchanged release bytes' -Tag 'StrictPinAnchor' -ForEach @(
+        @{ Mode = 'transformed'; Field = 'copy SHA'; Change = {
+            $catalog.actions['sample/tool'].sha = ('2' * 40) + "`n"
+        }; Error = '*Invalid catalog entry*' }
+        @{ Mode = 'transformed'; Field = 'upstream commit'; Change = {
+            $catalog.actions['sample/tool'].upstreamCommit = ('b' * 40) + "`n"
+        }; Error = '*Catalog upstreamCommit for*full lowercase commit SHA*' }
+        @{ Mode = 'transformed'; Field = 'action key'; Change = {
+            $copy = $catalog.actions['sample/tool']
+            $catalog.actions.Remove('sample/tool')
+            # Keep the derived repository consistent so only the key syntax can reject this entry.
+            $copy.repository = "demo-actions/sample-tool`n"
+            $catalog.actions["sample/tool`n"] = $copy
+        }; Error = '*Invalid catalog entry*' }
+    ) {
+        $catalog = Get-Content "$candidate/vendoring/actions.json" -Raw | ConvertFrom-Json -AsHashtable
+        $catalog.actions['sample/tool'] = @{
+            repository = 'demo-actions/sample-tool'
+            sha = '2' * 40
+            upstreamCommit = 'b' * 40
+        }
+        . $Change
+        @{ version = 2; kind = 'release'; catalog = $catalog } | ConvertTo-Json -Depth 10 |
+            Set-Content "$candidate/platform/.vendoring.json"
+
+        { & $preflight @arguments } | Should -Throw $Error
+        Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
     It 'rejects <Case> on a version 2 import even if the current catalog would reproduce its bytes' -Tag 'CatalogSnapshot' -ForEach @(
         @{ Mode = 'transformed'; Case = 'missing snapshot'; Receipt = '{"version":2,"kind":"release"}' }
         @{ Mode = 'transformed'; Case = 'corrupt snapshot'; Receipt = '{"version":2,"kind":"release","catalog":{"version":2,"actions":"invalid"}}' }

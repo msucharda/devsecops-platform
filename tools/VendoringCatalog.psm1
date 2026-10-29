@@ -4,7 +4,7 @@ Set-StrictMode -Version Latest
 function Assert-VendoringUpstreamCommit {
     param([AllowNull()][object] $Commit, [string] $Upstream)
 
-    if ($Commit -isnot [string] -or $Commit -cnotmatch '^[a-f0-9]{40}\z') {
+    if ($Commit -isnot [string] -or $Commit -cnotmatch '\A[a-f0-9]{40}\z') {
         throw "Catalog upstreamCommit for '$Upstream' must be a full lowercase commit SHA from its approved receipt."
     }
 }
@@ -19,13 +19,13 @@ function Assert-VendoringCatalog {
     }
     foreach ($entry in $Catalog['actions'].PSBase.Keys) {
         $copy = $Catalog['actions'][$entry]
-        if ($entry -cnotmatch '^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$' -or
+        if ($entry -cnotmatch '\A[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}\z' -or
             $copy -isnot [Collections.IDictionary] -or
             $copy['repository'] -isnot [string] -or
             $copy['repository'] -cne "$ActionsOrganization/$($entry.Replace('/', '-'))" -or
             $copy['sha'] -isnot [string] -or
             ($copy.Contains('tag') -and $copy['tag'] -isnot [string]) -or
-            $copy['sha'] -cnotmatch '^[a-f0-9]{40}$') {
+            $copy['sha'] -cnotmatch '\A[a-f0-9]{40}\z') {
             throw "Invalid catalog entry '$entry': expected $ActionsOrganization/owner-repo and a full commit SHA."
         }
         Assert-VendoringUpstreamCommit -Commit $copy['upstreamCommit'] -Upstream $entry
