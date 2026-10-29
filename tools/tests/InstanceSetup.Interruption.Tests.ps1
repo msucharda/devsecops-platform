@@ -85,30 +85,42 @@ Describe 'Instance setup interruption harness' -Tag 'Interruption' {
                         '^GET /orgs/([^/]+)$' { return & $respond 200 (Get-GitHubApiFixture -Name orgs/get -Set @{ login = $Matches[1] }) }
                         '^GET /repos/([^/]+)/([^/]+)$' {
                             if (-not $S.Repos.ContainsKey("$($Matches[1])/$($Matches[2])")) { return & $notFound }
-                            return & $respond 200 @{ name = $Matches[2]; private = $true }
+                            return & $respond 200 (Get-GitHubApiFixture -Name repos/get -Set @{
+                                name = $Matches[2]; full_name = "$($Matches[1])/$($Matches[2])"
+                                'owner.login' = $Matches[1]; private = $S.Repos["$($Matches[1])/$($Matches[2])"].private
+                            })
                         }
                         '^POST /orgs/([^/]+)/repos$' {
                             $key = "$($Matches[1])/$($data.name)"
                             if ($S.Repos.ContainsKey($key)) { return & $respond 422 @{ message = 'Repository creation failed.' } }
                             $S.Repos[$key] = @{ private = $data.private }
-                            return & $respond 201 @{ name = $data.name; private = $data.private }
+                            return & $respond 201 (Get-GitHubApiFixture -Name repos/create-in-org -Set @{
+                                name = $data.name; full_name = $key; 'owner.login' = $Matches[1]; private = $data.private
+                            })
                         }
                         '^GET /orgs/([^/]+)/teams/([^/]+)$' {
                             if (-not $S.Teams.ContainsKey("$($Matches[1])/$($Matches[2])")) { return & $notFound }
-                            return & $respond 200 @{ slug = $Matches[2] }
+                            return & $respond 200 (Get-GitHubApiFixture -Name teams/get-by-name -Set @{
+                                name = $Matches[2]; slug = $Matches[2]; 'organization.login' = $Matches[1]
+                                privacy = $S.Teams["$($Matches[1])/$($Matches[2])"].privacy
+                            })
                         }
                         '^POST /orgs/([^/]+)/teams$' {
                             $key = "$($Matches[1])/$($data.name)"
                             if ($S.Teams.ContainsKey($key)) { return & $respond 422 @{ message = 'Validation Failed' } }
                             $S.Teams[$key] = @{ privacy = $data.privacy }
-                            return & $respond 201 @{ slug = $data.name }
+                            return & $respond 201 (Get-GitHubApiFixture -Name teams/create -Set @{
+                                name = $data.name; slug = $data.name; 'organization.login' = $Matches[1]; privacy = $data.privacy
+                            })
                         }
                         '^(GET|PUT) /orgs/([^/]+)/teams/([^/]+)/memberships/([^/]+)$' {
                             if (-not $S.Teams.ContainsKey("$($Matches[2])/$($Matches[3])")) { return & $notFound }
                             $key = "$($Matches[2])/$($Matches[3])/$($Matches[4])"
                             if ($Matches[1] -ceq 'PUT') { $S.Memberships[$key] = $data.role }
                             if (-not $S.Memberships.ContainsKey($key)) { return & $notFound }
-                            return & $respond 200 @{ role = $S.Memberships[$key]; state = 'active' }
+                            return & $respond 200 (Get-GitHubApiFixture -Name teams/get-membership-for-user-in-org -Set @{
+                                role = $S.Memberships[$key]; state = 'active'
+                            })
                         }
                         '^GET /orgs/[^/]+/actions/permissions$' { return & $respond 200 (Get-GitHubApiFixture -Name actions/get-github-actions-permissions-organization) }
                         '^GET /orgs/[^/]+/code-security/configurations$' { return & $respond 200 @() }
