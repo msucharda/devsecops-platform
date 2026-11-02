@@ -1,5 +1,7 @@
 # Workflow instance volají GitHub API přes GitHub App installation tokeny
 
+Stav: částečně nahrazeno [ADR 0019](0019-token-broker.md). Rozsah náhrady určuje ADR 0019; původní text rozhodnutí níže zůstává zachovaný.
+
 Workflow v repozitáři instance používají pro správu GitHubu jediný způsob autentizace: GitHub App installation tokeny (instalační tokeny GitHub App). Způsob autentizace sjednocujeme, identity ani oprávnění ne. Automatizované kontroly přesouváme na úroveň organizací tam, kde zachovají požadované vynucování proti týmům workloadů; nepodporované operace nepokrýváme dalším typem tokenu.
 
 ## Identity a oprávnění

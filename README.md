@@ -4,6 +4,7 @@ Modulární DevSecOps platforma pro zákazníky s GitHub Enterprise Cloud s data
 
 - [Glosář](CONTEXT.md)
 - [Rozhodnutí (ADR)](docs/adr/)
+- [Token broker — ADR 0019](docs/adr/0019-token-broker.md): přijaté rozhodnutí přírůstku 2, které částečně nahrazuje ADR 0016; migrace workflow teprve následuje.
 - [Příprava a akceptace referenční instance](docs/reference-instance.md)
 
 ## Struktura repozitáře
@@ -369,7 +370,7 @@ Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
 - JSON Schema z release validuje `instance.yaml`. Z manifestů modulů vygeneruje CI zdrojového repozitáře workflow s jobem pro každý modul (ADR 0014).
 - State backend je storage account v management subscription. Má zapnutý versioning, soft delete a lock. Každý modul má vlastní kontejner.
 - Každý modul má vlastní managed identity pro plan a pro apply (ADR 0015).
-- Pro správu GitHubu workflow používají GitHub App installation tokeny. GitHub App identity lze sdílet jen při shodných oprávněních, prostředcích a fázi (ADR 0016).
+- Pro správu GitHubu workflow používají GitHub App installation tokeny podle [ADR 0016](docs/adr/0016-github-app-installation-tokens-for-instance-workflows.md). Přijatý [ADR 0019](docs/adr/0019-token-broker.md) pro přírůstek 2 zavádí token broker a jednu App na modul a fázi; migrace workflow teprve následuje.
 - Automatický PR plan s přihlašovacími údaji smí běžet jen pro PR platformního týmu v repozitáři instance. Forky, jiní autoři ani PR vytvořené App je automaticky nedostanou. Po review a merge PR importu proběhne plan na chráněné větvi `main` před apply.
 - Běžný plan je read-only. Plan organizačních rulesetů běží v samostatném jobu s výslovnou výjimkou `Organization Administration: write`; toto oprávnění nesmějí dostat ostatní plan joby.
 - Workflow zapíše nepotvrzené ruční kroky do job summary jako varování. Platformní tým potvrdí ruční krok v `instance.yaml` přes PR.
