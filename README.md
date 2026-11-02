@@ -358,11 +358,12 @@ Modul `lz-vending` (subscription pro workload) přijde později.
 ## Pořadí implementace
 
 1. GitHub governance: `bootstrap`, `emu-identity`, `organizations`, `organization-roles`, `organization-rulesets`, `actions-catalog`, `enterprise-baseline`. Přírůstek končí testem teardownu.
-2. SLZ: `slz-core`, `slz-management`, `slz-connectivity`, `audit-streaming`.
-3. Dodávka: `shared-app-lz`, `runner-pool`, `required-workflows`, `image-promotion`, `workload-onboarding`.
-4. Copilot: `copilot-catalog`, `copilot-workstation`.
+2. Token broker: `token-broker`, klient, drift reporter a migrace workflow podle [ADR 0019](docs/adr/0019-token-broker.md).
+3. SLZ: `slz-core`, `slz-management`, `slz-connectivity`, `audit-streaming`.
+4. Dodávka: `shared-app-lz`, `runner-pool`, `required-workflows`, `image-promotion`, `workload-onboarding`.
+5. Copilot: `copilot-catalog`, `copilot-workstation`.
 
-Návrh přírůstků 2–4 se upřesní na začátku každého přírůstku.
+Návrh přírůstků 3–5 se upřesní na začátku každého přírůstku.
 
 ## Nasazení instance
 

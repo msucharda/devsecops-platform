@@ -73,6 +73,7 @@ Log Analytics workspace bude v resource group brokeru. Audit musí zahrnovat Aud
 - Vydání tokenu závisí na dostupnosti brokeru a Key Vaultu. Výpadek po omezeném retry zastaví job, nikoli přepne autentizaci.
 - Cache `jti` bez trvalého úložiště nezaručuje trvalou ochranu před replay. Audit intentu a výsledku neuchovává vydaný token; trvalý ledger zůstává odložený.
 - Přechod workflow proběhne postupně podle D12. Tento zápis ADR sám nemigruje klíče ani workflow a nedokazuje dostupnost na referenční instanci.
+- Pevný region `swedencentral` podle D9 je při jiném `regions.primary` v rozporu s definicí Primary region (primární region) v [glosáři](../../CONTEXT.md#platforma) a s [pravidly regionů](../../README.md#regiony): všechny moduly a management mají být v primárním regionu a SLZ má povolit primární a případně sekundární lokaci. **Otevřená otázka před nasazením v [#191](https://github.com/msucharda/devsecops-platform/issues/191):** jak sladit pevný region brokeru s primárním regionem instance a povolenými lokacemi SLZ? Uživatel musí před nasazením vyjasnit regionální politiku a případnou výjimku. D9 se tímto zápisem nemění.
 
 ## Ověřené podklady
 
@@ -91,6 +92,7 @@ Ověřeno proti veřejné dokumentaci 2. 11. 2026, bez živého PoC. Zdroje doka
 ## Neověřeno a rozpory podkladů
 
 - **Neověřeno:** `workflow_ref` a `event_name` u `pull_request` (`refs/pull/N/merge`) vůči D3. Ověření při implementaci nesmí tiše rozšířit povolené refs nebo events.
+- **Neověřeno:** `workflow_ref` a `event_name` u `pull_request_target`, který spouští PR plan ve [workflow nasazení](../../templates/instance/.github/workflows/deploy.yml). Při implementaci je nutné ověřit claims, rozlišení base a head ref při plánu nad head SHA PR a soulad s povoleným seznamem events podle D3. D3 se tímto zápisem nemění; ověření nesmí tiše rozšířit povolené refs nebo events.
 - **Neověřeno:** GA status Container Apps express, image podle digestu a `minReplicas`. Tyto body z #184 zůstávají k ověření při implementaci.
 - **Rozpor dokumentace s podkladem #184:** výzkum v #184 uvádí repliky 0–1. [Aktuální přehled](https://learn.microsoft.com/en-us/azure/container-apps/express-overview#supported-features) uvádí podporu více replik; [FAQ](https://learn.microsoft.com/en-us/azure/container-apps/express-faq#how-do-i-create-an-express-app) současně ukazuje příklad s `min-replicas 0` a `max-replicas 1`. Limit 0–1 proto není ověřený fakt. Rozpor zůstává k ověření při implementaci a nemění D1–D13.
 - **Nahlášeno výzkumem v #184, zde neověřeno:** express umí z Terraform providerů jen azapi. Výše uvedené ARM schéma potvrzuje AzAPI kontrakt, nikoli výlučnost podpory mezi providery.
