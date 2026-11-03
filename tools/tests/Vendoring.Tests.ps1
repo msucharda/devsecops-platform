@@ -297,13 +297,15 @@ jobs:
         Test-Path -LiteralPath $output | Should -BeFalse
     }
 
-    It 'rejects external Docker images <Image> in imported actions' -Tag 'Docker' -ForEach @(
-        @{ Image = 'docker://alpine:3' }
-        @{ Image = 'alpine:3' }
+    It 'rejects external Docker images <Image> for runtime <Runtime>' -Tag 'Docker' -ForEach @(
+        @{ Runtime = 'docker'; Image = 'docker://alpine:3' }
+        @{ Runtime = 'docker'; Image = 'alpine:3' }
+        @{ Runtime = 'Docker'; Image = 'docker://alpine:3' }
+        @{ Runtime = 'DOCKER'; Image = 'alpine:3' }
     ) {
         $source = Join-Path $TestDrive "docker-$([guid]::NewGuid().ToString('N'))"
         $null = New-Item -ItemType Directory -Path $source
-        "runs: { using: docker, image: $Image }" | Set-Content -LiteralPath (Join-Path $source 'action.yml')
+        "runs: { using: $Runtime, image: $Image }" | Set-Content -LiteralPath (Join-Path $source 'action.yml')
         $output = Join-Path $TestDrive "docker-output-$([guid]::NewGuid().ToString('N'))"
 
         { & $prepare -SourcePath $source -OutputPath $output -CatalogPath (Join-Path $fixtures 'catalog.json') `
