@@ -329,6 +329,7 @@ Add-WorkflowBlock @'
   validate:
     name: Validate configuration against the vendored release
     needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' }}
     runs-on: ubuntu-latest
     steps:
 '@
