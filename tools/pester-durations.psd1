@@ -56,7 +56,7 @@
     'CodeSecurityCoverage.Tests.ps1' = 2
     'AcceptanceRunEvidence.Tests.ps1' = 2
     'OrganizationRoles.Tests.ps1' = 2
-    'TeardownWorkflow.Tests.ps1' = 3
+    'TeardownWorkflow.Tests.ps1' = 6
     'GitHubAcceptance.Tests.ps1' = 2
     'WaitPullRequestChecks.Tests.ps1' = 2
     'OrganizationDrift.Tests.ps1' = 2
