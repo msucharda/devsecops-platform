@@ -639,6 +639,12 @@
             )
         }
         @{
+            Name = 'actions-policy-reset-conflict'
+            Tests = @(
+                @{ Path = 'tools/tests/ActionsPolicy.Tests.ps1'; FullName = @('*Set-ActionsPolicy*') }
+            )
+        }
+        @{
             Name = 'actions-policy-state'
             Tests = @(
                 @{ Path = 'tools/tests/ActionsPolicy.Tests.ps1'; FullName = @('*Get-ActionsPolicyStateViolation*') }
