@@ -330,6 +330,12 @@ Describe 'Teardown workflow generation' {
         @{ Case = 'effective reviewer access'; Pattern = 'P\u0159ed prvn\u00ed zm\u011bnou reviewer\u016f.*ka\u017ed\u00e9ho.*aktivn.*`read`' }
         @{ Case = 'unconditional deploy cancellation'; Pattern = '(?s)P\u0159ed ka\u017ed\u00fdm.*deploy\.yml.*completed.*workflow_dispatch' }
         @{ Case = 'abandoned run cancellation'; Pattern = '(?s)Pokud nouzov\u00fd b\u011bh nepokra\u010duje.*zru\u0161.*completed.*odeber' }
+        @{ Case = 'changes limited to empty reviewer teams'; Pattern = 'Uprav pouze.*pr\u00e1zdn.*`platform`.*`security`.*Ostatn.*beze zm\u011bny' }
+        @{ Case = 'default apply environment names'; Pattern = 'neuveden.*<module>-apply' }
+        @{ Case = 'restoration before the deployment block and reviewer changes'; Pattern = '(?s)obnovovac\u00ed PR.*vypni pouze workflow `deploy.yml`.*P\u0159ed prvn\u00ed zm\u011bnou reviewer\u016f' }
+        @{ Case = 'cancellation after disabling deployments'; Pattern = '(?s)Disable workflow.*completed.*Required reviewers' }
+        @{ Case = 'teardown remaining enabled'; Pattern = '`teardown.yml` mus\u00ed z\u016fstat zapnut\u00fd' }
+        @{ Case = 'the deployment block lasting through reviewer restoration'; Pattern = 'Blokaci deploy dr\u017e a\u017e do ov\u011b\u0159en\u00e9 obnovy p\u016fvodn\u00edch reviewer\u016f' }
     ) {
         $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
         $recovery = [regex]::Match($readme, '(?s)### Nouzov\u00e9 schv\u00e1len\u00ed opakovan\u00e9ho teardownu\r?\n(?<recovery>.*?)(?=\r?\n### |\z)')
