@@ -370,6 +370,29 @@ Describe 'Drift issue publication' {
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
         }
 
+        It 'preserves resolution evidence after replacing the body prefix: <Case>' -Tag 'SpecBodyEdit' -ForEach @(
+            @{ Case = 'prepended note'; Change = { param($i) $i.body = "Operator note.`n$($i.body)" } }
+            @{ Case = 'replaced body'; Change = { param($i) $i.body = 'Operator replaced the report.' } }
+            @{ Case = 'null body'; Change = { param($i) $i.body = $null } }
+            @{ Case = 'missing optional body'; Change = { param($i) $i.Remove('body') } }
+        ) {
+            $resolvedComments[0].body = "<!-- platform-drift-clean:${digest}:30:$('a' * 40) -->`n$(Get-TestDriftReport -RunNumber 30)"
+            & $Change $resolved
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+
+            { & $publisher @arguments } | Should -Throw '*report was already resolved*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rejects an unsupported closed issue body before reading its evidence' -Tag 'SpecBodyEdit' {
+            # Deliberately invalid: issue body is a string or null, never an array.
+            $resolved.body = @($resolved.body)
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+
+            { & $publisher @arguments } | Should -Throw '*issue body*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
         It 'rejects a legacy incoming report when only a clean comment retains resolution evidence' {
             $resolved.body = "$marker`nOperator replaced the old report."
 

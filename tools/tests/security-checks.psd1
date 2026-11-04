@@ -619,7 +619,7 @@
         }
         @{
             Name = 'drift-clean-evidence'
-            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*rejects unreadable clean-run evidence*', '*rejects stale clean evidence*', '*rejects a last drift report*', '*uses the existing read-only token*') })
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*rejects unreadable clean-run evidence*', '*rejects stale clean evidence*', '*rejects a last drift report*', '*uses the existing read-only token*', '*rejects an invalid current workflow context*', '*closes matching reports from a custom workflow*') })
         }
         @{
             Name = 'drift-current-main'

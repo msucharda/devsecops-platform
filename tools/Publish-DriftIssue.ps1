@@ -216,7 +216,10 @@ function Get-MatchingDriftIssue {
             -not ($item['user']['type'] -is [string] -and $item['user']['type'])) {
             throw 'GitHub issues API returned an issue author without a readable login and type.'
         }
-        if ($item['user']['login'] -ceq $botLogin -and $item['user']['type'] -ceq 'Bot' -and $isDriftReport) {
+        if ($item['user']['login'] -ceq $botLogin -and $item['user']['type'] -ceq 'Bot' -and ($isDriftReport -or $State -ceq 'closed')) {
+            if ($null -ne $item['body'] -and $item['body'] -isnot [string]) {
+                throw 'GitHub issues API returned an unsupported issue body.'
+            }
             Assert-IssueState -Issue $item -Operation GET -ExpectedState $State
             $item
         }
