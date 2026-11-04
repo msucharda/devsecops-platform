@@ -344,7 +344,7 @@ Podporovaný přechod inventory vede z `0.1.0-rc.5` nebo novějšího release ř
 
 Platformní tým musí nejdřív otevřít a sloučit PR, který aktualizuje vendoring i marker na `main` na cílový schválený release. PR musí zachovat `instance.yaml`, pokud tým samostatně neschválil jeho změnu.
 
-Aktuální import release připraví `.platform-bootstrap.json` automaticky a publikuje ho ve stejném import commitu jako `platform/**` a `platform/.vendoring.json`. Při přechodu na jiný release zachová `instance`, aktualizuje `releaseVersion` a nahradí celou mapu `files` hodnotami SHA-256 původních souborů ověřeného release. Hashování proběhne před vendoring přepisem odkazů na akce. Marker tak odpovídá verzi a původnímu obsahu cílového release. Následný bootstrap s `-UpgradeInventory` tento marker na chráněné `main` pouze ověří; sám ho nepřepisuje.
+Aktuální import release připraví `.platform-bootstrap.json` automaticky a publikuje ho ve stejném import commitu jako `platform/**` a `platform/.vendoring.json`. Při přechodu na jiný release zachová `instance`, aktualizuje `releaseVersion` a nahradí celou mapu `files` hodnotami SHA-256 původních souborů ověřeného release. Hashování používá původní zdrojové soubory, nikoli transformovaný výstup. Marker tak odpovídá verzi a původnímu obsahu cílového release. Následný bootstrap s `-UpgradeInventory` tento marker na chráněné `main` pouze ověří; sám ho nepřepisuje.
 
 Samotná shoda markeru s lokální kopií nedokazuje původ release. U App importního PR se deploy kontrola markeru a původu spustí až po merge na `main`, nikoli v PR běhu, který autorizace odmítla. Reviewer musí ověřit, že importní PR obsahuje marker i odpovídající `platform/`. Marker ručně nepřepočítávej z vendorované kopie ani jím nezakrývej nesoulad.
 
