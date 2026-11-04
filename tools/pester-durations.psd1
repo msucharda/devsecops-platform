@@ -15,6 +15,8 @@
     'LocalCiGate.Tests.ps1' = 40
     'Bootstrap.Tests.ps1' = 25
     'VendoringPullRequest.Tests.ps1' = 24
+    # Source CI run 41909019436: 50.1317 seconds, rounded up.
+    'TeardownMutation.Tests.ps1' = 51
     # Source CI run 40583010425: 22.597 seconds.
     'MutationRunner.Tests.ps1' = 23
     'Organizations.Tests.ps1' = 18
