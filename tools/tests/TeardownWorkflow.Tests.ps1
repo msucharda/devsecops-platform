@@ -21,6 +21,12 @@ BeforeAll {
         param([Parameter(Mandatory)][string] $Job)
         @($workflow.jobs[$Job].steps | Where-Object { $_.Contains('run') } | ForEach-Object { $_.run })
     }
+
+    function Get-DestroyPhaseNode {
+        param([Parameter(Mandatory)][string] $Job)
+        if ($Job -ceq 'destroy_enterprise_baseline_code_security') { return 'enterprise-baseline:code-security' }
+        $Job.Substring('destroy_'.Length).Replace('_', '-')
+    }
 }
 
 Describe 'Teardown workflow generation' {
@@ -143,8 +149,7 @@ Describe 'Teardown workflow generation' {
             $targets.Count | Should -Be 1
             $module = $targets[0]
             $job.needs | Should -Contain $other
-            $key = $other.Substring('destroy_'.Length).Replace('_', '-')
-            if ($other -eq 'destroy_enterprise_baseline_code_security') { $key = 'enterprise-baseline:code-security' }
+            $key = Get-DestroyPhaseNode -Job $other
             $job.if | Should -Match ([regex]::Escape("(needs.$other.result == 'success' || (needs.$other.result == 'skipped' && !contains(fromJSON(needs.select.outputs.phaseNodes), '$key')))"))
             $realText.IndexOf("  ${other}:") | Should -BeLessThan $realText.IndexOf('  destroy_emu_identity:')
         }
@@ -349,15 +354,17 @@ Describe 'Teardown identity approval boundary' {
                 [bool] $Cancelled = $false
             )
 
+            $selectedNodes = $Selected
+            $jobResults = $Results
             $condition = $identity.if -replace '^\$\{\{\s*|\s*\}\}$', ''
             $condition = $condition.Replace('cancelled()', ('$' + $Cancelled.ToString().ToLowerInvariant()))
             $condition = [regex]::Replace($condition, "contains\(fromJSON\(needs.select.outputs.phaseNodes\), '([^']+)'\)", {
                 param($match)
-                '$' + ($Selected -ccontains $match.Groups[1].Value).ToString().ToLowerInvariant()
+                '$' + ($selectedNodes -ccontains $match.Groups[1].Value).ToString().ToLowerInvariant()
             })
             $condition = [regex]::Replace($condition, 'needs\.([a-z_]+)\.result', {
                 param($match)
-                "'$($Results[$match.Groups[1].Value])'"
+                "'$($jobResults[$match.Groups[1].Value])'"
             })
             $condition = $condition.Replace('==', '-ceq').Replace('&&', '-and').Replace('||', '-or').Replace('!', '-not ')
             & ([scriptblock]::Create($condition))
@@ -398,8 +405,7 @@ Describe 'Teardown identity approval boundary' {
             $selectedNodes = @('emu-identity')
             foreach ($job in $otherDestroyJobs) {
                 if ($job -ceq $interruptedJob -and -not $Selected) { continue }
-                $selectedNodes += if ($job -ceq 'destroy_enterprise_baseline_code_security') { 'enterprise-baseline:code-security' }
-                else { $job.Substring('destroy_'.Length).Replace('_', '-') }
+                $selectedNodes += Get-DestroyPhaseNode -Job $job
             }
 
             Test-IdentityCondition -Results $results -Selected $selectedNodes |
