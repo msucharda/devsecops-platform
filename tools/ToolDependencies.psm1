@@ -1,6 +1,29 @@
 #Requires -Version 7.4
 Set-StrictMode -Version Latest
 
+function Invoke-DependencyTransfer {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][scriptblock] $Action,
+        [Parameter(Mandatory)][int] $MaxAttempts,
+        [Parameter(Mandatory)][int] $RetryDelaySeconds,
+        [Parameter(Mandatory)][string] $Dependency
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Action
+            return
+        }
+        catch {
+            if ($attempt -eq $MaxAttempts) { throw }
+            $delay = $RetryDelaySeconds * $attempt
+            Write-Warning "Failed to download $Dependency (attempt $attempt/$MaxAttempts): $($_.Exception.Message). Retrying in $delay seconds."
+            Start-Sleep -Seconds $delay
+        }
+    }
+}
+
 # security-check: tool-package-sha256
 function Assert-ToolPackage {
     [CmdletBinding()]
@@ -110,14 +133,14 @@ function Get-ToolDependencyPath {
 function Get-ToolBinaryPackage {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('Actionlint', 'TFLint', 'Terraform')][string] $Name,
+        [Parameter(Mandatory)][ValidateSet('Actionlint', 'TFLint', 'Terraform', 'Trivy')][string] $Name,
         [string] $ToolsPath = $PSScriptRoot
     )
 
     if ((-not $IsWindows -and -not $IsLinux) -or
         [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.InteropServices.Architecture]::X64 -or
-        ($Name -eq 'TFLint' -and -not $IsLinux)) {
-        throw "$Name binary installation supports $(if ($Name -eq 'TFLint') { 'Linux' } else { 'Windows and Linux' }) amd64 only."
+        ($Name -in @('TFLint', 'Trivy') -and -not $IsLinux)) {
+        throw "$Name binary installation supports $(if ($Name -in @('TFLint', 'Trivy')) { 'Linux' } else { 'Windows and Linux' }) amd64 only."
     }
     $requirements = Import-PowerShellDataFile (Join-Path $ToolsPath 'requirements.psd1')
     $pin = $requirements.Binaries[$Name]
@@ -127,11 +150,13 @@ function Get-ToolBinaryPackage {
         'Actionlint' { "actionlint_$($pin.Version)_$platform.$(if ($IsWindows) { 'zip' } else { 'tar.gz' })" }
         'TFLint' { 'tflint_linux_amd64.zip' }
         'Terraform' { "terraform_$($pin.Version)_$platform.zip" }
+        'Trivy' { "trivy_$($pin.Version)_Linux-64bit.tar.gz" }
     }
     $uri = switch ($Name) {
         'Actionlint' { "https://github.com/rhysd/actionlint/releases/download/v$($pin.Version)/$archive" }
         'TFLint' { "https://github.com/terraform-linters/tflint/releases/download/v$($pin.Version)/$archive" }
         'Terraform' { "https://releases.hashicorp.com/terraform/$($pin.Version)/$archive" }
+        'Trivy' { "https://github.com/aquasecurity/trivy/releases/download/v$($pin.Version)/$archive" }
     }
     [pscustomobject]@{
         Name = $Name; Version = $pin.Version; Archive = $archive; Uri = $uri; Sha256 = $pin[$key]
@@ -202,7 +227,7 @@ function Expand-ToolBinary {
 function Get-ToolBinaryPath {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('Actionlint', 'TFLint', 'Terraform')][string] $Name,
+        [Parameter(Mandatory)][ValidateSet('Actionlint', 'TFLint', 'Terraform', 'Trivy')][string] $Name,
         [Parameter(Mandatory)][string] $DestinationPath,
         [string] $ToolsPath = $PSScriptRoot
     )
@@ -225,4 +250,4 @@ function Test-PlatformReleaseFile {
 }
 
 Export-ModuleMember -Function Assert-ToolPackage, Assert-ToolModulePayload, Expand-ToolPackage, Get-ToolDependencyPath, Test-PlatformReleaseFile,
-    Get-ToolBinaryPackage, Expand-ToolBinary, Get-ToolBinaryPath
+    Get-ToolBinaryPackage, Expand-ToolBinary, Get-ToolBinaryPath, Invoke-DependencyTransfer

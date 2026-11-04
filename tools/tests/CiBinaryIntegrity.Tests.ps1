@@ -3,6 +3,60 @@ BeforeAll {
 }
 
 Describe 'CI binary integrity before execution' {
+    It 'stops after four failed connections without publishing a binary' {
+        Get-Module ToolDependencies -All | Remove-Module -Force
+        Import-Module (Join-Path $tools 'ToolDependencies.psm1')
+        Mock Start-Sleep {} -ModuleName ToolDependencies
+        Mock Invoke-WebRequest {
+            Set-Content $OutFile 'partial download'
+            throw [Net.Http.HttpRequestException]::new('Connection failed')
+        }
+        $oldTemp = $env:RUNNER_TEMP
+        $oldGitHubPath = $env:GITHUB_PATH
+        try {
+            $env:RUNNER_TEMP = $TestDrive
+            $env:GITHUB_PATH = Join-Path $TestDrive 'failed-github-path'
+            { & (Join-Path $tools 'Install-CiBinary.ps1') -Name Actionlint } | Should -Throw '*Connection failed*'
+            Should -Invoke Invoke-WebRequest -Times 4 -Exactly
+            Should -Invoke Start-Sleep -Times 3 -Exactly -ModuleName ToolDependencies
+            Test-Path $env:GITHUB_PATH | Should -BeFalse
+            @(Get-ChildItem $TestDrive -Filter 'platform-actionlint-*') | Should -BeNullOrEmpty
+        }
+        finally { $env:RUNNER_TEMP = $oldTemp; $env:GITHUB_PATH = $oldGitHubPath }
+    }
+
+    It 'retries a transient connection failure and verifies the recovered download before publication' {
+        $root = Join-Path $TestDrive 'retry-tools'
+        $payload = Join-Path $TestDrive 'retry-payload'
+        $null = New-Item -ItemType Directory -Path $root, $payload
+        Copy-Item (Join-Path $tools 'Install-CiBinary.ps1'), (Join-Path $tools 'ToolDependencies.psm1') $root
+        Set-Content (Join-Path $payload 'actionlint') 'verified fixture; never executed'
+        $fixtureArchive = Join-Path $TestDrive 'retry.zip'
+        [IO.Compression.ZipFile]::CreateFromDirectory($payload, $fixtureArchive)
+        $hash = (Get-FileHash $fixtureArchive).Hash
+        $hashKey = if ($IsWindows) { 'WindowsAmd64ArchiveSha256' } else { 'LinuxAmd64ArchiveSha256' }
+        Set-Content (Join-Path $root 'requirements.psd1') "@{ Binaries=@{ Actionlint=@{ Version='1.7.7'; $hashKey='$hash' } } }"
+        $state = @{ Attempts = 0 }
+        Get-Module ToolDependencies -All | Remove-Module -Force
+        Import-Module (Join-Path $root 'ToolDependencies.psm1') -Force
+        Mock Start-Sleep {} -ModuleName ToolDependencies
+        Mock Invoke-WebRequest {
+            $state.Attempts++
+            if ($state.Attempts -eq 1) {
+                Set-Content $OutFile 'partial download'
+                throw [Net.Http.HttpRequestException]::new('Connection failed (curl exit 7 equivalent)')
+            }
+            Test-Path $OutFile | Should -BeFalse
+            Copy-Item $fixtureArchive $OutFile
+        }
+        & (Join-Path $root 'Install-CiBinary.ps1') -Name Actionlint -Local
+        $cached = @(Get-ChildItem (Join-Path $root '.dependencies') -Recurse -File)
+        $cached.Count | Should -Be 1
+        (Get-FileHash $cached[0].FullName).Hash | Should -BeExactly $hash
+        Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+        Should -Invoke Start-Sleep -Times 1 -Exactly -ModuleName ToolDependencies
+    }
+
     It 'restores actionlint from a verified cached archive without running or trusting a cached executable' {
         $root = Join-Path $TestDrive 'actionlint-tools'
         $payload = Join-Path $TestDrive 'actionlint-payload'
@@ -19,6 +73,9 @@ Describe 'CI binary integrity before execution' {
         $hash = (Get-FileHash $fixtureArchive).Hash
         $hashKey = if ($IsWindows) { 'WindowsAmd64ArchiveSha256' } else { 'LinuxAmd64ArchiveSha256' }
         Set-Content (Join-Path $root 'requirements.psd1') "@{ Binaries=@{ Actionlint=@{ Version='1.7.7'; $hashKey='$hash' } } }"
+        Get-Module ToolDependencies -All | Remove-Module -Force
+        Import-Module (Join-Path $root 'ToolDependencies.psm1') -Force
+        Mock Start-Sleep {} -ModuleName ToolDependencies
         Mock Invoke-WebRequest {
             Set-Content $OutFile 'interrupted download'
             throw 'Download interrupted before publication'
@@ -37,13 +94,98 @@ Describe 'CI binary integrity before execution' {
         $fresh = Get-ToolBinaryPath -Name Actionlint -ToolsPath $root -DestinationPath (Join-Path $TestDrive 'actionlint-fresh')
         Get-Content $fresh | Should -BeExactly 'fixture executable; must not run'
         & (Join-Path $root 'Install-CiBinary.ps1') -Name Actionlint -Local
-        Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+        Should -Invoke Invoke-WebRequest -Times 5 -Exactly
         Set-Content $package.CachePath 'tampered cache'
         { Get-ToolBinaryPath -Name Actionlint -ToolsPath $root -DestinationPath (Join-Path $TestDrive 'rejected') } |
             Should -Throw '*SHA256 mismatch for Actionlint*'
         { & (Join-Path $root 'Install-CiBinary.ps1') -Name Actionlint -Local } |
             Should -Throw '*SHA256 mismatch for Actionlint*'
         Test-Path (Join-Path $TestDrive 'rejected') | Should -BeFalse
+    }
+
+    Describe 'Pinned Trivy installation' -Skip:(-not $IsLinux) {
+        BeforeEach {
+            $oldTemp = $env:RUNNER_TEMP
+            $oldGitHubPath = $env:GITHUB_PATH
+            $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $root
+            Copy-Item (Join-Path $tools 'Install-CiBinary.ps1'), (Join-Path $tools 'ToolDependencies.psm1') $root
+            $fixtureArchive = Join-Path $root 'fixture.tar.gz'
+            $file = [IO.File]::Create($fixtureArchive)
+            $gzip = [IO.Compression.GZipStream]::new($file, [IO.Compression.CompressionMode]::Compress)
+            $writer = [System.Formats.Tar.TarWriter]::new($gzip)
+            $entry = [System.Formats.Tar.PaxTarEntry]::new([System.Formats.Tar.TarEntryType]::RegularFile, 'trivy')
+            $entry.DataStream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes('verified fixture; never executed'))
+            try { $writer.WriteEntry($entry) }
+            finally { $entry.DataStream.Dispose(); $writer.Dispose(); $gzip.Dispose(); $file.Dispose() }
+            $hash = (Get-FileHash $fixtureArchive).Hash
+            Set-Content (Join-Path $root 'requirements.psd1') "@{ Binaries=@{ Trivy=@{ Version='0.72.0'; LinuxAmd64ArchiveSha256='$hash' } } }"
+            Get-Module ToolDependencies -All | Remove-Module -Force
+            Import-Module (Join-Path $root 'ToolDependencies.psm1') -Force
+            Mock Start-Sleep {} -ModuleName ToolDependencies
+            Mock Invoke-WebRequest { Copy-Item $fixtureArchive $OutFile }
+            $env:RUNNER_TEMP = $root
+            $env:GITHUB_PATH = Join-Path $root 'github-path'
+        }
+
+        AfterEach {
+            $env:RUNNER_TEMP = $oldTemp
+            $env:GITHUB_PATH = $oldGitHubPath
+        }
+
+        It 'pins the version, release URL and archive SHA256' {
+            $package = Get-ToolBinaryPackage -Name Trivy -ToolsPath $tools
+            $package.Version | Should -BeExactly '0.72.0'
+            $package.Uri | Should -BeExactly 'https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz'
+            $package.Sha256 | Should -BeExactly 'bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea'
+        }
+
+        It 'recovers from a transient DNS failure before publishing a verified executable' {
+            $state = @{ Attempts = 0 }
+            Mock Invoke-WebRequest {
+                $state.Attempts++
+                if ($state.Attempts -lt 3) {
+                    Set-Content $OutFile 'partial download'
+                    throw [Net.Http.HttpRequestException]::new('DNS resolution failed (curl exit 6 equivalent)')
+                }
+                Test-Path $OutFile | Should -BeFalse
+                Copy-Item $fixtureArchive $OutFile
+            }
+            & (Join-Path $root 'Install-CiBinary.ps1') -Name Trivy
+            $directory = (Get-Content $env:GITHUB_PATH -Raw).Trim()
+            Get-Content (Join-Path $directory 'trivy') | Should -BeExactly 'verified fixture; never executed'
+            Should -Invoke Invoke-WebRequest -Times 3 -Exactly -ParameterFilter {
+                $Uri -eq 'https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz' -and
+                $ConnectionTimeoutSeconds -eq 30 -and $OperationTimeoutSeconds -eq 120
+            }
+            Should -Invoke Start-Sleep -Times 1 -Exactly -ModuleName ToolDependencies -ParameterFilter { $Seconds -eq 15 }
+            Should -Invoke Start-Sleep -Times 1 -Exactly -ModuleName ToolDependencies -ParameterFilter { $Seconds -eq 30 }
+        }
+
+        It 'fails after four attempts and removes partial downloads without publishing PATH' {
+            Mock Invoke-WebRequest {
+                Set-Content $OutFile 'partial download'
+                throw [Net.Http.HttpRequestException]::new('Connection failed')
+            }
+            { & (Join-Path $root 'Install-CiBinary.ps1') -Name Trivy } | Should -Throw '*Connection failed*'
+            Should -Invoke Invoke-WebRequest -Times 4 -Exactly
+            Should -Invoke Start-Sleep -Times 3 -Exactly -ModuleName ToolDependencies
+            Test-Path $env:GITHUB_PATH | Should -BeFalse
+            @(Get-ChildItem $root -Filter 'platform-trivy-*') | Should -BeNullOrEmpty
+        }
+
+        It 'rejects a hash mismatch after a recovered download without retrying integrity errors' {
+            $state = @{ Attempts = 0 }
+            Mock Invoke-WebRequest {
+                $state.Attempts++
+                if ($state.Attempts -eq 1) { throw [Net.Http.HttpRequestException]::new('Connection failed') }
+                Set-Content $OutFile 'tampered archive'
+            }
+            { & (Join-Path $root 'Install-CiBinary.ps1') -Name Trivy } | Should -Throw '*SHA256 mismatch for Trivy*'
+            Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+            Test-Path $env:GITHUB_PATH | Should -BeFalse
+            @(Get-ChildItem $root -Filter 'platform-trivy-*') | Should -BeNullOrEmpty
+        }
     }
 
     It 'extracts a regular executable from the Linux tar.gz format without executing it' {

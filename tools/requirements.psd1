@@ -22,6 +22,10 @@
             Version = '0.60.0'
             LinuxAmd64ArchiveSha256 = '3476ceedcf0c4f9f2bed35e92988e1411bec2caa543c9387bffaa720df9efaf7'
         }
+        Trivy = @{
+            Version = '0.72.0'
+            LinuxAmd64ArchiveSha256 = 'bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea'
+        }
         Actionlint = @{
             Version = '1.7.7'
             LinuxAmd64ArchiveSha256 = '023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757'

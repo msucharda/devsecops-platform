@@ -92,6 +92,7 @@
         'WorkflowPreflight.Tests.ps1'
     )
     Interruption = @(
+        'CiBinaryIntegrity.Interruption.Tests.ps1'
         'GitHubTokenIssuance.Interruption.Tests.ps1'
         'Acceptance.Interruption.Tests.ps1'
         'ActionsCatalog.Interruption.Tests.ps1'

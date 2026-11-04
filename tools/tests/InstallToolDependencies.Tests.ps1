@@ -1,5 +1,15 @@
 BeforeAll {
     $script:sourceTools = Split-Path $PSScriptRoot -Parent
+    $nestedDirectory = Join-Path $TestDrive 'nested-dependency'
+    $null = New-Item -ItemType Directory -Path $nestedDirectory
+    $nestedPath = Join-Path $nestedDirectory 'ToolDependencies.psm1'
+    Copy-Item (Join-Path $script:sourceTools 'ToolDependencies.psm1') $nestedPath
+    # Other suites can leave dependency modules loaded in a parent module's private scope.
+    $script:nestedModule = New-Module -Name NestedDependencyFixture -ScriptBlock {
+        param($Path)
+        Import-Module $Path
+    } -ArgumentList $nestedPath
+    Import-Module $script:nestedModule
     function Get-PSRepository {
         [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Offline package transport stub.')]
         [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Matches the public PowerShellGet command.')]
@@ -42,6 +52,10 @@ BeforeAll {
     }
 }
 
+AfterAll {
+    Remove-Module $script:nestedModule -Force
+}
+
 Describe 'Tool dependency installer process errors' {
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot 'InstallToolDependenciesStub.psm1') -Force
@@ -62,6 +76,7 @@ Describe 'Tool dependency installer process errors' {
 Describe 'Tool dependency installation' {
     BeforeEach {
         $fixture = New-InstallerFixture -Root (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')))
+        Get-Module ToolDependencies -All | Remove-Module -Force
         Mock Invoke-WebRequest { Copy-Item -LiteralPath $fixture.Package -Destination $OutFile }
         Mock Save-Module {
             $destination = Join-Path $Path "$Name/$RequiredVersion"
@@ -138,12 +153,16 @@ Describe 'Tool dependency installation' {
         $state = @{ Attempts = 0 }
         Mock Invoke-WebRequest {
             $state.Attempts++
+            if ($state.Attempts -eq 1) {
+                # The public installer reloads the module before invoking the transport.
+                Mock Start-Sleep {} -ModuleName ToolDependencies
+            }
             if ($state.Attempts -lt 3) { throw 'Transient download failure' }
             Copy-Item $fixture.Package $OutFile
         }
         & $fixture.Installer -Development
-        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 15 }
-        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 30 }
+        Should -Invoke Start-Sleep -Times 1 -Exactly -ModuleName ToolDependencies -ParameterFilter { $Seconds -eq 15 }
+        Should -Invoke Start-Sleep -Times 1 -Exactly -ModuleName ToolDependencies -ParameterFilter { $Seconds -eq 30 }
     }
 
     It 'stops after the configured download attempt limit' {

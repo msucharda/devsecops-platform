@@ -1,7 +1,7 @@
 #Requires -Version 7.4
 [CmdletBinding()]
 param(
-    [ValidateSet('TFLint', 'Actionlint', 'Terraform')][string] $Name = 'TFLint',
+    [ValidateSet('TFLint', 'Actionlint', 'Terraform', 'Trivy')][string] $Name = 'TFLint',
     [switch] $Local
 )
 
@@ -20,7 +20,10 @@ try {
         return
     }
     $archive = Join-Path $directory $package.Archive
-    Invoke-WebRequest -Uri $package.Uri -OutFile $archive -ErrorAction Stop
+    Invoke-DependencyTransfer -Dependency "$Name $($package.Version)" -MaxAttempts 4 -RetryDelaySeconds 15 -Action {
+        if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
+        Invoke-WebRequest -Uri $package.Uri -OutFile $archive -ConnectionTimeoutSeconds 30 -OperationTimeoutSeconds 120 -ErrorAction Stop
+    }
     Assert-ToolPackage -Path $archive -Sha256 $package.Sha256 -Name $Name
     if ($Local) {
         [IO.File]::Move($archive, $package.CachePath, $true)
