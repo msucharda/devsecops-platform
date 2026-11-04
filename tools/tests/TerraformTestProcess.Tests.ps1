@@ -47,6 +47,32 @@ Write-Output 'healthy child'
         $env:PSModuleAnalysisCachePath | Should -BeExactly (Join-Path $sharedCache 'ModuleAnalysisCache')
     }
 
+    It 'returns failed child diagnostics when native command errors are terminating' {
+        $previousNativePreference = $global:PSNativeCommandUseErrorActionPreference
+        $previousErrorPreference = $global:ErrorActionPreference
+        try {
+            # Imported modules inherit global preferences, not Pester's test scope.
+            $global:PSNativeCommandUseErrorActionPreference = $true
+            $global:ErrorActionPreference = 'Stop'
+            $result = Invoke-TerraformTestProcess -Executable $pwsh -ArgumentList @(
+                '-NoProfile', '-NonInteractive', '-Command',
+                '[Console]::Error.WriteLine("injected child crash diagnostic"); exit 134'
+            ) -CacheRoot $cacheRoot
+
+            $result.ExitCode | Should -Be 134
+            $result.Output | Should -Match 'injected child crash diagnostic'
+            Test-Path -LiteralPath $result.CachePath -PathType Container | Should -BeTrue
+            $env:XDG_CACHE_HOME | Should -BeExactly $sharedCache
+            $env:PSModuleAnalysisCachePath | Should -BeExactly (Join-Path $sharedCache 'ModuleAnalysisCache')
+            $global:PSNativeCommandUseErrorActionPreference | Should -BeTrue
+            $global:ErrorActionPreference | Should -BeExactly 'Stop'
+        }
+        finally {
+            $global:PSNativeCommandUseErrorActionPreference = $previousNativePreference
+            $global:ErrorActionPreference = $previousErrorPreference
+        }
+    }
+
     It 'passes private caches through a native parent to its pwsh descendant without changing module search paths' {
         $script = Join-Path $TestDrive 'native-parent.ps1'
         Set-Content -LiteralPath $script -Value @'
