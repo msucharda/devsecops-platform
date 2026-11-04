@@ -50,6 +50,8 @@
     'DeadlineHttp.Tests.ps1' = 3
     'RulesetBypassVisibility.Tests.ps1' = 3
     'AppInstallationContract.Tests.ps1' = 2
+    # Source CI run 41803824553: 1.9166 seconds, rounded up.
+    'ActionsPolicy.Tests.ps1' = 2
     'DriftReport.Tests.ps1' = 3
     'CodeSecurityCoverage.Tests.ps1' = 2
     'AcceptanceRunEvidence.Tests.ps1' = 2

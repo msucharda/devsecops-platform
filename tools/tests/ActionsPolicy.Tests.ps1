@@ -174,6 +174,24 @@ Describe 'Actions policy' {
             (Get-StubWrite).Count | Should -Be 1
         }
 
+        It 'does not overwrite a newer restriction between the fallback read and write' {
+            $stub.Actions['allowed_actions'] = 'local_only'
+            $stub.Override['setActions'] = {
+                if ($parsed['allowed_actions'] -ceq 'all') { return @{ Status = 409; Body = '{"message":"Conflict"}' } }
+                $stub.Actions['allowed_actions'] = 'selected'
+                foreach ($key in $parsed.Keys) { $stub.Actions[$key] = $parsed[$key] }
+                @{ Status = 204; Body = '' }
+            }
+
+            { Set-ActionsPolicy @target -Policy $defaultPolicy -Reset } | Should -Throw '*allowed actions policy*not local_only*'
+
+            $stub.Actions['allowed_actions'] | Should -BeExactly 'selected'
+            $writes = Get-StubWrite
+            $writes[-1].Body.Contains('allowed_actions') | Should -BeFalse
+            Set-ActionsPolicy @target -Policy $defaultPolicy -Reset
+            $stub.Actions['allowed_actions'] | Should -BeExactly 'selected'
+        }
+
         It 'rejects a conflicting reset with <Case> allowed_actions' -ForEach @(
             @{ Case = 'unrestricted'; Value = 'all' }
             @{ Case = 'upper-case local'; Value = 'LOCAL_ONLY' }

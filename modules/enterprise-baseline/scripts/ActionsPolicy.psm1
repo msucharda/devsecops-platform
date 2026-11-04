@@ -230,7 +230,7 @@ function Set-ActionsPolicy {
         }
         catch {
             $managed['allowed_actions'] = Get-ActionsPolicyResetRestriction -ApiUrl $ApiUrl -Organization $Organization -Policy $managed -Failure $_ -Reset:$Reset
-            $body['allowed_actions'] = $managed['allowed_actions']
+            $body.Remove('allowed_actions')
             Invoke-ActionsPolicyApi -ApiUrl $ApiUrl -Method PUT -Path "/orgs/$Organization/actions/permissions" -Body $body
         }
     }
