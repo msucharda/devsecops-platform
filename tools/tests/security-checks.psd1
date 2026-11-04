@@ -4,6 +4,10 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'deployment-plan-change-output'
+            Tests = @(@{ Path = 'tools/tests/DeploymentSummary.Tests.ps1'; FullName = @('*publishes a complete plan decision*', '*rejects plan change output*') })
+        }
+        @{
             Name = 'setup-manual-instance-name'
             Tests = @(@{
                 Path = 'tools/tests/InstanceSetupManualSteps.Tests.ps1'

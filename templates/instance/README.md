@@ -17,7 +17,7 @@ Změnu App oprávnění musí navíc schválit security tým podle ADR 0016. Boo
 | `drift-report` | Bez schválení, jen z `main`. Samostatná App s právě `issues: write` jen pro repozitář instance. Žádná Azure identita. Job `report_drift` v `drift.yml` jí otevře nebo aktualizuje issue driftu. |
 | `vendoring-action-import`, `vendoring-release-import` | Jen z `main`, schválení platformním týmem, bez bypassu. Dvě oddělené Apps s `contents: write` a `pull_requests: write`, selected scope pouze v příslušné cílové organizaci. Žádné Azure nebo Microsoft Graph credentials. |
 | `vendoring-source` | Jen z `main`. Pro veřejný import prázdný; volitelná samostatná App s `contents: read` a `attestations: read` na jediný deklarovaný privátní zdroj. |
-| `approve-apply` | Jedno schválení platformním týmem pro celý běh. Žádné secrets. |
+| `approve-apply` | Jedno schválení platformním týmem pro celý běh, jen pokud alespoň jeden vybraný plan má změny. Bez změn se approval i apply přeskočí. Žádné secrets. |
 | `<module>-apply` | Vlastní apply identity a App. Po společném gate bez dalšího schválení, kromě `enterprise-baseline-apply` a `organization-rulesets-apply`, které vyžadují security tým. |
 | `approve-teardown-platform`, `teardown` | Navazující schválení platformním a potom security týmem. Žádné secrets, variables ani OIDC vazby. Používá je workflow `teardown`. |
 

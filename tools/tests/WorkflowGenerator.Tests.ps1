@@ -87,8 +87,10 @@ BeforeAll {
             $needs[$id] = @{ result = $result; outputs = @{} }
         }
         $needs.authorize.outputs.allowed = 'true'
+        $needs.plan_complete.outputs.changes = 'true'
         $needs.select.outputs.modules = '["emu-identity","organizations"]'
         $needs.select.outputs.phaseNodes = '["emu-identity","organizations"]'
+        $needs.select.outputs.rulesetModules = '[]'
         return @{
             cancelled = $false
             github = @{ ref = 'refs/heads/main'; event_name = 'push' }
@@ -249,7 +251,16 @@ Describe 'Deployment workflow generation' {
         $workflow.on.ContainsKey('schedule') | Should -BeFalse
         $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
         $workflow.jobs.ContainsKey('report_drift') | Should -BeFalse
-        @($workflow.jobs.Values | Where-Object { $_.ContainsKey('outputs') -and $_.outputs.ContainsKey('changes') }).Count | Should -Be 0
+        foreach ($id in @($workflow.jobs.Keys | Where-Object { $_ -match '^(module_|ruleset_plan_)' })) {
+            $workflow.jobs[$id].outputs.changes | Should -Be '${{ steps.run.outputs.changes }}'
+            $run = $workflow.jobs[$id].steps | Where-Object { $_['name'] -eq 'Run module' }
+            $run.id | Should -Be 'run'
+            $run.run | Should -Match '-GitHubOutputPath \$env:GITHUB_OUTPUT$'
+        }
+        $workflow.jobs.plan_complete.outputs.changes | Should -Be '${{ steps.summary.outputs.changes }}'
+        $summary = $workflow.jobs.plan_complete.steps | Where-Object { $_['name'] -eq 'Report plan status without deployment credentials' }
+        $summary.id | Should -Be 'summary'
+        $summary.run | Should -Match '-GitHubOutputPath \$env:GITHUB_OUTPUT$'
     }
 
     It 'rejects write permissions in the ordinary plan before writing a workflow' {
@@ -295,7 +306,7 @@ Describe 'Deployment workflow generation' {
         $workflow.jobs.plan_complete.needs | Should -Contain 'module_enterprise_baseline'
         $workflow.jobs.module_enterprise_baseline.if | Should -Match "contains\(fromJSON\(needs.select.outputs.phaseNodes\), 'enterprise-baseline'\)"
         $workflow.jobs.approve_apply.needs | Should -Be @('authorize', 'select', 'plan_complete')
-        $workflow.jobs.approve_apply.if | Should -Be '${{ !cancelled() && needs.authorize.result == ''success'' && needs.select.result == ''success'' && needs.plan_complete.result == ''success'' && github.ref == ''refs/heads/main'' && github.event_name != ''pull_request_target'' && needs.authorize.outputs.allowed == ''true'' && needs.select.outputs.phaseNodes != ''[]'' }}'
+        $workflow.jobs.approve_apply.if | Should -Be '${{ !cancelled() && needs.authorize.result == ''success'' && needs.select.result == ''success'' && needs.plan_complete.result == ''success'' && github.ref == ''refs/heads/main'' && github.event_name != ''pull_request_target'' && needs.authorize.outputs.allowed == ''true'' && needs.select.outputs.phaseNodes != ''[]'' && needs.plan_complete.outputs.changes == ''true'' }}'
     }
 
     It 'requires successful approval and the own plan for every apply job in <Graph>' -ForEach @(
@@ -325,6 +336,59 @@ Describe 'Deployment workflow generation' {
             $output = Join-Path $TestDrive 'subset-conditions.yml'
             & $generator -OutputPath $output
             $subsetWorkflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        }
+
+        It 'skips apply approval when all selected plans report no changes' {
+            $context = Get-SubsetWorkflowContext $subsetWorkflow
+            $context.needs.plan_complete.outputs.changes = 'false'
+
+            $result = Get-WorkflowConditionResult $subsetWorkflow 'approve_apply' $context
+
+            $result.Allowed | Should -BeFalse
+            $result.RejectedBy | Should -Be "needs.plan_complete.outputs.changes == 'true'"
+        }
+
+        It 'routes the reported plan with changes=<Changes> on <EventName> through shared approval before apply' -ForEach @(
+            foreach ($eventName in @('push', 'workflow_dispatch')) {
+                @{ Changes = 'false'; EventName = $eventName; Expected = $false }
+                @{ Changes = 'true'; EventName = $eventName; Expected = $true }
+            }
+        ) {
+            $context = Get-SubsetWorkflowContext $subsetWorkflow
+            $context.github.event_name = $EventName
+            $context.needs.module_emu_identity.outputs.changes = 'false'
+            $context.needs.module_organizations.outputs.changes = $Changes
+            $runDirectory = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+            $trustedTools = Join-Path $runDirectory 'trusted/platform/tools'
+            $null = New-Item -ItemType Directory -Path $trustedTools -Force
+            Copy-Item -LiteralPath (Join-Path $toolsPath 'Write-DeploymentSummary.ps1') -Destination $trustedTools
+            $output = Join-Path $runDirectory 'github-output'
+            $summaryStep = $subsetWorkflow.jobs.plan_complete.steps | Where-Object { $_['id'] -eq 'summary' }
+            $savedNeeds = $env:DEPLOYMENT_NEEDS
+            $savedOutput = $env:GITHUB_OUTPUT
+            $savedSummary = $env:GITHUB_STEP_SUMMARY
+            Push-Location $runDirectory
+            try {
+                $env:DEPLOYMENT_NEEDS = ConvertTo-Json $context.needs -Depth 20
+                $env:GITHUB_OUTPUT = $output
+                $env:GITHUB_STEP_SUMMARY = Join-Path $runDirectory 'summary.md'
+                & ([scriptblock]::Create($summaryStep.run)) 6>$null
+            }
+            finally {
+                Pop-Location
+                $env:DEPLOYMENT_NEEDS = $savedNeeds
+                $env:GITHUB_OUTPUT = $savedOutput
+                $env:GITHUB_STEP_SUMMARY = $savedSummary
+            }
+            [IO.File]::ReadAllText($output) | Should -BeExactly "changes=$Changes`n"
+            $context.needs.plan_complete.outputs.changes = [IO.File]::ReadAllText($output).Trim().Split('=', 2)[1]
+
+            $approval = Get-WorkflowConditionResult $subsetWorkflow 'approve_apply' $context
+            $approval.Allowed | Should -Be $Expected
+            $context.needs.approve_apply.result = if ($approval.Allowed) { 'success' } else { 'skipped' }
+            foreach ($job in @('apply_emu_identity', 'apply_organizations')) {
+                (Get-WorkflowConditionResult $subsetWorkflow $job $context).Allowed | Should -Be $Expected
+            }
         }
 
         It 'allows <Job> on <EventName> despite skipped unselected module ancestors' -ForEach @(
@@ -359,6 +423,9 @@ Describe 'Deployment workflow generation' {
                 @{ Case = "authorization [$allowed]"; Path = 'needs.authorize.outputs.allowed'; Value = $allowed; RejectedBy = "needs.authorize.outputs.allowed == 'true'" }
             }
             @{ Case = 'an empty phase selection'; Path = 'needs.select.outputs.phaseNodes'; Value = '[]'; RejectedBy = "needs.select.outputs.phaseNodes != '[]'" }
+            foreach ($changes in @('false', '', 'unknown', '__missing__', $null)) {
+                @{ Case = "plan changes [$changes]"; Path = 'needs.plan_complete.outputs.changes'; Value = $changes; RejectedBy = "needs.plan_complete.outputs.changes == 'true'" }
+            }
         ) {
             $context = Get-SubsetWorkflowContext $subsetWorkflow
             Set-WorkflowConditionValue $context $Path $Value
@@ -490,7 +557,7 @@ Describe 'Deployment workflow generation' {
         $job.environment | Should -Be '${{ fromJSON(needs.select.outputs.rulesetEnvironments)[''enterprise-baseline''] }}'
         $job.needs | Should -Be @('authorize', 'select', 'module_service', 'module_enterprise_baseline')
         $job.if | Should -Match "contains.*enterprise-baseline.*needs.module_service.result == 'success'.*needs.module_enterprise_baseline.result == 'success'"
-        ($job.steps | Where-Object { $_['name'] -eq 'Run module' }).run | Should -Match '-Action plan.*-Rulesets$'
+        ($job.steps | Where-Object { $_['name'] -eq 'Run module' }).run | Should -Match '-Action plan.*-Rulesets -GitHubOutputPath'
         ($job.steps | Where-Object { $_['name'] -like 'Issue a phase*' }).run | Should -Match '-Phase rulesetPlan'
         $workflow.jobs.module_enterprise_baseline.environment | Should -Be '${{ fromJSON(needs.select.outputs.environments)[''enterprise-baseline''] }}'
         $workflow.jobs.apply_enterprise_baseline.environment | Should -Be '${{ fromJSON(needs.select.outputs.applyEnvironments)[''enterprise-baseline''] }}'

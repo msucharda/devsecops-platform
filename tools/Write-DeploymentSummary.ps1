@@ -2,13 +2,33 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string] $NeedsJson,
-    [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY
+    [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY,
+    [string] $GitHubOutputPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# security-check: deployment-plan-change-output
+function Get-DeploymentPlanChange {
+    param([System.Collections.IDictionary] $Job, [string] $Name)
+
+    $outputs = $Job['outputs']
+    if ($outputs -isnot [System.Collections.IDictionary]) {
+        throw [FormatException]::new("Cloud plan INCOMPLETE: $Name has no readable plan outputs. Apply is blocked.")
+    }
+    if (-not $outputs.Contains('changes')) {
+        throw [FormatException]::new("Cloud plan INCOMPLETE: $Name is missing the changes output. Apply is blocked.")
+    }
+    if ($outputs['changes'] -isnot [string] -or $outputs['changes'] -cnotin @('true', 'false')) {
+        throw [FormatException]::new("Cloud plan INCOMPLETE: $Name has an invalid changes output. Apply is blocked.")
+    }
+    return $outputs['changes'] -eq 'true'
+}
+
 $needs = ConvertFrom-Json -InputObject $NeedsJson -AsHashtable
 $failure = $null
+$hasChanges = $false
 if ($needs['authorize']['result'] -cne 'success') {
     $text = 'Cloud plan NOT PERFORMED: trusted authorization failed. No deployment credentials were released.'
     $failure = 'Trusted deployment authorization failed.'
@@ -74,7 +94,19 @@ else {
         $text = 'No modules selected. No cloud plan or apply is required.'
     }
     else {
-        $text = "Cloud plan completed for all selected modules, prerequisites and declared ruleset exceptions: $($selected -join ', '). Manual confirmations are not automatically verified."
+        foreach ($job in $jobNames) {
+            try { $changed = Get-DeploymentPlanChange -Job $needs[$job] -Name $job }
+            catch [FormatException] {
+                $failure = $_.Exception.Message
+                break
+            }
+            if ($changed) { $hasChanges = $true }
+        }
+        if ($failure) { $text = $failure }
+        else {
+            $text = "Cloud plan completed for all selected modules, prerequisites and declared ruleset exceptions: $($selected -join ', '). Manual confirmations are not automatically verified."
+            if (-not $hasChanges) { $text += ' No changes. No apply approval or apply is required.' }
+        }
     }
 }
 if ($JobSummaryPath) {
@@ -82,3 +114,7 @@ if ($JobSummaryPath) {
 }
 Write-Information $text -InformationAction Continue
 if ($failure) { throw $failure }
+if ($GitHubOutputPath) {
+    [IO.File]::AppendAllText([IO.Path]::GetFullPath($GitHubOutputPath),
+        "changes=$($hasChanges.ToString().ToLowerInvariant())`n", [Text.UTF8Encoding]::new($false))
+}
