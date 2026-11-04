@@ -23,7 +23,7 @@ BeforeAll {
         )
     }
 
-    function New-TeardownMutationRepository {
+    function Initialize-TeardownMutationRepository {
         $copy = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
         $null = New-Item -ItemType Directory -Path (Join-Path $copy 'tools/tests/fixtures') -Force
         foreach ($name in @('Generate-TeardownWorkflow.ps1', 'PlatformTools.psm1', 'ToolDependencies.psm1', 'requirements.psd1')) {
@@ -46,7 +46,7 @@ BeforeAll {
         return $copy
     }
 
-    function New-TeardownMutationConfiguration {
+    function Get-TeardownMutationConfiguration {
         param([string] $Repository)
 
         return @{
@@ -91,8 +91,8 @@ BeforeAll {
         }
     }
 
-    $repo = New-TeardownMutationRepository
-    $configuration = New-TeardownMutationConfiguration -Repository $repo
+    $repo = Initialize-TeardownMutationRepository
+    $configuration = Get-TeardownMutationConfiguration -Repository $repo
     $generator = Join-Path $repo 'tools/Generate-TeardownWorkflow.ps1'
     $generatorBytes = [IO.File]::ReadAllBytes($generator)
     $fixtureOutput = Join-Path $repo 'fixture.yml'
@@ -210,14 +210,14 @@ Describe 'Teardown generated-predicate mutation inventory' {
         @{ Case = 'invalid name'; Key = 'Name'; Value = 'teardown workflow'; Message = '*valid security check Name*' }
         @{ Case = 'array name'; Key = 'Name'; Value = @('teardown-workflow-predicates'); Message = '*valid security check Name*' }
     ) {
-        $invalid = New-TeardownMutationConfiguration -Repository $repo
+        $invalid = Get-TeardownMutationConfiguration -Repository $repo
         $invalid.Checks[-1][$Key] = $Value
 
         { Get-SecurityCheckMarker -RepoPath $repo -Configuration $invalid } | Should -Throw $Message
     }
 
     It 'rejects configuring the same generator adapter more than once under different check names' {
-        $invalid = New-TeardownMutationConfiguration -Repository $repo
+        $invalid = Get-TeardownMutationConfiguration -Repository $repo
         $second = @{} + $invalid.Checks[-1]
         $second.Name = 'another-teardown-workflow'
         $invalid.Checks += @($second)
@@ -252,8 +252,8 @@ Describe 'Teardown generated-predicate mutation inventory' {
     }
 
     It 'rejects a missing generator instead of returning an empty inventory' {
-        $missing = New-TeardownMutationRepository
-        $missingConfiguration = New-TeardownMutationConfiguration -Repository $missing
+        $missing = Initialize-TeardownMutationRepository
+        $missingConfiguration = Get-TeardownMutationConfiguration -Repository $missing
         Remove-Item -LiteralPath (Join-Path $missing 'tools/Generate-TeardownWorkflow.ps1')
 
         { Get-TeardownMutationInventory -Repository $missing -Configuration $missingConfiguration } |
