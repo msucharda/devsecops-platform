@@ -966,6 +966,11 @@
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/200'
         }
         @{
+            Mutant = 'Test-CodeSecurityArtifactId: operand ''$Value -is [string]'' -> $true#1'
+            Reason = 'Equivalent mutant: the only caller passes Get-NeedValue, which returns only scalar strings or null. Null cannot match the positive decimal ID pattern, so removing this type guard admits no additional input.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/212'
+        }
+        @{
             Mutant = 'Test-SetupAcceptanceRunEvidence: operator ''-cne'' -> -ine in ''[string] $record[''runId''] -cne [string] $Run[''id'']''#1'
             Reason = 'Equivalent mutant: the GitHub workflow run ID is an integer, so a case-insensitive comparison accepts no other value.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/57'
