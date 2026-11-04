@@ -8,6 +8,7 @@ param(
     [string] $AppSlug = $env:PLATFORM_APP_SLUG,
     [string] $Repository = $env:GITHUB_REPOSITORY,
     [string] $ContentsToken = $env:DRIFT_CONTENTS_TOKEN,
+    [string] $WorkflowRef = $env:GITHUB_WORKFLOW_REF,
     [string] $ApiUrl = $env:GITHUB_API_URL
 )
 
@@ -37,6 +38,7 @@ if ($report.Length -gt $maximumBodyLength) {
 }
 $token = [string] $tokens[$owner]
 $contentsReadToken = $ContentsToken
+$currentWorkflowRef = $WorkflowRef
 $issuesPath = "/repos/$owner/$name/issues"
 $botLogin = "$AppSlug[bot]"
 
@@ -94,10 +96,11 @@ function Assert-IssueState {
 function Test-CleanComment {
     [CmdletBinding()]
     [OutputType([bool])]
-    param([Parameter(Mandatory)][System.Collections.IDictionary] $Comment, [string] $CleanMarker)
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Comment, [string] $CleanMarker, [switch] $Prefix)
 
+    $expectedPrefix = if ($Prefix) { $CleanMarker } else { "$CleanMarker`n" }
     if ($Comment['body'] -isnot [string] -or
-        -not $Comment['body'].StartsWith("$CleanMarker`n", [System.StringComparison]::Ordinal)) { return $false }
+        -not $Comment['body'].StartsWith($expectedPrefix, [System.StringComparison]::Ordinal)) { return $false }
     if ($Comment['user'] -isnot [System.Collections.IDictionary] -or
         $Comment['user']['login'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Comment['user']['login']) -or
         $Comment['user']['type'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Comment['user']['type'])) {
@@ -139,9 +142,10 @@ function Get-CleanDriftEvidence {
     param([string] $Report, [System.Collections.IDictionary] $Previous)
 
     $clean = Get-DriftRunEvidence -Body $Report
-    $workflow = "$Repository/.github/workflows/drift.yml@refs/heads/main"
+    $workflow = $currentWorkflowRef
     $revisions = [regex]::Matches($Report, '(?m)^Revision: `(?<sha>[a-f0-9]{40})`$')
-    if ($null -eq $clean -or $clean.Workflow -cne $workflow -or $Previous.Workflow -cne $workflow -or
+    if ($workflow -cnotmatch "^$([regex]::Escape($Repository))/\.github/workflows/[^/`r`n]+\.ya?ml@refs/heads/main\z" -or
+        $null -eq $clean -or $clean.Workflow -cne $workflow -or $Previous.Workflow -cne $workflow -or
         $revisions.Count -ne 1) {
         throw 'Unreadable or uncorrelated clean-run evidence.'
     }
@@ -193,21 +197,26 @@ function Get-DriftCollection {
     throw "GitHub issues API did not end the $Name list within 1000 pages."
 }
 
+# security-check: drift-issue-author
 function Get-MatchingDriftIssue {
     param([ValidateSet('open', 'closed')][string] $State)
 
     foreach ($item in (Get-DriftCollection -Path "$issuesPath`?state=$State" -Name issue)) {
-        if ($item -isnot [System.Collections.IDictionary] -or -not $item.Contains('user')) {
+        if (-not $item.Contains('user')) {
             throw 'GitHub issues API returned an unknown issue list item.'
         }
-        if ($item.Contains('pull_request') -or $null -eq $item['user']) { continue }
+        if ($item.Contains('pull_request')) { continue }
+        $isDriftReport = $item['body'] -is [string] -and $item['body'].StartsWith("$marker`n", [StringComparison]::Ordinal)
+        if ($null -eq $item['user']) {
+            if ($isDriftReport) { throw 'Cannot verify the author of a marker-bearing drift issue; resolve the ambiguity manually.' }
+            continue
+        }
         if ($item['user'] -isnot [System.Collections.IDictionary] -or
             -not ($item['user']['login'] -is [string] -and $item['user']['login']) -or
             -not ($item['user']['type'] -is [string] -and $item['user']['type'])) {
             throw 'GitHub issues API returned an issue author without a readable login and type.'
         }
-        if ($item['user']['login'] -ceq $botLogin -and $item['user']['type'] -ceq 'Bot' -and
-            $item['body'] -is [string] -and $item['body'].StartsWith("$marker`n", [System.StringComparison]::Ordinal)) {
+        if ($item['user']['login'] -ceq $botLogin -and $item['user']['type'] -ceq 'Bot' -and $isDriftReport) {
             Assert-IssueState -Issue $item -Operation GET -ExpectedState $State
             $item
         }
@@ -221,26 +230,28 @@ function Assert-DriftReportNotResolved {
     $incoming = Get-DriftRunEvidence -Body $Report
     foreach ($resolved in (Get-MatchingDriftIssue -State closed)) {
         $previous = Get-DriftRunEvidence -Body $resolved['body']
-        if ($null -eq $previous) { continue }
-        if ($null -eq $incoming -or $incoming.Workflow -cne $previous.Workflow) {
-            throw 'Cannot compare uncorrelated resolved-run evidence; start a new drift run.'
+        $latest = 0L
+        if ($null -ne $previous) {
+            if ($null -eq $incoming -or $incoming.Workflow -cne $previous.Workflow) {
+                throw 'Cannot compare uncorrelated resolved-run evidence; start a new drift run.'
+            }
+            $latest = $previous.Number
         }
-        $latest = $previous.Number
-        $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($resolved['body']))).ToLowerInvariant()
-        $prefix = "<!-- platform-drift-clean:${digest}:"
         foreach ($comment in (Get-DriftCollection -Path "$issuesPath/$($resolved['number'])/comments" -Name comment)) {
             if ($comment['body'] -isnot [string]) { throw 'Unreadable resolved-run evidence in a comment body.' }
-            if (-not $comment['body'].StartsWith($prefix, [StringComparison]::Ordinal)) { continue }
-            $metadata = [regex]::Match($comment['body'], "^$([regex]::Escape($prefix))(?<number>[1-9][0-9]*):[a-f0-9]{40} -->`n")
+            if (-not (Test-CleanComment -Comment $comment -CleanMarker '<!-- platform-drift-clean:' -Prefix)) { continue }
+            $metadata = [regex]::Match($comment['body'], "^<!-- platform-drift-clean:(?<digest>[a-f0-9]{64}):(?<number>[1-9][0-9]*):[a-f0-9]{40} -->`n")
             $number = 0L
             if (-not [long]::TryParse($metadata.Groups['number'].Value, [ref] $number)) {
                 throw 'Unreadable resolved-run evidence in a clean-result marker.'
             }
-            if (Test-CleanComment -Comment $comment -CleanMarker $metadata.Value.TrimEnd("`n")) {
-                $latest = [Math]::Max($latest, $number)
+            $clean = Get-DriftRunEvidence -Body $comment['body']
+            if ($null -eq $clean -or $null -eq $incoming -or $clean.Workflow -cne $incoming.Workflow -or $clean.Number -ne $number) {
+                throw 'Uncorrelated resolved-run evidence in a clean-result comment.'
             }
+            $latest = [Math]::Max($latest, $number)
         }
-        if ($incoming.Number -le $latest) {
+        if ($latest -gt 0 -and $incoming.Number -le $latest) {
             throw 'The report was already resolved by this workflow; start a new drift run.'
         }
     }

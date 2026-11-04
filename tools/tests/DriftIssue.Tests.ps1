@@ -32,6 +32,7 @@ Describe 'Drift issue publication' {
             Repository = 'platform/instance'
             ApiUrl = 'https://api.example.test'
             ContentsToken = 'read-token'
+            WorkflowRef = $workflowRef
         }
         $listed = @(
             (Get-ListedIssue -Number 5 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nold" -PullRequest)
@@ -149,7 +150,7 @@ Describe 'Drift issue publication' {
     }
 
     It 'skips issues whose author is the documented null user' {
-        $listed += (Get-GitHubApiFixture -Name issues/list-for-repo.issue -Set @{ '0.number' = 12; '0.user' = $null; '0.body' = "$marker`nghost" })[0]
+        $listed += (Get-GitHubApiFixture -Name issues/list-for-repo.issue -Set @{ '0.number' = 12; '0.user' = $null; '0.body' = 'Unrelated issue' })[0]
         $listed += (Get-GitHubApiFixture -Name issues/list-for-repo -Set @{ '0.number' = 13; '0.user' = $null })[0]
         $listed += Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nprevious"
 
@@ -157,6 +158,23 @@ Describe 'Drift issue publication' {
 
         $result.Action | Should -Be 'updated'
         $result.Number | Should -Be 9
+    }
+
+    It 'fails closed on a marker-bearing open issue with the documented null author' -Tag 'ReviewTwo' {
+        $listed += (Get-GitHubApiFixture -Name issues/list-for-repo.issue -Set @{ '0.user' = $null; '0.body' = "$marker`nghost" })[0]
+
+        { & $publisher @arguments } | Should -Throw '*Cannot verify the author*drift issue*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+    }
+
+    It 'rejects a singleton array masquerading as an issue author login' {
+        $issue = Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body (Get-TestDriftReport)
+        # Deliberately invalid: Simple User login is a scalar string.
+        $issue.user.login = @('octoapp[bot]')
+        $listed += $issue
+
+        { & $publisher @arguments } | Should -Throw '*issue author without a readable login and type*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
     }
 
     It 'refuses to choose between duplicate drift issues' {
@@ -263,7 +281,7 @@ Describe 'Drift issue publication' {
             $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($resolved.body))).ToLowerInvariant()
             $resolutionMarker = "<!-- platform-drift-clean:${digest}:21:$('a' * 40) -->"
             $resolvedComments = Get-GitHubApiFixture -Name issues/list-comments -Set @{
-                '0.body' = "$resolutionMarker`nNo drift detected."
+                '0.body' = "$resolutionMarker`n$(Get-TestDriftReport -RunNumber 21)"
                 '0.user.login' = 'octoapp[bot]'; '0.user.type' = 'Bot'
             }
             Mock Invoke-RestMethod { return , @($resolved) } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues?state=closed&*page=1' }
@@ -288,9 +306,16 @@ Describe 'Drift issue publication' {
 
         It 'allows a new report after a manually closed legacy issue' {
             $resolved.body = "$marker`nlegacy"
+            $resolvedComments = @()
             [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
             (& $publisher @arguments).Action | Should -BeExactly 'created'
-            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Uri -like '*/comments?*' }
+        }
+
+        It 'allows a legacy report after a manually closed legacy issue without resolution evidence' {
+            $resolved.body = "$marker`nlegacy"
+            $resolvedComments = @()
+
+            (& $publisher @arguments).Action | Should -BeExactly 'created'
         }
 
         It 'does not recreate a manually closed report in the same run' {
@@ -307,6 +332,64 @@ Describe 'Drift issue publication' {
             (& $publisher @arguments).Action | Should -BeExactly 'created'
         }
 
+        It 'ignores malformed resolution metadata from a known non-App author: <Login>' -Tag 'ReviewTwo' -ForEach @(
+            @{ Login = 'other[bot]'; Type = 'Bot' }
+            @{ Login = 'mona'; Type = 'User' }
+        ) {
+            $resolvedComments[0].user.login = $Login
+            $resolvedComments[0].user.type = $Type
+            $resolvedComments[0].body = "<!-- platform-drift-clean:${digest}:invalid:$('a' * 40) -->`nother"
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+
+            (& $publisher @arguments).Action | Should -BeExactly 'created'
+        }
+
+        It 'fails closed on a marker-bearing closed issue with the documented null author' -Tag 'ReviewTwo' {
+            $resolved.user = $null
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+
+            { & $publisher @arguments } | Should -Throw '*Cannot verify the author*drift issue*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'preserves the newer resolution counter after editing the resolved body' -Tag 'ReviewTwo' {
+            $resolvedComments[0].body = "<!-- platform-drift-clean:${digest}:30:$('a' * 40) -->`n$(Get-TestDriftReport -RunNumber 30)"
+            $resolved.body += "`nOperator note."
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+
+            { & $publisher @arguments } | Should -Throw '*report was already resolved*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'preserves resolution evidence after removing metadata from the resolved body' -Tag 'CheckpointFour' {
+            $resolvedComments[0].body = "<!-- platform-drift-clean:${digest}:30:$('a' * 40) -->`n$(Get-TestDriftReport -RunNumber 30)"
+            $resolved.body = "$marker`nOperator replaced the old report."
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+
+            { & $publisher @arguments } | Should -Throw '*report was already resolved*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rejects a legacy incoming report when only a clean comment retains resolution evidence' {
+            $resolved.body = "$marker`nOperator replaced the old report."
+
+            { & $publisher @arguments } | Should -Throw '*Uncorrelated resolved-run evidence*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rejects uncorrelated resolution comment metadata: <Case>' -ForEach @(
+            @{ Case = 'missing'; Report = 'No metadata.' }
+            @{ Case = 'other workflow'; Report = "<!-- platform-drift-report -->`n<!-- platform-drift-run:other/workflow|21 -->`n" }
+            @{ Case = 'workflow case'; Report = "<!-- platform-drift-report -->`n<!-- platform-drift-run:platform/instance/.github/workflows/Drift.yml@refs/heads/main|21 -->`n" }
+            @{ Case = 'different counter'; Report = "<!-- platform-drift-report -->`n<!-- platform-drift-run:platform/instance/.github/workflows/drift.yml@refs/heads/main|22 -->`n" }
+        ) {
+            $resolvedComments[0].body = "$resolutionMarker`n$Report"
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+
+            { & $publisher @arguments } | Should -Throw '*Uncorrelated resolved-run evidence*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
         It 'does not post without correlatable incoming metadata after a modern resolution' {
             { & $publisher @arguments } | Should -Throw '*uncorrelated resolved-run evidence*'
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
@@ -317,6 +400,7 @@ Describe 'Drift issue publication' {
             @{ Workflow = 'platform/instance/.github/workflows/Drift.yml@refs/heads/main' }
         ) {
             $resolved.body = Get-TestDriftReport -Workflow $Workflow
+            $resolvedComments = @()
             [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
             { & $publisher @arguments } | Should -Throw '*uncorrelated resolved-run evidence*'
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
@@ -387,6 +471,34 @@ Describe 'Drift issue publication' {
 
             $result.Action | Should -BeExactly 'unchanged'
             $result.Number | Should -BeNullOrEmpty
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'closes matching reports from a custom workflow filename: <Filename>' -Tag 'ReviewTwo' -ForEach @(
+            @{ Filename = 'explicit-drift.yml' }
+            @{ Filename = 'nightly-drift.yaml' }
+        ) {
+            $customWorkflow = "platform/instance/.github/workflows/$Filename@refs/heads/main"
+            $current.body = Get-TestDriftReport -Workflow $customWorkflow
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 21 -Workflow $customWorkflow))
+
+            (& $publisher @arguments -WorkflowRef $customWorkflow).Action | Should -BeExactly 'closed'
+        }
+
+        It 'rejects an invalid current workflow context: <Case>' -ForEach @(
+            @{ Case = 'empty'; CurrentWorkflow = '' }
+            @{ Case = 'other repository'; CurrentWorkflow = 'other/instance/.github/workflows/drift.yml@refs/heads/main' }
+            @{ Case = 'repository case'; CurrentWorkflow = 'Platform/instance/.github/workflows/drift.yml@refs/heads/main' }
+            @{ Case = 'other ref'; CurrentWorkflow = 'platform/instance/.github/workflows/drift.yml@refs/heads/other' }
+            @{ Case = 'nested path'; CurrentWorkflow = 'platform/instance/.github/workflows/sub/drift.yml@refs/heads/main' }
+            @{ Case = 'other extension'; CurrentWorkflow = 'platform/instance/.github/workflows/drift.txt@refs/heads/main' }
+        ) {
+            $arguments.WorkflowRef = $CurrentWorkflow
+            if ($CurrentWorkflow) {
+                $current.body = Get-TestDriftReport -Workflow $CurrentWorkflow
+                [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 21 -Workflow $CurrentWorkflow))
+            }
+            { & $publisher @arguments } | Should -Throw '*uncorrelated clean-run evidence*'
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
         }
 

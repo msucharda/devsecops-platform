@@ -646,6 +646,10 @@
             Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*Resolved report recovery*') })
         }
         @{
+            Name = 'drift-issue-author'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('Drift issue publication*') })
+        }
+        @{
             Name = 'catalog-repository-adoptable'
             Tests = @(
                 @{ Path = 'tools/tests/ActionsCatalog.Tests.ps1'; FullName = @('*Test-CatalogRepositoryAdoptable*', '*refuses an existing repository that*', '*refuses a new repository that GitHub created*') }

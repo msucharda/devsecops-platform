@@ -36,7 +36,7 @@ function Add-CodeSecurityCoverage {
     param([string] $Path, [string[]] $Organizations)
 
     $coverage = $null
-    try { $coverage = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText([IO.Path]::GetFullPath($Path))) -AsHashtable -ErrorAction Stop } catch { $coverage = $null }
+    try { $coverage = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText([IO.Path]::GetFullPath($Path))) -AsHashtable -NoEnumerate -ErrorAction Stop } catch { $coverage = $null }
     if ($coverage -isnot [Collections.IDictionary] -or $coverage['organizations'] -isnot [Collections.IDictionary]) {
         $incomplete.Add('Code Security coverage artifact did not publish a readable organization map.')
         return

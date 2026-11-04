@@ -18,6 +18,7 @@ Describe 'Clean drift issue interruption harness' -Tag 'Interruption' {
             Repository = 'platform/instance'
             ApiUrl = 'https://api.example.test'
             ContentsToken = 'read-token'
+            WorkflowRef = 'platform/instance/.github/workflows/drift.yml@refs/heads/main'
         }
         $plan = Get-InterruptionPlan
         $cloud = @{ issue = $null; comments = [Collections.Generic.List[object]]::new(); legacy = $false }
@@ -112,7 +113,10 @@ Describe 'Clean drift issue interruption harness' -Tag 'Interruption' {
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
     }
 
-    It 'does not recreate resolved drift when an interrupted old report resumes after a newer clean run' {
+    It 'does not recreate resolved drift after a newer clean run with author state <Author>' -ForEach @(
+        @{ Author = 'readable'; ExpectedError = '*report was already resolved*' }
+        @{ Author = 'null'; ExpectedError = '*Cannot verify the author*drift issue*' }
+    ) {
         & $reset
         $cloud.issue = $null
         $oldReport = "<!-- platform-drift-report -->`n${metadata}20 -->`nRevision: ``$('a' * 40)```nDrift detected."
@@ -128,10 +132,11 @@ Describe 'Clean drift issue interruption harness' -Tag 'Interruption' {
         [IO.File]::WriteAllText($reportPath, $cleanReport)
         & $run
         $cloud.issue.state | Should -BeExactly 'closed'
+        if ($Author -eq 'null') { $cloud.issue.user = $null }
 
         $arguments.Outcome = 'Report'
         [IO.File]::WriteAllText($reportPath, $oldReport)
-        { & $run } | Should -Throw '*report was already resolved*'
+        { & $run } | Should -Throw $ExpectedError
         $cloud.issue.state | Should -BeExactly 'closed'
         $cloud.comments.Count | Should -Be 1
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' -and $Uri -like '*/issues' }

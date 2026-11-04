@@ -257,6 +257,23 @@ Describe 'Drift report evaluation' {
                 $report | Should -Not -Match 'compliant 1'
             }
 
+            It 'rejects a singleton array wrapping a coverage artifact' -Tag 'ReviewTwo' {
+                $modulesPath = New-CoverageReportModule
+                $needs = Get-DriftNeed
+                $needs['module_enterprise_baseline_code_security'] = @{
+                    result = 'success'; outputs = @{ changes = 'false'; codeSecurityCoverage = '123' }
+                }
+                Write-CoverageArtifact -Repositories @(@{ repository = 'platform/app'; status = 'compliant'; security_status = 'enabled' })
+                # Deliberately unsupported: the coverage contract requires an object root.
+                [IO.File]::WriteAllText($coverageArtifact, "[$([IO.File]::ReadAllText($coverageArtifact))]")
+
+                Invoke-DriftReport -Needs $needs
+
+                $output.complete | Should -BeExactly 'false'
+                $output.outcome | Should -BeExactly 'Report'
+                $report | Should -Match 'readable organization map'
+            }
+
             It 'evaluates a large coverage artifact without putting repository details in the needs environment' {
                 $modulesPath = New-CoverageReportModule
                 $needs = Get-DriftNeed

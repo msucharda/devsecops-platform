@@ -325,6 +325,10 @@ App nejdřív přidá komentář s čistým výsledkem, potom nastaví stav `clo
 
 Po ztracené odpovědi na vytvoření reportu může novější čistý běh původní issue zavřít dřív, než se starý report job zopakuje. Publisher proto před vytvořením nového issue ověří i uzavřené reporty a counter jejich čistých komentářů. Již vyřešený běh skončí chybou bez nového vytvoření. Pro detekci nového driftu spusť nový běh workflow, ne rerun starého report jobu.
 
+Publisher ověří identitu aktuálního workflow z `GITHUB_WORKFLOW_REF`, takže podporuje i vlastní název drift workflow. U uzavřeného issue koreluje číslo čistého běhu s metadaty workflow v komentáři App, ne s později upravitelným tělem issue. Známé cizí komentáře před čtením counteru vynechá. Neověřitelný autor drift issue s markerem zastaví publikaci bez nového vytvoření.
+
+**Omezení při povýšení release:** nový kód nezmění historický job. Rerun report jobu vytvořeného před upgradem může stále vykonat původní publisher bez freshness kontrol a přepsat novější report nebo znovu vytvořit vyřešené issue. Tato změna mu neodebírá writer credential. Po povýšení spouštěj nový běh workflow; jde o pokyn operátorovi, nikoli o účinné odstavení historického writeru. Uživatel vyčlenil technickou ochranu přechodu do [follow-up #213](https://github.com/msucharda/devsecops-platform/issues/213); #200 ji neimplementuje.
+
 Alias App patří do `githubApps` a klíč do `keys.json`. U existující instance doplň alias přes PR a požadované review podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Cloudový plan změněných vazeb proběhne až z `main` po merge; výsledek PR workflow závisí i na autorizaci autora. Bootstrapu pak předej konfiguraci shodnou s `main` a alias přes `-DriftReportApp`:
 
 ```powershell
