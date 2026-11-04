@@ -1,3 +1,5 @@
+Set-StrictMode -Version Latest
+
 function Invoke-TerraformTestProcess {
     [CmdletBinding()]
     param(
@@ -15,6 +17,8 @@ function Invoke-TerraformTestProcess {
         # -NoProfile does not disable the startup JIT profile shared by Unix pwsh processes.
         $env:XDG_CACHE_HOME = $cachePath
         $env:PSModuleAnalysisCachePath = $analysisCachePath
+        # Return native failures to the caller with their original diagnostics.
+        $PSNativeCommandUseErrorActionPreference = $false
         $output = & $Executable @ArgumentList 2>&1 | Out-String
         [pscustomobject]@{
             ExitCode = $LASTEXITCODE
