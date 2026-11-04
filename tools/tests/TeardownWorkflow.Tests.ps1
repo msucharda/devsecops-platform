@@ -294,6 +294,7 @@ Describe 'Teardown workflow generation' {
 
         $plan.Success | Should -BeTrue
         $plan.Groups['plan'].Value | Should -Match '(?s)destroy_organizations.*Generate-TeardownWorkflow\.ps1.*organizations/delete-instance-organizations.*workflow_dispatch.*Re-run jobs'
+        $plan.Groups['plan'].Value | Should -Match '(?s)Po review a merge PR.*deploy\.yml.*completed.*organizations/delete-instance-organizations.*workflow_dispatch'
         $plan.Groups['plan'].Value | Should -Match ([regex]::Escape('-ModulesPath .\platform\modules'))
         $plan.Groups['plan'].Value | Should -Match ([regex]::Escape('-OutputPath (Join-Path $PWD ''.github\workflows\teardown.yml'')'))
     }
@@ -338,7 +339,7 @@ Describe 'Teardown action allowlist instructions' {
         Set-Content -LiteralPath $restoredPath -Value $extended
         $parsed = ConvertFrom-Yaml $extended
         $expected = @($parsed.jobs.Values | ForEach-Object { $_.steps } |
-            Where-Object { $_.Contains('uses') } | ForEach-Object { $_.uses } | Sort-Object -Unique)
+            Where-Object { $_.Contains('uses') } | ForEach-Object { $_.uses } | Sort-Object -Unique -CaseSensitive)
 
         $actual = @(& $readActions)
 
@@ -352,9 +353,11 @@ Describe 'Teardown action allowlist instructions' {
         @{ Case = 'an action pinned to a tag'; Reference = 'actions/checkout@v7' }
         @{ Case = 'an action without a pin'; Reference = 'actions/checkout' }
         @{ Case = 'a wildcard allowance'; Reference = 'actions/*@1234567890123456789012345678901234567890' }
+        @{ Case = 'a short commit pin'; Reference = 'actions/checkout@3d3c42e' }
+        @{ Case = 'an uppercase commit pin'; Reference = 'actions/checkout@3D3C42E5AAC5BA805825DA76410C181273BA90B1' }
     ) {
         $content = if ($null -eq $Reference) { 'jobs: {}' }
-        else { "jobs:`n  example:`n    steps:`n      - uses: $Reference" }
+        else { $text + "`n  extra_job:`n    runs-on: ubuntu-latest`n    steps:`n      - uses: $Reference`n" }
         Set-Content -LiteralPath $restoredPath -Value $content
 
         { & $readActions } | Should -Throw '*non-empty list*full commit SHAs*'

@@ -462,22 +462,21 @@ Povýšený `teardown.yml` používá katalogové akce z organizace akcí. Po je
    $actions = @(
        Select-String -LiteralPath .\.github\workflows\teardown.yml `
            -Pattern '^\s+(?:-\s+)?uses:\s+([^\s#]+)' |
-       ForEach-Object { $_.Matches[0].Groups[1].Value } |
-       Sort-Object -Unique
+       ForEach-Object { $_.Matches[0].Groups[1].Value }
    )
    if ($actions.Count -eq 0 -or @($actions | Where-Object {
        $_ -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$'
    }).Count -gt 0) {
        throw 'Expected a non-empty list of upstream actions pinned to full commit SHAs.'
    }
-   $actions
+   $actions | Sort-Object -Unique -CaseSensitive
    ```
 
 4. Po úspěšném destroy `enterprise-baseline` operátor upraví **jen organizační politiku organizace repozitáře instance**. Úspěšný destroy sám dostupnost upstream akcí nezaručuje; reset může zachovat `local_only` nebo `selected`. V **Organization settings → Actions → General** zvol povolení enterprise a vybraných externích akcí. Do seznamu povolených externích akcí vlož pouze reference z výpisu v kroku 3 ve tvaru `owner/repository@SHA`, jak popisuje [dokumentace GitHubu](https://docs.github.com/en/enterprise-cloud@latest/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization#allowing-select-actions-and-reusable-workflows-to-run). Nepovoluj všechny akce, všechny akce GitHubu, verified creators, tagy ani wildcard vzory. Neměň enterprise politiku, politiku jiných organizací, rozsah povolených repozitářů ani credentials.
 
    Po uložení znovu otevři nastavení. Porovnej celou externí allowlist s výpisem: musí obsahovat právě stejné reference a SHA, bez dalších vzorů a širokých voleb. Výpis a commit obnovovacího PR zaznamenej do jeho popisu. Pokud nastavení nejde uložit, enterprise politika akci blokuje nebo readback neodpovídá, **organizace nemaž a teardown nepokračuj**. Nový commit měnící workflow vyžaduje nový výpis a nové porovnání.
-5. Po review a merge PR ověř, že `main` obsahuje obnovený `teardown.yml` se stejným seznamem SHA, který jsi povolil. Teprve potom proveď ruční krok `organizations/delete-instance-organizations`: enterprise owner smaže organizace akcí a workloadů v enterprise settings.
-6. Spusť **nový** `workflow_dispatch` workflow `teardown` z aktualizované `main`, se stejným potvrzením instance a oběma schváleními. Nepoužívej **Re-run jobs**: [opakovaný běh zachová původní SHA a ref](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs), tedy i odkazy na smazaný katalog. Nový běh přeskočí již prázdné state, ověří smazání organizací a dokončí zbývající teardown; `emu-identity` zůstává poslední.
+5. Po review a merge PR ověř, že `main` obsahuje obnovený `teardown.yml` se stejným seznamem SHA, který jsi povolil. Merge spustí `deploy.yml`: zruš všechny jeho nedokončené běhy na všech větvích, včetně PR planů a běhu vyvolaného mergem, a počkej na stav `completed`. Jejich apply neschvaluj. Pokud ukončení nedokážeš ověřit, **organizace nemaž**. Teprve potom proveď ruční krok `organizations/delete-instance-organizations`: enterprise owner smaže organizace akcí a workloadů v enterprise settings.
+6. Spusť **nový** `workflow_dispatch` workflow `teardown` z aktualizované `main`, se stejným potvrzením instance a oběma schváleními. Čas dispatch musí být pozdější než poslední `updated_at` všech běhů `deploy.yml`. Do odstranění bootstrapu už deploy nespouštěj ani neopakuj. Jinak `Remove-Bootstrap.ps1` odmítne i úspěšný teardown, protože deploy změnil stav po jeho zahájení. Nepoužívej **Re-run jobs**: [opakovaný běh zachová původní SHA a ref](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs), tedy i odkazy na smazaný katalog. Nový běh přeskočí již prázdné state, ověří smazání organizací a dokončí zbývající teardown; `emu-identity` zůstává poslední.
 
 Po přerušení nejdřív ověř stav PR, obsah `main`, uloženou organizační allowlist a existenci obou organizací. Již provedené smazání neopakuj. Pokud organizace akcí už neexistuje, nejdřív dokonči obnovovací PR a ověření allowlist, potom spusť nový dispatch; starý katalogový běh neopraví ani opakování jobů.
 
