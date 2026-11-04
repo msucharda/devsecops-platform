@@ -290,7 +290,7 @@ Describe 'Teardown workflow generation' {
 
     It 'documents the restoration PR before organization deletion and a fresh dispatch afterwards' {
         $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
-        $plan = [regex]::Match($readme, '(?s)### Plán teardownu s povýšenými workflow\r?\n(?<plan>.*?)(?=\r?\n### |\z)')
+        $plan = [regex]::Match($readme, '(?s)### Pl\u00e1n teardownu s pov\u00fd\u0161en\u00fdmi workflow\r?\n(?<plan>.*?)(?=\r?\n### |\z)')
 
         $plan.Success | Should -BeTrue
         $plan.Groups['plan'].Value | Should -Match '(?s)destroy_organizations.*Generate-TeardownWorkflow\.ps1.*organizations/delete-instance-organizations.*workflow_dispatch.*Re-run jobs'
