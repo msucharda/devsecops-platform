@@ -7,14 +7,21 @@ manualSteps:
     description: >-
       Before the organizations module is destroyed, an enterprise owner deletes the actions and workloads
       organizations of the instance in the enterprise settings, only after the destroy of every module that depends on
-      organizations succeeded. GitHub offers no organization deletion with
+      organizations succeeded, including enterprise-baseline. With promoted live workflows, first verify
+      that the existing enterprise policy permits the SHA-pinned upstream actions required by teardown.
+      Open a reviewed PR changing only .github/workflows/teardown.yml: regenerate it with the installed
+      platform/tools/Generate-TeardownWorkflow.ps1 and platform/modules, not the catalog-rewritten template.
+      Only after this PR is merged into main, delete the actions and workloads organizations.
+      Then start a new workflow_dispatch of teardown from main; do not use Re-run jobs, which keeps
+      the original commit and its catalog action references. Keep emu-identity until the final approvals.
+      See the promoted-workflow teardown plan in platform/README.md. GitHub offers no organization deletion with
       the enterprise installation token; the module destroy only verifies that both organizations are gone
       and fails otherwise. Their names stay blocked; a new deployment needs a new bootstrap with a new
       deployment identifier.
     limitations:
       plan: The plan does not show the deletion; it reads only whether each organization exists and which Apps it has.
       drift: Drift detection reports a deleted organization as a failed plan, not as a planned deletion.
-      teardown: The teardown workflow stops at the organizations destroy until both organizations are deleted; delete them and run the teardown again.
+      teardown: The first teardown stops at organizations; restore upstream teardown through a reviewed PR before deleting the actions organization, then start a new workflow_dispatch from the updated main.
 permissions:
   azure: []
   microsoftGraph: []

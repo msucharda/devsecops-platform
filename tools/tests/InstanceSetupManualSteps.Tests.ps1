@@ -147,6 +147,30 @@ Describe 'Instance setup manual steps through the public wizard' {
         Should -Invoke Start-Process -ModuleName InstanceSetup -Times 0
     }
 
+    It 'guides upstream teardown restoration before deleting the actions organization' {
+        $configuration = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $repoRoot 'templates/instance/instance.yaml') -Raw)
+        $configuration['modules'] = @{
+            organizations = @{ parameters = @{ admin_logins = @('platform-admin'); billing_email = 'platform@example.test' } }
+        }
+        $configuration | ConvertTo-Yaml | Set-Content -LiteralPath $instancePath
+        $arguments.ModulesPath = Join-Path $repoRoot 'modules'
+        $before = [IO.File]::ReadAllText($instancePath)
+        $answers.Enqueue($configuration.instance.name)
+        $answers.Enqueue('n')
+
+        $result = Invoke-InstanceSetup @arguments -ManualStep 'organizations/delete-instance-organizations'
+
+        $guidance = $messages -join "`n"
+        $guidance | Should -Match '(?s)enterprise-baseline.*PR.*\.github/workflows/teardown\.yml.*merged into main.*delete the actions and workloads organizations.*workflow_dispatch.*main'
+        $guidance | Should -Match 'Generate-TeardownWorkflow\.ps1'
+        $guidance | Should -Match 'Re-run'
+        $result.Completed | Should -BeFalse
+        $result.ManualSteps[0].Verified | Should -BeFalse
+        [IO.File]::ReadAllText($instancePath) | Should -BeExactly $before
+        Should -Invoke Invoke-WebRequest -ModuleName InstanceSetup -Times 0
+        Should -Invoke Start-Process -ModuleName InstanceSetup -Times 0
+    }
+
     It 'recovers <Scenario> publication interrupted <Boundary> with <Termination>' -ForEach @(
         foreach ($scenario in @('Confirmation', 'InitialPending', 'ReconfirmPending')) {
             foreach ($boundary in @('BeforePublish', 'AfterPublish')) {

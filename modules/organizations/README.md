@@ -73,8 +73,9 @@ Ověření provádí destroy provisioner prostředku `organization` a znovu pros
 Teardown odstraňuje moduly v obráceném pořadí předpokladů. Modul `enterprise-baseline` deklaruje `organizations` jako předpoklad, proto teardown odstraní jeho kontroly v organizacích před destroy modulu `organizations`. Postup:
 
 1. Spusť teardown. Zastaví se na destroy modulu `organizations` s chybou, že organizace existuje.
-2. Enterprise owner smaže organizace actions a workloads v nastavení enterprise. Organizace smaž až po úspěšném destroy modulu `enterprise-baseline`.
-3. Spusť teardown znovu. Moduly s prázdným state přeskočí; destroy `organizations` projde. Job `enterprise-baseline` nejdřív přečte state obou rootů (`-Action state`). Pokud jsou oba prázdné, nevydá token App: smazané organizace už instalaci App nemají a vydání tokenu by selhalo.
+2. Po úspěšném destroy modulu `enterprise-baseline` připrav obnovu povýšeného workflow podle [plánu teardownu](../../README.md#plán-teardownu-s-povýšenými-workflow). Ověř povolení upstream akcí stávající enterprise politikou. Přes reviewovaný PR obnov pouze `.github/workflows/teardown.yml` na upstream akce s plnými SHA generátorem z instalovaného release. Katalogovou šablonu z `platform/templates/` nekopíruj. Organizace ponech existovat až do merge PR do `main`; `emu-identity` ponech pro závěrečná schválení.
+3. Enterprise owner smaže organizace akcí a workloadů v nastavení enterprise až po ověření obnoveného workflow v `main`.
+4. Spusť nový `workflow_dispatch` teardownu z aktualizované `main`, nikoli Re-run jobs starého běhu s katalogovými akcemi. Moduly s prázdným state přeskočí; destroy `organizations` projde. Job `enterprise-baseline` nejdřív přečte state obou rootů (`-Action state`). Pokud jsou oba prázdné, nevydá token App: smazané organizace už instalaci App nemají a vydání tokenu by selhalo.
 
 Zbytkové riziko: pokud enterprise owner smaže organizace dřív, než destroy `enterprise-baseline` uspěje, state `enterprise-baseline` zůstane neprázdný a vydání tokenu selže. Teardown pak nepokračuje a stav vyžaduje ruční zásah.
 
