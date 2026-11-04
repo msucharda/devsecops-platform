@@ -194,6 +194,9 @@ Describe 'Teardown generated-predicate mutation inventory' {
             $predicate = Get-EmittedPredicate -Workflow $yaml -Target $Target
             $predicate | Should -Not -BeNullOrEmpty
             $predicate | Should -Not -Match ([regex]::Escape($Required))
+            if ($Target -ceq 'cancellation') {
+                $predicate | Should -Match '^\$\{\{ always\(\) && '
+            }
         }
         finally { [IO.File]::WriteAllBytes($generator, $generatorBytes) }
     }
@@ -265,10 +268,14 @@ Describe 'Teardown mutation execution through the existing worker and runner' -T
     It 'kills an emitted cancellation mutant with an existing contract assertion, not a generator or runner error, and restores the source' {
         $inventory = @(Get-TeardownMutationInventory -Repository $repo -Configuration $configuration)
         $mutant = @($inventory | Where-Object Id -CEQ "${checkName}: cancellation#1")[0]
+        $cancellationContract = @{
+            Path = $contract.Path
+            FullName = @('Teardown identity approval boundary.does not destroy identity when the run is cancelled after preceding modules finished')
+        }
         $jobs = @(
-            @{ Id = 'baseline-before'; File = $mutant.File; Text = $null; Tests = @($contract) }
-            @{ Id = $mutant.Id; File = $mutant.File; Text = $mutant.Text; Tests = @($contract) }
-            @{ Id = 'baseline-after'; File = $mutant.File; Text = $null; Tests = @($contract) }
+            @{ Id = 'baseline-before'; File = $mutant.File; Text = $null; Tests = @($cancellationContract) }
+            @{ Id = $mutant.Id; File = $mutant.File; Text = $mutant.Text; Tests = @($cancellationContract) }
+            @{ Id = 'baseline-after'; File = $mutant.File; Text = $null; Tests = @($cancellationContract) }
         )
         $jobsPath = Join-Path $repo 'jobs.json'
         $resultsPath = Join-Path $repo 'worker-results.jsonl'
@@ -286,7 +293,7 @@ Describe 'Teardown mutation execution through the existing worker and runner' -T
         }
         $results[1].Errors | Should -Be 0
         $results[1].Failed | Should -BeGreaterThan 0
-        $results[1].Failures -join ' ' | Should -Match 'destroys foundation only after every selected dependent and after the owner check'
+        $results[1].Failures -join ' ' | Should -Match 'does not destroy identity when the run is cancelled after preceding modules finished'
         (Get-MutationJobStatus -Result $results[1])[0] | Should -BeExactly 'Killed'
         [Convert]::ToBase64String([IO.File]::ReadAllBytes($generator)) | Should -BeExactly ([Convert]::ToBase64String($generatorBytes))
     }

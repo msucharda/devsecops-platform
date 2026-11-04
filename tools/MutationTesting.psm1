@@ -343,7 +343,7 @@ function Get-TeardownWorkflowMutant {
     $gate = '$gateCondition = "needs.select.result == ''success'' && needs.approve_teardown.result == ''success'' && needs.enterprise_owner.result == ''success''"'
     $selection = '$condition = "!cancelled() && $gateCondition && contains($nodesExpression, ''$key'')"'
     $targets = @(
-        @{ Name = 'cancellation'; Original = '!cancelled() && $gateCondition'; Replacement = '$gateCondition' }
+        @{ Name = 'cancellation'; Original = '!cancelled() && $gateCondition'; Replacement = 'always() && $gateCondition' }
         @{ Name = 'selected-node'; Original = $selection; Replacement = '$condition = "!cancelled() && $gateCondition"' }
         @{ Name = 'selection-success'; Original = $gate; Replacement = $gate.Replace("needs.select.result == 'success' && ", '') }
         @{ Name = 'approval-success'; Original = $gate; Replacement = $gate.Replace("needs.approve_teardown.result == 'success' && ", '') }
