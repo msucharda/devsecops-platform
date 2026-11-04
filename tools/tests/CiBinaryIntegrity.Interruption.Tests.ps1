@@ -1,3 +1,12 @@
+BeforeDiscovery {
+    Import-Module (Join-Path $PSScriptRoot 'InterruptionHarness.psm1') -Force
+    $shard = Get-InterruptionShard
+    $boundaries = @('Downloaded', 'Verified', 'Extracting', 'Extracted', 'Published')
+    $cases = @(for ($index = 0; $index -lt $boundaries.Count; $index++) {
+        if ($index % $shard.ShardCount -eq $shard.ShardIndex) { @{ Boundary = $boundaries[$index] } }
+    })
+}
+
 BeforeAll {
     $script:sourceTools = Split-Path $PSScriptRoot -Parent
 
@@ -87,13 +96,7 @@ $name = if ($IsLinux) { 'Trivy' } else { 'Actionlint' }
 '@
     }
 
-    It 'resumes after abrupt termination at <Boundary> without publishing incomplete staging' -ForEach @(
-        @{ Boundary = 'Downloaded' }
-        @{ Boundary = 'Verified' }
-        @{ Boundary = 'Extracting' }
-        @{ Boundary = 'Extracted' }
-        @{ Boundary = 'Published' }
-    ) {
+    It 'resumes after abrupt termination at <Boundary> without publishing incomplete staging' -ForEach $cases {
         $first = Invoke-BinaryInstallerProcess -Root $root -Boundary $Boundary
         $first.ExitCode | Should -Be 17 -Because $first.Error
         $staging = @(Get-ChildItem (Join-Path $root 'temp') -Directory)
