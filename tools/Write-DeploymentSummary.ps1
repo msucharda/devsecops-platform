@@ -15,13 +15,13 @@ function Get-DeploymentPlanChange {
 
     $outputs = $Job['outputs']
     if ($outputs -isnot [System.Collections.IDictionary]) {
-        throw "Cloud plan INCOMPLETE: $Name has no readable plan outputs. Apply is blocked."
+        throw [FormatException]::new("Cloud plan INCOMPLETE: $Name has no readable plan outputs. Apply is blocked.")
     }
     if (-not $outputs.Contains('changes')) {
-        throw "Cloud plan INCOMPLETE: $Name is missing the changes output. Apply is blocked."
+        throw [FormatException]::new("Cloud plan INCOMPLETE: $Name is missing the changes output. Apply is blocked.")
     }
     if ($outputs['changes'] -isnot [string] -or $outputs['changes'] -cnotin @('true', 'false')) {
-        throw "Cloud plan INCOMPLETE: $Name has an invalid changes output. Apply is blocked."
+        throw [FormatException]::new("Cloud plan INCOMPLETE: $Name has an invalid changes output. Apply is blocked.")
     }
     return $outputs['changes'] -eq 'true'
 }
@@ -95,11 +95,18 @@ else {
     }
     else {
         foreach ($job in $jobNames) {
-            $changed = Get-DeploymentPlanChange -Job $needs[$job] -Name $job
+            try { $changed = Get-DeploymentPlanChange -Job $needs[$job] -Name $job }
+            catch [FormatException] {
+                $failure = $_.Exception.Message
+                break
+            }
             if ($changed) { $hasChanges = $true }
         }
-        $text = "Cloud plan completed for all selected modules, prerequisites and declared ruleset exceptions: $($selected -join ', '). Manual confirmations are not automatically verified."
-        if (-not $hasChanges) { $text += ' No changes. No apply approval or apply is required.' }
+        if ($failure) { $text = $failure }
+        else {
+            $text = "Cloud plan completed for all selected modules, prerequisites and declared ruleset exceptions: $($selected -join ', '). Manual confirmations are not automatically verified."
+            if (-not $hasChanges) { $text += ' No changes. No apply approval or apply is required.' }
+        }
     }
 }
 if ($JobSummaryPath) {

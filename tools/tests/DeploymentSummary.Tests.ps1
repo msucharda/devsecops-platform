@@ -59,11 +59,14 @@ Describe 'Deployment plan status' {
         if ($null -eq $Outputs) { $needs.module_observer.Remove('outputs') }
         else { $needs.module_observer.outputs = $Outputs }
         $output = Join-Path $caseDirectory 'invalid.txt'
+        $summary = Join-Path $caseDirectory 'invalid.md'
 
-        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath (Join-Path $TestDrive 'invalid.md') -GitHubOutputPath $output 6>$null } |
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -JobSummaryPath $summary -GitHubOutputPath $output 6>$null } |
             Should -Throw "*INCOMPLETE*module_observer*$Reason*Apply is blocked*"
 
         Test-Path -LiteralPath $output | Should -BeFalse
+        Test-Path -LiteralPath $summary | Should -BeTrue
+        [IO.File]::ReadAllText($summary) | Should -BeLike "*INCOMPLETE*module_observer*$Reason*Apply is blocked*"
     }
 
     It 'does not publish a decision before summary persistence and can retry after an interrupted report' {
