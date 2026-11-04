@@ -40,7 +40,7 @@ Describe 'Per-organization drift completeness' {
 
     It 'requires a successful no-change plan for every organization before reporting no drift' {
         Invoke-OrganizationDriftReport
-        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=false`ncomplete=true`n"
+        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=false`ncomplete=true`noutcome=Clean`n"
     }
 
     It 'rejects a singleton array wrapping complete organization results' {
@@ -49,7 +49,7 @@ Describe 'Per-organization drift completeness' {
 
         Invoke-OrganizationDriftReport
 
-        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`n"
+        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`noutcome=Report`n"
         Get-Content -LiteralPath $reportPath -Raw | Should -Match 'did not publish per-organization results'
     }
 
@@ -88,7 +88,7 @@ Describe 'Per-organization drift completeness' {
 
         Invoke-OrganizationDriftReport
 
-        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`n"
+        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`noutcome=Report`n"
         $report = Get-Content -LiteralPath $reportPath -Raw
         $report | Should -Match 'Drift detected'
         $report | Should -Match '`scoped`.*organization results incomplete'
