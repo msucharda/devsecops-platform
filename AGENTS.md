@@ -106,6 +106,7 @@ CI workflow `Source CI` běží s oprávněním `contents: read`. Pester, harnes
   3. Lokálně spusť `./tools/Invoke-MutationTests.ps1 -Check <name>`.
 - Přeživší mutant (survived) je chybějící negativní test. Doplň test. Výjimku v `Exceptions` přidej jen pro ekvivalentního mutanta, který nemůže změnit chování. Výjimka musí mít přesné ID mutanta z reportu, důvod a URL issue nebo PR.
 - Běh selže při nesouladu markerů a konfigurace, při chybě baseline, při chybě mutanta, při přeživším mutantovi bez výjimky a při zastaralé výjimce.
+- Generovaný teardown YAML pokrývá explicitní adaptér `TeardownWorkflow` v mutační konfiguraci. Mění predikáty přes šablony generátoru a používá stávající worker a kontraktní testy bez produkčního markeru. Testy adaptéru musí doložit změnu emitované podmínky, platný YAML a odmítnutí kontraktní assertion; chyba generátoru ani runneru není zabitý mutant.
 
 ### Lokální validace
 

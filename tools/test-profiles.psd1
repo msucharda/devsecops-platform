@@ -82,6 +82,7 @@
         'RulesetsTerraform.Tests.ps1'
         'TeardownEnterpriseOwner.Tests.ps1'
         'TeardownMainCommit.Tests.ps1'
+        'TeardownMutation.Tests.ps1'
         'TeardownWorkflow.Tests.ps1'
         'VendoredRuntime.Tests.ps1'
         'Vendoring.Tests.ps1'

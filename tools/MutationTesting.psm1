@@ -19,13 +19,14 @@ $script:CaseInsensitive = @{
 function Get-SecurityCheckMarker {
     <#
     .SYNOPSIS
-    Finds the functions marked with '# security-check: <name>' on the line before the function.
+    Finds marked functions and the explicitly configured teardown workflow generator adapter.
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)][string] $RepoPath,
-        [string[]] $Include = @('tools', 'modules')
+        [string[]] $Include = @('tools', 'modules'),
+        [System.Collections.IDictionary] $Configuration
     )
 
     foreach ($folder in $Include) {
@@ -57,6 +58,31 @@ function Get-SecurityCheckMarker {
                     Line = $function[0].Extent.StartLineNumber
                     Function = $function[0].Name
                 }
+            }
+        }
+    }
+    if ($null -ne $Configuration) {
+        $generated = $false
+        foreach ($check in @($Configuration['Checks'])) {
+            if ($check -isnot [System.Collections.IDictionary] -or
+                (-not $check.Contains('Kind') -and -not $check.Contains('File'))) { continue }
+            if ($check['Kind'] -isnot [string] -or $check['Kind'] -cne 'TeardownWorkflow') {
+                throw "Unsupported mutation adapter '$($check['Kind'])' for security check '$($check['Name'])'."
+            }
+            if ($check['File'] -isnot [string] -or $check['File'] -cne 'tools/Generate-TeardownWorkflow.ps1') {
+                throw "The TeardownWorkflow adapter File must be exactly 'tools/Generate-TeardownWorkflow.ps1'."
+            }
+            if ($generated) { throw 'The TeardownWorkflow adapter must be configured exactly once.' }
+            if ($check['Name'] -isnot [string] -or $check['Name'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]*$') {
+                throw 'The TeardownWorkflow adapter must have a valid security check Name.'
+            }
+            $generated = $true
+            [pscustomobject]@{
+                Name = $check['Name']
+                File = $check['File']
+                Line = 1
+                Function = $null
+                Kind = 'TeardownWorkflow'
             }
         }
     }
@@ -266,7 +292,7 @@ function Get-FunctionMutant {
 function Get-SecurityCheckMutant {
     <#
     .SYNOPSIS
-    Generates the mutants of every marked function and verifies that each mutated file still parses.
+    Generates marked function or configured teardown generator mutants and verifies that each mutated file still parses.
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -277,12 +303,22 @@ function Get-SecurityCheckMutant {
 
     $ids = [System.Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($check in $Marker) {
+        if ($check.PSObject.Properties['Kind'] -and
+            ($check.Kind -isnot [string] -or $check.Kind -cne 'TeardownWorkflow' -or
+            $check.File -isnot [string] -or $check.File -cne 'tools/Generate-TeardownWorkflow.ps1')) {
+            throw "Unsupported mutation adapter target '$($check.Kind)' in '$($check.File)'."
+        }
         $path = Join-Path $RepoPath $check.File
         $text = [IO.File]::ReadAllText($path)
-        $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, $path, [ref] $null, [ref] $null)
-        $function = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Extent.StartLineNumber -eq $check.Line }, $true))
-        if ($function.Count -ne 1) { throw "$($check.File):$($check.Line): the function of the security check $($check.Name) was not found." }
-        $mutants = @(Get-FunctionMutant -Function $function[0])
+        if ($check.PSObject.Properties['Kind']) {
+            $mutants = @(Get-TeardownWorkflowMutant -Text $text -Check $check)
+        }
+        else {
+            $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, $path, [ref] $null, [ref] $null)
+            $function = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Extent.StartLineNumber -eq $check.Line }, $true))
+            if ($function.Count -ne 1) { throw "$($check.File):$($check.Line): the function of the security check $($check.Name) was not found." }
+            $mutants = @(Get-FunctionMutant -Function $function[0])
+        }
         if ($mutants.Count -eq 0) { throw "$($check.File):$($check.Line): the security check $($check.Name) has no mutable condition." }
         foreach ($mutant in $mutants) {
             $mutated = $text.Substring(0, $mutant.Start) + $mutant.Replacement + $text.Substring($mutant.End)
@@ -296,6 +332,45 @@ function Get-SecurityCheckMutant {
             $mutant | Add-Member -NotePropertyName File -NotePropertyValue $check.File
             $mutant | Add-Member -NotePropertyName Text -NotePropertyValue $mutated
             $mutant
+        }
+    }
+}
+
+function Get-TeardownWorkflowMutant {
+    param([string] $Text, [object] $Check)
+
+    # These source templates emit workflow predicates, not PowerShell function guards.
+    $gate = '$gateCondition = "needs.select.result == ''success'' && needs.approve_teardown.result == ''success'' && needs.enterprise_owner.result == ''success''"'
+    $selection = '$condition = "!cancelled() && $gateCondition && contains($nodesExpression, ''$key'')"'
+    $targets = @(
+        @{ Name = 'cancellation'; Original = '!cancelled() && $gateCondition'; Replacement = 'always() && $gateCondition' }
+        @{ Name = 'selected-node'; Original = $selection; Replacement = '$condition = "!cancelled() && $gateCondition"' }
+        @{ Name = 'selection-success'; Original = $gate; Replacement = $gate.Replace("needs.select.result == 'success' && ", '') }
+        @{ Name = 'approval-success'; Original = $gate; Replacement = $gate.Replace("needs.approve_teardown.result == 'success' && ", '') }
+        @{ Name = 'owner-success'; Original = $gate; Replacement = $gate.Replace(" && needs.enterprise_owner.result == 'success'", '') }
+        @{ Name = 'prerequisite-success'; Original = ' && needs.outputs_$($prerequisite.Replace(''-'', ''_'').Replace('':'', ''_'')).result == ''success'''; Replacement = '' }
+        @{ Name = 'dependent-success'; Original = 'needs.$job.result == ''success'''; Replacement = "'success' == 'success'" }
+        @{ Name = 'dependent-skipped'; Original = 'needs.$job.result == ''skipped'''; Replacement = "'skipped' == 'skipped'" }
+        @{ Name = 'dependent-unselected'; Original = '!contains($nodesExpression, ''$dependent'')'; Replacement = "'skipped' == 'skipped'" }
+        @{ Name = 'identity-dependents'; Original = '$dependents = @($phaseGraph.PSBase.Keys | Where-Object { $_ -cne $identityModule } | Sort-Object -CaseSensitive)'; Replacement = '$dependents = @()' }
+        @{ Name = 'nonempty-state'; Original = 'steps.state.outputs.empty != ''true'''; Replacement = 'true' }
+        @{ Name = 'always-revoke'; Original = 'always()'; Replacement = 'success()' }
+    )
+    foreach ($target in $targets) {
+        $targetMatches = [regex]::Matches($Text, [regex]::Escape($target.Original))
+        if ($targetMatches.Count -ne 1) {
+            throw "$($Check.File): the emitted $($target.Name) predicate target must match exactly once; found $($targetMatches.Count)."
+        }
+        $start = $targetMatches[0].Index
+        [pscustomobject]@{
+            Start = $start
+            End = $start + $targetMatches[0].Length
+            Line = ($Text.Substring(0, $start).Split("`n")).Count
+            Original = $target.Original
+            Replacement = $target.Replacement
+            Kind = 'generated-condition'
+            Description = "emitted $($target.Name) predicate weakened"
+            Id = "$($Check.Name): $($target.Name)#1"
         }
     }
 }

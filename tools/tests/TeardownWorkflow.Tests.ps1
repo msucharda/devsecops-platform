@@ -374,6 +374,7 @@ Describe 'Teardown identity approval boundary' {
             $selectedNodes = $Selected
             $jobResults = $Results
             $condition = $identity.if -replace '^\$\{\{\s*|\s*\}\}$', ''
+            $condition = $condition.Replace('always()', '$true')
             $condition = $condition.Replace('cancelled()', ('$' + $Cancelled.ToString().ToLowerInvariant()))
             $condition = [regex]::Replace($condition, "contains\(fromJSON\(needs.select.outputs.phaseNodes\), '([^']+)'\)", {
                 param($match)
