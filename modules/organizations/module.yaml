@@ -7,14 +7,29 @@ manualSteps:
     description: >-
       Before the organizations module is destroyed, an enterprise owner deletes the actions and workloads
       organizations of the instance in the enterprise settings, only after the destroy of every module that depends on
-      organizations succeeded. GitHub offers no organization deletion with
+      organizations succeeded, including enterprise-baseline. A successful destroy need not remove
+      the organization Actions restrictions. With promoted live workflows, open a reviewed PR changing
+      only .github/workflows/teardown.yml: regenerate it with the installed
+      platform/tools/Generate-TeardownWorkflow.ps1 and platform/modules, not the catalog-rewritten template.
+      Derive the exact upstream SHA action list from that generated workflow, not a handwritten list.
+      In the organization containing the instance repository, use selected actions to permit only these
+      external references, without wildcards or broad GitHub or verified-creator allowances.
+      Read back the saved policy and compare it with the generated list; stop before deletion if any
+      reference is missing, broader access is enabled, or the enterprise policy blocks the change.
+      Do not change the enterprise policy or any other organization.
+      After this PR is merged into main, cancel every unfinished deploy.yml run on every branch and
+      wait until all are completed; do not approve their apply. Only then delete the actions and workloads organizations.
+      Then start a new workflow_dispatch of teardown from main; do not use Re-run jobs, which keeps
+      the original commit and its catalog action references. The dispatch must be later than every deploy
+      updated_at; do not start or rerun deploy until bootstrap removal finishes. Keep emu-identity until the final approvals.
+      See the promoted-workflow teardown plan in platform/README.md. GitHub offers no organization deletion with
       the enterprise installation token; the module destroy only verifies that both organizations are gone
       and fails otherwise. Their names stay blocked; a new deployment needs a new bootstrap with a new
       deployment identifier.
     limitations:
       plan: The plan does not show the deletion; it reads only whether each organization exists and which Apps it has.
       drift: Drift detection reports a deleted organization as a failed plan, not as a planned deletion.
-      teardown: The teardown workflow stops at the organizations destroy until both organizations are deleted; delete them and run the teardown again.
+      teardown: The first teardown stops at organizations; derive and verify the exact upstream SHA exceptions, merge the restoration PR, cancel and await every deploy run before deleting the actions organization, then start a new workflow_dispatch from the updated main.
 permissions:
   azure: []
   microsoftGraph: []
