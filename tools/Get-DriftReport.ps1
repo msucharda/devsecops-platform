@@ -336,6 +336,7 @@ if ($JobSummaryPath) {
     [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($JobSummaryPath), $content, $encoding)
 }
 $publish = ($drift.Count -gt 0 -or -not $complete).ToString().ToLowerInvariant()
+$outcome = if ($publish -ceq 'false') { 'Clean' } else { 'Report' }
 [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($GitHubOutputPath),
-    "report=$publish`ncomplete=$($complete.ToString().ToLowerInvariant())`n", $encoding)
+    "report=$publish`ncomplete=$($complete.ToString().ToLowerInvariant())`noutcome=$outcome`n", $encoding)
 Write-Information $content -InformationAction Continue

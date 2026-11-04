@@ -37,7 +37,7 @@ Describe 'Drift issue publication' {
             if ($Method -eq 'GET' -and $Uri -eq 'https://api.example.test/repos/platform/instance/issues?state=open&per_page=100&page=1') { return , $listed }
             if ($Method -eq 'GET' -and $Uri -like 'https://api.example.test/repos/platform/instance/issues?state=open&per_page=100&page=*') { return , @() }
             if ($Method -eq 'POST' -and $Uri -eq 'https://api.example.test/repos/platform/instance/issues') { return $created }
-            if ($Method -eq 'PATCH' -and $Uri -eq 'https://api.example.test/repos/platform/instance/issues/9') { return $updated }
+            if ($Method -eq 'PATCH' -and $Uri -eq 'https://api.example.test/repos/platform/instance/issues/9') { return , $updated }
             throw "Unexpected GitHub API request: $Method $Uri"
         }
     }
@@ -68,6 +68,38 @@ Describe 'Drift issue publication' {
             $Method -eq 'PATCH' -and @(($Body | ConvertFrom-Json -AsHashtable).Keys) -join ',' -eq 'body'
         }
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'comments on the clean result before closing the single open drift issue of the App' {
+        $listed += Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nprevious"
+        [IO.File]::WriteAllText($reportPath, "$marker`nNo drift detected in the automatically planned resources.`n")
+        $updated.state = 'closed'
+        $writes = [Collections.Generic.List[string]]::new()
+        Mock Invoke-RestMethod { return , @() } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues/9/comments?*' }
+        Mock Invoke-RestMethod {
+            $writes.Add('comment')
+            Get-GitHubApiFixture -Name issues/create-comment -Set @{ body = ($Body | ConvertFrom-Json -AsHashtable).body }
+        } -ParameterFilter { $Method -eq 'POST' -and $Uri -like '*/issues/9/comments' }
+        Mock Invoke-RestMethod {
+            $writes.Add('close')
+            $updated
+        } -ParameterFilter { $Method -eq 'PATCH' }
+
+        $result = & $publisher @arguments -Outcome Clean
+
+        $result.Action | Should -Be 'closed'
+        $result.Number | Should -Be 9
+        $writes -join ',' | Should -BeExactly 'comment,close'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and $Uri -like '*/issues/9/comments' -and
+            ($Body | ConvertFrom-Json -AsHashtable).body -match 'No drift detected'
+        }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PATCH' -and ($Body | ConvertFrom-Json -AsHashtable).state -ceq 'closed' -and
+            ($Body | ConvertFrom-Json -AsHashtable).state_reason -ceq 'completed' -and
+            -not ($Body | ConvertFrom-Json -AsHashtable).Contains('body')
+        }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' -and $Uri -like '*/issues' }
     }
 
     It 'recovers from a lost creation response by updating the issue on the next run' {
@@ -203,5 +235,201 @@ Describe 'Drift issue publication' {
 
         { & $publisher @arguments } | Should -Throw '*drift report marker*'
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'rejects an invalid outcome before any API request: <Value>' -ForEach @(
+        @{ Value = '' }, @{ Value = 'clean' }, @{ Value = 'unknown' }
+    ) {
+        { & $publisher @arguments -Outcome $Value } | Should -Throw '*Outcome*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    Context 'Clean reconciliation' -Tag 'CleanDrift' {
+        BeforeEach {
+            $arguments.Outcome = 'Clean'
+            $current = Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nprevious"
+            $listed += $current
+            $updated.state = 'closed'
+            $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$marker`nprevious"))).ToLowerInvariant()
+            $cleanMarker = "<!-- platform-drift-clean:$digest -->"
+            $comments = @()
+            Mock Invoke-RestMethod {
+                if ($Uri -like '*page=1') { return , $comments }
+                return , @()
+            } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues/9/comments?*' }
+            Mock Invoke-RestMethod {
+                Get-GitHubApiFixture -Name issues/create-comment -Set @{ body = ($Body | ConvertFrom-Json -AsHashtable).body }
+            } -ParameterFilter { $Method -eq 'POST' -and $Uri -like '*/issues/9/comments' }
+        }
+
+        It 'does not create or close anything when no matching open issue exists' {
+            $listed = @($listed | Where-Object { $_.number -ne 9 })
+
+            $result = & $publisher @arguments
+
+            $result.Action | Should -BeExactly 'unchanged'
+            $result.Number | Should -BeNullOrEmpty
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'reuses a clean comment from this App after a lost response even if the run URL changes' {
+            $comments = Get-GitHubApiFixture -Name issues/list-comments -Set @{
+                '0.body' = "$cleanMarker`nNo drift detected in a previous clean run."
+                '0.user.login' = 'octoapp[bot]'
+                '0.user.type' = 'Bot'
+            }
+            [IO.File]::WriteAllText($reportPath, "$marker`nNo drift detected. Run: https://github.example.test/runs/99`n")
+
+            $result = & $publisher @arguments
+
+            $result.Action | Should -BeExactly 'closed'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'does not reuse a comment when <Case>' -ForEach @(
+            @{ Case = 'the author is null'; Change = { param($c) $c.user = $null } }
+            @{ Case = 'the author is missing'; Change = { param($c) $c.Remove('user') } }
+            @{ Case = 'the author is not an object'; Change = { param($c) $c.user = 'octoapp[bot]' } }
+            @{ Case = 'the login belongs to another App'; Change = { param($c) $c.user.login = 'other[bot]' } }
+            @{ Case = 'the login differs in case'; Change = { param($c) $c.user.login = 'Octoapp[bot]' } }
+            @{ Case = 'the login is empty'; Change = { param($c) $c.user.login = '' } }
+            @{ Case = 'the login is an array containing the App login'; Change = { param($c) $c.user.login = @('octoapp[bot]') } }
+            @{ Case = 'the login is missing'; Change = { param($c) $c.user.Remove('login') } }
+            @{ Case = 'the author is a user'; Change = { param($c) $c.user.type = 'User' } }
+            @{ Case = 'the author type differs in case'; Change = { param($c) $c.user.type = 'bot' } }
+            @{ Case = 'the author type is empty'; Change = { param($c) $c.user.type = '' } }
+            @{ Case = 'the author type is an array containing Bot'; Change = { param($c) $c.user.type = @('Bot') } }
+            @{ Case = 'the author type is missing'; Change = { param($c) $c.user.Remove('type') } }
+            @{ Case = 'the body is missing'; Change = { param($c) $c.Remove('body') } }
+            @{ Case = 'the body is not text'; Change = { param($c) $c.body = @('text') } }
+            @{ Case = 'the body is empty'; Change = { param($c) $c.body = '' } }
+            @{ Case = 'the marker belongs to an older drift report'; Change = { param($c) $c.body = "<!-- platform-drift-clean:$('0' * 64) -->`nclean" } }
+            @{ Case = 'the marker is not a prefix'; Change = { param($c) $c.body = "text`n$($c.body)" } }
+            @{ Case = 'the marker differs in case'; Change = { param($c) $c.body = $c.body.Replace('platform-drift-clean', 'PLATFORM-DRIFT-CLEAN') } }
+        ) {
+            $comments = Get-GitHubApiFixture -Name issues/list-comments -Set @{
+                '0.body' = "$cleanMarker`nNo drift detected."
+                '0.user.login' = 'octoapp[bot]'
+                '0.user.type' = 'Bot'
+            }
+            # Missing required fields and wrong types intentionally exercise unsupported API responses.
+            & $Change $comments[0]
+
+            $result = & $publisher @arguments
+
+            $result.Action | Should -BeExactly 'closed'
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'continues beyond a short comment page before posting a clean comment' {
+            $comments = Get-GitHubApiFixture -Name issues/list-comments
+            $later = Get-GitHubApiFixture -Name issues/list-comments -Set @{
+                '0.body' = "$cleanMarker`nNo drift detected."
+                '0.user.login' = 'octoapp[bot]'
+                '0.user.type' = 'Bot'
+            }
+            Mock Invoke-RestMethod { return , $later } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/comments?*page=2' }
+
+            $result = & $publisher @arguments
+
+            $result.Action | Should -BeExactly 'closed'
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -like '*/comments?*page=3' }
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'leaves the issue open when <Case>' -ForEach @(
+            @{ Case = 'listing comments fails'; Response = { throw 'comments unavailable' }; Error = '*GET*/comments failed*' }
+            # Intentionally invalid: the list endpoint must return an array of objects.
+            @{ Case = 'the comment list is an object'; Response = { return @{ id = 1 } }; Error = '*unknown comment list*' }
+            @{ Case = 'a comment is not an object'; Response = { return , @('text') }; Error = '*unknown comment list item*' }
+        ) {
+            Mock Invoke-RestMethod $Response -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/comments?*' }
+
+            { & $publisher @arguments } | Should -Throw $Error
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'leaves the issue open when the clean comment cannot be posted' {
+            Mock Invoke-RestMethod { throw 'comment unavailable' } -ParameterFilter { $Method -eq 'POST' }
+
+            { & $publisher @arguments } | Should -Throw '*POST*/comments failed*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'rejects a created clean comment with <Case>' -ForEach @(
+            @{ Case = 'no ID'; Change = { param($c) $c.Remove('id'); return , $c } }
+            @{ Case = 'an empty ID'; Change = { param($c) $c.id = ''; return , $c } }
+            @{ Case = 'an invalid ID'; Change = { param($c) $c.id = 'x'; return , $c } }
+            @{ Case = 'no body'; Change = { param($c) $c.Remove('body'); return , $c } }
+            @{ Case = 'another body'; Change = { param($c) $c.body = 'other'; return , $c } }
+            @{ Case = 'an array containing the expected body'; Change = { param($c) $c.body = @($c.body); return , $c } }
+            @{ Case = 'a body differing in case'; Change = { param($c) $c.body = $c.body.Replace('platform-drift-clean', 'PLATFORM-DRIFT-CLEAN'); return , $c } }
+            @{ Case = 'an array instead of an object'; Change = { param($c) return , @($c) } }
+        ) {
+            Mock Invoke-RestMethod {
+                $comment = Get-GitHubApiFixture -Name issues/create-comment -Set @{ body = ($Body | ConvertFrom-Json -AsHashtable).body }
+                # Intentionally invalid API response, changed one field at a time.
+                & $Change $comment
+            } -ParameterFilter { $Method -eq 'POST' }
+
+            { & $publisher @arguments } | Should -Throw '*did not return the clean-result comment*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'accepts the documented null author in the created comment response' {
+            Mock Invoke-RestMethod {
+                Get-GitHubApiFixture -Name issues/create-comment -Set @{ body = ($Body | ConvertFrom-Json -AsHashtable).body; user = $null }
+            } -ParameterFilter { $Method -eq 'POST' }
+
+            (& $publisher @arguments).Action | Should -BeExactly 'closed'
+        }
+
+        It 'rejects a close response with <Case>' -ForEach @(
+            @{ Case = 'an open state'; Change = { param($i) $i.state = 'open'; return , $i } }
+            @{ Case = 'a state differing in case'; Change = { param($i) $i.state = 'CLOSED'; return , $i } }
+            @{ Case = 'an empty state'; Change = { param($i) $i.state = ''; return , $i } }
+            @{ Case = 'an array containing the closed state'; Change = { param($i) $i.state = @('closed'); return , $i } }
+            @{ Case = 'a missing state'; Change = { param($i) $i.Remove('state'); return , $i } }
+            @{ Case = 'another issue number'; Change = { param($i) $i.number = 999; return , $i } }
+            @{ Case = 'a missing issue number'; Change = { param($i) $i.Remove('number'); return , $i } }
+            @{ Case = 'a pull request'; Change = { param($i) $i.pull_request = @{ url = 'https://api.example.test/pulls/9' }; return , $i } }
+            @{ Case = 'an array instead of an object'; Change = { param($i) return , @($i) } }
+        ) {
+            # Missing required fields and wrong types intentionally exercise unsupported API responses.
+            $updated = & $Change $updated
+
+            { & $publisher @arguments } | Should -Throw '*PATCH did not return an closed issue*'
+        }
+
+        It 'reports a failure to close after posting the clean comment' {
+            Mock Invoke-RestMethod { throw 'close unavailable' } -ParameterFilter { $Method -eq 'PATCH' }
+
+            { & $publisher @arguments } | Should -Throw '*PATCH /repos/platform/instance/issues/9 failed*'
+        }
+
+        It 'rejects an unreadable matching issue before writing: <Case>' -ForEach @(
+            @{ Case = 'missing number'; Change = { param($i) $i.Remove('number') } }
+            @{ Case = 'invalid number'; Change = { param($i) $i.number = '../10' } }
+            @{ Case = 'closed state'; Change = { param($i) $i.state = 'closed' } }
+            @{ Case = 'missing state'; Change = { param($i) $i.Remove('state') } }
+        ) {
+            # Intentionally invalid list item; required number/state must remain readable.
+            & $Change $current
+
+            { & $publisher @arguments } | Should -Throw '*GET did not return an open issue*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'preserves the recovery marker when truncating a clean comment' {
+            [IO.File]::WriteAllText($reportPath, "$marker`n" + ('x' * 70000))
+
+            $null = & $publisher @arguments
+
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'POST' -and ($Body | ConvertFrom-Json -AsHashtable).body.Length -le 65536 -and
+                ($Body | ConvertFrom-Json -AsHashtable).body.StartsWith("$cleanMarker`n", [StringComparison]::Ordinal) -and
+                ($Body | ConvertFrom-Json -AsHashtable).body -match 'truncated.*job summary'
+            }
+        }
     }
 }

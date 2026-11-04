@@ -19,6 +19,7 @@
         'ActionUpdates.Tests.ps1'
         'BootstrapExecutionPolicy.Tests.ps1'
         'CredentialContract.Tests.ps1'
+        'DriftWorkflow.Tests.ps1'
         'CodeSecurityCoverage.Tests.ps1'
         'GitHubApiFixture.Tests.ps1'
         'GitHubRetryIntegration.Tests.ps1'
@@ -92,6 +93,7 @@
         'WorkflowPreflight.Tests.ps1'
     )
     Interruption = @(
+        'DriftIssue.Interruption.Tests.ps1'
         'CiBinaryIntegrity.Interruption.Tests.ps1'
         'GitHubTokenIssuance.Interruption.Tests.ps1'
         'Acceptance.Interruption.Tests.ps1'

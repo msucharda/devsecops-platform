@@ -224,14 +224,28 @@ Describe 'Drift report evaluation' {
                 [Text.Encoding]::UTF8.GetByteCount($report) | Should -BeLessOrEqual 50000
             }
 
-    It 'publishes no issue when every selected plan completed without changes' {
+    It 'signals clean reconciliation when every selected plan completed without changes' {
         Invoke-DriftReport -Needs (Get-DriftNeed)
 
         $output.report | Should -BeExactly 'false'
         $output.complete | Should -BeExactly 'true'
+        $output.outcome | Should -BeExactly 'Clean'
         $report | Should -Match '^<!-- platform-drift-report -->\n'
         $report | Should -Match 'No drift detected'
         [IO.File]::ReadAllText($summaryPath) | Should -Match 'Not covered by automatic drift detection'
+    }
+
+    It 'signals report reconciliation instead of closure for <Case>' -ForEach @(
+        @{ Case = 'detected drift'; Result = 'success'; Changes = 'true' }
+        @{ Case = 'an incomplete plan'; Result = 'failure'; Changes = 'false' }
+    ) {
+        $needs = Get-DriftNeed
+        $needs.module_foundation.result = $Result
+        $needs.module_foundation.outputs.changes = $Changes
+
+        Invoke-DriftReport -Needs $needs
+
+        $output.outcome | Should -BeExactly 'Report'
     }
 
     It 'checks only selected phase roots when the phase plan is <Result>' -ForEach @(
@@ -365,7 +379,7 @@ Describe 'Drift report evaluation' {
         & $reporter -NeedsJson 'not json' -InstancePath $instancePath -ModulesPath $modulesPath -ReportPath $reportPath `
             -GitHubOutputPath $outputPath -JobSummaryPath (Join-Path $TestDrive 'invalid.summary') -RunUrl 'https://github.example.test/r' 6>$null
 
-        [IO.File]::ReadAllText($outputPath) | Should -BeExactly "report=true`ncomplete=false`n"
+        [IO.File]::ReadAllText($outputPath) | Should -BeExactly "report=true`ncomplete=false`noutcome=Report`n"
         [IO.File]::ReadAllText($reportPath) | Should -Match 'Drift detection INCOMPLETE'
     }
 }

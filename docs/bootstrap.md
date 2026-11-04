@@ -319,6 +319,8 @@ Bootstrap vytvoří environment `drift-report` bez reviewerů, jen z `main`. Iss
 |---|---|
 | App reportu driftu | Právě `issues: write`, jen repozitář `instance` organizace platformy. Samostatná identita; nesmí ji sdílet autorizace ani žádná fáze modulu. |
 
+Stejná App také zavře své otevřené drift issue po úplném běhu bez driftu. Nejdřív přidá komentář s čistým výsledkem, potom nastaví stav `closed` s důvodem `completed`. Nepotřebuje další oprávnění. Při neúplném běhu issue nezavře; bez otevřeného drift issue nic nevytvoří.
+
 Alias App patří do `githubApps` a klíč do `keys.json`. U existující instance doplň alias přes PR a požadované review podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Cloudový plan změněných vazeb proběhne až z `main` po merge; výsledek PR workflow závisí i na autorizaci autora. Bootstrapu pak předej konfiguraci shodnou s `main` a alias přes `-DriftReportApp`:
 
 ```powershell

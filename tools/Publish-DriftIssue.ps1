@@ -3,6 +3,7 @@
 [OutputType([pscustomobject])]
 param(
     [Parameter(Mandatory)][string] $ReportPath,
+    [ValidateSet('Report', 'Clean', IgnoreCase = $false)][string] $Outcome = 'Report',
     [string] $TokensJson = $env:PLATFORM_GITHUB_TOKENS,
     [string] $AppSlug = $env:PLATFORM_APP_SLUG,
     [string] $Repository = $env:GITHUB_REPOSITORY,
@@ -70,15 +71,42 @@ function Invoke-IssueRequest {
     }
 }
 
-# security-check: drift-open-issue
-function Assert-OpenIssue {
+# security-check: drift-issue-state
+function Assert-IssueState {
     [CmdletBinding()]
-    param([AllowNull()][object] $Issue, [string] $Operation, [string] $ExpectedNumber)
+    param([AllowNull()][object] $Issue, [string] $Operation, [string] $ExpectedNumber,
+        [ValidateSet('open', 'closed')][string] $ExpectedState = 'open')
 
     if ($Issue -isnot [System.Collections.IDictionary] -or $Issue.Contains('pull_request') -or
-        [string] $Issue['number'] -cnotmatch '^[1-9][0-9]*$' -or $Issue['state'] -cne 'open' -or
+        [string] $Issue['number'] -cnotmatch '^[1-9][0-9]*$' -or
+        $Issue['state'] -isnot [string] -or $Issue['state'] -cne $ExpectedState -or
         ($ExpectedNumber -and [string] $Issue['number'] -cne $ExpectedNumber)) {
-        throw "GitHub issues API $Operation did not return an open issue."
+        throw "GitHub issues API $Operation did not return an $ExpectedState issue."
+    }
+}
+
+# security-check: drift-clean-comment
+function Test-CleanComment {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Comment, [string] $CleanMarker)
+
+    return $Comment['user'] -is [System.Collections.IDictionary] -and
+        $Comment['user']['login'] -is [string] -and $Comment['user']['login'] -ceq $botLogin -and
+        $Comment['user']['type'] -is [string] -and $Comment['user']['type'] -ceq 'Bot' -and
+        $Comment['body'] -is [string] -and
+        $Comment['body'].StartsWith("$CleanMarker`n", [System.StringComparison]::Ordinal)
+}
+
+# security-check: drift-created-comment
+function Assert-CreatedComment {
+    [CmdletBinding()]
+    param([AllowNull()][object] $Comment, [string] $ExpectedBody)
+
+    if ($Comment -isnot [System.Collections.IDictionary] -or
+        [string] $Comment['id'] -cnotmatch '^[1-9][0-9]*$' -or
+        $Comment['body'] -isnot [string] -or $Comment['body'] -cne $ExpectedBody) {
+        throw 'GitHub issues API POST did not return the clean-result comment.'
     }
 }
 
@@ -110,15 +138,52 @@ do {
 if ($matching.Count -gt 1) {
     throw "Found more than one open drift issue of this App: $(($matching | ForEach-Object { "#$($_['number'])" }) -join ', '). Close the duplicates manually."
 }
+if ($Outcome -ceq 'Clean') {
+    if ($matching.Count -eq 0) {
+        Write-Information 'No open drift issue of this App to close.' -InformationAction Continue
+        return [pscustomobject]@{ Action = 'unchanged'; Number = $null }
+    }
+    $current = $matching[0]
+    Assert-IssueState -Issue $current -Operation 'GET'
+    $number = [string] $current['number']
+    $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($current['body']))).ToLowerInvariant()
+    # Bind recovery to the last drift report, not to a clean run that changes on every rerun.
+    $cleanMarker = "<!-- platform-drift-clean:$digest -->"
+    $commentFound = $false
+    $page = 1
+    do {
+        if ($page -gt 1000) { throw 'GitHub issues API did not end the comment list within 1000 pages.' }
+        $comments = Invoke-IssueRequest -Method GET -Path "$issuesPath/$number/comments?per_page=100&page=$page"
+        if ($comments -isnot [System.Collections.IList]) { throw 'GitHub issues API returned an unknown comment list.' }
+        foreach ($comment in $comments) {
+            if ($comment -isnot [System.Collections.IDictionary]) { throw 'GitHub issues API returned an unknown comment list item.' }
+            if (Test-CleanComment -Comment $comment -CleanMarker $cleanMarker) { $commentFound = $true }
+        }
+        $page++
+    } while ($comments.Count -gt 0)
+    if (-not $commentFound) {
+        $commentBody = "$cleanMarker`n$report"
+        if ($commentBody.Length -gt $maximumBodyLength) {
+            $notice = "`n`n_Report truncated; see the job summary of the run for the complete report._`n"
+            $commentBody = $commentBody.Substring(0, $maximumBodyLength - $notice.Length) + $notice
+        }
+        $comment = Invoke-IssueRequest -Method POST -Path "$issuesPath/$number/comments" -Body @{ body = $commentBody }
+        Assert-CreatedComment -Comment $comment -ExpectedBody $commentBody
+    }
+    $issue = Invoke-IssueRequest -Method PATCH -Path "$issuesPath/$number" -Body @{ state = 'closed'; state_reason = 'completed' }
+    Assert-IssueState -Issue $issue -Operation 'PATCH' -ExpectedNumber $number -ExpectedState closed
+    Write-Information "Drift issue #$number closed after a clean result." -InformationAction Continue
+    return [pscustomobject]@{ Action = 'closed'; Number = [int] $number }
+}
 if ($matching.Count -eq 1) {
     $number = [string] $matching[0]['number']
     $issue = Invoke-IssueRequest -Method PATCH -Path "$issuesPath/$number" -Body @{ body = $report }
-    Assert-OpenIssue -Issue $issue -Operation 'PATCH' -ExpectedNumber $number
+    Assert-IssueState -Issue $issue -Operation 'PATCH' -ExpectedNumber $number
     $action = 'updated'
 }
 else {
     $issue = Invoke-IssueRequest -Method POST -Path $issuesPath -Body ([ordered]@{ title = $title; body = $report })
-    Assert-OpenIssue -Issue $issue -Operation 'POST'
+    Assert-IssueState -Issue $issue -Operation 'POST'
     $action = 'created'
 }
 Write-Information "Drift issue #$($issue['number']) $action." -InformationAction Continue

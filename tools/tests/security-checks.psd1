@@ -600,10 +600,18 @@
             )
         }
         @{
-            Name = 'drift-open-issue'
+            Name = 'drift-issue-state'
             Tests = @(
-                @{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*updates the single open drift issue*', '*fails closed when the created response*', '*fails closed when the update response*') }
+                @{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*updates the single open drift issue*', '*fails closed when the created response*', '*fails closed when the update response*', '*comments on the clean result*', '*rejects a close response*') }
             )
+        }
+        @{
+            Name = 'drift-clean-comment'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*reuses a clean comment*', '*does not reuse a comment when*') })
+        }
+        @{
+            Name = 'drift-created-comment'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*comments on the clean result*', '*rejects a created clean comment*', '*accepts the documented null author*') })
         }
         @{
             Name = 'catalog-repository-adoptable'
@@ -911,14 +919,19 @@
             Issue = 'https://github.com/msucharda/devsecops-platform/pull/88'
         }
         @{
-            Mutant = 'Assert-OpenIssue: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Issue[''number''] -cnotmatch ''^[1-9][0-9]*$''''#1'
+            Mutant = 'Assert-IssueState: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Issue[''number''] -cnotmatch ''^[1-9][0-9]*$''''#1'
             Reason = 'Equivalent mutant: the pattern contains only digit classes, and no character matches a digit class case-insensitively but not case-sensitively.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/57'
         }
         @{
-            Mutant = 'Assert-OpenIssue: operator ''-cne'' -> -ine in ''[string] $Issue[''number''] -cne $ExpectedNumber''#1'
+            Mutant = 'Assert-IssueState: operator ''-cne'' -> -ine in ''[string] $Issue[''number''] -cne $ExpectedNumber''#1'
             Reason = 'Equivalent mutant: the same condition first requires the issue number to be a decimal number, which has no case.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/57'
+        }
+        @{
+            Mutant = 'Assert-CreatedComment: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Comment[''id''] -cnotmatch ''^[1-9][0-9]*$''''#1'
+            Reason = 'Equivalent mutant: the pattern contains only decimal digits and anchors, which have no case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/200'
         }
         @{
             Mutant = 'Test-SetupAcceptanceRunEvidence: operator ''-cne'' -> -ine in ''[string] $record[''runId''] -cne [string] $Run[''id'']''#1'
