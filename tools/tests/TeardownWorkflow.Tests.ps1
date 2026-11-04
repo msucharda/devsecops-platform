@@ -326,6 +326,17 @@ Describe 'Teardown workflow generation' {
         $instructions | Should -Match 'Po p\u0159eru\u0161en\u00ed'
     }
 
+    It 'documents <Case> before emergency teardown can continue' -ForEach @(
+        @{ Case = 'effective reviewer access'; Pattern = 'P\u0159ed prvn\u00ed zm\u011bnou reviewer\u016f.*ka\u017ed\u00e9ho.*aktivn.*`read`' }
+        @{ Case = 'unconditional deploy cancellation'; Pattern = '(?s)P\u0159ed ka\u017ed\u00fdm.*deploy\.yml.*completed.*workflow_dispatch' }
+        @{ Case = 'abandoned run cancellation'; Pattern = '(?s)Pokud nouzov\u00fd b\u011bh nepokra\u010duje.*zru\u0161.*completed.*odeber' }
+    ) {
+        $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
+        $recovery = [regex]::Match($readme, '(?s)### Nouzov\u00e9 schv\u00e1len\u00ed opakovan\u00e9ho teardownu\r?\n(?<recovery>.*?)(?=\r?\n### |\z)')
+
+        $recovery.Groups['recovery'].Value | Should -Match $Pattern
+    }
+
     It 'fails the check when the committed workflow differs and passes when it matches' {
         & $generator -ModulesPath $fixtures -OutputPath $output -Check
         [IO.File]::AppendAllText($output, '# drift')
@@ -418,6 +429,25 @@ Describe 'Teardown identity approval boundary' {
         foreach ($job in $identity.needs) { $results[$job] = 'success' }
 
         Test-IdentityCondition -Results $results -Selected @('emu-identity') -Cancelled $true | Should -BeFalse
+    }
+
+    It 'allows identity only when each configuration approval and owner gate is <Case>' -ForEach @(
+        @{ Case = 'successful'; Result = 'success'; Expected = $true }
+        @{ Case = 'failed'; Result = 'failure'; Expected = $false }
+        @{ Case = 'cancelled'; Result = 'cancelled'; Expected = $false }
+        @{ Case = 'skipped'; Result = 'skipped'; Expected = $false }
+        @{ Case = 'missing'; Result = ''; Expected = $false }
+        @{ Case = 'unknown'; Result = 'unknown'; Expected = $false }
+    ) {
+        foreach ($gate in @('select', 'approve_teardown', 'enterprise_owner')) {
+            $results = @{}
+            foreach ($job in $identity.needs) { $results[$job] = 'success' }
+            $results[$gate] = $Result
+            $selectedNodes = @('emu-identity') + @($otherDestroyJobs | ForEach-Object { Get-DestroyPhaseNode -Job $_ })
+
+            Test-IdentityCondition -Results $results -Selected $selectedNodes |
+                Should -Be $Expected -Because "identity must respect the $Result result of $gate"
+        }
     }
 }
 
