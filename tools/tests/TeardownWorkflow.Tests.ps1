@@ -295,6 +295,7 @@ Describe 'Teardown workflow generation' {
         $plan.Success | Should -BeTrue
         $plan.Groups['plan'].Value | Should -Match '(?s)destroy_organizations.*Generate-TeardownWorkflow\.ps1.*organizations/delete-instance-organizations.*workflow_dispatch.*Re-run jobs'
         $plan.Groups['plan'].Value | Should -Match '(?s)Po review a merge PR.*deploy\.yml.*completed.*organizations/delete-instance-organizations.*workflow_dispatch'
+        $plan.Groups['plan'].Value | Should -Match '(?s)Po p\u0159eru\u0161en\u00ed.*kroku 5.*kroku 6'
         $plan.Groups['plan'].Value | Should -Match ([regex]::Escape('-ModulesPath .\platform\modules'))
         $plan.Groups['plan'].Value | Should -Match ([regex]::Escape('-OutputPath (Join-Path $PWD ''.github\workflows\teardown.yml'')'))
     }
