@@ -232,7 +232,7 @@ function Assert-DriftReportNotResolved {
             if (-not $comment['body'].StartsWith($prefix, [StringComparison]::Ordinal)) { continue }
             $metadata = [regex]::Match($comment['body'], "^$([regex]::Escape($prefix))(?<number>[1-9][0-9]*):[a-f0-9]{40} -->`n")
             $number = 0L
-            if (-not $metadata.Success -or -not [long]::TryParse($metadata.Groups['number'].Value, [ref] $number)) {
+            if (-not [long]::TryParse($metadata.Groups['number'].Value, [ref] $number)) {
                 throw 'Unreadable resolved-run evidence in a clean-result marker.'
             }
             if (Test-CleanComment -Comment $comment -CleanMarker $metadata.Value.TrimEnd("`n")) {
