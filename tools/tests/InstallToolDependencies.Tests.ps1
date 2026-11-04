@@ -1,5 +1,15 @@
 BeforeAll {
     $script:sourceTools = Split-Path $PSScriptRoot -Parent
+    $nestedDirectory = Join-Path $TestDrive 'nested-dependency'
+    $null = New-Item -ItemType Directory -Path $nestedDirectory
+    $nestedPath = Join-Path $nestedDirectory 'ToolDependencies.psm1'
+    Copy-Item (Join-Path $script:sourceTools 'ToolDependencies.psm1') $nestedPath
+    # Other suites can leave dependency modules loaded in a parent module's private scope.
+    $script:nestedModule = New-Module -Name NestedDependencyFixture -ScriptBlock {
+        param($Path)
+        Import-Module $Path
+    } -ArgumentList $nestedPath
+    Import-Module $script:nestedModule
     function Get-PSRepository {
         [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Offline package transport stub.')]
         [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Matches the public PowerShellGet command.')]
@@ -42,6 +52,10 @@ BeforeAll {
     }
 }
 
+AfterAll {
+    Remove-Module $script:nestedModule -Force
+}
+
 Describe 'Tool dependency installer process errors' {
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot 'InstallToolDependenciesStub.psm1') -Force
@@ -62,7 +76,7 @@ Describe 'Tool dependency installer process errors' {
 Describe 'Tool dependency installation' {
     BeforeEach {
         $fixture = New-InstallerFixture -Root (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')))
-        Remove-Module ToolDependencies -Force -ErrorAction SilentlyContinue
+        Get-Module ToolDependencies -All | Remove-Module -Force
         Mock Invoke-WebRequest { Copy-Item -LiteralPath $fixture.Package -Destination $OutFile }
         Mock Save-Module {
             $destination = Join-Path $Path "$Name/$RequiredVersion"

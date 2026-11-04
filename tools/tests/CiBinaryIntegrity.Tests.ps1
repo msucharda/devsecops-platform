@@ -4,7 +4,7 @@ BeforeAll {
 
 Describe 'CI binary integrity before execution' {
     It 'stops after four failed connections without publishing a binary' {
-        Remove-Module ToolDependencies -Force -ErrorAction SilentlyContinue
+        Get-Module ToolDependencies -All | Remove-Module -Force
         Import-Module (Join-Path $tools 'ToolDependencies.psm1')
         Mock Start-Sleep {} -ModuleName ToolDependencies
         Mock Invoke-WebRequest {
@@ -37,7 +37,7 @@ Describe 'CI binary integrity before execution' {
         $hashKey = if ($IsWindows) { 'WindowsAmd64ArchiveSha256' } else { 'LinuxAmd64ArchiveSha256' }
         Set-Content (Join-Path $root 'requirements.psd1') "@{ Binaries=@{ Actionlint=@{ Version='1.7.7'; $hashKey='$hash' } } }"
         $state = @{ Attempts = 0 }
-        Remove-Module ToolDependencies -Force -ErrorAction SilentlyContinue
+        Get-Module ToolDependencies -All | Remove-Module -Force
         Import-Module (Join-Path $root 'ToolDependencies.psm1') -Force
         Mock Start-Sleep {} -ModuleName ToolDependencies
         Mock Invoke-WebRequest {
@@ -73,7 +73,7 @@ Describe 'CI binary integrity before execution' {
         $hash = (Get-FileHash $fixtureArchive).Hash
         $hashKey = if ($IsWindows) { 'WindowsAmd64ArchiveSha256' } else { 'LinuxAmd64ArchiveSha256' }
         Set-Content (Join-Path $root 'requirements.psd1') "@{ Binaries=@{ Actionlint=@{ Version='1.7.7'; $hashKey='$hash' } } }"
-        Remove-Module ToolDependencies -Force -ErrorAction SilentlyContinue
+        Get-Module ToolDependencies -All | Remove-Module -Force
         Import-Module (Join-Path $root 'ToolDependencies.psm1') -Force
         Mock Start-Sleep {} -ModuleName ToolDependencies
         Mock Invoke-WebRequest {
@@ -105,6 +105,8 @@ Describe 'CI binary integrity before execution' {
 
     Describe 'Pinned Trivy installation' -Skip:(-not $IsLinux) {
         BeforeEach {
+            $oldTemp = $env:RUNNER_TEMP
+            $oldGitHubPath = $env:GITHUB_PATH
             $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
             $null = New-Item -ItemType Directory -Path $root
             Copy-Item (Join-Path $tools 'Install-CiBinary.ps1'), (Join-Path $tools 'ToolDependencies.psm1') $root
@@ -118,12 +120,10 @@ Describe 'CI binary integrity before execution' {
             finally { $entry.DataStream.Dispose(); $writer.Dispose(); $gzip.Dispose(); $file.Dispose() }
             $hash = (Get-FileHash $fixtureArchive).Hash
             Set-Content (Join-Path $root 'requirements.psd1') "@{ Binaries=@{ Trivy=@{ Version='0.72.0'; LinuxAmd64ArchiveSha256='$hash' } } }"
-            Remove-Module ToolDependencies -Force -ErrorAction SilentlyContinue
+            Get-Module ToolDependencies -All | Remove-Module -Force
             Import-Module (Join-Path $root 'ToolDependencies.psm1') -Force
             Mock Start-Sleep {} -ModuleName ToolDependencies
             Mock Invoke-WebRequest { Copy-Item $fixtureArchive $OutFile }
-            $oldTemp = $env:RUNNER_TEMP
-            $oldGitHubPath = $env:GITHUB_PATH
             $env:RUNNER_TEMP = $root
             $env:GITHUB_PATH = Join-Path $root 'github-path'
         }
