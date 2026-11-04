@@ -1,7 +1,7 @@
 BeforeAll {
     $reporter = Join-Path (Split-Path $PSScriptRoot -Parent) 'Write-DeploymentSummary.ps1'
 
-    function New-PlanNeeds {
+    function Get-PlanContext {
         return @{
             authorize = @{ result = 'success'; outputs = @{ allowed = 'true' } }
             validate = @{ result = 'success' }
@@ -32,7 +32,7 @@ Describe 'Deployment plan status' {
         @{ Case = 'another module change'; ChangedJob = 'module_observer'; Expected = 'true' }
         @{ Case = 'a ruleset-only change'; ChangedJob = 'ruleset_plan_enterprise_baseline'; Expected = 'true' }
     ) {
-        $needs = New-PlanNeeds
+        $needs = Get-PlanContext
         if ($ChangedJob) { $needs[$ChangedJob].outputs.changes = 'true' }
         $summary = Join-Path $caseDirectory 'decision.md'
         $output = Join-Path $caseDirectory 'decision.txt'
@@ -54,7 +54,7 @@ Describe 'Deployment plan status' {
             @{ Case = "invalid changes [$value]"; Outputs = @{ changes = $value }; Reason = 'invalid changes output' }
         }
     ) {
-        $needs = New-PlanNeeds
+        $needs = Get-PlanContext
         $needs.module_enterprise_baseline_code_security.outputs.changes = 'true'
         if ($null -eq $Outputs) { $needs.module_observer.Remove('outputs') }
         else { $needs.module_observer.outputs = $Outputs }
@@ -67,7 +67,7 @@ Describe 'Deployment plan status' {
     }
 
     It 'does not publish a decision before summary persistence and can retry after an interrupted report' {
-        $needs = New-PlanNeeds
+        $needs = Get-PlanContext
         $needs.module_observer.outputs.changes = 'true'
         $output = Join-Path $TestDrive 'retry.txt'
         $summary = Join-Path $TestDrive 'retry.md'
@@ -82,7 +82,7 @@ Describe 'Deployment plan status' {
     }
 
     It 'reports an empty selection as successful without apply' {
-        $needs = New-PlanNeeds
+        $needs = Get-PlanContext
         $needs.select.outputs = @{ modules = '[]'; phaseNodes = '[]'; rulesetModules = '[]' }
         $output = Join-Path $TestDrive 'empty.txt'
         $summary = Join-Path $TestDrive 'empty.md'
