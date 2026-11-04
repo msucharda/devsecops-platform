@@ -49,6 +49,7 @@ Describe 'Drift issue publication' {
             if ($Method -eq 'PATCH' -and $Uri -eq 'https://api.example.test/repos/platform/instance/issues/9') { return , $updated }
             throw "Unexpected GitHub API request: $Method $Uri"
         }
+        Mock Invoke-RestMethod { return , @() } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues?state=closed&*' }
     }
 
     It 'opens a new drift issue when the App has no open drift issue' {
@@ -255,6 +256,109 @@ Describe 'Drift issue publication' {
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly
     }
 
+    Context 'Resolved report recovery' -Tag 'ResolvedDrift' {
+        BeforeEach {
+            $resolved = Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body (Get-TestDriftReport)
+            $resolved.state = 'closed'
+            $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($resolved.body))).ToLowerInvariant()
+            $resolutionMarker = "<!-- platform-drift-clean:${digest}:21:$('a' * 40) -->"
+            $resolvedComments = Get-GitHubApiFixture -Name issues/list-comments -Set @{
+                '0.body' = "$resolutionMarker`nNo drift detected."
+                '0.user.login' = 'octoapp[bot]'; '0.user.type' = 'Bot'
+            }
+            Mock Invoke-RestMethod { return , @($resolved) } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues?state=closed&*page=1' }
+            Mock Invoke-RestMethod {
+                if ($Uri -like '*page=1') { return , $resolvedComments }
+                return , @()
+            } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues/9/comments?*' }
+        }
+
+        It 'does not recreate a report already resolved by run 21: <RunNumber>' -ForEach @(
+            @{ RunNumber = '20' }, @{ RunNumber = '21' }
+        ) {
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber $RunNumber))
+            { & $publisher @arguments } | Should -Throw '*report was already resolved*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'allows a new drift run after the recorded clean resolution' {
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+            (& $publisher @arguments).Action | Should -BeExactly 'created'
+        }
+
+        It 'allows a new report after a manually closed legacy issue' {
+            $resolved.body = "$marker`nlegacy"
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+            (& $publisher @arguments).Action | Should -BeExactly 'created'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Uri -like '*/comments?*' }
+        }
+
+        It 'does not recreate a manually closed report in the same run' {
+            $resolvedComments = @()
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 20))
+            { & $publisher @arguments } | Should -Throw '*report was already resolved*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'does not trust a resolution marker posted by another App' {
+            $resolvedComments[0].user.login = 'other[bot]'
+            $resolvedComments[0].body = "<!-- platform-drift-clean:${digest}:99:$('a' * 40) -->`nother"
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+            (& $publisher @arguments).Action | Should -BeExactly 'created'
+        }
+
+        It 'does not post without correlatable incoming metadata after a modern resolution' {
+            { & $publisher @arguments } | Should -Throw '*uncorrelated resolved-run evidence*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rejects uncorrelated closed-workflow evidence: <Workflow>' -ForEach @(
+            @{ Workflow = 'platform/instance/.github/workflows/other.yml@refs/heads/main' }
+            @{ Workflow = 'platform/instance/.github/workflows/Drift.yml@refs/heads/main' }
+        ) {
+            $resolved.body = Get-TestDriftReport -Workflow $Workflow
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+            { & $publisher @arguments } | Should -Throw '*uncorrelated resolved-run evidence*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rejects unreadable closed-issue lists rather than creating a duplicate' {
+            # Deliberately invalid: the list endpoint must return an array, not one issue object.
+            Mock Invoke-RestMethod { return , $resolved } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues?state=closed&*' }
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+            { & $publisher @arguments } | Should -Throw '*unknown issue list*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'refuses a resolution with a matching marker and null author' {
+            $resolvedComments[0].user = $null
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+            { & $publisher @arguments } | Should -Throw '*Cannot verify the author*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rejects malformed matching resolution metadata: <Counter>' -ForEach @(
+            @{ Counter = 'x' }, @{ Counter = '0' }, @{ Counter = '9223372036854775808' }
+        ) {
+            $resolvedComments[0].body = "<!-- platform-drift-clean:${digest}:${Counter}:$('a' * 40) -->`nclean"
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+            { & $publisher @arguments } | Should -Throw '*Unreadable resolved-run evidence*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+        It 'rejects unreadable resolution comment bodies: <Case>' -ForEach @(
+            # Missing optional body is unsupported evidence; arrays/null are deliberately invalid field types.
+            @{ Case = 'missing'; Change = { param($c) $c.Remove('body') } }
+            @{ Case = 'null'; Change = { param($c) $c.body = $null } }
+            @{ Case = 'array'; Change = { param($c) $c.body = @($c.body) } }
+        ) {
+            & $Change $resolvedComments[0]
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 22))
+            { & $publisher @arguments } | Should -Throw '*Unreadable resolved-run evidence in a comment body*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+    }
+
     Context 'Clean reconciliation' -Tag 'CleanDrift' {
         BeforeEach {
             $arguments.Outcome = 'Clean'
@@ -389,6 +493,8 @@ Describe 'Drift issue publication' {
             @{ Case = 'no ID'; Change = { param($c) $c.Remove('id'); return , $c } }
             @{ Case = 'an empty ID'; Change = { param($c) $c.id = ''; return , $c } }
             @{ Case = 'an invalid ID'; Change = { param($c) $c.id = 'x'; return , $c } }
+            @{ Case = 'a zero ID'; Change = { param($c) $c.id = 0; return , $c } }
+            @{ Case = 'a negative ID'; Change = { param($c) $c.id = -1; return , $c } }
             @{ Case = 'an array-valued ID'; Change = { param($c) $c.id = @(1); return , $c } }
             @{ Case = 'a string-valued ID'; Change = { param($c) $c.id = '1'; return , $c } }
             @{ Case = 'no body'; Change = { param($c) $c.Remove('body'); return , $c } }
@@ -442,6 +548,8 @@ Describe 'Drift issue publication' {
         It 'rejects an unreadable matching issue before writing: <Case>' -ForEach @(
             @{ Case = 'missing number'; Change = { param($i) $i.Remove('number') } }
             @{ Case = 'invalid number'; Change = { param($i) $i.number = '../10' } }
+            @{ Case = 'zero number'; Change = { param($i) $i.number = 0 } }
+            @{ Case = 'negative number'; Change = { param($i) $i.number = -1 } }
             @{ Case = 'array-valued number'; Change = { param($i) $i.number = @(9) } }
             @{ Case = 'closed state'; Change = { param($i) $i.state = 'closed' } }
             @{ Case = 'missing state'; Change = { param($i) $i.Remove('state') } }
@@ -570,8 +678,11 @@ Describe 'Drift issue publication' {
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' -or $Uri -like '*/git/ref/*' }
         }
 
-        It 'rejects a last drift report from a different workflow' -Tag 'DriftFreshness' {
-            $current.body = Get-TestDriftReport -Workflow 'platform/instance/.github/workflows/other.yml@refs/heads/main'
+        It 'rejects a last drift report from a different workflow: <Workflow>' -Tag 'DriftFreshness' -ForEach @(
+            @{ Workflow = 'platform/instance/.github/workflows/other.yml@refs/heads/main' }
+            @{ Workflow = 'platform/instance/.github/workflows/Drift.yml@refs/heads/main' }
+        ) {
+            $current.body = Get-TestDriftReport -Workflow $Workflow
             { & $publisher @arguments } | Should -Throw '*uncorrelated clean-run evidence*'
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
         }
@@ -580,6 +691,7 @@ Describe 'Drift issue publication' {
             @{ Case = 'older report rerun'; Body = { Get-TestDriftReport -RunNumber 19 } }
             @{ Case = 'report without run metadata'; Body = { "$marker`nlegacy" } }
             @{ Case = 'report from another workflow'; Body = { Get-TestDriftReport -RunNumber 21 -Workflow 'other/workflow' } }
+            @{ Case = 'workflow differs in case'; Body = { Get-TestDriftReport -RunNumber 21 -Workflow 'platform/instance/.github/workflows/Drift.yml@refs/heads/main' } }
         ) {
             $arguments.Outcome = 'Report'
             [IO.File]::WriteAllText($reportPath, (& $Body))

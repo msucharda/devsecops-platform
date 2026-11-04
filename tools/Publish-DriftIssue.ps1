@@ -174,14 +174,28 @@ function Assert-DriftReportOrder {
     }
 }
 
-$matching = [System.Collections.Generic.List[object]]::new()
-$page = 1
-# A short page does not prove the end of the list; only an empty page does.
-do {
-    if ($page -gt 1000) { throw 'GitHub issues API did not end the open issue list within 1000 pages.' }
-    $items = @(Invoke-IssueRequest -Method GET -Path "$issuesPath`?state=open&per_page=100&page=$page")
-    if ($items.Count -eq 1 -and $items[0] -is [System.Collections.IList]) { $items = @($items[0]) }
-    foreach ($item in $items) {
+# security-check: drift-collection
+function Get-DriftCollection {
+    param([string] $Path, [ValidateSet('issue', 'comment')][string] $Name)
+
+    $separator = if ($Path.Contains('?')) { '&' } else { '?' }
+    # A short page does not prove the end of the list; only an empty page does.
+    for ($page = 1; $page -le 1000; $page++) {
+        $items = Invoke-IssueRequest -Method GET -Path "${Path}${separator}per_page=100&page=$page"
+        if ($items -isnot [Collections.IList]) { throw "GitHub issues API returned an unknown $Name list." }
+        foreach ($item in $items) {
+            if ($item -isnot [Collections.IDictionary]) { throw "GitHub issues API returned an unknown $Name list item." }
+            $item
+        }
+        if ($items.Count -eq 0) { return }
+    }
+    throw "GitHub issues API did not end the $Name list within 1000 pages."
+}
+
+function Get-MatchingDriftIssues {
+    param([ValidateSet('open', 'closed')][string] $State)
+
+    foreach ($item in (Get-DriftCollection -Path "$issuesPath`?state=$State" -Name issue)) {
         if ($item -isnot [System.Collections.IDictionary] -or -not $item.Contains('user')) {
             throw 'GitHub issues API returned an unknown issue list item.'
         }
@@ -193,12 +207,45 @@ do {
         }
         if ($item['user']['login'] -ceq $botLogin -and $item['user']['type'] -ceq 'Bot' -and
             $item['body'] -is [string] -and $item['body'].StartsWith("$marker`n", [System.StringComparison]::Ordinal)) {
-            $matching.Add($item)
+            Assert-IssueState -Issue $item -Operation GET -ExpectedState $State
+            $item
         }
     }
-    $page++
-} while ($items.Count -gt 0)
+}
 
+# security-check: drift-resolved-report
+function Assert-DriftReportNotResolved {
+    param([string] $Report)
+
+    $incoming = Get-DriftRunEvidence -Body $Report
+    foreach ($resolved in (Get-MatchingDriftIssues -State closed)) {
+        $previous = Get-DriftRunEvidence -Body $resolved['body']
+        if ($null -eq $previous) { continue }
+        if ($null -eq $incoming -or $incoming.Workflow -cne $previous.Workflow) {
+            throw 'Cannot compare uncorrelated resolved-run evidence; start a new drift run.'
+        }
+        $latest = $previous.Number
+        $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($resolved['body']))).ToLowerInvariant()
+        $prefix = "<!-- platform-drift-clean:${digest}:"
+        foreach ($comment in (Get-DriftCollection -Path "$issuesPath/$($resolved['number'])/comments" -Name comment)) {
+            if ($comment['body'] -isnot [string]) { throw 'Unreadable resolved-run evidence in a comment body.' }
+            if (-not $comment['body'].StartsWith($prefix, [StringComparison]::Ordinal)) { continue }
+            $metadata = [regex]::Match($comment['body'], "^$([regex]::Escape($prefix))(?<number>[1-9][0-9]*):[a-f0-9]{40} -->`n")
+            $number = 0L
+            if (-not $metadata.Success -or -not [long]::TryParse($metadata.Groups['number'].Value, [ref] $number)) {
+                throw 'Unreadable resolved-run evidence in a clean-result marker.'
+            }
+            if (Test-CleanComment -Comment $comment -CleanMarker $metadata.Value.TrimEnd("`n")) {
+                $latest = [Math]::Max($latest, $number)
+            }
+        }
+        if ($incoming.Number -le $latest) {
+            throw 'The report was already resolved by this workflow; start a new drift run.'
+        }
+    }
+}
+
+$matching = @(Get-MatchingDriftIssues -State open)
 if ($matching.Count -gt 1) {
     throw "Found more than one open drift issue of this App: $(($matching | ForEach-Object { "#$($_['number'])" }) -join ', '). Close the duplicates manually."
 }
@@ -228,17 +275,9 @@ if ($Outcome -ceq 'Clean') {
         $commentReport = $report
     }
     $commentFound = $false
-    $page = 1
-    do {
-        if ($page -gt 1000) { throw 'GitHub issues API did not end the comment list within 1000 pages.' }
-        $comments = Invoke-IssueRequest -Method GET -Path "$issuesPath/$number/comments?per_page=100&page=$page"
-        if ($comments -isnot [System.Collections.IList]) { throw 'GitHub issues API returned an unknown comment list.' }
-        foreach ($comment in $comments) {
-            if ($comment -isnot [System.Collections.IDictionary]) { throw 'GitHub issues API returned an unknown comment list item.' }
-            if (Test-CleanComment -Comment $comment -CleanMarker $cleanMarker) { $commentFound = $true }
-        }
-        $page++
-    } while ($comments.Count -gt 0)
+    foreach ($comment in (Get-DriftCollection -Path "$issuesPath/$number/comments" -Name comment)) {
+        if (Test-CleanComment -Comment $comment -CleanMarker $cleanMarker) { $commentFound = $true }
+    }
     if (-not $commentFound) {
         $commentBody = "$cleanMarker`n$commentReport"
         if ($commentBody.Length -gt $maximumBodyLength) {
@@ -266,6 +305,7 @@ if ($matching.Count -eq 1) {
     $action = 'updated'
 }
 else {
+    Assert-DriftReportNotResolved -Report $report
     $issue = Invoke-IssueRequest -Method POST -Path $issuesPath -Body ([ordered]@{ title = $title; body = $report })
     Assert-IssueState -Issue $issue -Operation 'POST'
     $action = 'created'

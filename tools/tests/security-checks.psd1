@@ -602,7 +602,7 @@
         @{
             Name = 'drift-issue-state'
             Tests = @(
-                @{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*updates the single open drift issue*', '*fails closed when the created response*', '*fails closed when the update response*', '*comments on the clean result*', '*rejects a close response*') }
+                @{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*updates the single open drift issue*', '*fails closed when the created response*', '*fails closed when the update response*', '*comments on the clean result*', '*rejects a close response*', '*rejects an unreadable matching issue*') }
             )
         }
         @{
@@ -636,6 +636,14 @@
         @{
             Name = 'drift-need-string'
             Tests = @(@{ Path = 'tools/tests/DriftReport.Tests.ps1'; FullName = @('*refuses array-valued job evidence*', '*records the workflow identity and counter*') })
+        }
+        @{
+            Name = 'drift-collection'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*comments on the clean result*', '*leaves the issue open when*', '*rejects unreadable closed-issue lists*') })
+        }
+        @{
+            Name = 'drift-resolved-report'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*Resolved report recovery*') })
         }
         @{
             Name = 'catalog-repository-adoptable'

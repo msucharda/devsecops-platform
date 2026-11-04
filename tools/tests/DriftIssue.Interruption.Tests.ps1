@@ -35,11 +35,20 @@ Describe 'Clean drift issue interruption harness' -Tag 'Interruption' {
                 if ($Uri -like '*/git/ref/heads/main') {
                     return Get-GitHubApiFixture -Name git/get-ref -Set @{ ref = 'refs/heads/main'; 'object.sha' = ('a' * 40) }
                 }
-                if ($Uri -like '*/issues?state=open&per_page=100&page=1' -and $cloud.issue.state -ceq 'open') { return , @($cloud.issue) }
+                if ($Uri -like '*/issues?state=open&per_page=100&page=1' -and $null -ne $cloud.issue -and $cloud.issue.state -ceq 'open') { return , @($cloud.issue) }
+                if ($Uri -like '*/issues?state=closed&per_page=100&page=1' -and $null -ne $cloud.issue -and $cloud.issue.state -ceq 'closed') { return , @($cloud.issue) }
                 if ($Uri -like '*/issues/9/comments?per_page=100&page=1') { return , @($cloud.comments.ToArray()) }
                 return , @()
             }
             $request = $Body | ConvertFrom-Json -AsHashtable
+            if ($Method -eq 'POST' -and $Uri -like '*/issues') {
+                return Invoke-InterruptionStep -Plan $plan -Request 'POST drift issue' -Identity 'drift issue' -Apply {
+                    $cloud.issue = Get-GitHubApiFixture -Name issues/create -Set @{
+                        number = 9; body = $request.body; 'user.login' = 'octoapp[bot]'; 'user.type' = 'Bot'
+                    }
+                    return $cloud.issue
+                } -Interrupt { throw 'Injected interruption.' }
+            }
             if ($Method -eq 'POST' -and $Uri -like '*/issues/9/comments') {
                 return Invoke-InterruptionStep -Plan $plan -Request 'POST clean comment' -Identity 'clean comment' -Apply {
                     $comment = Get-GitHubApiFixture -Name issues/create-comment -Set @{
@@ -101,5 +110,30 @@ Describe 'Clean drift issue interruption harness' -Tag 'Interruption' {
         $cloud.comments.Count | Should -Be 1
         $cloud.issue.state | Should -BeExactly 'open'
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+    }
+
+    It 'does not recreate resolved drift when an interrupted old report resumes after a newer clean run' {
+        & $reset
+        $cloud.issue = $null
+        $oldReport = "<!-- platform-drift-report -->`n${metadata}20 -->`nRevision: ``$('a' * 40)```nDrift detected."
+        $cleanReport = [IO.File]::ReadAllText($reportPath)
+        $arguments.Outcome = 'Report'
+        [IO.File]::WriteAllText($reportPath, $oldReport)
+        Clear-InterruptionPlan -Plan $plan -Target 1 -Kind LoseResponse
+        { & $run } | Should -Throw '*Injected interruption*'
+        $cloud.issue.state | Should -BeExactly 'open'
+
+        Clear-InterruptionPlan -Plan $plan
+        $arguments.Outcome = 'Clean'
+        [IO.File]::WriteAllText($reportPath, $cleanReport)
+        & $run
+        $cloud.issue.state | Should -BeExactly 'closed'
+
+        $arguments.Outcome = 'Report'
+        [IO.File]::WriteAllText($reportPath, $oldReport)
+        { & $run } | Should -Throw '*report was already resolved*'
+        $cloud.issue.state | Should -BeExactly 'closed'
+        $cloud.comments.Count | Should -Be 1
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' -and $Uri -like '*/issues' }
     }
 }

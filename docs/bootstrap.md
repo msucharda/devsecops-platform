@@ -323,6 +323,8 @@ Stejná App také zavře své otevřené drift issue po úplném běhu bez drift
 
 App nejdřív přidá komentář s čistým výsledkem, potom nastaví stav `closed` s důvodem `completed`. Při neúplném běhu issue nezavře; bez otevřeného drift issue nic nevytvoří. Issue vytvořené před zavedením metadat `run_number` automaticky nezavře: přidá komentář s pokynem ověřit poslední čistý běh a issue zavřít ručně. Pokud obnova najde odpovídající komentář s neověřitelným autorem, job selže bez duplikace a bez zavření. Platform team (platformní tým) musí výsledek ověřit a issue zavřít ručně.
 
+Po ztracené odpovědi na vytvoření reportu může novější čistý běh původní issue zavřít dřív, než se starý report job zopakuje. Publisher proto před vytvořením nového issue ověří i uzavřené reporty a counter jejich čistých komentářů. Již vyřešený běh skončí chybou bez nového vytvoření. Pro detekci nového driftu spusť nový běh workflow, ne rerun starého report jobu.
+
 Alias App patří do `githubApps` a klíč do `keys.json`. U existující instance doplň alias přes PR a požadované review podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Cloudový plan změněných vazeb proběhne až z `main` po merge; výsledek PR workflow závisí i na autorizaci autora. Bootstrapu pak předej konfiguraci shodnou s `main` a alias přes `-DriftReportApp`:
 
 ```powershell
