@@ -163,6 +163,7 @@ Describe 'Instance setup manual steps through the public wizard' {
         $guidance = $messages -join "`n"
         $guidance | Should -Match '(?s)enterprise-baseline.*PR.*\.github/workflows/teardown\.yml.*merged into main.*delete the actions and workloads organizations.*workflow_dispatch.*main'
         $guidance | Should -Match 'Generate-TeardownWorkflow\.ps1'
+        $guidance | Should -Match '(?s)exact upstream SHA.*organization.*selected.*Read back.*stop'
         $guidance | Should -Match 'Re-run'
         $result.Completed | Should -BeFalse
         $result.ManualSteps[0].Verified | Should -BeFalse

@@ -295,7 +295,7 @@ Describe 'Teardown workflow generation' {
         $plan.Success | Should -BeTrue
         $plan.Groups['plan'].Value | Should -Match '(?s)destroy_organizations.*Generate-TeardownWorkflow\.ps1.*organizations/delete-instance-organizations.*workflow_dispatch.*Re-run jobs'
         $plan.Groups['plan'].Value | Should -Match ([regex]::Escape('-ModulesPath .\platform\modules'))
-        $plan.Groups['plan'].Value | Should -Match ([regex]::Escape('-OutputPath .\.github\workflows\teardown.yml'))
+        $plan.Groups['plan'].Value | Should -Match ([regex]::Escape('-OutputPath (Join-Path $PWD ''.github\workflows\teardown.yml'')'))
     }
 
     It 'fails the check when the committed workflow differs and passes when it matches' {
@@ -308,6 +308,56 @@ Describe 'Teardown workflow generation' {
     It 'keeps the committed instance template and fixture current' {
         { & $generator -Check } | Should -Not -Throw
         { & $generator -ModulesPath $fixtures -OutputPath (Join-Path $PSScriptRoot 'fixtures/teardown.yml') -Check } | Should -Not -Throw
+    }
+}
+
+Describe 'Teardown action allowlist instructions' {
+    BeforeAll {
+        $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
+        $snippets = @([regex]::Matches($readme, '(?s)```powershell\r?\n(?<code>.*?)\r?\n\s*```') |
+            Where-Object { $_.Groups['code'].Value -match 'Select-String -LiteralPath' })
+        $snippets.Count | Should -Be 1
+        $allowlistCommand = [scriptblock]::Create($snippets[0].Groups['code'].Value)
+    }
+
+    BeforeEach {
+        $instanceRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $workflowsPath = Join-Path $instanceRoot '.github/workflows'
+        $null = New-Item -ItemType Directory -Path $workflowsPath -Force
+        $restoredPath = Join-Path $workflowsPath 'teardown.yml'
+        $readActions = {
+            Push-Location $instanceRoot
+            try { & $allowlistCommand }
+            finally { Pop-Location }
+        }
+    }
+
+    It 'derives the exact unique SHA references from the restored template, including a newly added action' {
+        $extra = 'example/new-action@1234567890123456789012345678901234567890'
+        $extended = $text + "`n  extra_job:`n    runs-on: ubuntu-latest`n    steps:`n      - uses: $extra`n"
+        Set-Content -LiteralPath $restoredPath -Value $extended
+        $parsed = ConvertFrom-Yaml $extended
+        $expected = @($parsed.jobs.Values | ForEach-Object { $_.steps } |
+            Where-Object { $_.Contains('uses') } | ForEach-Object { $_.uses } | Sort-Object -Unique)
+
+        $actual = @(& $readActions)
+
+        $actual | Should -Be $expected
+        $actual | Should -Contain $extra
+        @($actual | Where-Object { $_ -like 'actions/checkout@*' }).Count | Should -Be 1
+    }
+
+    It 'stops instead of returning a policy list for <Case>' -ForEach @(
+        @{ Case = 'an empty template'; Reference = $null }
+        @{ Case = 'an action pinned to a tag'; Reference = 'actions/checkout@v7' }
+        @{ Case = 'an action without a pin'; Reference = 'actions/checkout' }
+        @{ Case = 'a wildcard allowance'; Reference = 'actions/*@1234567890123456789012345678901234567890' }
+    ) {
+        $content = if ($null -eq $Reference) { 'jobs: {}' }
+        else { "jobs:`n  example:`n    steps:`n      - uses: $Reference" }
+        Set-Content -LiteralPath $restoredPath -Value $content
+
+        { & $readActions } | Should -Throw '*non-empty list*full commit SHAs*'
     }
 }
 

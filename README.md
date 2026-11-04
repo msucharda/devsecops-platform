@@ -446,21 +446,40 @@ Workflow neodstraní `bootstrap`. Organizační politiky, rulesety, code securit
 Povýšený `teardown.yml` používá katalogové akce z organizace akcí. Po jejím smazání je GitHub nerozliší a workflow se nespustí. Teardown proto vyžaduje **plánovaný PR s obnovou upstream akcí před smazáním organizací**, nikoli ruční opravu až po selhání.
 
 1. Ponech organizace akcí a workloadů existovat. Spusť teardown z `main` a dokonči destroy modulů, které vyžadují `organizations`, včetně `enterprise-baseline`. Job `destroy_organizations` se zastaví, protože organizace dosud existují. Neodstraňuj `emu-identity`; jeho týmy dál schvalují gate. Pokud dřívější destroy selhal, nejdřív vyřeš jeho chybu.
-2. Ověř, že destroy `enterprise-baseline` odstranil organizační omezení Actions a stávající enterprise politika povoluje všechny upstream akce použité v obnoveném workflow (`actions/*`, `Azure/*`, `hashicorp/*`, připnuté na SHA). Teardown enterprise politiku nemění. Pokud akce nepovoluje, **organizace nemaž**; pokračování vyžaduje samostatné rozhodnutí o politice.
-3. V pracovní větvi repozitáře instance obnov pouze `.github/workflows/teardown.yml` generátorem z **již instalovaného release**. Spusť následující příkazy z kořene repozitáře instance:
+2. V pracovní větvi repozitáře instance obnov pouze `.github/workflows/teardown.yml` generátorem z **již instalovaného release**. Spusť následující příkazy z kořene repozitáře instance:
 
    ```powershell
    .\platform\tools\Generate-TeardownWorkflow.ps1 `
        -ModulesPath .\platform\modules `
-       -OutputPath .\.github\workflows\teardown.yml
+       -OutputPath (Join-Path $PWD '.github\workflows\teardown.yml')
    git diff -- .github/workflows/teardown.yml
    ```
 
    Otevři PR a nech jej reviewovat platformním i security týmem. Diff musí obnovit upstream `uses:` s plnými SHA místo katalogových kopií; nesmí měnit pořadí jobů, gate, identity ani oprávnění. Pokud generátor změní i jinou logiku, nepokračuj se smazáním a nejdřív sjednoť workflow s instalovaným release. Nekopíruj `platform/templates/instance/.github/workflows/teardown.yml`: import přepsal tuto šablonu na katalogové akce. Neměň `platform/`, `deploy.yml`, `drift.yml`, vendor ani import workflow. Tato výjimka slouží jen k dokončení teardownu, ne k dalšímu nasazování.
-4. Po review a merge PR ověř, že `main` obsahuje obnovený `teardown.yml`. Teprve potom proveď ruční krok `organizations/delete-instance-organizations`: enterprise owner smaže organizace akcí a workloadů v enterprise settings.
-5. Spusť **nový** `workflow_dispatch` workflow `teardown` z aktualizované `main`, se stejným potvrzením instance a oběma schváleními. Nepoužívej **Re-run jobs**: [opakovaný běh zachová původní SHA a ref](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs), tedy i odkazy na smazaný katalog. Nový běh přeskočí již prázdné state, ověří smazání organizací a dokončí zbývající teardown; `emu-identity` zůstává poslední.
+3. Ze vzniklého workflow odvoď seznam přesných upstream referencí. **Seznam nepiš ručně a nepřebírej jej z přepsané katalogové šablony.** Následující výpis čte právě obnovovaný `teardown.yml`; prázdný seznam nebo reference bez plného SHA musí skončit chybou:
 
-Po přerušení nejdřív ověř stav PR, obsah `main` a existenci obou organizací. Již provedené smazání neopakuj. Pokud organizace akcí už neexistuje, nejdřív dokonči obnovovací PR a potom spusť nový dispatch; starý katalogový běh neopraví ani opakování jobů.
+   ```powershell
+   $actions = @(
+       Select-String -LiteralPath .\.github\workflows\teardown.yml `
+           -Pattern '^\s+(?:-\s+)?uses:\s+([^\s#]+)' |
+       ForEach-Object { $_.Matches[0].Groups[1].Value } |
+       Sort-Object -Unique
+   )
+   if ($actions.Count -eq 0 -or @($actions | Where-Object {
+       $_ -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$'
+   }).Count -gt 0) {
+       throw 'Expected a non-empty list of upstream actions pinned to full commit SHAs.'
+   }
+   $actions
+   ```
+
+4. Po úspěšném destroy `enterprise-baseline` operátor upraví **jen organizační politiku organizace repozitáře instance**. Úspěšný destroy sám dostupnost upstream akcí nezaručuje; reset může zachovat `local_only` nebo `selected`. V **Organization settings → Actions → General** zvol povolení enterprise a vybraných externích akcí. Do seznamu povolených externích akcí vlož pouze reference z výpisu v kroku 3 ve tvaru `owner/repository@SHA`, jak popisuje [dokumentace GitHubu](https://docs.github.com/en/enterprise-cloud@latest/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization#allowing-select-actions-and-reusable-workflows-to-run). Nepovoluj všechny akce, všechny akce GitHubu, verified creators, tagy ani wildcard vzory. Neměň enterprise politiku, politiku jiných organizací, rozsah povolených repozitářů ani credentials.
+
+   Po uložení znovu otevři nastavení. Porovnej celou externí allowlist s výpisem: musí obsahovat právě stejné reference a SHA, bez dalších vzorů a širokých voleb. Výpis a commit obnovovacího PR zaznamenej do jeho popisu. Pokud nastavení nejde uložit, enterprise politika akci blokuje nebo readback neodpovídá, **organizace nemaž a teardown nepokračuj**. Nový commit měnící workflow vyžaduje nový výpis a nové porovnání.
+5. Po review a merge PR ověř, že `main` obsahuje obnovený `teardown.yml` se stejným seznamem SHA, který jsi povolil. Teprve potom proveď ruční krok `organizations/delete-instance-organizations`: enterprise owner smaže organizace akcí a workloadů v enterprise settings.
+6. Spusť **nový** `workflow_dispatch` workflow `teardown` z aktualizované `main`, se stejným potvrzením instance a oběma schváleními. Nepoužívej **Re-run jobs**: [opakovaný běh zachová původní SHA a ref](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs), tedy i odkazy na smazaný katalog. Nový běh přeskočí již prázdné state, ověří smazání organizací a dokončí zbývající teardown; `emu-identity` zůstává poslední.
+
+Po přerušení nejdřív ověř stav PR, obsah `main`, uloženou organizační allowlist a existenci obou organizací. Již provedené smazání neopakuj. Pokud organizace akcí už neexistuje, nejdřív dokonči obnovovací PR a ověření allowlist, potom spusť nový dispatch; starý katalogový běh neopraví ani opakování jobů.
 
 ### Lokální odstranění bootstrapu
 
