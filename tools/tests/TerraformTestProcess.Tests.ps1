@@ -59,7 +59,7 @@ Write-Output 'healthy child'
                 '[Console]::Error.WriteLine("injected child crash diagnostic"); exit 134'
             ) -CacheRoot $cacheRoot
 
-            $result.ExitCode | Should -Be 134
+            $result.ExitCode | Should -Be 134 -Because $result.Output
             $result.Output | Should -Match 'injected child crash diagnostic'
             Test-Path -LiteralPath $result.CachePath -PathType Container | Should -BeTrue
             $env:XDG_CACHE_HOME | Should -BeExactly $sharedCache
