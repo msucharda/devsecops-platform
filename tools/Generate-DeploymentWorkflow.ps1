@@ -550,6 +550,7 @@ Add-WorkflowBlock @'
         shell: pwsh
         env:
           DRIFT_OUTCOME: ${{ steps.evaluate.outputs.outcome }}
+          DRIFT_CONTENTS_TOKEN: ${{ github.token }}
         run: ./trusted/platform/tools/Publish-DriftIssue.ps1 -ReportPath ./drift-report.md -Outcome $env:DRIFT_OUTCOME
       - name: Revoke the issue-writer token
         if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}

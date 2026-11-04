@@ -607,11 +607,35 @@
         }
         @{
             Name = 'drift-clean-comment'
-            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*reuses a clean comment*', '*does not reuse a comment when*') })
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*reuses a clean comment*', '*does not reuse a comment when*', '*leaves recovery ambiguous*') })
         }
         @{
             Name = 'drift-created-comment'
             Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*comments on the clean result*', '*rejects a created clean comment*', '*accepts the documented null author*') })
+        }
+        @{
+            Name = 'drift-run-evidence'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*rejects unreadable clean-run evidence*', '*leaves a legacy issue open*', '*uses the existing read-only token*') })
+        }
+        @{
+            Name = 'drift-clean-evidence'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*rejects unreadable clean-run evidence*', '*rejects stale clean evidence*', '*rejects a last drift report*', '*uses the existing read-only token*') })
+        }
+        @{
+            Name = 'drift-current-main'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*does not close when the main reference*', '*rejects an all-jobs rerun*', '*requires a contents token*', '*uses the existing read-only token*') })
+        }
+        @{
+            Name = 'drift-report-order'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*does not downgrade the last drift evidence*', '*accepts a current correlated drift update*', '*updates the single open drift issue*') })
+        }
+        @{
+            Name = 'drift-organization-result'
+            Tests = @(@{ Path = 'tools/tests/OrganizationDrift.Tests.ps1'; FullName = @('Per-organization drift completeness*') })
+        }
+        @{
+            Name = 'drift-need-string'
+            Tests = @(@{ Path = 'tools/tests/DriftReport.Tests.ps1'; FullName = @('*refuses array-valued job evidence*', '*records the workflow identity and counter*') })
         }
         @{
             Name = 'catalog-repository-adoptable'

@@ -9,6 +9,8 @@ param(
     [string] $CodeSecurityCoveragePath = './artifacts/code-security-coverage/code-security-coverage.json',
     [string] $PlatformOrganization = $env:GITHUB_REPOSITORY_OWNER,
     [string] $JobSummaryPath = $env:GITHUB_STEP_SUMMARY,
+    [string] $RunNumber = $env:GITHUB_RUN_NUMBER,
+    [string] $WorkflowRef = $env:GITHUB_WORKFLOW_REF,
     [string] $RunUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
 )
 
@@ -88,15 +90,34 @@ function Add-CodeSecurityCoverage {
     }
 }
 
+# security-check: drift-need-string
+function Test-DriftNeedString {
+    param([AllowNull()][object] $Value)
+
+    return $Value -is [string]
+}
+
 function Get-NeedValue {
     [CmdletBinding()]
     param([System.Collections.IDictionary] $Needs, [string] $Job, [string] $Output)
 
     if ($null -eq $Needs -or -not $Needs.Contains($Job) -or $Needs[$Job] -isnot [System.Collections.IDictionary]) { return $null }
-    if (-not $Output) { return $Needs[$Job]['result'] }
-    $outputs = $Needs[$Job]['outputs']
-    if ($outputs -isnot [System.Collections.IDictionary] -or -not $outputs.Contains($Output)) { return $null }
-    return $outputs[$Output]
+    if (-not $Output) { $value = $Needs[$Job]['result'] }
+    else {
+        $outputs = $Needs[$Job]['outputs']
+        if ($outputs -isnot [System.Collections.IDictionary] -or -not $outputs.Contains($Output)) { return $null }
+        $value = $outputs[$Output]
+    }
+    if (Test-DriftNeedString -Value $value) { return $value }
+    return $null
+}
+
+# security-check: drift-organization-result
+function Test-DriftOrganizationResult {
+    param([System.Collections.IDictionary] $Record)
+
+    return $Record['result'] -is [string] -and $Record['result'] -ceq 'success' -and
+        $Record['changes'] -is [bool]
 }
 
 function ConvertFrom-ModuleList {
@@ -124,7 +145,7 @@ catch {
 
 $needs = $null
 try {
-    $needs = ConvertFrom-Json -InputObject $NeedsJson -AsHashtable -ErrorAction Stop
+    $needs = ConvertFrom-Json -InputObject $NeedsJson -AsHashtable -NoEnumerate -ErrorAction Stop
 }
 catch { $needs = $null }
 if ($needs -isnot [System.Collections.IDictionary]) {
@@ -230,7 +251,7 @@ if ($needs) {
                                     $organizationChanges = $true
                                     $drift.Add("- ``$module`` / ``$organization`` ($($root.Label))")
                                 }
-                                if ($record['result'] -cne 'success' -or $record['changes'] -isnot [bool]) {
+                                if (-not (Test-DriftOrganizationResult -Record $record)) {
                                     $incomplete.Add("Plan job $($root.Job) did not complete organization '$organization' with a boolean change state.")
                                 }
                             }
@@ -284,6 +305,14 @@ else {
 $complete = $incomplete.Count -eq 0
 $report = [System.Collections.Generic.List[string]]::new()
 $report.Add('<!-- platform-drift-report -->')
+if ($RunNumber -or $WorkflowRef) {
+    $number = 0L
+    if ($RunNumber -cnotmatch '^[1-9][0-9]*$' -or -not [long]::TryParse($RunNumber, [ref] $number) -or
+        [string]::IsNullOrWhiteSpace($WorkflowRef) -or $WorkflowRef -match '[|\r\n]') {
+        throw 'Drift run metadata requires a positive run_number and a readable workflow_ref.'
+    }
+    $report.Add("<!-- platform-drift-run:$WorkflowRef|$RunNumber -->")
+}
 $report.Add('## Infrastructure drift')
 $report.Add('')
 $report.Add("Run: $RunUrl")

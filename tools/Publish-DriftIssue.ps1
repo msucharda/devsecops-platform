@@ -7,6 +7,7 @@ param(
     [string] $TokensJson = $env:PLATFORM_GITHUB_TOKENS,
     [string] $AppSlug = $env:PLATFORM_APP_SLUG,
     [string] $Repository = $env:GITHUB_REPOSITORY,
+    [string] $ContentsToken = $env:DRIFT_CONTENTS_TOKEN,
     [string] $ApiUrl = $env:GITHUB_API_URL
 )
 
@@ -43,9 +44,11 @@ function Invoke-IssueRequest {
     param(
         [Parameter(Mandatory)][ValidateSet('GET', 'POST', 'PATCH')][string] $Method,
         [Parameter(Mandatory)][string] $Path,
-        [System.Collections.IDictionary] $Body
+        [System.Collections.IDictionary] $Body,
+        [switch] $ReadRepository
     )
 
+    if ($ReadRepository) { $token = $ContentsToken }
     $arguments = @{
         Method = $Method
         Uri = "$($ApiUrl.TrimEnd('/'))$Path"
@@ -78,6 +81,7 @@ function Assert-IssueState {
         [ValidateSet('open', 'closed')][string] $ExpectedState = 'open')
 
     if ($Issue -isnot [System.Collections.IDictionary] -or $Issue.Contains('pull_request') -or
+        ($Issue['number'] -isnot [int] -and $Issue['number'] -isnot [long]) -or
         [string] $Issue['number'] -cnotmatch '^[1-9][0-9]*$' -or
         $Issue['state'] -isnot [string] -or $Issue['state'] -cne $ExpectedState -or
         ($ExpectedNumber -and [string] $Issue['number'] -cne $ExpectedNumber)) {
@@ -91,11 +95,14 @@ function Test-CleanComment {
     [OutputType([bool])]
     param([Parameter(Mandatory)][System.Collections.IDictionary] $Comment, [string] $CleanMarker)
 
-    return $Comment['user'] -is [System.Collections.IDictionary] -and
-        $Comment['user']['login'] -is [string] -and $Comment['user']['login'] -ceq $botLogin -and
-        $Comment['user']['type'] -is [string] -and $Comment['user']['type'] -ceq 'Bot' -and
-        $Comment['body'] -is [string] -and
-        $Comment['body'].StartsWith("$CleanMarker`n", [System.StringComparison]::Ordinal)
+    if ($Comment['body'] -isnot [string] -or
+        -not $Comment['body'].StartsWith("$CleanMarker`n", [System.StringComparison]::Ordinal)) { return $false }
+    if ($Comment['user'] -isnot [System.Collections.IDictionary] -or
+        $Comment['user']['login'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Comment['user']['login']) -or
+        $Comment['user']['type'] -isnot [string] -or [string]::IsNullOrWhiteSpace($Comment['user']['type'])) {
+        throw 'Cannot verify the author of an existing clean-result comment; leave the issue open and resolve the ambiguous recovery manually.'
+    }
+    return $Comment['user']['login'] -ceq $botLogin -and $Comment['user']['type'] -ceq 'Bot'
 }
 
 # security-check: drift-created-comment
@@ -104,9 +111,66 @@ function Assert-CreatedComment {
     param([AllowNull()][object] $Comment, [string] $ExpectedBody)
 
     if ($Comment -isnot [System.Collections.IDictionary] -or
+        ($Comment['id'] -isnot [int] -and $Comment['id'] -isnot [long]) -or
         [string] $Comment['id'] -cnotmatch '^[1-9][0-9]*$' -or
         $Comment['body'] -isnot [string] -or $Comment['body'] -cne $ExpectedBody) {
         throw 'GitHub issues API POST did not return the clean-result comment.'
+    }
+}
+
+# security-check: drift-run-evidence
+function Get-DriftRunEvidence {
+    param([string] $Body)
+
+    $markers = [regex]::Matches($Body, '(?m)^<!-- platform-drift-run:')
+    if ($markers.Count -eq 0) { return $null }
+    $metadata = [regex]::Matches($Body, '(?m)^<!-- platform-drift-run:(?<workflow>[^|\r\n]+)\|(?<number>[1-9][0-9]*) -->$')
+    $number = 0L
+    if ($markers.Count -ne 1 -or $metadata.Count -ne 1 -or
+        -not [long]::TryParse($metadata[0].Groups['number'].Value, [ref] $number)) {
+        throw 'Unreadable clean-run evidence metadata.'
+    }
+    return @{ Workflow = $metadata[0].Groups['workflow'].Value; Number = $number }
+}
+
+# security-check: drift-clean-evidence
+function Get-CleanDriftEvidence {
+    param([string] $Report, [System.Collections.IDictionary] $Previous)
+
+    $clean = Get-DriftRunEvidence -Body $Report
+    $workflow = "$Repository/.github/workflows/drift.yml@refs/heads/main"
+    $revisions = [regex]::Matches($Report, '(?m)^Revision: `(?<sha>[a-f0-9]{40})`$')
+    if ($null -eq $clean -or $clean.Workflow -cne $workflow -or $Previous.Workflow -cne $workflow -or
+        $revisions.Count -ne 1) {
+        throw 'Unreadable or uncorrelated clean-run evidence.'
+    }
+    if ($clean.Number -le $Previous.Number) { throw 'Clean evidence must be newer than the last drift report.' }
+    return @{ Number = $clean.Number; Revision = $revisions[0].Groups['sha'].Value }
+}
+
+# security-check: drift-current-main
+function Assert-CurrentDriftMain {
+    param([string] $Revision)
+
+    if ([string]::IsNullOrWhiteSpace($ContentsToken)) {
+        throw 'Clean drift closure requires the existing contents:read token.'
+    }
+    $reference = Invoke-IssueRequest -Method GET -Path "/repos/$owner/$name/git/ref/heads/main" -ReadRepository
+    if ($reference -isnot [Collections.IDictionary] -or $reference['ref'] -isnot [string] -or
+        $reference['ref'] -cne 'refs/heads/main' -or $reference['object'] -isnot [Collections.IDictionary] -or
+        $reference['object']['type'] -isnot [string] -or $reference['object']['type'] -cne 'commit' -or
+        $reference['object']['sha'] -isnot [string] -or $reference['object']['sha'] -cne $Revision) {
+        throw 'Current main is unreadable or no longer matches the clean plan revision.'
+    }
+}
+
+# security-check: drift-report-order
+function Assert-DriftReportOrder {
+    param([AllowNull()][object] $Previous, [AllowNull()][object] $Incoming)
+
+    if ($null -ne $Previous -and ($null -eq $Incoming -or $Incoming.Workflow -cne $Previous.Workflow -or
+            $Incoming.Number -lt $Previous.Number)) {
+        throw 'Refusing an older or uncorrelated drift report over the last recorded run.'
     }
 }
 
@@ -147,8 +211,22 @@ if ($Outcome -ceq 'Clean') {
     Assert-IssueState -Issue $current -Operation 'GET'
     $number = [string] $current['number']
     $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($current['body']))).ToLowerInvariant()
-    # Bind recovery to the last drift report, not to a clean run that changes on every rerun.
-    $cleanMarker = "<!-- platform-drift-clean:$digest -->"
+    $previous = Get-DriftRunEvidence -Body $current['body']
+    $manual = $null -eq $previous
+    $evidence = $null
+    if ($manual) {
+        $cleanMarker = "<!-- platform-drift-manual:$digest -->"
+        $commentReport = 'The last drift report has no run_number; verify the latest clean run and ' +
+            '[close this issue manually](https://docs.github.com/en/issues/tracking-your-work-with-issues/administering-issues/closing-an-issue).' +
+            "`n`n$report"
+    }
+    else {
+        $evidence = Get-CleanDriftEvidence -Report $report -Previous $previous
+        Assert-CurrentDriftMain -Revision $evidence.Revision
+        # A rerun keeps its counter and revision; another clean plan must not reuse stale evidence.
+        $cleanMarker = "<!-- platform-drift-clean:${digest}:$($evidence.Number):$($evidence.Revision) -->"
+        $commentReport = $report
+    }
     $commentFound = $false
     $page = 1
     do {
@@ -162,7 +240,7 @@ if ($Outcome -ceq 'Clean') {
         $page++
     } while ($comments.Count -gt 0)
     if (-not $commentFound) {
-        $commentBody = "$cleanMarker`n$report"
+        $commentBody = "$cleanMarker`n$commentReport"
         if ($commentBody.Length -gt $maximumBodyLength) {
             $notice = "`n`n_Report truncated; see the job summary of the run for the complete report._`n"
             $commentBody = $commentBody.Substring(0, $maximumBodyLength - $notice.Length) + $notice
@@ -170,12 +248,18 @@ if ($Outcome -ceq 'Clean') {
         $comment = Invoke-IssueRequest -Method POST -Path "$issuesPath/$number/comments" -Body @{ body = $commentBody }
         Assert-CreatedComment -Comment $comment -ExpectedBody $commentBody
     }
+    if ($manual) {
+        Write-Information "Drift issue #$number remains open; its legacy report requires manual closure." -InformationAction Continue
+        return [pscustomobject]@{ Action = 'manual'; Number = [int] $number }
+    }
+    Assert-CurrentDriftMain -Revision $evidence.Revision
     $issue = Invoke-IssueRequest -Method PATCH -Path "$issuesPath/$number" -Body @{ state = 'closed'; state_reason = 'completed' }
     Assert-IssueState -Issue $issue -Operation 'PATCH' -ExpectedNumber $number -ExpectedState closed
     Write-Information "Drift issue #$number closed after a clean result." -InformationAction Continue
     return [pscustomobject]@{ Action = 'closed'; Number = [int] $number }
 }
 if ($matching.Count -eq 1) {
+    Assert-DriftReportOrder -Previous (Get-DriftRunEvidence -Body $matching[0]['body']) -Incoming (Get-DriftRunEvidence -Body $report)
     $number = [string] $matching[0]['number']
     $issue = Invoke-IssueRequest -Method PATCH -Path "$issuesPath/$number" -Body @{ body = $report }
     Assert-IssueState -Issue $issue -Operation 'PATCH' -ExpectedNumber $number

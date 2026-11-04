@@ -101,6 +101,9 @@ Describe 'Per-organization drift completeness' {
         @{ Case = 'failed organization'; Change = { param($r) $r['demo-actions'].result = 'failure' } }
         @{ Case = 'pending organization'; Change = { param($r) $r['demo-actions'].result = 'pending' } }
         @{ Case = 'missing status'; Change = { param($r) $r['demo-actions'].Remove('result') } }
+        # Deliberately invalid: a plan result must be a scalar string.
+        @{ Case = 'empty status array'; Change = { param($r) $r['demo-actions'].result = @() } }
+        @{ Case = 'singleton success array'; Change = { param($r) $r['demo-actions'].result = @('success') } }
         @{ Case = 'missing change state'; Change = { param($r) $r['demo-actions'].Remove('changes') } }
         @{ Case = 'string change state'; Change = { param($r) $r['demo-actions'].changes = 'false' } }
         @{ Case = 'null record'; Change = { param($r) $r['demo-actions'] = $null } }

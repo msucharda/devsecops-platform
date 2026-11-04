@@ -2,6 +2,14 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
     $publisher = Join-Path (Split-Path $PSScriptRoot -Parent) 'Publish-DriftIssue.ps1'
     $marker = '<!-- platform-drift-report -->'
+    $workflowRef = 'platform/instance/.github/workflows/drift.yml@refs/heads/main'
+
+    function Get-TestDriftReport {
+        param([string] $RunNumber = '20', [string] $Revision = ('a' * 40),
+            [string] $Workflow = $workflowRef, [string] $Message = 'previous')
+
+        return "$marker`n<!-- platform-drift-run:$Workflow|$RunNumber -->`nRevision: ``$Revision```n$Message`n"
+    }
 
     function Get-ListedIssue {
         [CmdletBinding()]
@@ -23,6 +31,7 @@ Describe 'Drift issue publication' {
             AppSlug = 'octoapp'
             Repository = 'platform/instance'
             ApiUrl = 'https://api.example.test'
+            ContentsToken = 'read-token'
         }
         $listed = @(
             (Get-ListedIssue -Number 5 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nold" -PullRequest)
@@ -71,8 +80,10 @@ Describe 'Drift issue publication' {
     }
 
     It 'comments on the clean result before closing the single open drift issue of the App' {
-        $listed += Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nprevious"
-        [IO.File]::WriteAllText($reportPath, "$marker`nNo drift detected in the automatically planned resources.`n")
+        $listed += Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body (Get-TestDriftReport)
+        [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 21 -Message 'No drift detected in the automatically planned resources.'))
+        Mock Invoke-RestMethod { Get-GitHubApiFixture -Name git/get-ref -Set @{ ref = 'refs/heads/main'; 'object.sha' = ('a' * 40) } } `
+            -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/git/ref/heads/main' }
         $updated.state = 'closed'
         $writes = [Collections.Generic.List[string]]::new()
         Mock Invoke-RestMethod { return , @() } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues/9/comments?*' }
@@ -247,11 +258,14 @@ Describe 'Drift issue publication' {
     Context 'Clean reconciliation' -Tag 'CleanDrift' {
         BeforeEach {
             $arguments.Outcome = 'Clean'
-            $current = Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body "$marker`nprevious"
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 21 -Message 'No drift detected.'))
+            $current = Get-ListedIssue -Number 9 -Login 'octoapp[bot]' -Type 'Bot' -Body (Get-TestDriftReport)
             $listed += $current
             $updated.state = 'closed'
-            $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$marker`nprevious"))).ToLowerInvariant()
-            $cleanMarker = "<!-- platform-drift-clean:$digest -->"
+            $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($current.body))).ToLowerInvariant()
+            $cleanMarker = "<!-- platform-drift-clean:${digest}:21:$('a' * 40) -->"
+            $mainRef = Get-GitHubApiFixture -Name git/get-ref -Set @{ ref = 'refs/heads/main'; 'object.sha' = ('a' * 40) }
+            Mock Invoke-RestMethod { return , $mainRef } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/git/ref/heads/main' }
             $comments = @()
             Mock Invoke-RestMethod {
                 if ($Uri -like '*page=1') { return , $comments }
@@ -278,7 +292,7 @@ Describe 'Drift issue publication' {
                 '0.user.login' = 'octoapp[bot]'
                 '0.user.type' = 'Bot'
             }
-            [IO.File]::WriteAllText($reportPath, "$marker`nNo drift detected. Run: https://github.example.test/runs/99`n")
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 21 -Message 'No drift detected. Run: https://github.example.test/runs/99'))
 
             $result = & $publisher @arguments
 
@@ -287,19 +301,10 @@ Describe 'Drift issue publication' {
         }
 
         It 'does not reuse a comment when <Case>' -ForEach @(
-            @{ Case = 'the author is null'; Change = { param($c) $c.user = $null } }
-            @{ Case = 'the author is missing'; Change = { param($c) $c.Remove('user') } }
-            @{ Case = 'the author is not an object'; Change = { param($c) $c.user = 'octoapp[bot]' } }
             @{ Case = 'the login belongs to another App'; Change = { param($c) $c.user.login = 'other[bot]' } }
             @{ Case = 'the login differs in case'; Change = { param($c) $c.user.login = 'Octoapp[bot]' } }
-            @{ Case = 'the login is empty'; Change = { param($c) $c.user.login = '' } }
-            @{ Case = 'the login is an array containing the App login'; Change = { param($c) $c.user.login = @('octoapp[bot]') } }
-            @{ Case = 'the login is missing'; Change = { param($c) $c.user.Remove('login') } }
             @{ Case = 'the author is a user'; Change = { param($c) $c.user.type = 'User' } }
             @{ Case = 'the author type differs in case'; Change = { param($c) $c.user.type = 'bot' } }
-            @{ Case = 'the author type is empty'; Change = { param($c) $c.user.type = '' } }
-            @{ Case = 'the author type is an array containing Bot'; Change = { param($c) $c.user.type = @('Bot') } }
-            @{ Case = 'the author type is missing'; Change = { param($c) $c.user.Remove('type') } }
             @{ Case = 'the body is missing'; Change = { param($c) $c.Remove('body') } }
             @{ Case = 'the body is not text'; Change = { param($c) $c.body = @('text') } }
             @{ Case = 'the body is empty'; Change = { param($c) $c.body = '' } }
@@ -328,6 +333,7 @@ Describe 'Drift issue publication' {
                 '0.user.login' = 'octoapp[bot]'
                 '0.user.type' = 'Bot'
             }
+
             Mock Invoke-RestMethod { return , $later } -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/comments?*page=2' }
 
             $result = & $publisher @arguments
@@ -335,6 +341,29 @@ Describe 'Drift issue publication' {
             $result.Action | Should -BeExactly 'closed'
             Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -like '*/comments?*page=3' }
             Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'leaves recovery ambiguous without duplicating a matching comment when <Case>' -ForEach @(
+            @{ Case = 'the documented author is null'; Change = { param($c) $c.user = $null } }
+            # Missing fields and wrong types intentionally exercise unreadable author identities.
+            @{ Case = 'the author is missing'; Change = { param($c) $c.Remove('user') } }
+            @{ Case = 'the author is not an object'; Change = { param($c) $c.user = 'octoapp[bot]' } }
+            @{ Case = 'the login is empty'; Change = { param($c) $c.user.login = '' } }
+            @{ Case = 'the login is an array'; Change = { param($c) $c.user.login = @('octoapp[bot]') } }
+            @{ Case = 'the login is missing'; Change = { param($c) $c.user.Remove('login') } }
+            @{ Case = 'the author type is empty'; Change = { param($c) $c.user.type = '' } }
+            @{ Case = 'the author type is an array'; Change = { param($c) $c.user.type = @('Bot') } }
+            @{ Case = 'the author type is missing'; Change = { param($c) $c.user.Remove('type') } }
+        ) {
+            $comments = Get-GitHubApiFixture -Name issues/list-comments -Set @{
+                '0.body' = "$cleanMarker`nNo drift detected."
+                '0.user.login' = 'octoapp[bot]'
+                '0.user.type' = 'Bot'
+            }
+            & $Change $comments[0]
+
+            { & $publisher @arguments } | Should -Throw '*Cannot verify the author of an existing clean-result comment*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
         }
 
         It 'leaves the issue open when <Case>' -ForEach @(
@@ -360,6 +389,8 @@ Describe 'Drift issue publication' {
             @{ Case = 'no ID'; Change = { param($c) $c.Remove('id'); return , $c } }
             @{ Case = 'an empty ID'; Change = { param($c) $c.id = ''; return , $c } }
             @{ Case = 'an invalid ID'; Change = { param($c) $c.id = 'x'; return , $c } }
+            @{ Case = 'an array-valued ID'; Change = { param($c) $c.id = @(1); return , $c } }
+            @{ Case = 'a string-valued ID'; Change = { param($c) $c.id = '1'; return , $c } }
             @{ Case = 'no body'; Change = { param($c) $c.Remove('body'); return , $c } }
             @{ Case = 'another body'; Change = { param($c) $c.body = 'other'; return , $c } }
             @{ Case = 'an array containing the expected body'; Change = { param($c) $c.body = @($c.body); return , $c } }
@@ -392,6 +423,7 @@ Describe 'Drift issue publication' {
             @{ Case = 'a missing state'; Change = { param($i) $i.Remove('state'); return , $i } }
             @{ Case = 'another issue number'; Change = { param($i) $i.number = 999; return , $i } }
             @{ Case = 'a missing issue number'; Change = { param($i) $i.Remove('number'); return , $i } }
+            @{ Case = 'an array-valued issue number'; Change = { param($i) $i.number = @(9); return , $i } }
             @{ Case = 'a pull request'; Change = { param($i) $i.pull_request = @{ url = 'https://api.example.test/pulls/9' }; return , $i } }
             @{ Case = 'an array instead of an object'; Change = { param($i) return , @($i) } }
         ) {
@@ -410,6 +442,7 @@ Describe 'Drift issue publication' {
         It 'rejects an unreadable matching issue before writing: <Case>' -ForEach @(
             @{ Case = 'missing number'; Change = { param($i) $i.Remove('number') } }
             @{ Case = 'invalid number'; Change = { param($i) $i.number = '../10' } }
+            @{ Case = 'array-valued number'; Change = { param($i) $i.number = @(9) } }
             @{ Case = 'closed state'; Change = { param($i) $i.state = 'closed' } }
             @{ Case = 'missing state'; Change = { param($i) $i.Remove('state') } }
         ) {
@@ -421,7 +454,7 @@ Describe 'Drift issue publication' {
         }
 
         It 'preserves the recovery marker when truncating a clean comment' {
-            [IO.File]::WriteAllText($reportPath, "$marker`n" + ('x' * 70000))
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 21 -Message ('x' * 70000)))
 
             $null = & $publisher @arguments
 
@@ -430,6 +463,137 @@ Describe 'Drift issue publication' {
                 ($Body | ConvertFrom-Json -AsHashtable).body.StartsWith("$cleanMarker`n", [StringComparison]::Ordinal) -and
                 ($Body | ConvertFrom-Json -AsHashtable).body -match 'truncated.*job summary'
             }
+        }
+
+        It 'rejects stale clean evidence from a report-job rerun: <RunNumber>' -Tag 'DriftFreshness' -ForEach @(
+            @{ RunNumber = '19' }, @{ RunNumber = '20' }
+        ) {
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber $RunNumber))
+
+            { & $publisher @arguments } | Should -Throw '*must be newer than the last drift report*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rejects an all-jobs rerun planned against an older main revision' -Tag 'DriftFreshness' {
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber 21 -Revision ('b' * 40)))
+
+            { & $publisher @arguments } | Should -Throw '*main is unreadable or no longer matches*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rechecks main after the comment before closing the issue' -Tag 'DriftFreshness' {
+            Mock Invoke-RestMethod {
+                $mainRef.object.sha = 'b' * 40
+                Get-GitHubApiFixture -Name issues/create-comment -Set @{ body = ($Body | ConvertFrom-Json -AsHashtable).body }
+            } -ParameterFilter { $Method -eq 'POST' }
+
+            { & $publisher @arguments } | Should -Throw '*main is unreadable or no longer matches*'
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'uses the existing read-only token only for the two main-reference checks' -Tag 'DriftFreshness' {
+            (& $publisher @arguments).Action | Should -BeExactly 'closed'
+            Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter {
+                $Uri -like '*/git/ref/heads/main' -and $Headers.Authorization -ceq 'Bearer read-token' -and
+                $Headers['X-GitHub-Api-Version'] -ceq '2026-03-10'
+            }
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter {
+                $Uri -like '*/issues*' -and $Headers.Authorization -ceq 'Bearer read-token'
+            }
+        }
+
+        It 'requires a contents token before checking modern clean evidence' -Tag 'DriftFreshness' {
+            $arguments.ContentsToken = ''
+            { & $publisher @arguments } | Should -Throw '*requires the existing contents:read token*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'does not close when the main reference is unreadable: <Case>' -Tag 'DriftFreshness' -ForEach @(
+            # Deliberately invalid responses derived from the documented git-ref fixture.
+            @{ Case = 'missing ref'; Change = { param($r) $r.Remove('ref'); return , $r } }
+            @{ Case = 'another ref'; Change = { param($r) $r.ref = 'refs/heads/other'; return , $r } }
+            @{ Case = 'ref case'; Change = { param($r) $r.ref = 'refs/heads/Main'; return , $r } }
+            @{ Case = 'array ref'; Change = { param($r) $r.ref = @('refs/heads/main'); return , $r } }
+            @{ Case = 'missing object'; Change = { param($r) $r.Remove('object'); return , $r } }
+            @{ Case = 'missing type'; Change = { param($r) $r.object.Remove('type'); return , $r } }
+            @{ Case = 'tag object'; Change = { param($r) $r.object.type = 'tag'; return , $r } }
+            @{ Case = 'type case'; Change = { param($r) $r.object.type = 'Commit'; return , $r } }
+            @{ Case = 'array type'; Change = { param($r) $r.object.type = @('commit'); return , $r } }
+            @{ Case = 'missing SHA'; Change = { param($r) $r.object.Remove('sha'); return , $r } }
+            @{ Case = 'array SHA'; Change = { param($r) $r.object.sha = @('a' * 40); return , $r } }
+            @{ Case = 'SHA case'; Change = { param($r) $r.object.sha = 'A' * 40; return , $r } }
+            @{ Case = 'array root'; Change = { param($r) return , @($r) } }
+        ) {
+            $mainRef = & $Change $mainRef
+            { & $publisher @arguments } | Should -Throw '*main is unreadable or no longer matches*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'rejects unreadable clean-run evidence: <Case>' -Tag 'DriftFreshness' -ForEach @(
+            @{ Case = 'missing metadata'; Body = { "$marker`nRevision: ``$('a' * 40)```n" } }
+            @{ Case = 'duplicate metadata'; Body = { "$(Get-TestDriftReport -RunNumber 21)$(Get-TestDriftReport -RunNumber 21)" } }
+            @{ Case = 'one valid and one malformed metadata marker'; Body = { "$(Get-TestDriftReport -RunNumber 21)<!-- platform-drift-run:invalid -->`n" } }
+            @{ Case = 'invalid counter'; Body = { Get-TestDriftReport -RunNumber 'x' } }
+            @{ Case = 'zero counter'; Body = { Get-TestDriftReport -RunNumber '0' } }
+            @{ Case = 'overflow counter'; Body = { Get-TestDriftReport -RunNumber '9223372036854775808' } }
+            @{ Case = 'another workflow'; Body = { Get-TestDriftReport -RunNumber 21 -Workflow 'platform/instance/.github/workflows/other.yml@refs/heads/main' } }
+            @{ Case = 'wrong workflow case'; Body = { Get-TestDriftReport -RunNumber 21 -Workflow 'platform/instance/.github/workflows/Drift.yml@refs/heads/main' } }
+            @{ Case = 'missing revision'; Body = { (Get-TestDriftReport -RunNumber 21).Replace("Revision: ``$('a' * 40)```n", '') } }
+            @{ Case = 'invalid revision'; Body = { Get-TestDriftReport -RunNumber 21 -Revision 'x' } }
+        ) {
+            [IO.File]::WriteAllText($reportPath, (& $Body))
+            { & $publisher @arguments } | Should -Throw '*clean-run evidence*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'leaves a legacy issue open with a deduplicated manual-closure comment' -Tag 'DriftFreshness' {
+            $current.body = "$marker`nlegacy drift without run_number"
+            $arguments.ContentsToken = ''
+            $manualComments = [Collections.Generic.List[object]]::new()
+            Mock Invoke-RestMethod { return , @($manualComments.ToArray()) } `
+                -ParameterFilter { $Method -eq 'GET' -and $Uri -like '*/issues/9/comments?*page=1' }
+            Mock Invoke-RestMethod {
+                $savedComment = Get-GitHubApiFixture -Name issues/create-comment -Set @{
+                    body = ($Body | ConvertFrom-Json -AsHashtable).body
+                    'user.login' = 'octoapp[bot]'; 'user.type' = 'Bot'
+                }
+                $manualComments.Add($savedComment)
+                return , $savedComment
+            } -ParameterFilter { $Method -eq 'POST' }
+
+            (& $publisher @arguments).Action | Should -BeExactly 'manual'
+            (& $publisher @arguments).Action | Should -BeExactly 'manual'
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'POST' -and ($Body | ConvertFrom-Json -AsHashtable).body -match 'no run_number.*close this issue manually'
+            }
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' -or $Uri -like '*/git/ref/*' }
+        }
+
+        It 'rejects a last drift report from a different workflow' -Tag 'DriftFreshness' {
+            $current.body = Get-TestDriftReport -Workflow 'platform/instance/.github/workflows/other.yml@refs/heads/main'
+            { & $publisher @arguments } | Should -Throw '*uncorrelated clean-run evidence*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'does not downgrade the last drift evidence: <Case>' -Tag 'DriftFreshness' -ForEach @(
+            @{ Case = 'older report rerun'; Body = { Get-TestDriftReport -RunNumber 19 } }
+            @{ Case = 'report without run metadata'; Body = { "$marker`nlegacy" } }
+            @{ Case = 'report from another workflow'; Body = { Get-TestDriftReport -RunNumber 21 -Workflow 'other/workflow' } }
+        ) {
+            $arguments.Outcome = 'Report'
+            [IO.File]::WriteAllText($reportPath, (& $Body))
+            { & $publisher @arguments } | Should -Throw '*Refusing an older or uncorrelated drift report*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+        }
+
+        It 'accepts a current correlated drift update: <RunNumber>' -Tag 'DriftFreshness' -ForEach @(
+            @{ RunNumber = '20' }, @{ RunNumber = '21' }
+        ) {
+            $arguments.Outcome = 'Report'
+            $updated.state = 'open'
+            [IO.File]::WriteAllText($reportPath, (Get-TestDriftReport -RunNumber $RunNumber))
+            (& $publisher @arguments).Action | Should -BeExactly 'updated'
         }
     }
 }

@@ -319,7 +319,9 @@ Bootstrap vytvoří environment `drift-report` bez reviewerů, jen z `main`. Iss
 |---|---|
 | App reportu driftu | Právě `issues: write`, jen repozitář `instance` organizace platformy. Samostatná identita; nesmí ji sdílet autorizace ani žádná fáze modulu. |
 
-Stejná App také zavře své otevřené drift issue po úplném běhu bez driftu. Nejdřív přidá komentář s čistým výsledkem, potom nastaví stav `closed` s důvodem `completed`. Nepotřebuje další oprávnění. Při neúplném běhu issue nezavře; bez otevřeného drift issue nic nevytvoří.
+Stejná App také zavře své otevřené drift issue po úplném běhu bez driftu. Číslo `github.run_number` čistého běhu musí převyšovat číslo posledního reportu stejného workflow. Job před komentářem i před zavřením ověří, že revize plánu stále odpovídá aktuálnímu `main`. Použije stávající token jobu s `contents: read`; App zůstane pouze u `issues: write`. Oprávnění `actions: read` nepřidává. Rerun starého report jobu ani všech jobů se starou revizí tak nesmí zavřít novější drift.
+
+App nejdřív přidá komentář s čistým výsledkem, potom nastaví stav `closed` s důvodem `completed`. Při neúplném běhu issue nezavře; bez otevřeného drift issue nic nevytvoří. Issue vytvořené před zavedením metadat `run_number` automaticky nezavře: přidá komentář s pokynem ověřit poslední čistý běh a issue zavřít ručně. Pokud obnova najde odpovídající komentář s neověřitelným autorem, job selže bez duplikace a bez zavření. Platform team (platformní tým) musí výsledek ověřit a issue zavřít ručně.
 
 Alias App patří do `githubApps` a klíč do `keys.json`. U existující instance doplň alias přes PR a požadované review podle [postupu pro chráněné vazby](#pr-se-změnou-githubapps-nebo-credentials). Cloudový plan změněných vazeb proběhne až z `main` po merge; výsledek PR workflow závisí i na autorizaci autora. Bootstrapu pak předej konfiguraci shodnou s `main` a alias přes `-DriftReportApp`:
 

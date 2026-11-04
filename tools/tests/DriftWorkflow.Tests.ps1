@@ -16,6 +16,8 @@ Describe 'Drift workflow reconciliation' {
         $tokenStep.env.Keys.Count | Should -Be 4
         $workflow.jobs.report_drift.permissions.contents | Should -BeExactly 'read'
         $publishStep.env.DRIFT_OUTCOME | Should -BeExactly '${{ steps.evaluate.outputs.outcome }}'
+        $publishStep.env.DRIFT_CONTENTS_TOKEN | Should -BeExactly '${{ github.token }}'
+        $workflow.jobs.report_drift.permissions.Keys.Count | Should -Be 1
     }
 
     It 'executes the actual publish step for a clean result without creating an issue' {
