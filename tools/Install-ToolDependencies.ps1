@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [switch] $Development,
-    [ValidateSet('Actionlint', 'Terraform', 'TFLint')]
+    [ValidateSet('Actionlint', 'Terraform', 'TFLint', 'Trivy')]
     [string[]] $Binary = @(),
     [ValidateRange('Positive')]
     [int] $MaxAttempts = 4,
@@ -13,29 +13,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1') -Force
-
-function Invoke-DependencyTransfer {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][scriptblock] $Action,
-        [Parameter(Mandatory)][int] $MaxAttempts,
-        [Parameter(Mandatory)][int] $RetryDelaySeconds,
-        [Parameter(Mandatory)][string] $Dependency
-    )
-
-    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        try {
-            & $Action
-            return
-        }
-        catch {
-            if ($attempt -eq $MaxAttempts) { throw }
-            $delay = $RetryDelaySeconds * $attempt
-            Write-Warning "Failed to download $Dependency (attempt $attempt/$MaxAttempts): $($_.Exception.Message). Retrying in $delay seconds."
-            Start-Sleep -Seconds $delay
-        }
-    }
-}
 
 $requirements = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'requirements.psd1')
 foreach ($name in $requirements.Runtime.Keys) {

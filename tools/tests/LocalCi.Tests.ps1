@@ -55,6 +55,7 @@ Describe 'Local CI reads ci.yml' {
         $setting.PlatformTerraformVersion | Should -BeExactly $setting.TerraformVersion
         $setting.TflintVersion | Should -Match '^\d+\.\d+\.\d+$'
         $setting.TrivyVersion | Should -Match '^\d+\.\d+\.\d+$'
+        $setting.TrivyVersion | Should -BeExactly (Import-PowerShellDataFile (Join-Path $toolRoot 'requirements.psd1')).Binaries.Trivy.Version
     }
 
     It 'runs the offline real-Terraform probe only after organizations provider initialization' {
@@ -82,6 +83,7 @@ Describe 'Local CI reads ci.yml' {
         @{ Label = 'TFLint installer changed'; Find = './tools/Install-CiBinary.ps1 -Name TFLint'; Replace = './tools/Install-CiBinary.ps1 -Name Other' }
         @{ Label = 'actionlint installer changed'; Find = './tools/Install-CiBinary.ps1 -Name Actionlint'; Replace = './tools/Install-CiBinary.ps1 -Name Other' }
         @{ Label = 'Trivy command changed'; Find = '--severity HIGH,CRITICAL'; Replace = '--severity MEDIUM,HIGH,CRITICAL' }
+        @{ Label = 'Trivy installer changed'; Find = './tools/Install-CiBinary.ps1 -Name Trivy'; Replace = './tools/Install-CiBinary.ps1 -Name Other' }
         @{ Label = 'TFLint step runs another command'; Find = 'tflint --chdir="$TF_ROOT"' + "`n"; Replace = 'tflint --chdir="$TF_ROOT"' + "`n" + '          tflint --chdir="$TF_ROOT" --format json' + "`n" }
     ) {
         $path = Join-Path $TestDrive 'ci.yml'

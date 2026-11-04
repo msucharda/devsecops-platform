@@ -107,6 +107,10 @@ function Get-CiWorkflowSetting {
     if ($actionlintInstaller['shell'] -cne 'pwsh' -or $actionlintInstaller['run'] -cne './tools/Install-CiBinary.ps1 -Name Actionlint') {
         throw 'ci.yml must install the pinned actionlint archive. Update tools/LocalCi.psm1.'
     }
+    $trivyInstaller = Get-CiWorkflowStep -Workflow $workflow -Job terraform -Name 'Install verified Trivy'
+    if ($trivyInstaller['shell'] -cne 'pwsh' -or $trivyInstaller['run'] -cne './tools/Install-CiBinary.ps1 -Name Trivy') {
+        throw 'ci.yml must install the pinned Trivy archive. Update tools/LocalCi.psm1.'
+    }
     $pwshSteps = [ordered]@{}
     foreach ($name in 'Check PowerShell', 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {
         $step = Get-CiWorkflowStep -Workflow $workflow -Job platform-checks -Name $name
@@ -155,7 +159,7 @@ function Get-CiWorkflowSetting {
         TerraformVersion = Get-CiActionInput -Workflow $workflow -Job terraform -Action 'hashicorp/setup-terraform' -InputName terraform_version
         PlatformTerraformVersion = Get-CiActionInput -Workflow $workflow -Job pester -Action 'hashicorp/setup-terraform' -InputName terraform_version
         TflintVersion = $requirements.Binaries.TFLint.Version
-        TrivyVersion = (Get-CiActionInput -Workflow $workflow -Job terraform -Action 'aquasecurity/setup-trivy' -InputName version).TrimStart('v')
+        TrivyVersion = $requirements.Binaries.Trivy.Version
         TerraformRunCommands = $terraformCommands
         TerraformFingerprint = ConvertTo-Json -Compress -Depth 20 -InputObject @(
             $workflow['jobs']['terraform'],

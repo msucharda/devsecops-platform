@@ -227,10 +227,9 @@ jobs:
       - name: Install verified TFLint
         shell: pwsh
         run: ./tools/Install-CiBinary.ps1 -Name TFLint
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.72.0
-          cache: false
+      - name: Install verified Trivy
+        shell: pwsh
+        run: ./tools/Install-CiBinary.ps1 -Name Trivy
       - name: Terraform format
         run: terraform -chdir="$TF_ROOT" fmt -check -diff
       - name: Terraform validate
