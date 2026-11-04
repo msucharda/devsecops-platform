@@ -502,7 +502,7 @@ foreach ($node in $phaseGraph.PSBase.Values) {
 $driftPlanNeeds = @($planNeeds | Where-Object { $_ -cne 'validate_scope' })
 Add-WorkflowBlock @"
   report_drift:
-    name: Open or update the drift issue
+    name: Reconcile the drift issue
     needs: [$($driftPlanNeeds -join ', ')]
 "@
 Add-WorkflowBlock @'
@@ -539,7 +539,6 @@ Add-WorkflowBlock @'
           DRIFT_NEEDS: ${{ toJSON(needs) }}
         run: ./trusted/platform/tools/Get-DriftReport.ps1 -NeedsJson $env:DRIFT_NEEDS -InstancePath ./trusted/instance.yaml -ModulesPath ./trusted/platform/modules -ReportPath ./drift-report.md -GitHubOutputPath $env:GITHUB_OUTPUT
       - name: Issue the isolated issue-writer token
-        if: ${{ steps.evaluate.outputs.report == 'true' }}
         shell: pwsh
         env:
           PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -547,10 +546,12 @@ Add-WorkflowBlock @'
           PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
         run: ./trusted/platform/tools/New-PlatformGitHubToken.ps1 -DriftReport
-      - name: Open or update the drift issue
-        if: ${{ steps.evaluate.outputs.report == 'true' }}
+      - name: Reconcile the drift issue
         shell: pwsh
-        run: ./trusted/platform/tools/Publish-DriftIssue.ps1 -ReportPath ./drift-report.md
+        env:
+          DRIFT_OUTCOME: ${{ steps.evaluate.outputs.outcome }}
+          DRIFT_CONTENTS_TOKEN: ${{ github.token }}
+        run: ./trusted/platform/tools/Publish-DriftIssue.ps1 -ReportPath ./drift-report.md -Outcome $env:DRIFT_OUTCOME
       - name: Revoke the issue-writer token
         if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh

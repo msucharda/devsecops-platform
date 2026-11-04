@@ -920,8 +920,11 @@ Describe 'Drift workflow generation' {
         $evaluate.run | Should -Match 'trusted/platform/tools/Get-DriftReport\.ps1 '
         $token = $job.steps | Where-Object { $_['run'] -match 'New-PlatformGitHubToken' }
         $token.run | Should -Match 'New-PlatformGitHubToken\.ps1 -DriftReport$'
-        $token.if | Should -Be '${{ steps.evaluate.outputs.report == ''true'' }}'
-        ($job.steps | Where-Object { $_['run'] -match 'Publish-DriftIssue' }).if | Should -Be '${{ steps.evaluate.outputs.report == ''true'' }}'
+        $token.ContainsKey('if') | Should -BeFalse
+        $publish = $job.steps | Where-Object { $_['run'] -match 'Publish-DriftIssue' }
+        $publish.ContainsKey('if') | Should -BeFalse
+        $publish.env.DRIFT_OUTCOME | Should -BeExactly '${{ steps.evaluate.outputs.outcome }}'
+        $publish.run | Should -Match '-Outcome \$env:DRIFT_OUTCOME$'
         ($job.steps | Where-Object { $_['run'] -match 'Remove-PlatformGitHubToken' }).if | Should -Be '${{ always() && env.PLATFORM_GITHUB_TOKENS != '''' }}'
         $job.steps[-1].if | Should -Be '${{ steps.evaluate.outputs.complete != ''true'' }}'
         (ConvertTo-Json $job -Depth 20) | Should -Not -Match 'candidate|id-token|Azure/login'

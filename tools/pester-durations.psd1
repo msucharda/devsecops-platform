@@ -45,14 +45,14 @@
     'ModuleOrder.Tests.ps1' = 5
     # Source CI run 40880936626: 4.45 seconds, rounded up.
     'CodeSecurity.Tests.ps1' = 5
-    'DriftIssue.Tests.ps1' = 3
+    'DriftIssue.Tests.ps1' = 4
     'GitHubApiFixture.Tests.ps1' = 3
     'DeadlineHttp.Tests.ps1' = 3
     'RulesetBypassVisibility.Tests.ps1' = 3
     'AppInstallationContract.Tests.ps1' = 2
     # Source CI run 41803824553: 1.9166 seconds, rounded up.
     'ActionsPolicy.Tests.ps1' = 2
-    'DriftReport.Tests.ps1' = 3
+    'DriftReport.Tests.ps1' = 6
     'CodeSecurityCoverage.Tests.ps1' = 2
     'AcceptanceRunEvidence.Tests.ps1' = 2
     'OrganizationRoles.Tests.ps1' = 2

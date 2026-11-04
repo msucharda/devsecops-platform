@@ -600,10 +600,54 @@
             )
         }
         @{
-            Name = 'drift-open-issue'
+            Name = 'drift-issue-state'
             Tests = @(
-                @{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*updates the single open drift issue*', '*fails closed when the created response*', '*fails closed when the update response*') }
+                @{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*updates the single open drift issue*', '*fails closed when the created response*', '*fails closed when the update response*', '*comments on the clean result*', '*rejects a close response*', '*rejects an unreadable matching issue*') }
             )
+        }
+        @{
+            Name = 'drift-clean-comment'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*reuses a clean comment*', '*does not reuse a comment when*', '*leaves recovery ambiguous*') })
+        }
+        @{
+            Name = 'drift-created-comment'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*comments on the clean result*', '*rejects a created clean comment*', '*accepts the documented null author*') })
+        }
+        @{
+            Name = 'drift-run-evidence'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*rejects unreadable clean-run evidence*', '*leaves a legacy issue open*', '*uses the existing read-only token*') })
+        }
+        @{
+            Name = 'drift-clean-evidence'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*rejects unreadable clean-run evidence*', '*rejects stale clean evidence*', '*rejects a last drift report*', '*uses the existing read-only token*', '*rejects an invalid current workflow context*', '*closes matching reports from a custom workflow*') })
+        }
+        @{
+            Name = 'drift-current-main'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*does not close when the main reference*', '*rejects an all-jobs rerun*', '*requires a contents token*', '*uses the existing read-only token*') })
+        }
+        @{
+            Name = 'drift-report-order'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*does not downgrade the last drift evidence*', '*accepts a current correlated drift update*', '*updates the single open drift issue*') })
+        }
+        @{
+            Name = 'drift-organization-result'
+            Tests = @(@{ Path = 'tools/tests/OrganizationDrift.Tests.ps1'; FullName = @('Per-organization drift completeness*') })
+        }
+        @{
+            Name = 'drift-need-string'
+            Tests = @(@{ Path = 'tools/tests/DriftReport.Tests.ps1'; FullName = @('*refuses array-valued job evidence*', '*records the workflow identity and counter*') })
+        }
+        @{
+            Name = 'drift-collection'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*opens a new drift issue*', '*comments on the clean result*', '*leaves the issue open when*', '*rejects unreadable closed-issue lists*') })
+        }
+        @{
+            Name = 'drift-resolved-report'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('*Resolved report recovery*') })
+        }
+        @{
+            Name = 'drift-issue-author'
+            Tests = @(@{ Path = 'tools/tests/DriftIssue.Tests.ps1'; FullName = @('Drift issue publication*') })
         }
         @{
             Name = 'catalog-repository-adoptable'
@@ -911,14 +955,24 @@
             Issue = 'https://github.com/msucharda/devsecops-platform/pull/88'
         }
         @{
-            Mutant = 'Assert-OpenIssue: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Issue[''number''] -cnotmatch ''^[1-9][0-9]*$''''#1'
+            Mutant = 'Assert-IssueState: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Issue[''number''] -cnotmatch ''^[1-9][0-9]*$''''#1'
             Reason = 'Equivalent mutant: the pattern contains only digit classes, and no character matches a digit class case-insensitively but not case-sensitively.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/57'
         }
         @{
-            Mutant = 'Assert-OpenIssue: operator ''-cne'' -> -ine in ''[string] $Issue[''number''] -cne $ExpectedNumber''#1'
+            Mutant = 'Assert-IssueState: operator ''-cne'' -> -ine in ''[string] $Issue[''number''] -cne $ExpectedNumber''#1'
             Reason = 'Equivalent mutant: the same condition first requires the issue number to be a decimal number, which has no case.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/57'
+        }
+        @{
+            Mutant = 'Assert-CreatedComment: operator ''-cnotmatch'' -> -inotmatch in ''[string] $Comment[''id''] -cnotmatch ''^[1-9][0-9]*$''''#1'
+            Reason = 'Equivalent mutant: the pattern contains only decimal digits and anchors, which have no case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/200'
+        }
+        @{
+            Mutant = 'Test-CodeSecurityArtifactId: operand ''$Value -is [string]'' -> $true#1'
+            Reason = 'Equivalent mutant: the only caller passes Get-NeedValue, which returns only scalar strings or null. Null cannot match the positive decimal ID pattern, so removing this type guard admits no additional input.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/212'
         }
         @{
             Mutant = 'Test-SetupAcceptanceRunEvidence: operator ''-cne'' -> -ine in ''[string] $record[''runId''] -cne [string] $Run[''id'']''#1'

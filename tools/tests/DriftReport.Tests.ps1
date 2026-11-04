@@ -59,14 +59,15 @@ BeforeAll {
     function Invoke-DriftReport {
         [CmdletBinding()]
         param([Parameter(Mandatory)][System.Collections.IDictionary] $Needs, [string] $Instance = $instancePath,
-            [string] $CoverageFile = $coverageArtifact)
+            [string] $CoverageFile = $coverageArtifact, [string] $RunNumber = '', [string] $WorkflowRef = '')
 
         $script:reportPath = Join-Path $TestDrive "$([guid]::NewGuid()).md"
         $script:outputPath = Join-Path $TestDrive "$([guid]::NewGuid()).out"
         $script:summaryPath = Join-Path $TestDrive "$([guid]::NewGuid()).summary"
         & $reporter -NeedsJson (ConvertTo-Json -InputObject $Needs -Depth 10)         -InstancePath $Instance -ModulesPath $modulesPath `
             -ReportPath $script:reportPath -GitHubOutputPath $script:outputPath -JobSummaryPath $script:summaryPath `
-            -CodeSecurityCoveragePath $CoverageFile -RunUrl 'https://github.example.test/platform/instance/actions/runs/7' 6>$null
+            -CodeSecurityCoveragePath $CoverageFile -RunNumber $RunNumber -WorkflowRef $WorkflowRef `
+            -RunUrl 'https://github.example.test/platform/instance/actions/runs/7' 6>$null
         $script:output = @{}
         foreach ($line in [IO.File]::ReadAllLines($script:outputPath)) {
             $name, $value = $line -split '=', 2
@@ -77,6 +78,60 @@ BeforeAll {
 }
 
 Describe 'Drift report evaluation' {
+    It 'refuses array-valued job evidence: <Case>' -Tag 'DriftPlanEvidence' -ForEach @(
+        # Deliberately invalid: Actions needs.result and needs.outputs values are scalar strings.
+        @{ Case = 'authorization result'; Change = { param($n) $n.authorize.result = @('success') }; Reason = 'not confirmed on an immutable revision' }
+        @{ Case = 'authorization decision'; Change = { param($n) $n.authorize.outputs.allowed = @('true') }; Reason = 'not confirmed on an immutable revision' }
+        @{ Case = 'authorization revision'; Change = { param($n) $n.authorize.outputs.revision = @('a' * 40) }; Reason = 'not confirmed on an immutable revision' }
+        @{ Case = 'validation result'; Change = { param($n) $n.validate.result = @('success') }; Reason = 'validation or trusted module selection did not succeed' }
+        @{ Case = 'selection result'; Change = { param($n) $n.select.result = @('success') }; Reason = 'validation or trusted module selection did not succeed' }
+        @{ Case = 'module result'; Change = { param($n) $n.module_application.result = @('success') }; Reason = 'module_application did not complete' }
+        @{ Case = 'module change state'; Change = { param($n) $n.module_application.outputs.changes = @('false') }; Reason = 'module_application did not complete' }
+        @{ Case = 'module selection'; Change = { param($n) $n.select.outputs.modules = @($n.select.outputs.modules) }; Reason = 'module selection is missing or invalid' }
+        @{ Case = 'inherited ruleset count'; Change = { param($n) $n.ruleset_plan_enterprise_baseline.outputs.inheritedRulesets = @('0') }; Reason = 'did not verify ruleset bypass visibility' }
+    ) {
+        $needs = Get-DriftNeed
+        & $Change $needs
+        Invoke-DriftReport -Needs $needs
+
+        $script:output.complete | Should -BeExactly 'false'
+        $script:output.outcome | Should -BeExactly 'Report'
+        $script:report | Should -Match $Reason
+    }
+
+    It 'rejects a singleton array wrapping otherwise complete job results' -Tag 'DriftPlanEvidence' {
+        $reportPath = Join-Path $TestDrive 'array-needs.md'
+        $outputPath = Join-Path $TestDrive 'array-needs.out'
+        # Deliberately invalid: the needs context is an object, not an array.
+        & $reporter -NeedsJson (ConvertTo-Json -InputObject @((Get-DriftNeed)) -Depth 10) `
+            -InstancePath $instancePath -ModulesPath $modulesPath -ReportPath $reportPath -GitHubOutputPath $outputPath `
+            -RunNumber '' -WorkflowRef '' -JobSummaryPath '' 6>$null
+
+        [IO.File]::ReadAllText($outputPath) | Should -BeExactly "report=true`ncomplete=false`noutcome=Report`n"
+        [IO.File]::ReadAllText($reportPath) | Should -Match 'workflow job results could not be read'
+    }
+
+    It 'records the workflow identity and counter that remain stable across reruns' {
+        Invoke-DriftReport -Needs (Get-DriftNeed) -RunNumber 21 `
+            -WorkflowRef 'platform/instance/.github/workflows/drift.yml@refs/heads/main'
+
+        $script:report | Should -Match ([regex]::Escape("<!-- platform-drift-run:platform/instance/.github/workflows/drift.yml@refs/heads/main|21 -->"))
+        $script:report | Should -Match ([regex]::Escape("Revision: ``$revision``"))
+    }
+
+    It 'rejects malformed run metadata: <Case>' -ForEach @(
+        @{ Case = 'missing counter'; Run = ''; Workflow = 'repo/workflow@refs/heads/main' }
+        @{ Case = 'zero counter'; Run = '0'; Workflow = 'repo/workflow@refs/heads/main' }
+        @{ Case = 'invalid counter'; Run = 'x'; Workflow = 'repo/workflow@refs/heads/main' }
+        @{ Case = 'overflow counter'; Run = '9223372036854775808'; Workflow = 'repo/workflow@refs/heads/main' }
+        @{ Case = 'missing workflow'; Run = '21'; Workflow = '' }
+        @{ Case = 'injected workflow separator'; Run = '21'; Workflow = 'repo/workflow|22' }
+        @{ Case = 'injected workflow line'; Run = '21'; Workflow = "repo/workflow`nline" }
+    ) {
+        { Invoke-DriftReport -Needs (Get-DriftNeed) -RunNumber $Run -WorkflowRef $Workflow } |
+            Should -Throw '*Drift run metadata requires*'
+    }
+
     It 'reports early Code Security coverage as <Status> with <Security> direct state' -ForEach @(
         @{ Status = 'compliant'; Security = 'enabled'; Publish = 'false'; Complete = 'true' }
         @{ Status = 'drift'; Security = 'disabled'; Publish = 'true'; Complete = 'true' }
@@ -202,6 +257,23 @@ Describe 'Drift report evaluation' {
                 $report | Should -Not -Match 'compliant 1'
             }
 
+            It 'rejects a singleton array wrapping a coverage artifact' -Tag 'ReviewTwo' {
+                $modulesPath = New-CoverageReportModule
+                $needs = Get-DriftNeed
+                $needs['module_enterprise_baseline_code_security'] = @{
+                    result = 'success'; outputs = @{ changes = 'false'; codeSecurityCoverage = '123' }
+                }
+                Write-CoverageArtifact -Repositories @(@{ repository = 'platform/app'; status = 'compliant'; security_status = 'enabled' })
+                # Deliberately unsupported: the coverage contract requires an object root.
+                [IO.File]::WriteAllText($coverageArtifact, "[$([IO.File]::ReadAllText($coverageArtifact))]")
+
+                Invoke-DriftReport -Needs $needs
+
+                $output.complete | Should -BeExactly 'false'
+                $output.outcome | Should -BeExactly 'Report'
+                $report | Should -Match 'readable organization map'
+            }
+
             It 'evaluates a large coverage artifact without putting repository details in the needs environment' {
                 $modulesPath = New-CoverageReportModule
                 $needs = Get-DriftNeed
@@ -224,14 +296,28 @@ Describe 'Drift report evaluation' {
                 [Text.Encoding]::UTF8.GetByteCount($report) | Should -BeLessOrEqual 50000
             }
 
-    It 'publishes no issue when every selected plan completed without changes' {
+    It 'signals clean reconciliation when every selected plan completed without changes' {
         Invoke-DriftReport -Needs (Get-DriftNeed)
 
         $output.report | Should -BeExactly 'false'
         $output.complete | Should -BeExactly 'true'
+        $output.outcome | Should -BeExactly 'Clean'
         $report | Should -Match '^<!-- platform-drift-report -->\n'
         $report | Should -Match 'No drift detected'
         [IO.File]::ReadAllText($summaryPath) | Should -Match 'Not covered by automatic drift detection'
+    }
+
+    It 'signals report reconciliation instead of closure for <Case>' -ForEach @(
+        @{ Case = 'detected drift'; Result = 'success'; Changes = 'true' }
+        @{ Case = 'an incomplete plan'; Result = 'failure'; Changes = 'false' }
+    ) {
+        $needs = Get-DriftNeed
+        $needs.module_foundation.result = $Result
+        $needs.module_foundation.outputs.changes = $Changes
+
+        Invoke-DriftReport -Needs $needs
+
+        $output.outcome | Should -BeExactly 'Report'
     }
 
     It 'checks only selected phase roots when the phase plan is <Result>' -ForEach @(
@@ -365,7 +451,7 @@ Describe 'Drift report evaluation' {
         & $reporter -NeedsJson 'not json' -InstancePath $instancePath -ModulesPath $modulesPath -ReportPath $reportPath `
             -GitHubOutputPath $outputPath -JobSummaryPath (Join-Path $TestDrive 'invalid.summary') -RunUrl 'https://github.example.test/r' 6>$null
 
-        [IO.File]::ReadAllText($outputPath) | Should -BeExactly "report=true`ncomplete=false`n"
+        [IO.File]::ReadAllText($outputPath) | Should -BeExactly "report=true`ncomplete=false`noutcome=Report`n"
         [IO.File]::ReadAllText($reportPath) | Should -Match 'Drift detection INCOMPLETE'
     }
 }

@@ -40,7 +40,7 @@ Describe 'Per-organization drift completeness' {
 
     It 'requires a successful no-change plan for every organization before reporting no drift' {
         Invoke-OrganizationDriftReport
-        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=false`ncomplete=true`n"
+        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=false`ncomplete=true`noutcome=Clean`n"
     }
 
     It 'rejects a singleton array wrapping complete organization results' {
@@ -49,7 +49,7 @@ Describe 'Per-organization drift completeness' {
 
         Invoke-OrganizationDriftReport
 
-        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`n"
+        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`noutcome=Report`n"
         Get-Content -LiteralPath $reportPath -Raw | Should -Match 'did not publish per-organization results'
     }
 
@@ -88,7 +88,7 @@ Describe 'Per-organization drift completeness' {
 
         Invoke-OrganizationDriftReport
 
-        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`n"
+        Get-Content -LiteralPath $outputPath -Raw | Should -BeExactly "report=true`ncomplete=false`noutcome=Report`n"
         $report = Get-Content -LiteralPath $reportPath -Raw
         $report | Should -Match 'Drift detected'
         $report | Should -Match '`scoped`.*organization results incomplete'
@@ -100,7 +100,11 @@ Describe 'Per-organization drift completeness' {
         @{ Case = 'extra organization'; Change = { param($r) $r['foreign'] = @{ result = 'success'; changes = $false } } }
         @{ Case = 'failed organization'; Change = { param($r) $r['demo-actions'].result = 'failure' } }
         @{ Case = 'pending organization'; Change = { param($r) $r['demo-actions'].result = 'pending' } }
+        @{ Case = 'status differs in case'; Change = { param($r) $r['demo-actions'].result = 'Success' } }
         @{ Case = 'missing status'; Change = { param($r) $r['demo-actions'].Remove('result') } }
+        # Deliberately invalid: a plan result must be a scalar string.
+        @{ Case = 'empty status array'; Change = { param($r) $r['demo-actions'].result = @() } }
+        @{ Case = 'singleton success array'; Change = { param($r) $r['demo-actions'].result = @('success') } }
         @{ Case = 'missing change state'; Change = { param($r) $r['demo-actions'].Remove('changes') } }
         @{ Case = 'string change state'; Change = { param($r) $r['demo-actions'].changes = 'false' } }
         @{ Case = 'null record'; Change = { param($r) $r['demo-actions'] = $null } }

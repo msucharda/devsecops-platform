@@ -6,6 +6,7 @@ BeforeAll {
 Describe 'Source CI job dependencies' {
     It 'requires all four mutation shards before the stable mutation check can pass' {
         $shards = $workflow.jobs['mutation-shards']
+        $shards['timeout-minutes'] | Should -Be 15
         @($shards.strategy.matrix.shard) | Should -BeExactly @(0, 1, 2, 3)
         $shards.strategy['fail-fast'] | Should -BeFalse
         $shards['continue-on-error'] | Should -Not -BeTrue
