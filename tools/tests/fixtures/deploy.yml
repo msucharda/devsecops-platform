@@ -158,6 +158,8 @@ jobs:
     needs: [authorize, select, module_foundation]
     if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.module_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['application'] }}
+    outputs:
+      changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
@@ -213,10 +215,11 @@ jobs:
           name: plan-outputs-foundation
           path: ./artifacts/prerequisites
       - name: Run module
+        id: run
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'application' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'application' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -GitHubOutputPath $env:GITHUB_OUTPUT
       - name: Upload public module outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -234,6 +237,8 @@ jobs:
     needs: [authorize, select, module_service]
     if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_service.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
+    outputs:
+      changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
@@ -289,10 +294,11 @@ jobs:
           name: plan-outputs-service
           path: ./artifacts/prerequisites
       - name: Run module
+        id: run
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -GitHubOutputPath $env:GITHUB_OUTPUT
       - name: Upload public module outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -310,6 +316,8 @@ jobs:
     needs: [authorize, select, module_service, module_enterprise_baseline]
     if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.rulesetEnvironments)['enterprise-baseline'] }}
+    outputs:
+      changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
@@ -365,10 +373,11 @@ jobs:
           name: plan-outputs-service
           path: ./artifacts/prerequisites
       - name: Run module
+        id: run
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -Rulesets
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'enterprise-baseline' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -Rulesets -GitHubOutputPath $env:GITHUB_OUTPUT
       - name: Upload public module outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -386,6 +395,8 @@ jobs:
     needs: [authorize, select]
     if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['foundation'] }}
+    outputs:
+      changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
@@ -436,10 +447,11 @@ jobs:
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
         run: ./trusted/platform/tools/New-PlatformGitHubToken.ps1 -Module 'foundation' -Phase plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules
       - name: Run module
+        id: run
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'foundation' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'foundation' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -GitHubOutputPath $env:GITHUB_OUTPUT
       - name: Upload public module outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -457,6 +469,8 @@ jobs:
     needs: [authorize, select]
     if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['observer'] }}
+    outputs:
+      changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
@@ -507,10 +521,11 @@ jobs:
           PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
         run: ./trusted/platform/tools/New-PlatformGitHubToken.ps1 -Module 'observer' -Phase plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules
       - name: Run module
+        id: run
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'observer' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'observer' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -GitHubOutputPath $env:GITHUB_OUTPUT
       - name: Upload public module outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -528,6 +543,8 @@ jobs:
     needs: [authorize, select, module_application, module_foundation]
     if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['service'] }}
+    outputs:
+      changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
@@ -588,10 +605,11 @@ jobs:
           name: plan-outputs-foundation
           path: ./artifacts/prerequisites
       - name: Run module
+        id: run
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ env.GH_TOKEN }}
-        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'service' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER
+        run: ./candidate/platform/tools/Invoke-Module.ps1 -Module 'service' -Action plan -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -GitHubOutputPath $env:GITHUB_OUTPUT
       - name: Upload public module outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -608,6 +626,8 @@ jobs:
     needs: [validate_scope, authorize, validate, select, module_application, module_enterprise_baseline, ruleset_plan_enterprise_baseline, module_foundation, module_observer, module_service]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    outputs:
+      changes: ${{ steps.summary.outputs.changes }}
     steps:
       - name: Check out trusted authorization tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -616,14 +636,15 @@ jobs:
           path: trusted
           persist-credentials: false
       - name: Report plan status without deployment credentials
+        id: summary
         shell: pwsh
         env:
           DEPLOYMENT_NEEDS: ${{ toJSON(needs) }}
-        run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS
+        run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS -GitHubOutputPath $env:GITHUB_OUTPUT
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.phaseNodes != '[]' }}
+    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.phaseNodes != '[]' && needs.plan_complete.outputs.changes == 'true' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:

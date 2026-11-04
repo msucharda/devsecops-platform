@@ -99,9 +99,11 @@ function Add-DeploymentJob {
         $environmentExpression = 'format(''{0}-drift'', ' + $environmentExpression + ')'
     }
     $lines.Add('    environment: ${{ ' + $environmentExpression + ' }}')
-    if ($Drift) {
+    if ($Phase -ne 'apply') {
         $lines.Add('    outputs:')
         $lines.Add('      changes: ${{ steps.run.outputs.changes }}')
+    }
+    if ($Drift) {
         if ($Manifest.Contains('organizationScoped')) {
             $lines.Add('      organizations: ${{ steps.run.outputs.organizations }}')
         }
@@ -167,9 +169,9 @@ function Add-DeploymentJob {
     $action = if ($Phase -eq 'apply') { 'apply' } else { 'plan' }
     $runner = "./candidate/platform/tools/Invoke-Module.ps1 -Module '$name' -Action $action -InstancePath ./candidate/instance.yaml -ModulesPath ./candidate/platform/modules -PrerequisiteOutputsPath ./artifacts/prerequisites -ArtifactsPath ./artifacts/module-outputs -PlatformOrganization `$env:GITHUB_REPOSITORY_OWNER"
     $rulesetArgument = if ($Phase -eq 'rulesetPlan') { ' -Rulesets' } elseif ($deploymentPhase) { " -DeploymentPhase $deploymentPhase" } else { '' }
-    if ($Drift) { $rulesetArgument += ' -GitHubOutputPath $env:GITHUB_OUTPUT' }
+    if ($Phase -ne 'apply') { $rulesetArgument += ' -GitHubOutputPath $env:GITHUB_OUTPUT' }
     $lines.Add('      - name: Run module')
-    if ($Drift) { $lines.Add('        id: run') }
+    if ($Phase -ne 'apply') { $lines.Add('        id: run') }
     Add-WorkflowBlock @"
         shell: pwsh
         env:
@@ -398,19 +400,22 @@ Add-WorkflowBlock @"
 Add-WorkflowBlock @'
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    outputs:
+      changes: ${{ steps.summary.outputs.changes }}
     steps:
 '@
 Add-WorkflowCheckout
 Add-WorkflowBlock @'
       - name: Report plan status without deployment credentials
+        id: summary
         shell: pwsh
         env:
           DEPLOYMENT_NEEDS: ${{ toJSON(needs) }}
-        run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS
+        run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS -GitHubOutputPath $env:GITHUB_OUTPUT
   approve_apply:
     name: Platform-team approval for the entire apply
     needs: [authorize, select, plan_complete]
-    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.phaseNodes != '[]' }}
+    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.select.result == 'success' && needs.plan_complete.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.allowed == 'true' && needs.select.outputs.phaseNodes != '[]' && needs.plan_complete.outputs.changes == 'true' }}
     runs-on: ubuntu-latest
     environment: approve-apply
     steps:
