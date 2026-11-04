@@ -5,6 +5,7 @@ Weakens every marked security check and verifies that its configured tests fail 
 
 .DESCRIPTION
 Functions marked with '# security-check: <name>' are configured in tools/tests/security-checks.psd1.
+The explicit TeardownWorkflow adapter mutates emitted teardown predicates through bounded generator source templates.
 Each mutant changes one guard condition, logical operand, boolean result or case-sensitive comparison so that the
 check accepts more input. Worker processes run the configured tests in their own copy of the repository.
 A surviving mutant without an exception, an error, a failed baseline, an unfinished job or a stale exception fails the run.
@@ -58,7 +59,7 @@ Import-Module (Join-Path $PSScriptRoot 'MutationTesting.psm1') -Force
 $started = [Diagnostics.Stopwatch]::StartNew()
 $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 $configuration = Import-PowerShellDataFile -LiteralPath $ConfigurationPath
-$markers = @(Get-SecurityCheckMarker -RepoPath $RepoPath)
+$markers = @(Get-SecurityCheckMarker -RepoPath $RepoPath -Configuration $configuration)
 Assert-SecurityCheckConfiguration -Marker $markers -Configuration $configuration
 $inventory = @(Get-SecurityCheckMutant -RepoPath $RepoPath -Marker $markers)
 $inventoryText = ConvertTo-Json -InputObject @($inventory | Sort-Object Id | Select-Object Id, Check, File, Text) -Depth 4 -Compress

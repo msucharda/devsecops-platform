@@ -4,6 +4,23 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'teardown-workflow-predicates'
+            Kind = 'TeardownWorkflow'
+            File = 'tools/Generate-TeardownWorkflow.ps1'
+            Tests = @(@{
+                Path = 'tools/tests/TeardownWorkflow.Tests.ps1'
+                FullName = @(
+                    'Teardown workflow generation.destroys <Module> only after every selected dependent and after the owner check'
+                    'Teardown workflow generation.destroys only selected phase roots*'
+                    'Teardown workflow generation.destroys emu-identity last*'
+                    'Teardown workflow generation.passes prerequisite outputs*'
+                    'Teardown workflow generation.destroys with apply installation tokens and no PAT'
+                    'Teardown workflow generation.reads every state root*'
+                    'Teardown identity approval boundary*'
+                )
+            })
+        }
+        @{
             Name = 'deployment-plan-change-output'
             Tests = @(@{ Path = 'tools/tests/DeploymentSummary.Tests.ps1'; FullName = @('*publishes a complete plan decision*', '*rejects plan change output*') })
         }
