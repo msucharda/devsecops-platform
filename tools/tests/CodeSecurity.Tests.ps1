@@ -314,8 +314,11 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             $setting['custom_pattern_settings'][0]['push_protection_setting'] | Should -Be 'enabled'
         }
 
-        It 'enables push protection on the first write with a null pattern configuration version' {
-            $stub.PatternConfigVersion = $null
+        It 'enables push protection on the first write with a <Case> pattern configuration version' -ForEach @(
+            @{ Case = 'null'; Value = $null }
+            @{ Case = 'empty'; Value = '' }
+        ) {
+            $stub.PatternConfigVersion = $Value
 
             Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern)
 
@@ -384,7 +387,11 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             $stub.Patterns[0]['push_protection_enabled'] | Should -BeTrue
         }
 
-        It 'converges when the run stops after the pattern is created and before push protection is enabled' {
+        It 'converges when the run stops before push protection is enabled from version <InitialVersion>' -ForEach @(
+            @{ InitialVersion = 1 }
+            @{ InitialVersion = '' }
+        ) {
+            $stub.PatternConfigVersion = $InitialVersion
             $stub.DropNext = '^GET .*/pattern-configurations$'
 
             { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } | Should -Throw
@@ -395,7 +402,11 @@ Describe 'CodeSecurity module against the documented GitHub API' {
             $stub.Patterns[0]['push_protection_enabled'] | Should -BeTrue
         }
 
-        It 'converges when the push protection response is lost' {
+        It 'converges when the push protection response is lost from version <InitialVersion>' -ForEach @(
+            @{ InitialVersion = 1 }
+            @{ InitialVersion = '' }
+        ) {
+            $stub.PatternConfigVersion = $InitialVersion
             $stub.DropNext = '^PATCH .*/pattern-configurations$'
 
             { Set-CustomPattern -ApiUrl $apiUrl -Organization demo -Pattern (Get-TestPattern) } | Should -Throw
@@ -409,6 +420,7 @@ Describe 'CodeSecurity module against the documented GitHub API' {
         It 'retries push protection after a concurrent change from version <InitialVersion>' -ForEach @(
             @{ InitialVersion = 1 }
             @{ InitialVersion = $null }
+            @{ InitialVersion = '' }
         ) {
             $stub.PatternConfigVersion = $InitialVersion
             $stub.ConcurrentPatternWrites = 2
@@ -471,7 +483,6 @@ Describe 'CodeSecurity module against the documented GitHub API' {
         }
 
         It 'refuses a configuration with <Case> pattern_config_version' -ForEach @(
-            @{ Case = 'empty'; Value = '' }
             @{ Case = 'missing'; Value = $null }
             @{ Case = 'numeric'; Value = 7 }
         ) {
@@ -482,7 +493,7 @@ Describe 'CodeSecurity module against the documented GitHub API' {
                 'custom_pattern_overrides.0.slug' = $stub.Patterns[0]['slug']
                 pattern_config_version = $Value
             }
-            # Deliberately invalid: only an explicit null or a nonempty string is usable as a version.
+            # Deliberately invalid: the version must be present and contain a string or null.
             if ($Case -ceq 'missing') { $response.Remove('pattern_config_version') }
             Mock -ModuleName CodeSecurity Invoke-WebRequest {
                 [pscustomobject]@{ StatusCode = 200; Content = ConvertTo-Json -InputObject $response -Depth 100; Headers = @{} }
