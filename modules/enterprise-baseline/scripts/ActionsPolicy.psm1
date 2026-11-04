@@ -69,7 +69,9 @@ function Invoke-ActionsPolicyApi {
     $reply = Invoke-GitHubRetryRequest -Request $request
     $status = [int] $reply.StatusCode
     if ($status -eq 409) {
-        throw "GitHub returned HTTP 409 for $Method ${Path}: the enterprise policy prevents the organization setting. Align the enterprise GitHub Actions policy with the module or remove the enterprise restriction."
+        $conflict = [InvalidOperationException]::new("GitHub returned HTTP 409 for $Method ${Path}: the enterprise policy prevents the organization setting. Align the enterprise GitHub Actions policy with the module or remove the enterprise restriction.")
+        $conflict.Data['StatusCode'] = $status
+        throw $conflict
     }
     if ($status -lt 200 -or $status -gt 299) { throw "GitHub returned HTTP $status for $Method $Path." }
     if ($Method -ceq 'PUT') { return }
@@ -78,6 +80,29 @@ function Invoke-ActionsPolicyApi {
     $parsed = ConvertFrom-Json -InputObject $content -AsHashtable -Depth 20 -NoEnumerate
     if ($parsed -isnot [System.Collections.IDictionary]) { throw "GitHub returned no JSON object for GET $Path." }
     return $parsed
+}
+
+# security-check: actions-policy-reset-conflict
+function Get-ActionsPolicyResetRestriction {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][string] $ApiUrl,
+        [Parameter(Mandatory)][string] $Organization,
+        [Parameter(Mandatory)][System.Collections.IDictionary] $Policy,
+        [Parameter(Mandatory)][System.Management.Automation.ErrorRecord] $Failure,
+        [switch] $Reset
+    )
+
+    if (-not $Reset -or $Policy['allowed_actions'] -ne 'all' -or $Failure.Exception.Data['StatusCode'] -ne 409) {
+        throw $Failure
+    }
+    $current = Invoke-ActionsPolicyApi -ApiUrl $ApiUrl -Method GET -Path "/orgs/$Organization/actions/permissions"
+    if ($current['allowed_actions'] -isnot [string] -or $current['allowed_actions'] -cnotin @('local_only', 'selected')) {
+        throw "Cannot reset the actions policy of ${Organization}: HTTP 409 did not leave a readable restrictive allowed_actions policy."
+    }
+    Write-Warning "GitHub rejected the default allowed_actions policy of $Organization (HTTP 409). Reset keeps '$($current['allowed_actions'])'; the enterprise policy is unchanged."
+    return $current['allowed_actions']
 }
 
 function ConvertTo-ActionsPolicy {
@@ -172,9 +197,8 @@ function Set-ActionsPolicy {
     .SYNOPSIS
     Writes the GitHub Actions permissions and the default workflow permissions of one organization.
     .DESCRIPTION
-    Both writes are idempotent PUT requests of the complete managed fields, so a repeated run after an interruption
-    converges. A write is skipped when the read value already matches; an enterprise policy that enforces the same value
-    then cannot fail the run.
+    Both writes are idempotent PUT requests, so a repeated run after an interruption converges.
+    Reset retries a conflicting default allowed_actions with the current restrictive value; every field is read back.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Called by Terraform, which owns confirmation and the operation lifecycle.')]
     [CmdletBinding()]
@@ -196,11 +220,19 @@ function Set-ActionsPolicy {
     $actions = $state['actions_permissions']
     if ($actions['enabled_repositories'] -cne $managed['enabled_repositories'] -or $actions['allowed_actions'] -cne $managed['allowed_actions'] -or
         $actions['sha_pinning_required'] -isnot [bool] -or $actions['sha_pinning_required'] -ne $managed['sha_pinning_required']) {
-        Invoke-ActionsPolicyApi -ApiUrl $ApiUrl -Method PUT -Path "/orgs/$Organization/actions/permissions" -Body ([ordered]@{
-                enabled_repositories = $managed['enabled_repositories']
-                allowed_actions      = $managed['allowed_actions']
-                sha_pinning_required = $managed['sha_pinning_required']
-            })
+        $body = [ordered]@{
+            enabled_repositories = $managed['enabled_repositories']
+            allowed_actions      = $managed['allowed_actions']
+            sha_pinning_required = $managed['sha_pinning_required']
+        }
+        try {
+            Invoke-ActionsPolicyApi -ApiUrl $ApiUrl -Method PUT -Path "/orgs/$Organization/actions/permissions" -Body $body
+        }
+        catch {
+            $managed['allowed_actions'] = Get-ActionsPolicyResetRestriction -ApiUrl $ApiUrl -Organization $Organization -Policy $managed -Failure $_ -Reset:$Reset
+            $body['allowed_actions'] = $managed['allowed_actions']
+            Invoke-ActionsPolicyApi -ApiUrl $ApiUrl -Method PUT -Path "/orgs/$Organization/actions/permissions" -Body $body
+        }
     }
     $workflow = $state['workflow_permissions']
     if ($workflow['default_workflow_permissions'] -cne $managed['default_workflow_permissions'] -or

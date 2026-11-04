@@ -28,6 +28,7 @@ BeforeAll {
             Requests = [Collections.Generic.List[object]]::new()
             # Operation name => scriptblock returning @{ Status; Body } instead of the stub response.
             Override = @{}
+            RestrictAllActions = $false
         }
     }
 
@@ -54,6 +55,9 @@ BeforeAll {
             'getActions' { @{ Status = 200; Body = ConvertTo-Json -InputObject $stub.Actions -Compress } }
             'getWorkflow' { @{ Status = 200; Body = ConvertTo-Json -InputObject $stub.Workflow -Compress } }
             'setActions' {
+                if ($stub.RestrictAllActions -and $parsed['allowed_actions'] -ceq 'all') {
+                    return @{ Status = 409; Body = '{"message":"Conflict"}' }
+                }
                 # The documented request: enabled_repositories is required; allowed_actions and sha_pinning_required are optional.
                 $parsed['enabled_repositories'] | Should -BeIn @('all', 'none', 'selected')
                 foreach ($key in $parsed.Keys) { $stub.Actions[$key] = $parsed[$key] }
@@ -76,6 +80,7 @@ Describe 'Actions policy' {
             $reply = Invoke-ActionsPolicyStub -Method ([string] $Method).ToUpperInvariant() -PathAndQuery $uri.PathAndQuery -Headers $Headers -Body $PesterBoundParameters['Body']
             [pscustomobject]@{ StatusCode = $reply.Status; Content = $reply.Body; Headers = @{} }
         }
+        Mock -ModuleName ActionsPolicy Start-Sleep {}
     }
 
     AfterEach {
@@ -119,6 +124,136 @@ Describe 'Actions policy' {
             $stub.Actions['sha_pinning_required'] | Should -BeExactly $false
             $stub.Actions['allowed_actions'] | Should -BeExactly 'all'
             $legacy.Contains('sha_pinning_required') | Should -BeFalse
+        }
+
+        It 'resets defaults while preserving <Allowed> when enterprise rejects all actions' -ForEach @(
+            @{ Allowed = 'local_only' }
+            @{ Allowed = 'selected' }
+        ) {
+            $stub.Actions['allowed_actions'] = $Allowed
+            $stub.Actions['sha_pinning_required'] = $true
+            $stub.RestrictAllActions = $true
+
+            Set-ActionsPolicy @target -Policy $defaultPolicy -Reset
+
+            $stub.Actions['allowed_actions'] | Should -BeExactly $Allowed
+            $stub.Actions['enabled_repositories'] | Should -BeExactly 'all'
+            $stub.Actions['sha_pinning_required'] | Should -BeExactly $false
+            $stub.Workflow['default_workflow_permissions'] | Should -BeExactly 'read'
+            $stub.Workflow['can_approve_pull_request_reviews'] | Should -BeExactly $false
+            $defaultPolicy['allowed_actions'] | Should -BeExactly 'all'
+            Set-ActionsPolicy @target -Policy $defaultPolicy -Reset
+            $stub.Actions['allowed_actions'] | Should -BeExactly $Allowed
+        }
+
+        It 'uses the fresh restriction after the conflicting reset instead of the initial state' {
+            $stub.Actions['allowed_actions'] = 'local_only'
+            $stub.Override['setActions'] = {
+                if ($parsed['allowed_actions'] -ceq 'all') {
+                    $stub.Actions['allowed_actions'] = 'selected'
+                    return @{ Status = 409; Body = '{"message":"Conflict"}' }
+                }
+                foreach ($key in $parsed.Keys) { $stub.Actions[$key] = $parsed[$key] }
+                @{ Status = 204; Body = '' }
+            }
+
+            Set-ActionsPolicy @target -Policy $defaultPolicy -Reset
+
+            $stub.Actions['allowed_actions'] | Should -BeExactly 'selected'
+        }
+
+        It 'does not recover a conflict for <Case>' -ForEach @(
+            @{ Case = 'SetPolicy even with default values'; PolicyName = 'default'; Reset = $false }
+            @{ Case = 'a reset that does not request all actions'; PolicyName = 'managed'; Reset = $true }
+        ) {
+            $policy = if ($PolicyName -ceq 'default') { $defaultPolicy } else { $managedPolicy }
+            $stub.Actions['allowed_actions'] = 'selected'
+            $stub.Override['setActions'] = { @{ Status = 409; Body = '{"message":"Conflict"}' } }
+
+            { Set-ActionsPolicy @target -Policy $policy -Reset:$Reset } | Should -Throw '*HTTP 409*'
+            (Get-StubWrite).Count | Should -Be 1
+        }
+
+        It 'rejects a conflicting reset with <Case> allowed_actions' -ForEach @(
+            @{ Case = 'unrestricted'; Value = 'all' }
+            @{ Case = 'upper-case local'; Value = 'LOCAL_ONLY' }
+            @{ Case = 'upper-case selected'; Value = 'SELECTED' }
+            @{ Case = 'unknown'; Value = 'enterprise' }
+            @{ Case = 'empty'; Value = '' }
+            @{ Case = 'null'; Value = $null }
+            @{ Case = 'boolean'; Value = $true }
+            @{ Case = 'array'; Value = @('selected') }
+            @{ Case = 'missing'; Remove = $true }
+        ) {
+            # Intentionally malformed states test fail-closed handling; 'all' is valid but not restrictive.
+            if ($_.Contains('Remove')) { $stub.Actions.Remove('allowed_actions') }
+            else { $stub.Actions['allowed_actions'] = $Value }
+            $stub.Actions['sha_pinning_required'] = $true
+            $stub.Override['setActions'] = { @{ Status = 409; Body = '{"message":"Conflict"}' } }
+
+            { Set-ActionsPolicy @target -Policy $defaultPolicy -Reset } | Should -Throw '*HTTP 409 did not leave a readable restrictive allowed_actions policy*'
+            (Get-StubWrite).Count | Should -Be 1
+        }
+
+        It 'fails reset on HTTP <Status> from <Operation>' -ForEach @(
+            @{ Operation = 'setActions'; Status = 403 }
+            @{ Operation = 'setActions'; Status = 500 }
+            @{ Operation = 'setActions'; Status = 422 }
+            @{ Operation = 'setWorkflow'; Status = 409 }
+        ) {
+            $stub.Actions['allowed_actions'] = 'local_only'
+            $stub.RestrictAllActions = $true
+            $stub.Override[$Operation] = { @{ Status = $Status; Body = '{"message":"Error"}' } }.GetNewClosure()
+
+            { Set-ActionsPolicy @target -Policy $defaultPolicy -Reset } | Should -Throw "*HTTP $Status*"
+            if ($Operation -ceq 'setActions') {
+                @($stub.Requests | Where-Object Operation -CEQ 'getActions').Count | Should -Be 1
+            }
+        }
+
+        It 'fails instead of swallowing a second conflict' {
+            $stub.Actions['allowed_actions'] = 'selected'
+            $stub.Override['setActions'] = { @{ Status = 409; Body = '{"message":"Conflict"}' } }
+
+            { Set-ActionsPolicy @target -Policy $defaultPolicy -Reset } | Should -Throw '*HTTP 409*'
+            (Get-StubWrite).Count | Should -Be 2
+        }
+
+        It 'fails when the read after a conflicting reset is unavailable' {
+            $stub.Actions['allowed_actions'] = 'local_only'
+            $stub.RestrictAllActions = $true
+            $stub.Override['getActions'] = {
+                if (@($stub.Requests | Where-Object Operation -CEQ 'getActions').Count -gt 1) {
+                    return @{ Status = 403; Body = '{"message":"Forbidden"}' }
+                }
+                @{ Status = 200; Body = ConvertTo-Json -InputObject $stub.Actions -Compress }
+            }
+
+            { Set-ActionsPolicy @target -Policy $defaultPolicy -Reset } | Should -Throw '*HTTP 403*'
+            (Get-StubWrite).Count | Should -Be 1
+        }
+
+        It 'fails readback when the fallback write does not reset SHA pinning' {
+            $stub.Actions['allowed_actions'] = 'selected'
+            $stub.Actions['sha_pinning_required'] = $true
+            $stub.Override['setActions'] = {
+                if ($parsed['allowed_actions'] -ceq 'all') { return @{ Status = 409; Body = '{"message":"Conflict"}' } }
+                @{ Status = 204; Body = '' }
+            }
+
+            { Set-ActionsPolicy @target -Policy $defaultPolicy -Reset } | Should -Throw '*Required SHA pinning*not false*'
+        }
+
+        It 'fails readback when the fallback write weakens the retained restriction' {
+            $stub.Actions['allowed_actions'] = 'selected'
+            $stub.Override['setActions'] = {
+                if ($parsed['allowed_actions'] -ceq 'all') { return @{ Status = 409; Body = '{"message":"Conflict"}' } }
+                foreach ($key in $parsed.Keys) { $stub.Actions[$key] = $parsed[$key] }
+                $stub.Actions['allowed_actions'] = 'all'
+                @{ Status = 204; Body = '' }
+            }
+
+            { Set-ActionsPolicy @target -Policy $defaultPolicy -Reset } | Should -Throw '*allowed actions policy*not selected*'
         }
 
         It 'rejects a missing SHA field outside legacy reset' {

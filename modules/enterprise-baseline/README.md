@@ -98,6 +98,7 @@ Modul v každé organizaci z `target_organizations` nastaví tato pole (API verz
 - Data source `external.actions_policy_state` čte `GET /orgs/{org}/actions/permissions` a `GET /orgs/{org}/actions/permissions/workflow` při každém planu a po apply. Chybějící pole, jiný typ nebo jiná velikost písmen je porušení, ne shoda. Drift zastaví plan; oprava je ruční obnova nebo apply s `-replace=terraform_data.actions_policy_settings["<org>"]`.
 - Identitní prostředek `terraform_data.actions_policy` při destroy obnoví výchozí hodnoty GitHubu z tabulky. Obsahový prostředek `terraform_data.actions_policy_settings` politiku zapisuje; změna politiky nahradí jen jeho, takže mezi starou a novou politikou nevznikne okno s výchozími hodnotami.
 - Reset nastaví `sha_pinning_required: false`, protože obnovuje výchozí politiku GitHubu, nikoli původní stav organizace. Starší Terraform state pole neobsahuje; pouze `ResetPolicy` tento uložený vstup doplní o `false`. Přímý destroy ani opakování přerušeného destroy proto nevyžaduje předchozí apply nové verze. `SetPolicy` a kontrola readbacku chybějící pole dál odmítají.
+- Pokud enterprise odmítne reset `allowed_actions: all` odpovědí HTTP 409, `ResetPolicy` znovu přečte organizační politiku a zachová její omezení `local_only` nebo `selected`. Ostatní spravovaná pole zapíše na výchozí hodnoty a celý výsledek ověří readbackem. Reset nevypočítává enterprise politiku ani nejvolnější povolené nastavení a nepotřebuje enterprise token. Neznámá či nečitelná hodnota, neúspěšný opakovaný zápis a ostatní HTTP chyby dál zastaví destroy. `SetPolicy` žádnou výjimku pro HTTP 409 nemá.
 
 ### Preflight živých workflow
 
@@ -190,6 +191,8 @@ Neznámý stav připojení (hodnota mimo dokumentovaný enum) a neznámý `mode`
 ## Teardown
 
 Teardown vrátí spravované organizační politiky na výchozí hodnoty GitHubu, včetně politiky akcí a oprávnění `GITHUB_TOKEN` (`all`, `all`, `read`, `false`), a smaže configurations a custom patterns. Destroy configuration nejdřív zruší její výchozí roli a potom ji smaže. GitHub odpojí repozitáře a ponechá jim nastavení bez vazby na configuration. Destroy patternu vyřeší jeho alerty jako `pattern deleted` (`post_delete_action: resolve_alerts`). Ruční enterprise předpoklady nemění. Případné ruční operace uvádí manifest včetně omezení odstranění. Destroy organizačních nastavení pošle `PATCH` jen se spravovanými poli a výchozími hodnotami z tabulky výše.
+
+Výjimka: pokud enterprise politika nepovolí `allowed_actions: all` (HTTP 409), reset zachová aktuální organizační omezení `local_only` nebo `selected` podle [politiky akcí](#politika-akcí-a-oprávnění-github_token). Vypíše varování a po úspěšném zápisu ověří zachované omezení i ostatní výchozí hodnoty. Enterprise politiku ani seznam `selected-actions` nemění. Zachované omezení nemusí povolit upstream akce; úspěšný destroy proto nedokazuje jejich dostupnost. Po přerušení zopakuj teardown: oba zápisy jsou idempotentní a reset znovu ověří stav. Nemusíš dočasně povolovat všechny akce v enterprise.
 
 ## Identita
 

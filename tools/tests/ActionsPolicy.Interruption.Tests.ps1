@@ -57,6 +57,7 @@ Describe 'Actions policy interruption harness' -Tag 'Interruption' {
         @{ Name = 'the managed policy'; Policy = 'managed' }
         @{ Name = 'the GitHub defaults'; Policy = 'default' }
         @{ Name = 'the legacy GitHub defaults'; Policy = 'legacy' }
+        @{ Name = 'the defaults under a restrictive enterprise policy'; Policy = 'restricted' }
     ) {
         $desiredPolicy = if ($Policy -ceq 'managed') { $managedPolicy } else { $defaultPolicy }
         if ($Policy -ceq 'legacy') {
@@ -69,6 +70,7 @@ Describe 'Actions policy interruption harness' -Tag 'Interruption' {
                     $stub.Actions['allowed_actions'] = 'local_only'
                     $stub.Actions['sha_pinning_required'] = $true
                     $stub.Workflow['can_approve_pull_request_reviews'] = $true
+                    if ($Policy -ceq 'restricted') { $stub.RestrictAllActions = $true }
                 }
             }
         }
