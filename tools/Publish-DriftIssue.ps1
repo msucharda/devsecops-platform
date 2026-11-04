@@ -36,6 +36,7 @@ if ($report.Length -gt $maximumBodyLength) {
     $report = $report.Substring(0, $maximumBodyLength - $notice.Length) + $notice
 }
 $token = [string] $tokens[$owner]
+$contentsReadToken = $ContentsToken
 $issuesPath = "/repos/$owner/$name/issues"
 $botLogin = "$AppSlug[bot]"
 
@@ -48,7 +49,7 @@ function Invoke-IssueRequest {
         [switch] $ReadRepository
     )
 
-    if ($ReadRepository) { $token = $ContentsToken }
+    if ($ReadRepository) { $token = $contentsReadToken }
     $arguments = @{
         Method = $Method
         Uri = "$($ApiUrl.TrimEnd('/'))$Path"
@@ -152,7 +153,7 @@ function Get-CleanDriftEvidence {
 function Assert-CurrentDriftMain {
     param([string] $Revision)
 
-    if ([string]::IsNullOrWhiteSpace($ContentsToken)) {
+    if ([string]::IsNullOrWhiteSpace($contentsReadToken)) {
         throw 'Clean drift closure requires the existing contents:read token.'
     }
     $reference = Invoke-IssueRequest -Method GET -Path "/repos/$owner/$name/git/ref/heads/main" -ReadRepository
@@ -192,7 +193,7 @@ function Get-DriftCollection {
     throw "GitHub issues API did not end the $Name list within 1000 pages."
 }
 
-function Get-MatchingDriftIssues {
+function Get-MatchingDriftIssue {
     param([ValidateSet('open', 'closed')][string] $State)
 
     foreach ($item in (Get-DriftCollection -Path "$issuesPath`?state=$State" -Name issue)) {
@@ -218,7 +219,7 @@ function Assert-DriftReportNotResolved {
     param([string] $Report)
 
     $incoming = Get-DriftRunEvidence -Body $Report
-    foreach ($resolved in (Get-MatchingDriftIssues -State closed)) {
+    foreach ($resolved in (Get-MatchingDriftIssue -State closed)) {
         $previous = Get-DriftRunEvidence -Body $resolved['body']
         if ($null -eq $previous) { continue }
         if ($null -eq $incoming -or $incoming.Workflow -cne $previous.Workflow) {
@@ -245,7 +246,7 @@ function Assert-DriftReportNotResolved {
     }
 }
 
-$matching = @(Get-MatchingDriftIssues -State open)
+$matching = @(Get-MatchingDriftIssue -State open)
 if ($matching.Count -gt 1) {
     throw "Found more than one open drift issue of this App: $(($matching | ForEach-Object { "#$($_['number'])" }) -join ', '). Close the duplicates manually."
 }
