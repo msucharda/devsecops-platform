@@ -357,14 +357,14 @@ function Get-TeardownWorkflowMutant {
         @{ Name = 'always-revoke'; Original = 'always()'; Replacement = 'success()' }
     )
     foreach ($target in $targets) {
-        $matches = [regex]::Matches($Text, [regex]::Escape($target.Original))
-        if ($matches.Count -ne 1) {
-            throw "$($Check.File): the emitted $($target.Name) predicate target must match exactly once; found $($matches.Count)."
+        $targetMatches = [regex]::Matches($Text, [regex]::Escape($target.Original))
+        if ($targetMatches.Count -ne 1) {
+            throw "$($Check.File): the emitted $($target.Name) predicate target must match exactly once; found $($targetMatches.Count)."
         }
-        $start = $matches[0].Index
+        $start = $targetMatches[0].Index
         [pscustomobject]@{
             Start = $start
-            End = $start + $matches[0].Length
+            End = $start + $targetMatches[0].Length
             Line = ($Text.Substring(0, $start).Split("`n")).Count
             Original = $target.Original
             Replacement = $target.Replacement
