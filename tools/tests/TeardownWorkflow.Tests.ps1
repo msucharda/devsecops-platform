@@ -300,6 +300,27 @@ Describe 'Teardown workflow generation' {
         $plan.Groups['plan'].Value | Should -Match ([regex]::Escape('-OutputPath (Join-Path $PWD ''.github\workflows\teardown.yml'')'))
     }
 
+    It 'documents temporary teardown reviewers and their restoration after interruption or a later deployment' {
+        $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw
+        $recovery = [regex]::Match($readme, '(?s)### Nouzov\u00e9 schv\u00e1len\u00ed opakovan\u00e9ho teardownu\r?\n(?<recovery>.*?)(?=\r?\n### |\z)')
+
+        $recovery.Success | Should -BeTrue
+        $instructions = $recovery.Groups['recovery'].Value
+        foreach ($environment in @('approve-teardown-platform', 'teardown', 'enterprise-baseline-apply', 'organization-rulesets-apply')) {
+            $instructions | Should -Match ([regex]::Escape($environment))
+        }
+        $instructions | Should -Match 'credentials.*apply\.environment'
+        $instructions | Should -Match 'Enterprise Owner'
+        $instructions | Should -Match 'mimo repozit\u00e1\u0159 instance'
+        $instructions | Should -Match 'Prevent self-review'
+        $instructions | Should -Match '#195'
+        $instructions | Should -Match '(?s)deploy\.yml.*completed.*workflow_dispatch.*Re-run jobs'
+        $instructions | Should -Match 'Remove-Bootstrap\.ps1'
+        $instructions | Should -Match 'odeber.*do\u010dasn'
+        $instructions | Should -Match 'obnov.*p\u016fvodn'
+        $instructions | Should -Match 'Po p\u0159eru\u0161en\u00ed'
+    }
+
     It 'fails the check when the committed workflow differs and passes when it matches' {
         & $generator -ModulesPath $fixtures -OutputPath $output -Check
         [IO.File]::AppendAllText($output, '# drift')
@@ -310,6 +331,87 @@ Describe 'Teardown workflow generation' {
     It 'keeps the committed instance template and fixture current' {
         { & $generator -Check } | Should -Not -Throw
         { & $generator -ModulesPath $fixtures -OutputPath (Join-Path $PSScriptRoot 'fixtures/teardown.yml') -Check } | Should -Not -Throw
+    }
+}
+
+Describe 'Teardown identity approval boundary' {
+    BeforeAll {
+        $realOutput = Join-Path $TestDrive 'teardown-approval-boundary.yml'
+        & $generator -ModulesPath (Join-Path $repositoryRoot 'modules') -OutputPath $realOutput
+        $real = ConvertFrom-Yaml (Get-Content -LiteralPath $realOutput -Raw)
+        $identity = $real.jobs.destroy_emu_identity
+        $otherDestroyJobs = @($real.jobs.Keys | Where-Object { $_ -like 'destroy_*' -and $_ -cne 'destroy_emu_identity' })
+
+        function Test-IdentityCondition {
+            param(
+                [hashtable] $Results,
+                [string[]] $Selected,
+                [bool] $Cancelled = $false
+            )
+
+            $condition = $identity.if -replace '^\$\{\{\s*|\s*\}\}$', ''
+            $condition = $condition.Replace('cancelled()', ('$' + $Cancelled.ToString().ToLowerInvariant()))
+            $condition = [regex]::Replace($condition, "contains\(fromJSON\(needs.select.outputs.phaseNodes\), '([^']+)'\)", {
+                param($match)
+                '$' + ($Selected -ccontains $match.Groups[1].Value).ToString().ToLowerInvariant()
+            })
+            $condition = [regex]::Replace($condition, 'needs\.([a-z_]+)\.result', {
+                param($match)
+                "'$($Results[$match.Groups[1].Value])'"
+            })
+            $condition = $condition.Replace('==', '-ceq').Replace('&&', '-and').Replace('||', '-or').Replace('!', '-not ')
+            & ([scriptblock]::Create($condition))
+        }
+    }
+
+    It 'places every other environment approval before identity destruction in the dependency DAG' {
+        $ancestors = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $pending = [Collections.Generic.Queue[string]]::new()
+        foreach ($job in $identity.needs) { $pending.Enqueue($job) }
+        while ($pending.Count -gt 0) {
+            $job = $pending.Dequeue()
+            if (-not $ancestors.Add($job)) { continue }
+            if ($real.jobs[$job].Contains('needs')) {
+                foreach ($need in @($real.jobs[$job].needs)) { $pending.Enqueue($need) }
+            }
+        }
+        $ancestors.Contains('destroy_emu_identity') | Should -BeFalse
+        foreach ($job in $real.jobs.Keys | Where-Object { $_ -cne 'destroy_emu_identity' -and $real.jobs[$_].Contains('environment') }) {
+            $ancestors.Contains($job) | Should -BeTrue -Because "$job must finish its environment approval before identity destruction"
+        }
+    }
+
+    It 'allows identity after a partial run only when each preceding destroy is <Case>' -ForEach @(
+        @{ Case = 'successful and selected'; Result = 'success'; Selected = $true; Expected = $true }
+        @{ Case = 'skipped and unselected'; Result = 'skipped'; Selected = $false; Expected = $true }
+        @{ Case = 'failed'; Result = 'failure'; Selected = $true; Expected = $false }
+        @{ Case = 'cancelled'; Result = 'cancelled'; Selected = $true; Expected = $false }
+        @{ Case = 'skipped but selected'; Result = 'skipped'; Selected = $true; Expected = $false }
+        @{ Case = 'missing'; Result = ''; Selected = $true; Expected = $false }
+        @{ Case = 'unknown'; Result = 'unknown'; Selected = $true; Expected = $false }
+        @{ Case = 'failed even if unselected'; Result = 'failure'; Selected = $false; Expected = $false }
+    ) {
+        foreach ($interruptedJob in $otherDestroyJobs) {
+            $results = @{}
+            foreach ($job in $identity.needs) { $results[$job] = 'success' }
+            $results[$interruptedJob] = $Result
+            $selectedNodes = @('emu-identity')
+            foreach ($job in $otherDestroyJobs) {
+                if ($job -ceq $interruptedJob -and -not $Selected) { continue }
+                $selectedNodes += if ($job -ceq 'destroy_enterprise_baseline_code_security') { 'enterprise-baseline:code-security' }
+                else { $job.Substring('destroy_'.Length).Replace('_', '-') }
+            }
+
+            Test-IdentityCondition -Results $results -Selected $selectedNodes |
+                Should -Be $Expected -Because "identity must respect the $Result result of $interruptedJob"
+        }
+    }
+
+    It 'does not destroy identity when the run is cancelled after preceding modules finished' {
+        $results = @{}
+        foreach ($job in $identity.needs) { $results[$job] = 'success' }
+
+        Test-IdentityCondition -Results $results -Selected @('emu-identity') -Cancelled $true | Should -BeFalse
     }
 }
 
