@@ -331,7 +331,7 @@ function Invoke-StubRoute {
     }
     if ($route -cmatch "^GET /orgs/$org/secret-scanning/pattern-configurations$") {
         $reply = Get-GitHubApiFixture -Name secret-scanning/list-org-pattern-configs
-        $reply['pattern_config_version'] = if ($null -eq $State.PatternConfigVersion) { $null } else { "p$($State.PatternConfigVersion)" }
+        $reply['pattern_config_version'] = if ([string]::IsNullOrEmpty($State.PatternConfigVersion)) { $State.PatternConfigVersion } else { "p$($State.PatternConfigVersion)" }
         $template = $reply['custom_pattern_overrides'][0]
         $reply['custom_pattern_overrides'] = @(foreach ($pattern in $State.Patterns) {
             if ($pattern['state'] -cne 'published' -or -not $State.PatternConfigOverride) { continue }
@@ -349,9 +349,9 @@ function Invoke-StubRoute {
         if ($State.ConcurrentPatternWrites -gt 0) {
             # Another writer changed the organization pattern configuration between the read and this write.
             $State.ConcurrentPatternWrites--
-            $State.PatternConfigVersion++
+            $State.PatternConfigVersion = [int] $State.PatternConfigVersion + 1
         }
-        $expectedVersion = if ($null -eq $State.PatternConfigVersion) { $null } else { "p$($State.PatternConfigVersion)" }
+        $expectedVersion = if ([string]::IsNullOrEmpty($State.PatternConfigVersion)) { $null } else { "p$($State.PatternConfigVersion)" }
         if (-not $Request.Contains('pattern_config_version') -or $Request['pattern_config_version'] -cne $expectedVersion) { return ConvertTo-StubReply -Status 409 -Body @{ message = 'Conflict' } }
         foreach ($setting in @($Request['custom_pattern_settings'])) {
             $pattern = $State.Patterns | Where-Object { "cp_$($_['id'])" -ceq $setting['token_type'] } | Select-Object -First 1
@@ -360,7 +360,7 @@ function Invoke-StubRoute {
             }
             if (-not $State.PushProtectionIgnored) { $pattern['push_protection_enabled'] = $setting['push_protection_setting'] -ceq 'enabled' }
         }
-        $State.PatternConfigVersion++
+        $State.PatternConfigVersion = [int] $State.PatternConfigVersion + 1
         $reply = Get-GitHubApiFixture -Name secret-scanning/update-org-pattern-configs
         $reply['pattern_config_version'] = "p$($State.PatternConfigVersion)"
         return ConvertTo-StubReply -Status 200 -Body $reply

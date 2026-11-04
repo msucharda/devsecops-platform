@@ -91,6 +91,13 @@ Describe 'CodeSecurity lifecycle interruption harness' -Tag 'Interruption' {
             )
         }
         @{
+            Case = 'custom pattern creation and first push protection with an empty version'
+            Expected = @(
+                'POST /orgs/demo/secret-scanning/custom-patterns'
+                'PATCH /orgs/demo/secret-scanning/pattern-configurations'
+            )
+        }
+        @{
             Case = 'custom pattern content update'
             Expected = @('PATCH /orgs/demo/secret-scanning/custom-patterns/{id}')
         }
@@ -104,6 +111,9 @@ Describe 'CodeSecurity lifecycle interruption harness' -Tag 'Interruption' {
             $context.Stub = Initialize-CodeSecurityStub -Organization demo -Origin $apiUrl -Token $token
             if ($context.Case -ceq 'custom pattern creation and first push protection') {
                 $context.Stub.PatternConfigVersion = $null
+            }
+            if ($context.Case -ceq 'custom pattern creation and first push protection with an empty version') {
+                $context.Stub.PatternConfigVersion = ''
             }
             if ($context.Case -like 'configuration update*' -or $context.Case -like 'configuration default removal*') {
                 $existing = Get-GitHubApiFixture -Name code-security/get-configuration -Set @{

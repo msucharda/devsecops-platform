@@ -489,9 +489,11 @@ function Get-CustomPatternOverride {
     if ($configuration -isnot [System.Collections.IDictionary]) { throw "Organization '$Organization' returned no pattern configuration." }
     $version = $configuration['pattern_config_version']
     if (-not $configuration.Contains('pattern_config_version') -or
-        ($null -ne $version -and ($version -isnot [string] -or -not $version))) {
-        throw "Organization '$Organization' returned an invalid pattern_config_version; expected a nonempty string or null."
+        ($null -ne $version -and $version -isnot [string])) {
+        throw "Organization '$Organization' returned an invalid pattern_config_version; expected a string or null."
     }
+    # An untouched configuration can return ""; PATCH expects null for the first write.
+    if ([string]::IsNullOrEmpty($version)) { $version = $null }
     $slug = [string] $Pattern['slug']
     $overrides = @($configuration['custom_pattern_overrides'] | Where-Object { $null -ne $_ -and $slug -and [string] $_['slug'] -ceq $slug })
     if ($overrides.Count -gt 1) { throw "Organization '$Organization' returned $($overrides.Count) pattern settings for slug '$slug'." }
