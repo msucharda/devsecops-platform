@@ -8,6 +8,8 @@ Each job holds the check, the file, the mutated text (null for a baseline) and t
 removes the modules loaded from the copy so that the tests import the current file. Results are appended as JSON lines,
 so a killed worker keeps the results of finished jobs.
 Worker dependencies are verified from the runner's tools directory, independently of the repository under test.
+FailedTests records each failed test's ExpandedPath and FullyQualifiedErrorId values. For jobs with
+RequireAssertionFailure, an unexpected exception or missing error record also increments Errors.
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +32,7 @@ $prefix = $RepoPath.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::Dire
 $jobs = @(Get-Content -LiteralPath $JobsPath -Raw | ConvertFrom-Json -AsHashtable)
 foreach ($job in $jobs) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
-    $result = [ordered]@{ Id = $job['Id']; Passed = 0; Failed = 0; Errors = 0; Failures = @(); Seconds = 0 }
+    $result = [ordered]@{ Id = $job['Id']; Passed = 0; Failed = 0; Errors = 0; Failures = @(); FailedTests = @(); Seconds = 0 }
     $target = Join-Path $RepoPath $job['File']
     $original = [IO.File]::ReadAllBytes($target)
     try {
@@ -67,7 +69,18 @@ foreach ($job in $jobs) {
             $result.Passed += $run.PassedCount
             $result.Failed += $run.FailedCount
             $result.Errors += $run.FailedContainersCount + $run.FailedBlocksCount
-            $result.Failures += @($run.Failed | Select-Object -First 1 | ForEach-Object { $_.ExpandedPath })
+            foreach ($failedTest in @($run.Failed)) {
+                $errorIds = @($failedTest.ErrorRecord | ForEach-Object { $_.FullyQualifiedErrorId })
+                $result.FailedTests += @{
+                    ExpandedPath = $failedTest.ExpandedPath
+                    FullyQualifiedErrorId = $errorIds
+                }
+                $result.Failures += "$($failedTest.ExpandedPath) [$($errorIds -join ', ')]"
+                if ($job['RequireAssertionFailure'] -eq $true -and
+                    ($errorIds.Count -eq 0 -or @($errorIds | Where-Object { $_ -cne 'PesterAssertionFailed' }).Count -gt 0)) {
+                    $result.Errors += 1
+                }
+            }
             if ($run.FailedCount -gt 0) { break }
             if ($run.PassedCount -eq 0) {
                 $result.Errors += 1
