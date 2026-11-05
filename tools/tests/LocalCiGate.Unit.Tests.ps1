@@ -36,7 +36,6 @@ Describe 'Local CI gate change selection' {
         @{ File = 'tools/LocalCi.psm1' }
         @{ File = 'tools/LocalCiGate.psm1' }
         @{ File = 'tools/LocalCiConcurrency.psm1' }
-        @{ File = 'tools/LocalCiNewWorker.psm1' }
         @{ File = 'tools/Test-LocalCiResult.ps1' }
         @{ File = '.githooks/pre-push' }
     ) {
@@ -78,14 +77,25 @@ Describe 'Local CI gate change selection' {
     }
 
     It 'falls back to the whole isolated profile when gate references are unknown or only name a longer file' {
-        Set-Content -LiteralPath (Join-Path $fixture 'tools/LocalCiNewWorker.psm1') -Value 'param()'
-        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value "'LocalCiNewWorker.psm1.extra'"
-        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/LocalCiNewWorker.psm1' -TerraformRoot @()
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value "'Invoke-LocalCi.ps1.extra'"
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerIntegration.Tests.ps1') -Value ''
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
         $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
 
         $selection.AllPester | Should -BeTrue
-        $selection.Reason | Should -Contain 'tools/LocalCiNewWorker.psm1: gate dependencies are uncertain; every Pester and interruption test runs.'
+        $selection.Reason | Should -Contain 'tools/Invoke-LocalCi.ps1: gate dependencies are uncertain; every Pester and interruption test runs.'
         $testProfile.Selected | Should -Contain 'tools/tests/Unrelated.Tests.ps1'
+    }
+
+    It 'does not treat selection fixture mentions as dependency evidence for a new gate module' {
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/LocalCiNewWorker.psm1') -Value 'param()'
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value "@{ File = 'LocalCiNewWorker.psm1' }"
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/LocalCiNewWorker.psm1' -TerraformRoot @()
+
+        $selection.AllPester | Should -BeTrue
+        $selection.Reason | Should -Contain 'tools/LocalCiNewWorker.psm1: gate dependencies are uncertain; every Pester and interruption test runs.'
+        (Get-LocalCiProfile -RepositoryRoot $fixture -AllPester:$selection.AllPester).Selected |
+            Should -Contain 'tools/tests/Unrelated.Tests.ps1'
     }
 
     It 'falls back to the whole isolated profile when a gate file was deleted' {

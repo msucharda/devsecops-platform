@@ -17,6 +17,10 @@ $script:TerraformStepCommands = [ordered]@{
 $script:PesterEscalationFiles = @(
     'tools/Invoke-Tests.ps1', 'tools/requirements.psd1', 'tools/test-profiles.psd1',
     'tools/Test-PowerShell.ps1', '.github/workflows/ci.yml')
+# Selection fixtures also name gate files, so text references alone cannot establish a new module's dependencies.
+$script:KnownGateFiles = @(
+    'tools/Invoke-LocalCi.ps1', 'tools/LocalCi.psm1', 'tools/LocalCiGate.psm1',
+    'tools/LocalCiConcurrency.psm1', 'tools/Test-LocalCiResult.ps1', '.githooks/pre-push')
 $script:MutationEngineFiles = @(
     'tools/tests/security-checks.psd1',
     'tools/MutationTesting.psm1',
@@ -241,7 +245,7 @@ function Get-LocalCiSelection {
         if ($gateFile) {
             $gateTests = @($tests | Where-Object { [IO.Path]::GetFileName($_.Path) -clike 'LocalCi*.Tests.ps1' })
             $references = @($tests | Where-Object { Test-TextContainsToken -Text $_.Text -Token $leaf -IgnoreCase })
-            if (-not $exists -or $gateTests.Count -eq 0 -or $references.Count -eq 0) {
+            if ($file -cnotin $script:KnownGateFiles -or -not $exists -or $gateTests.Count -eq 0 -or $references.Count -eq 0) {
                 $escalatePester = $true
                 $escalationReasons.Add("${file}: gate dependencies are uncertain; every Pester and interruption test runs.")
             }
