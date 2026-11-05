@@ -14,6 +14,7 @@
         'ModuleOrder.Tests.ps1'
         'ModuleSelection.Tests.ps1'
         'OrganizationScope.Tests.ps1'
+        'PowerShellAnalysisCache.Tests.ps1'
         'TerraformTestProcess.Tests.ps1'
     )
     Contract = @(
