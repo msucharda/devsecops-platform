@@ -26,6 +26,7 @@
         'GitHubApiFixture.Tests.ps1'
         'GitHubRetryIntegration.Tests.ps1'
         'LocalCiConcurrency.Tests.ps1'
+        'LocalCiPester.Tests.ps1'
         'MicrosoftApiFixture.Tests.ps1'
         'ModuleParameters.Tests.ps1'
         'ReleaseContent.Tests.ps1'

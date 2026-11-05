@@ -76,6 +76,7 @@ $mode = if ($Full) { 'Full' } else { 'Changed' }
 Import-Module (Join-Path $PSScriptRoot 'LocalCi.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'LocalCiGate.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'LocalCiConcurrency.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'LocalCiPester.psm1') -Force
 if (-not $StateRoot) { $StateRoot = Get-LocalCiMachineStateRoot }
 if ($env:INVOKE_LOCAL_CI_ACTIVE -and -not $Plan) { Exit-Usage 'Another Invoke-LocalCi run is active in this process tree; nested runs are refused.' }
 if ($IsWindows -and -not $Plan -and -not $WorkerProcess) {
@@ -354,8 +355,8 @@ try {
     }
     # Acquire the machine turn before clearing or using the worktree's shared TEMP.
     Set-LocalCiTimingPhase -Timing $timing -Name 'Machine queue'
-    $requestedSlots = if ($Full) { 0 } else { 1 }
-    $machineLease = Enter-LocalCiMachineQueue -StateRoot $StateRoot -WorkerBudget $WorkerBudget -Slots $requestedSlots -WaitSeconds $QueueWaitSeconds
+    $requestedSlots = if ($Full) { 0 } else { [Math]::Max(1, [Math]::Min(64, $selection.PesterPath.Count)) }
+    $machineLease = Enter-LocalCiMachineQueue -StateRoot $StateRoot -WorkerBudget $WorkerBudget -Slots $requestedSlots -CapToBudget -WaitSeconds $QueueWaitSeconds
     Set-LocalCiTimingPhase -Timing $timing -Name 'TEMP setup'
     $timing.MachineQueue = @{
         Slots = $machineLease.Slots
@@ -478,7 +479,14 @@ try {
     if ($selection.AllPester) { $pesterScript = './tools/Invoke-Tests.ps1 -CI' }
     elseif ($selection.PesterPath.Count -gt 0) { $pesterScript = "./tools/Invoke-Tests.ps1 -CI -Path $(ConvertTo-PwshList $selection.PesterPath)" }
     else { $pesterScript = $null }
-    if ($pesterScript) { Invoke-Step -Name 'Run Pester' -Pester -Body { Invoke-PwshScript -Script $pesterScript } }
+    if ($mode -eq 'Changed' -and $selection.PesterPath.Count -gt 0) {
+        Invoke-Step -Name 'Run Pester' -Pester -Body {
+            $result = Invoke-LocalCiPester -RepositoryRoot $repo -Path $selection.PesterPath -ShardCount $machineLease.Slots -TempPath $temp
+            foreach ($line in $result.Output) { Add-LogLine $line }
+            $result
+        }
+    }
+    elseif ($pesterScript) { Invoke-Step -Name 'Run Pester' -Pester -Body { Invoke-PwshScript -Script $pesterScript } }
     else { Skip-Step -Name 'Run Pester' -Reason 'no test file mapped' }
 
     # 10. Interruption harness, all shards
