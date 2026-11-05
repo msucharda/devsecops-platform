@@ -87,7 +87,9 @@ function Enter-LocalCiMachineQueue {
     )
     $StateRoot = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($StateRoot))
     $queue = Join-Path $StateRoot 'queue'
+    $active = Join-Path $StateRoot 'active'
     $null = New-Item -ItemType Directory -Force -Path $queue
+    $null = New-Item -ItemType Directory -Force -Path $active
     $configuration = Join-Path $StateRoot 'configuration.json'
     $ticket = $null
     $ticketHandle = $null
@@ -118,8 +120,16 @@ function Enter-LocalCiMachineQueue {
                         [IO.FileShare]::Delete, 4096, [IO.FileOptions]::DeleteOnClose) }
                 }
                 $pending = @(Get-ChildItem -LiteralPath $queue -Filter '*.json' -File | Sort-Object Name)
-                $unexpected = @($pending | Where-Object Name -CNotMatch '^\d{20}-[0-9a-f]{32}(\.active)?\.json$')
+                $running = @(Get-ChildItem -LiteralPath $active -Filter '*.json' -File)
+                $unexpected = @(($pending + $running) | Where-Object Name -CNotMatch '^\d{20}-[0-9a-f]{32}\.json$')
                 if ($unexpected.Count -gt 0) { throw "Unexpected file in the CI queue: $($unexpected[0].Name)" }
+                foreach ($entry in $running) {
+                    $orphan = Open-LocalCiExclusiveFile -Path $entry.FullName
+                    if ($null -ne $orphan) {
+                        $orphan.Dispose()
+                        [IO.File]::Delete($entry.FullName)
+                    }
+                }
                 foreach ($entry in $pending) {
                     $orphan = Open-LocalCiExclusiveFile -Path $entry.FullName
                     if ($null -ne $orphan) {
@@ -127,7 +137,6 @@ function Enter-LocalCiMachineQueue {
                         [IO.File]::Delete($entry.FullName)
                         continue
                     }
-                    if ($entry.Name.EndsWith('.active.json', [StringComparison]::Ordinal)) { continue }
                     if ($entry.Name -cne [IO.Path]::GetFileName($ticket)) { break }
                     # A shared barrier excludes older, whole-machine gate versions.
                     $handle = Open-LocalCiExclusiveFile (Join-Path $StateRoot 'running.lock') -Shared
@@ -155,8 +164,8 @@ function Enter-LocalCiMachineQueue {
                                 $slotHandles.RemoveAt($slotHandles.Count - 1)
                             }
                         }
-                        # Publishing admission removes this ticket from FIFO without dropping its liveness handle.
-                        $activeTicket = [IO.Path]::ChangeExtension($ticket, 'active.json')
+                        # Keep the legacy pending-ticket namespace readable by older worktrees.
+                        $activeTicket = Join-Path $active ([IO.Path]::GetFileName($ticket))
                         [IO.File]::Move($ticket, $activeTicket)
                         $ticket = $activeTicket
                         $admitted = $true

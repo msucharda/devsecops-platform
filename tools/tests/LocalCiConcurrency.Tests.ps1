@@ -280,8 +280,7 @@ try {
 "@))
                 $count = $children.Count - 1
                 Wait-QueueFixture {
-                    @(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json' |
-                        Where-Object Name -NotLike '*.active.json').Count -eq $count
+                    @(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count -eq $count
                 }
             }
             Test-Path (Join-Path $TestDrive 'small-ready') | Should -BeFalse
@@ -315,6 +314,61 @@ try {
         }
         finally { Exit-LocalCiMachineQueue -Lease $lease }
         @(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count | Should -Be 0
+    }
+
+    It 'keeps the pre-slot queue reader compatible and excludes its whole-machine lease' {
+        $state = Join-Path $TestDrive 'serial-compatibility'
+        $lease = Enter-LocalCiMachineQueue -StateRoot $state -WorkerBudget 2 -Slots 1 -WaitSeconds 2
+        $waiting = Join-Path $TestDrive 'serial-waiting'
+        $ready = Join-Path $TestDrive 'serial-ready'
+        $release = Join-Path $TestDrive 'serial-release'
+        $child = Start-QueueFixture -Name 'serial-compatibility' -Script @"
+Import-Module '$($modulePath.Replace("'", "''"))'
+& (Get-Module LocalCiConcurrency) {
+    # Serial queue contract from 30851a79e011a7910a0bb0442a4dc9b1d5142990:
+    # validate every pending filename before trying the exclusive whole-machine lock.
+    `$watch = [Diagnostics.Stopwatch]::StartNew()
+    `$handle = `$null
+    do {
+        `$guard = Open-LocalCiExclusiveFile (Join-Path '$state' 'admission.lock')
+        if (`$guard) {
+            try {
+                `$pending = @(Get-ChildItem -LiteralPath (Join-Path '$state' 'queue') -Filter '*.json' -File)
+                `$unexpected = @(`$pending | Where-Object Name -CNotMatch '^\d{20}-[0-9a-f]{32}\.json$')
+                if (`$unexpected.Count -gt 0) { throw 'Unexpected file in the CI queue.' }
+                'waiting' | Set-Content '$waiting'
+                `$handle = Open-LocalCiExclusiveFile (Join-Path '$state' 'running.lock')
+            } finally { `$guard.Dispose() }
+        }
+        if (`$handle) {
+            try {
+                'ready' | Set-Content '$ready'
+                while (-not (Test-Path '$release')) { Start-Sleep -Milliseconds 50 }
+            } finally { `$handle.Dispose() }
+            return
+        }
+        Start-Sleep -Milliseconds 50
+    } while (`$watch.Elapsed.TotalSeconds -lt 15)
+    throw 'Serial queue timed out.'
+}
+"@
+        try {
+            Wait-QueueFixture { (Test-Path $waiting) -or $child.HasExited }
+            $child.HasExited | Should -BeFalse
+            Test-Path $ready | Should -BeFalse
+            Exit-LocalCiMachineQueue -Lease $lease
+            $lease = $null
+            Wait-QueueFixture { Test-Path $ready }
+            { Enter-LocalCiMachineQueue -StateRoot $state -Slots 1 -WaitSeconds 1 } | Should -Throw '*Timed out*'
+            'release' | Set-Content $release
+            $child.WaitForExit(15000) | Should -BeTrue
+            $child.ExitCode | Should -Be 0
+        }
+        finally {
+            if ($lease) { Exit-LocalCiMachineQueue -Lease $lease }
+            if (-not $child.HasExited) { $child.Kill($true); $child.WaitForExit() }
+            $child.Dispose()
+        }
     }
 
     It 'recovers all slots after abrupt termination between <Stage>' -ForEach @(
@@ -355,6 +409,7 @@ throw 'The interruption point was not reached.'
             try { $recovered.Slots | Should -Be 3 }
             finally { Exit-LocalCiMachineQueue -Lease $recovered }
             @(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count | Should -Be 0
+            @(Get-ChildItem (Join-Path $state 'active') -Filter '*.json').Count | Should -Be 0
         }
         finally {
             if (-not $child.HasExited) { $child.Kill($true); $child.WaitForExit() }
@@ -373,8 +428,7 @@ finally { Exit-LocalCiMachineQueue -Lease `$lease }
 "@
         try {
             Wait-QueueFixture {
-                @(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json' |
-                    Where-Object Name -NotLike '*.active.json').Count -eq 1
+                @(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count -eq 1
             }
             { Enter-LocalCiMachineQueue -StateRoot $state -Slots 1 -WaitSeconds 1 } | Should -Throw '*Timed out*'
             $child.Kill()
@@ -450,9 +504,12 @@ throw 'The budget persistence interruption point was not reached.'
         @(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count | Should -Be 0
     }
 
-    It 'preserves an unexpected queue file and fails instead of deleting it' {
-        $state = Join-Path $TestDrive 'foreign-file'
-        $queue = Join-Path $state 'queue'
+    It 'preserves an unexpected <Directory> file and fails instead of deleting it' -ForEach @(
+        @{ Directory = 'queue' }
+        @{ Directory = 'active' }
+    ) {
+        $state = Join-Path $TestDrive "foreign-$Directory"
+        $queue = Join-Path $state $Directory
         $null = New-Item -ItemType Directory -Path $queue
         $foreign = Join-Path $queue 'unrelated.json'
         'preserve' | Set-Content $foreign
@@ -505,7 +562,7 @@ try {
                 foreach ($argument in '-NoProfile', '-File', $script) { $start.ArgumentList.Add($argument) }
                 $children.Add([Diagnostics.Process]::Start($start))
                 $watch = [Diagnostics.Stopwatch]::StartNew()
-                while (@(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count -lt ($number + 1)) {
+                while (@(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count -lt $number) {
                     if ($watch.Elapsed.TotalSeconds -gt 10) { throw 'Child did not enter the fixture queue.' }
                     Start-Sleep -Milliseconds 50
                 }
@@ -632,7 +689,7 @@ Start-Sleep -Seconds 120
             $null = $engine.AddScript("Import-Module '$($modulePath.Replace("'", "''"))'; Enter-LocalCiMachineQueue -StateRoot '$($state.Replace("'", "''"))' -WaitSeconds 20")
             $operation = $engine.BeginInvoke()
             $watch = [Diagnostics.Stopwatch]::StartNew()
-            while (@(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count -lt 2) {
+            while (@(Get-ChildItem (Join-Path $state 'queue') -Filter '*.json').Count -lt 1) {
                 if ($watch.Elapsed.TotalSeconds -gt 10) { throw 'Runspace did not enter the fixture queue.' }
                 Start-Sleep -Milliseconds 50
             }
