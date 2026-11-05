@@ -177,12 +177,7 @@ else {
     $selection = Get-LocalCiSelection -RepoPath $repo -ChangedFile $changedFiles -TerraformRoot $allRoots -AllTerraformRoots:$ciChanged
 }
 
-$testProfile = Get-LocalCiProfile -RepositoryRoot $repo -PesterPath $selection.PesterPath -AllPester:(
-    $selection.AllPester -or @($changedFiles | Where-Object { $_ -in @(
-        'tools/Invoke-LocalCi.ps1', 'tools/LocalCi.psm1', 'tools/LocalCiGate.psm1', 'tools/LocalCiConcurrency.psm1',
-        'tools/test-profiles.psd1', 'tools/Test-PowerShell.ps1', 'tools/Test-LocalCiResult.ps1',
-        '.githooks/pre-push', '.github/workflows/ci.yml'
-    ) }).Count -gt 0)
+$testProfile = Get-LocalCiProfile -RepositoryRoot $repo -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
 $staticPaths = @($changedFiles | Where-Object {
     $_ -match '\.(ps1|psm1|psd1)$' -and (Test-Path -LiteralPath (Join-Path $repo $_) -PathType Leaf)
 })
@@ -218,7 +213,7 @@ $planLines.Add('Steps: Preflight, Check PowerShell, Validate module manifests, V
     'Validate deployment workflow syntax, Validate instance workflows that call local reusable workflows, Discover Terraform roots, ' +
     'Terraform per root, Run Pester, Interrupt every state-changing step, Weaken every marked security check')
 $planLines.Add("Pester: $pesterLabel")
-foreach ($path in $selection.PesterPath) { $planLines.Add("  test: $path") }
+foreach ($path in $selection.PesterPath) { $planLines.Add("  test: $path [reason: $($selection.PesterReason[$path] -join '; ')]") }
 $planLines.Add("Interruption: $interruptionLabel")
 foreach ($path in $selection.InterruptionPath) { $planLines.Add("  test: $path") }
 $planLines.Add("Mutation: $mutationLabel")
