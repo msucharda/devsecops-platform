@@ -37,6 +37,6 @@ Mechanismus platí jen pro tento repozitář.
 
 ## Důsledky
 
-- Commit retrospektivy nespustí další kolo Copilot review, protože ruleset `main: Copilot review gate` má `review_on_push: false`. Merge gate vydá jen varování `copilot-review-stale`.
+- Ruleset `main: Copilot review gate` má `review_on_push: false` (ověřeno přes `GET /repos/{owner}/{repo}/rulesets/{ruleset_id}` dne 5. 11. 2026). Dokud nastavení platí, commit retrospektivy nespustí další kolo Copilot review a merge gate vydá jen varování `copilot-review-stale`. Pokud se nastavení změní, commit retrospektivy spotřebuje kolo review a toto rozhodnutí je nutné přehodnotit.
 - Destilační automation zatím běží app-local na stroji uživatele. Přesun do cloud automation je plánovaný.
 - PR, která tento mechanismus zavádějí, a PR rozpracovaná před zapnutím G12 používají marker `<!-- retro: none bootstrap -->`.
