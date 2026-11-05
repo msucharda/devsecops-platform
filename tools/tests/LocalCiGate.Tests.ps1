@@ -466,6 +466,39 @@ Describe 'Changed-only PowerShell analysis' {
     }
 }
 
+Describe 'Local CI gate timing output' {
+    It 'writes timings beside a plan log without leaving gaps in the run' {
+        $runner = Join-Path $PSScriptRoot '../Invoke-LocalCi.ps1'
+        $log = Join-Path $TestDrive 'plan.log'
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $output = & ([Environment]::ProcessPath) -NoProfile -File $runner -Plan -Base HEAD -LogPath $log 2>&1 | Out-String
+        $watch.Stop()
+        $LASTEXITCODE | Should -Be 0 -Because $output
+
+        $summary = Get-Content -LiteralPath (Join-Path $TestDrive 'plan.timings.json') -Raw | ConvertFrom-Json
+        $summary.Mode | Should -BeExactly 'Plan'
+        $summary.Phases.Name | Should -Contain 'Test selection'
+        $summary.TotalSeconds | Should -BeLessOrEqual $watch.Elapsed.TotalSeconds
+        ($watch.Elapsed.TotalSeconds - $summary.TotalSeconds) | Should -BeLessThan 1
+        [Math]::Abs(($summary.Phases | Measure-Object Seconds -Sum).Sum - $summary.TotalSeconds) | Should -BeLessThan 0.001
+        $output | Should -Match 'TIMING Test selection'
+    }
+
+    It 'writes a failed timing artifact when usage validation exits before selection' {
+        $runner = Join-Path $PSScriptRoot '../Invoke-LocalCi.ps1'
+        $log = Join-Path $TestDrive 'failed.log'
+        $output = & ([Environment]::ProcessPath) -NoProfile -File $runner -Changed -Full -LogPath $log 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 2 -Because $output
+
+        $summary = Get-Content -LiteralPath (Join-Path $TestDrive 'failed.timings.json') -Raw | ConvertFrom-Json
+        $summary.ExitCode | Should -Be 2
+        $summary.Status | Should -BeExactly 'failed'
+        @($summary.Phases).Count | Should -Be 1
+        $summary.Phases[0].Name | Should -BeExactly 'Startup'
+        $output | Should -Match 'TIMING Startup'
+    }
+}
+
 Describe 'Local CI profiles' {
     It 'keeps the complete Pester, interruption, mutation and Terraform selection in the full plan' {
         $log = Join-Path $TestDrive 'full-plan.log'
