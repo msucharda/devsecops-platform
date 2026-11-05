@@ -38,6 +38,8 @@
     'WorkflowGenerator.Tests.ps1' = 10
     'TeardownEnterpriseOwner.Tests.ps1' = 6
     'InstanceSetup.Tests.ps1' = 6
+    # Windows local gate (2026-11-05), shared machine under load: 48.9579 seconds, rounded up.
+    'InstanceSetupManualSteps.Tests.ps1' = 49
     # Token suites measured in Source CI run 40819725706, rounded up.
     # GitHubAppToken measured in Source CI run 40921301537: 7.6856 seconds, rounded up.
     'GitHubAppToken.Tests.ps1' = 8
