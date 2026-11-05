@@ -369,7 +369,7 @@ Describe 'Local CI plan selection reasons' {
     BeforeAll {
         $planRepository = Build-FakeRepository
         foreach ($name in @(
-            'Invoke-LocalCi.ps1', 'LocalCi.psm1', 'LocalCiGate.psm1', 'LocalCiConcurrency.psm1', 'LocalCiPester.psm1', 'LocalCiTiming.psm1',
+            'Invoke-LocalCi.ps1', 'LocalCi.psm1', 'LocalCiGate.psm1', 'LocalCiConcurrency.psm1', 'LocalCiPester.psm1', 'LocalCiTiming.psm1', 'LocalCiSteps.psm1',
             'ToolDependencies.psm1', 'Get-TerraformRoots.ps1', 'requirements.psd1'
         )) {
             Copy-Item -LiteralPath (Join-Path $toolRoot $name) -Destination (Join-Path $planRepository "tools/$name")

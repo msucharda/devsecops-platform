@@ -295,4 +295,35 @@ function Invoke-LocalCiPester {
     }
 }
 
-Export-ModuleMember -Function Get-LocalCiPesterShard, Merge-LocalCiPesterResult, Invoke-LocalCiPester
+function Get-LocalCiPesterStepGroup {
+    <#
+    .SYNOPSIS
+    Adapts the shard runner to one weighted scheduler group and persists its timing sidecar.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [Parameter(Mandatory)][string[]] $Path,
+        [Parameter(Mandatory)][ValidateRange(1, 64)][int] $GrantedShardCount,
+        [Parameter(Mandatory)][string] $TimingPath
+    )
+    $count = [Math]::Min($GrantedShardCount, $Path.Count)
+    if ($count -lt 1) { throw 'Pester selection is empty.' }
+    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
+        RepositoryRoot = $RepositoryRoot; Path = $Path; ShardCount = $count
+    } | ConvertTo-Json -Compress)))
+    $module = (Join-Path $PSScriptRoot 'LocalCiPester.psm1').Replace("'", "''")
+    $destination = $TimingPath.Replace("'", "''")
+    $script = @"
+Import-Module '$module'
+`$parameters = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$payload')) | ConvertFrom-Json -AsHashtable
+`$parameters.TempPath = `$env:TEMP
+`$result = Invoke-LocalCiPester @parameters
+ConvertTo-Json -InputObject @(`$result.Shards) -Depth 6 | Set-Content -LiteralPath '$destination' -Encoding utf8NoBOM
+`$result.Output
+`$global:LASTEXITCODE = `$result.ExitCode
+"@
+    return @{ Slots = $count; Steps = @(@{ Name = 'Run Pester'; Script = $script }) }
+}
+
+Export-ModuleMember -Function Get-LocalCiPesterShard, Merge-LocalCiPesterResult, Invoke-LocalCiPester, Get-LocalCiPesterStepGroup

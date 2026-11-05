@@ -161,7 +161,19 @@ $suites = foreach ($file in $Path) {
 
         It 'runs all selected files once concurrently, isolates shard TEMP and publishes one merged result' {
             $files = @('tools/tests/A.Tests.ps1', 'tools/tests/B.Tests.ps1', 'tools/tests/C.Tests.ps1', 'tools/tests/D.Tests.ps1')
-            $result = Invoke-LocalCiPester -RepositoryRoot $root -Path $files -ShardCount 2 -TempPath (Join-Path $root 'scratch')
+            $sidecar = Join-Path $root 'shards.json'
+            $group = Get-LocalCiPesterStepGroup -RepositoryRoot $root -Path $files -GrantedShardCount 2 -TimingPath $sidecar
+            $group.Slots | Should -Be 2
+            $savedTemp = $env:TEMP
+            try {
+                $env:TEMP = Join-Path $root 'scratch'
+                $output = @(& ([scriptblock]::Create($group.Steps[0].Script)))
+                $result = [pscustomobject]@{
+                    ExitCode = $LASTEXITCODE; Output = $output
+                    Shards = @(Get-Content $sidecar -Raw | ConvertFrom-Json)
+                }
+            }
+            finally { $env:TEMP = $savedTemp }
 
             $result.ExitCode | Should -Be 0 -Because ($result.Output -join "`n")
             $arrivals = @(Get-ChildItem (Join-Path $root 'arrivals') | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })

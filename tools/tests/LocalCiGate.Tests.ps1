@@ -466,12 +466,14 @@ Describe 'Changed-only PowerShell analysis' {
     }
 }
 
-Describe 'Local CI gate timing output' {
+Describe 'Local CI gate timing output' -Tag LocalCiTimingOutput {
     It 'writes timings beside a plan log without leaving gaps in the run' {
         $runner = Join-Path $PSScriptRoot '../Invoke-LocalCi.ps1'
         $log = Join-Path $TestDrive 'plan.log'
         $watch = [Diagnostics.Stopwatch]::StartNew()
-        $output = & ([Environment]::ProcessPath) -NoProfile -File $runner -Plan -Base HEAD -LogPath $log 2>&1 | Out-String
+        $startedTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
+        $output = & ([Environment]::ProcessPath) -NoProfile -File $runner -Plan -Base HEAD -LogPath $log `
+            -StartedTimestamp $startedTimestamp 2>&1 | Out-String
         $watch.Stop()
         $LASTEXITCODE | Should -Be 0 -Because $output
 
@@ -496,6 +498,163 @@ Describe 'Local CI gate timing output' {
         @($summary.Phases).Count | Should -Be 1
         $summary.Phases[0].Name | Should -BeExactly 'Startup'
         $output | Should -Match 'TIMING Startup'
+    }
+}
+
+Describe 'Local CI run-all gate' -Tag LocalCiSchedule {
+    BeforeAll {
+        $fixture = Join-Path $TestDrive 'schedule'
+        $tools = Join-Path $fixture 'tools'
+        $null = New-Item -ItemType Directory -Force -Path $tools, (Join-Path $tools 'tests'), (Join-Path $fixture '.github/workflows')
+        foreach ($name in 'Invoke-LocalCi.ps1', 'LocalCi.psm1', 'LocalCiGate.psm1', 'LocalCiConcurrency.psm1',
+            'LocalCiTiming.psm1', 'LocalCiSteps.psm1', 'LocalCiPester.psm1', 'pester-durations.psd1', 'requirements.psd1') {
+            Copy-Item -LiteralPath (Join-Path $repository "tools/$name") -Destination $tools
+        }
+        Copy-Item -LiteralPath (Join-Path $repository '.github/workflows/ci.yml') -Destination (Join-Path $fixture '.github/workflows/ci.yml')
+        $instanceWorkflows = Join-Path $fixture 'templates/instance/.github/workflows'
+        $null = New-Item -ItemType Directory -Force -Path $instanceWorkflows
+        foreach ($name in 'import-release.yml', 'import-action.yml', 'vendor.yml') {
+            Set-Content -LiteralPath (Join-Path $instanceWorkflows $name) -Value '# CLI fixture'
+        }
+        # Executables and dependency lookup are the system boundary; the scheduler and result binding remain real.
+        $dependencyRoot = (Join-Path $repository 'tools/.dependencies').Replace("'", "''")
+        $yamlManifest = (Get-ToolDependencyPath -Name powershell-yaml).Replace("'", "''")
+        @"
+function Get-ToolDependencyPath {
+    param([string] `$Name, [switch] `$ReuseLoaded)
+    if (`$Name -eq 'powershell-yaml') { return '$yamlManifest' }
+    `$requirements = Import-PowerShellDataFile (Join-Path `$PSScriptRoot 'requirements.psd1')
+    `$version = if (`$Name -eq 'powershell-yaml') { `$requirements.Runtime[`$Name] } else { `$requirements.Development[`$Name] }
+    return Join-Path '$dependencyRoot' "`$Name/`$version/`$Name.psd1"
+}
+function Get-ToolBinaryPath { param(`$Name, `$DestinationPath); Join-Path `$PSScriptRoot 'actionlint.ps1' }
+"@ | Set-Content -LiteralPath (Join-Path $tools 'ToolDependencies.psm1')
+        @'
+param([switch] $version, [Parameter(ValueFromRemainingArguments)][object[]] $ArgumentList)
+if ($version) { '1.7.7'; return }
+$name = if ($ArgumentList -contains '.github/workflows/ci.yml') { 'Validate deployment workflow syntax' }
+else { 'Validate instance workflows that call local reusable workflows' }
+"output: $name"
+if ($env:LOCAL_CI_FAILED_STEP -in @($name, 'all')) { throw "failure: $name" }
+'@ | Set-Content -LiteralPath (Join-Path $tools 'actionlint.ps1')
+        $stub = @'
+param(
+    $Path, $CacheDirectory, $ModulesPath, $InstancePath, $OutputPath, $ResultPath,
+    [switch] $Check, [switch] $CI
+)
+$name = '%%STEP%%'
+if ($name -eq 'Validate module manifests' -and $ModulesPath -like '*runner-modules') { $name = 'Validate instance examples' }
+"output: $name"
+if ($env:LOCAL_CI_FAILED_STEP -in @($name, 'all')) { throw "failure: $name" }
+if ($name -eq 'Run Pester') {
+    $suites = foreach ($file in $Path) {
+        $escaped = [Security.SecurityElement]::Escape([IO.Path]::GetFullPath($file))
+        '<test-suite name="{0}" result="Success" success="True" time="1"><results><test-case name="{0}" executed="True" result="Success" success="True" time="1" /></results></test-suite>' -f $escaped
+    }
+    $count = @($Path).Count
+    $xml = '<test-results total="{0}" errors="0" failures="0" not-run="0" inconclusive="0" ignored="0" skipped="0" invalid="0" result="Success" success="True" time="1"><test-suite name="Pester" result="Success" success="True" time="1"><results>{1}</results></test-suite></test-results>' -f $count, ($suites -join '')
+    Set-Content -LiteralPath $ResultPath -Value $xml
+    "Tests Passed: $count, Failed: 0, Skipped: 0, NotRun: 0"
+}
+'@
+        foreach ($entry in @{
+            'Test-PowerShell.ps1' = 'Check PowerShell'
+            'Test-ModuleManifests.ps1' = 'Validate module manifests'
+            'Test-InstanceConfiguration.ps1' = 'Validate instance examples'
+            'Generate-DeploymentWorkflow.ps1' = 'Check generated workflows'
+            'Generate-TeardownWorkflow.ps1' = 'Check generated workflows'
+            'Invoke-Tests.ps1' = 'Run Pester'
+        }.GetEnumerator()) {
+            Set-Content -LiteralPath (Join-Path $tools $entry.Key) -Value $stub.Replace('%%STEP%%', $entry.Value)
+        }
+        @'
+param($RepositoryPath, $GitHubOutputPath)
+if ($GitHubOutputPath) {
+    'output: Discover Terraform roots'
+    if ($env:LOCAL_CI_FAILED_STEP -in @('Discover Terraform roots', 'all')) { throw 'failure: Discover Terraform roots' }
+} else { '[]' }
+'@ | Set-Content -LiteralPath (Join-Path $tools 'Get-TerraformRoots.ps1')
+        Set-Content -LiteralPath (Join-Path $tools 'test-profiles.psd1') "@{ Unit=@('Fixture.Tests.ps1', 'Second.Tests.ps1'); Contract=@(); Integration=@(); Interruption=@() }"
+        Set-Content -LiteralPath (Join-Path $tools 'tests/Fixture.Tests.ps1') ''
+        Set-Content -LiteralPath (Join-Path $tools 'tests/Second.Tests.ps1') ''
+        Set-Content -LiteralPath (Join-Path $fixture '.gitignore') 'artifacts/'
+        git -C $fixture init --quiet
+        git -C $fixture config user.email 'tests@example.invalid'
+        git -C $fixture config user.name 'Local CI scheduler tests'
+        git -C $fixture add .
+        git -C $fixture -c commit.gpgsign=false commit --quiet -m initial
+        git -C $fixture branch baseline
+        Add-Content -LiteralPath (Join-Path $tools 'Test-PowerShell.ps1') '# Changed analysis target'
+        git -C $fixture add .
+        git -C $fixture -c commit.gpgsign=false commit --quiet -m changed
+        $stepNames = @(
+            'Check PowerShell', 'Validate module manifests', 'Validate instance examples', 'Check generated workflows',
+            'Discover Terraform roots', 'Validate deployment workflow syntax',
+            'Validate instance workflows that call local reusable workflows', 'Run Pester'
+        )
+    }
+
+    It 'reports every selected step with failure=<Failure> and budget=<Budget>' -ForEach @(
+        @{ Failure = 'none'; Budget = 4 }
+        @{ Failure = 'Check PowerShell'; Budget = 4 }
+        @{ Failure = 'Validate module manifests'; Budget = 4 }
+        @{ Failure = 'Validate instance examples'; Budget = 4 }
+        @{ Failure = 'Check generated workflows'; Budget = 4 }
+        @{ Failure = 'Discover Terraform roots'; Budget = 4 }
+        @{ Failure = 'Validate deployment workflow syntax'; Budget = 4 }
+        @{ Failure = 'Validate instance workflows that call local reusable workflows'; Budget = 4 }
+        @{ Failure = 'Run Pester'; Budget = 4 }
+        @{ Failure = 'all'; Budget = 4 }
+        @{ Failure = 'none'; Budget = 1 }
+    ) {
+        $log = Join-Path $fixture 'artifacts/schedule.log'
+        $savedActive = $env:INVOKE_LOCAL_CI_ACTIVE
+        $env:LOCAL_CI_FAILED_STEP = $Failure
+        Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
+        try {
+            $output = & ([Environment]::ProcessPath) -NoProfile -File (Join-Path $tools 'Invoke-LocalCi.ps1') `
+                -Base baseline -LogPath $log -WorkerBudget $Budget -StateRoot (Join-Path $TestDrive 'scheduler-machine') 2>&1 | Out-String
+            $code = $LASTEXITCODE
+        }
+        finally {
+            $env:INVOKE_LOCAL_CI_ACTIVE = $savedActive
+            Remove-Item Env:LOCAL_CI_FAILED_STEP
+        }
+
+        $code | Should -Be $(if ($Failure -eq 'none') { 0 } else { 1 }) -Because $output
+        $content = Get-Content -LiteralPath $log -Raw
+        foreach ($name in $stepNames) {
+            $content | Should -Match "=== $([regex]::Escape($name))\r?\n"
+            $status = if ($Failure -in @($name, 'all')) { 'FAIL' } else { 'PASS' }
+            $content | Should -Match "$status\s+$([regex]::Escape($name)) \["
+        }
+        $blocks = [regex]::Split($content, '(?m)^=== ')
+        foreach ($block in $blocks | Select-Object -Skip 1) {
+            $name = ($block -split '\r?\n')[0]
+            foreach ($line in ($block -split '\r?\n' | Where-Object { $_ -like 'output: *' })) {
+                $line | Should -BeExactly "output: $name" -Because 'child output must stay inside its own step block'
+            }
+        }
+        $content | Should -Not -Match 'fail-fast'
+        $receipt = (git -C $fixture rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        Test-Path -LiteralPath $receipt | Should -Be ($Failure -eq 'none')
+        $summary = Get-Content -LiteralPath ([IO.Path]::ChangeExtension($log, '.timings.json')) -Raw | ConvertFrom-Json
+        $summary.MachineQueue.Slots | Should -Be $Budget
+        @($summary.PesterShards).Count | Should -Be $(if ($Budget -eq 1) { 1 } else { 2 })
+        ($summary.PesterShards | Measure-Object FileCount -Sum).Sum | Should -Be 2
+        foreach ($shard in $summary.PesterShards) { $shard.Seconds | Should -BeGreaterThan 0 }
+        if ($Failure -notin @('Run Pester', 'all')) {
+            ($summary.PesterShards.Files | Measure-Object).Count | Should -Be 2
+            $summary.PesterShards.Files.Seconds | Should -BeExactly @(1, 1)
+            Test-Path (Join-Path $fixture 'artifacts/pester.xml') | Should -BeTrue
+        }
+        @($summary.Steps.Name | Sort-Object) | Should -BeExactly @($stepNames | Sort-Object)
+        $phase = $summary.Phases | Where-Object Name -EQ 'Concurrent checks'
+        foreach ($step in $summary.Steps) {
+            $step.StartSeconds | Should -BeGreaterOrEqual $phase.StartSeconds
+            ($step.StartSeconds + $step.Seconds) | Should -BeLessOrEqual ($phase.StartSeconds + $phase.Seconds)
+        }
+        [Math]::Abs(($summary.Phases | Measure-Object Seconds -Sum).Sum - $summary.TotalSeconds) | Should -BeLessThan 0.001
     }
 }
 
