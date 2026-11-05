@@ -10,15 +10,22 @@ function Get-LocalCiMachineStateRoot {
     return Join-Path $root 'devsecops-local-ci-machine'
 }
 
+function Get-LocalCiDefaultWorkerBudget {
+    [CmdletBinding()]
+    param([ValidateRange(1, [int]::MaxValue)][int] $LogicalProcessorCount = [Environment]::ProcessorCount)
+    return [int] [Math]::Max(1, [Math]::Min(4, [Math]::Floor($LogicalProcessorCount / 2)))
+}
+
 function Open-LocalCiExclusiveFile {
-    param([string] $Path)
+    param([string] $Path, [switch] $Shared)
     if ($IsLinux) {
         Initialize-LocalCiJobType
-        $handle = [DevSecOps.LocalCi.ProcessJob]::OpenUnixLock($Path)
+        $handle = [DevSecOps.LocalCi.ProcessJob]::OpenUnixLock($Path, $Shared.IsPresent)
         if ($null -eq $handle) { return $null }
         return [IO.FileStream]::new($handle, [IO.FileAccess]::ReadWrite)
     }
-    try { return [IO.File]::Open($Path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+    $sharing = if ($Shared) { [IO.FileShare]::ReadWrite } else { [IO.FileShare]::None }
+    try { return [IO.File]::Open($Path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, $sharing) }
     catch [IO.IOException] {
         # Sharing violations are contention; permission, disk, and other I/O failures remain errors.
         if (($_.Exception.HResult -band 0xffff) -in @(11, 32, 33)) { return $null }
@@ -50,20 +57,44 @@ function Write-LocalCiQueueState {
 }
 
 function Enter-LocalCiMachineQueue {
+    <#
+    .SYNOPSIS
+    Atomically reserves machine-wide process slots in strict FIFO admission order.
+    .DESCRIPTION
+    Keep the lease until every child process has exited. Release it in finally with Exit-LocalCiMachineQueue.
+    Linux callers must pass Handle, TicketHandle and every SlotHandles entry to Enable-LocalCiLeaseInheritance,
+    along with their worktree handle, before starting children. Windows callers use Initialize-LocalCiWorkerLifetime.
+    A budget change waits for all existing slots to drain. WaitSeconds covers both admission and reconfiguration.
+    .PARAMETER Slots
+    Exact number of concurrent heavy processes. Zero reserves the whole current budget (the serial legacy contract).
+    .PARAMETER CapToBudget
+    Caps Slots at the budget read under the admission lock. Callers must use the returned Slots as their fan-out limit.
+    This does not bypass a blocked FIFO head or grant fewer slots just because some slots are occupied.
+    .OUTPUTS
+    Lease with Slots, WorkerBudget, WaitSeconds, SlotHandles, Handle, TicketHandle and Ticket.
+    Locks, rather than persisted counters of active workers or PIDs, own slots across interruption and process exit.
+    #>
     [CmdletBinding()]
     param(
         [string] $StateRoot = (Get-LocalCiMachineStateRoot),
-        # Zero uses the persisted machine setting; the first run defaults to four.
+        # Zero uses the persisted machine setting; the first run reserves half the logical processors, capped at four.
         [ValidateRange(0, 64)][int] $WorkerBudget = 0,
+        # Zero reserves the entire budget, preserving the serial caller contract.
+        [ValidateRange(0, 64)][int] $Slots = 0,
+        # Bound a planned fan-out to the machine budget read at admission, not merely to currently free slots.
+        [switch] $CapToBudget,
         [ValidateRange(1, 86400)][int] $WaitSeconds = 900
     )
     $StateRoot = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($StateRoot))
     $queue = Join-Path $StateRoot 'queue'
+    $active = Join-Path $StateRoot 'active'
     $null = New-Item -ItemType Directory -Force -Path $queue
+    $null = New-Item -ItemType Directory -Force -Path $active
     $configuration = Join-Path $StateRoot 'configuration.json'
     $ticket = $null
     $ticketHandle = $null
     $handle = $null
+    $slotHandles = [Collections.Generic.List[IO.FileStream]]::new()
     $admitted = $false
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
@@ -74,7 +105,7 @@ function Enter-LocalCiMachineQueue {
                 $state = if (Test-Path -LiteralPath $configuration) {
                     Get-Content -LiteralPath $configuration -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
                 }
-                else { @{ NextTicket = 0L; WorkerBudget = 4 } }
+                else { @{ NextTicket = 0L; WorkerBudget = Get-LocalCiDefaultWorkerBudget } }
                 if ($state -isnot [hashtable]) { throw 'Invalid CI queue configuration object.' }
                 if ($state.NextTicket -isnot [long] -and $state.NextTicket -isnot [int]) { throw 'Invalid CI queue ticket counter.' }
                 if ($state.NextTicket -lt 0 -or ($state.WorkerBudget -isnot [int] -and $state.WorkerBudget -isnot [long]) -or
@@ -89,8 +120,16 @@ function Enter-LocalCiMachineQueue {
                         [IO.FileShare]::Delete, 4096, [IO.FileOptions]::DeleteOnClose) }
                 }
                 $pending = @(Get-ChildItem -LiteralPath $queue -Filter '*.json' -File | Sort-Object Name)
-                $unexpected = @($pending | Where-Object Name -CNotMatch '^\d{20}-[0-9a-f]{32}\.json$')
+                $running = @(Get-ChildItem -LiteralPath $active -Filter '*.json' -File)
+                $unexpected = @(($pending + $running) | Where-Object Name -CNotMatch '^\d{20}-[0-9a-f]{32}\.json$')
                 if ($unexpected.Count -gt 0) { throw "Unexpected file in the CI queue: $($unexpected[0].Name)" }
+                foreach ($entry in $running) {
+                    $orphan = Open-LocalCiExclusiveFile -Path $entry.FullName
+                    if ($null -ne $orphan) {
+                        $orphan.Dispose()
+                        [IO.File]::Delete($entry.FullName)
+                    }
+                }
                 foreach ($entry in $pending) {
                     $orphan = Open-LocalCiExclusiveFile -Path $entry.FullName
                     if ($null -ne $orphan) {
@@ -99,17 +138,56 @@ function Enter-LocalCiMachineQueue {
                         continue
                     }
                     if ($entry.Name -cne [IO.Path]::GetFileName($ticket)) { break }
-                    $handle = Open-LocalCiExclusiveFile (Join-Path $StateRoot 'running.lock')
+                    # A shared barrier excludes older, whole-machine gate versions.
+                    $handle = Open-LocalCiExclusiveFile (Join-Path $StateRoot 'running.lock') -Shared
                     if ($null -eq $handle) { break }
                     try {
-                        if ($WorkerBudget -gt 0) {
+                        $budget = if ($WorkerBudget -gt 0) { $WorkerBudget } else { [int] $state.WorkerBudget }
+                        $requested = if ($Slots -eq 0) { $budget } else { $Slots }
+                        if ($CapToBudget) { $requested = [Math]::Min($requested, $budget) }
+                        if ($requested -gt $budget) { throw "Requested $requested CI slots exceeds the machine worker budget $budget." }
+                        # Reconfiguration waits for every old slot, including indices above a reduced budget.
+                        $changingBudget = $budget -ne $state.WorkerBudget
+                        $limit = if ($changingBudget) { 64 } else { $budget }
+                        for ($index = 1; $index -le $limit; $index++) {
+                            $slot = Open-LocalCiExclusiveFile (Join-Path $StateRoot ('slot-{0:d2}.lock' -f $index))
+                            if ($null -ne $slot) { $slotHandles.Add($slot) }
+                            elseif ($changingBudget) { break }
+                            if (-not $changingBudget -and $slotHandles.Count -eq $requested) { break }
+                        }
+                        if ($slotHandles.Count -lt $(if ($changingBudget) { 64 } else { $requested })) { break }
+                        if ($changingBudget) {
                             $state.WorkerBudget = $WorkerBudget
                             Write-LocalCiQueueState -Path $configuration -State $state
+                            while ($slotHandles.Count -gt $requested) {
+                                $slotHandles[$slotHandles.Count - 1].Dispose()
+                                $slotHandles.RemoveAt($slotHandles.Count - 1)
+                            }
                         }
+                        # Keep the legacy pending-ticket namespace readable by older worktrees.
+                        $activeTicket = Join-Path $active ([IO.Path]::GetFileName($ticket))
+                        [IO.File]::Move($ticket, $activeTicket)
+                        $ticket = $activeTicket
                         $admitted = $true
-                        return [pscustomobject]@{ Handle = $handle; TicketHandle = $ticketHandle; Ticket = $ticket; WorkerBudget = [int] $state.WorkerBudget }
+                        return [pscustomobject]@{
+                            Handle = $handle
+                            TicketHandle = $ticketHandle
+                            Ticket = $ticket
+                            SlotHandles = $slotHandles.ToArray()
+                            WorkerBudget = [int] $state.WorkerBudget
+                            Slots = $requested
+                            WaitSeconds = $watch.Elapsed.TotalSeconds
+                        }
                     }
                     catch { $admitted = $false; throw }
+                    finally {
+                        if (-not $admitted) {
+                            foreach ($slot in $slotHandles) { $slot.Dispose() }
+                            $slotHandles.Clear()
+                            $handle.Dispose()
+                            $handle = $null
+                        }
+                    }
                 }
             }
             finally { $guard.Dispose() }
@@ -119,7 +197,10 @@ function Enter-LocalCiMachineQueue {
     }
     finally {
         if (-not $admitted -or $PSCmdlet.Stopping) {
-            try { if ($null -ne $handle) { $handle.Dispose() } }
+            try {
+                foreach ($slot in $slotHandles) { $slot.Dispose() }
+                if ($null -ne $handle) { $handle.Dispose() }
+            }
             finally {
                 if ($null -ne $ticketHandle) { $ticketHandle.Dispose() }
                 if ($IsLinux -and $ticket) { [IO.File]::Delete($ticket) }
@@ -131,8 +212,10 @@ function Enter-LocalCiMachineQueue {
 function Exit-LocalCiMachineQueue {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object] $Lease)
-    # Keep the ticket visible until the handle is released; the next live ticket cannot jump the queue.
-    try { $Lease.Handle.Dispose() }
+    try {
+        foreach ($slot in $Lease.SlotHandles) { $slot.Dispose() }
+        $Lease.Handle.Dispose()
+    }
     finally {
         $Lease.TicketHandle.Dispose()
         if ($IsLinux) { [IO.File]::Delete($Lease.Ticket) }
@@ -193,12 +276,12 @@ namespace DevSecOps.LocalCi {
         public static bool Assign(SafeWaitHandle job) {
             return AssignProcessToJobObject(job, GetCurrentProcess());
         }
-        public static SafeFileHandle OpenUnixLock(string path) {
-            const int readWrite = 2, create = 64, closeOnExec = 524288, exclusiveNonblocking = 6;
+        public static SafeFileHandle OpenUnixLock(string path, bool shared) {
+            const int readWrite = 2, create = 64, closeOnExec = 524288;
             int descriptor = open(path, readWrite | create | closeOnExec, 384);
             if (descriptor < 0) throw new Win32Exception(Marshal.GetLastWin32Error());
             var handle = new SafeFileHandle((IntPtr)descriptor, true);
-            if (flock(descriptor, exclusiveNonblocking) != 0) {
+            if (flock(descriptor, shared ? 5 : 6) != 0) { // LOCK_NB | (LOCK_SH or LOCK_EX)
                 int error = Marshal.GetLastWin32Error();
                 handle.Dispose();
                 if (error == 11) return null; // Linux EWOULDBLOCK: another invocation owns the lease.
@@ -253,4 +336,4 @@ function Initialize-LocalCiWorkerLifetime {
 }
 
 Export-ModuleMember -Function Get-LocalCiMachineStateRoot, Enter-LocalCiWorktreeLock, Enter-LocalCiMachineQueue,
-    Exit-LocalCiMachineQueue, Initialize-LocalCiWorkerLifetime, Enable-LocalCiLeaseInheritance
+    Exit-LocalCiMachineQueue, Initialize-LocalCiWorkerLifetime, Enable-LocalCiLeaseInheritance, Get-LocalCiDefaultWorkerBudget

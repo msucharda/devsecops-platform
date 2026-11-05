@@ -354,11 +354,18 @@ try {
     }
     # Acquire the machine turn before clearing or using the worktree's shared TEMP.
     Set-LocalCiTimingPhase -Timing $timing -Name 'Machine queue'
-    $machineLease = Enter-LocalCiMachineQueue -StateRoot $StateRoot -WorkerBudget $WorkerBudget -WaitSeconds $QueueWaitSeconds
+    $requestedSlots = if ($Full) { 0 } else { 1 }
+    $machineLease = Enter-LocalCiMachineQueue -StateRoot $StateRoot -WorkerBudget $WorkerBudget -Slots $requestedSlots -WaitSeconds $QueueWaitSeconds
     Set-LocalCiTimingPhase -Timing $timing -Name 'TEMP setup'
-    Enable-LocalCiLeaseInheritance -Handle @($worktreeLease, $machineLease.Handle, $machineLease.TicketHandle)
-    $env:LOCAL_CI_WORKER_BUDGET = [string] $machineLease.WorkerBudget
-    Write-Console "Machine queue admitted; worker budget: $($machineLease.WorkerBudget)"
+    $timing.MachineQueue = @{
+        Slots = $machineLease.Slots
+        WorkerBudget = $machineLease.WorkerBudget
+        WaitSeconds = $timing.Phases[$timing.Phases.Count - 1].Seconds
+    }
+    Enable-LocalCiLeaseInheritance -Handle (@($worktreeLease, $machineLease.Handle, $machineLease.TicketHandle) + $machineLease.SlotHandles)
+    $env:LOCAL_CI_WORKER_BUDGET = [string] $machineLease.Slots
+    Write-Console ('Machine queue admitted after {0:F6}s; slots: {1}; worker budget: {2}' -f
+        $timing.MachineQueue.WaitSeconds, $machineLease.Slots, $machineLease.WorkerBudget)
     # The default C:\Windows\TEMP allows creating files but denies deleting and enumerating them, so every run uses its own.
     Clear-LocalCiTemp -Path $temp
     foreach ($name in 'TEMP', 'TMP', 'TMPDIR') { [Environment]::SetEnvironmentVariable($name, $temp) }

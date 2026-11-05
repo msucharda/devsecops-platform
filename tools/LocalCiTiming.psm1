@@ -55,6 +55,7 @@ function Save-LocalCiTiming {
         TotalSeconds = $Timing.PhaseStart
         Phases = $Timing.Phases.ToArray()
     }
+    if ($Timing.ContainsKey('MachineQueue')) { $summary.MachineQueue = $Timing.MachineQueue }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
 }
 
