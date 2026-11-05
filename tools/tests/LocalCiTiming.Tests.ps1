@@ -3,6 +3,22 @@ BeforeAll {
 }
 
 Describe 'Local CI timing artifact' {
+    It 'persists queue admission details alongside the measured queue phase' {
+        $timing = New-LocalCiTiming
+        Set-LocalCiTimingPhase -Timing $timing -Name 'Machine queue'
+        Set-LocalCiTimingPhase -Timing $timing -Name 'Preflight'
+        $timing.MachineQueue = @{ Slots = 2; WorkerBudget = 3; WaitSeconds = 0.125 }
+        $path = Join-Path $TestDrive 'queue.timings.json'
+
+        Save-LocalCiTiming -Timing $timing -Path $path -Mode Changed -ExitCode 0
+
+        $summary = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $summary.MachineQueue.Slots | Should -Be 2
+        $summary.MachineQueue.WorkerBudget | Should -Be 3
+        $summary.MachineQueue.WaitSeconds | Should -Be 0.125
+        @($summary.Phases.Name) | Should -Contain 'Machine queue'
+    }
+
     It 'writes versioned non-overlapping phases covering the complete measured run' {
         $timing = New-LocalCiTiming
         Start-Sleep -Milliseconds 30
