@@ -4,6 +4,34 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'local-ci-unix-temp-access'
+            Tests = @(@{
+                Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'
+                FullName = 'Local CI Unix private directory access*'
+            })
+        }
+        @{
+            Name = 'powershell-analysis-source-binding'
+            Tests = @(@{
+                Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'
+                FullName = @('*analyzes a cold file*', '*rejects a file changed during analysis*')
+            })
+        }
+        @{
+            Name = 'powershell-analysis-success'
+            Tests = @(@{
+                Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'
+                FullName = @('*analyzes a cold file*', '*never caches analyzer warnings*')
+            })
+        }
+        @{
+            Name = 'powershell-analysis-cache-entry'
+            Tests = @(@{
+                Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'
+                FullName = 'PowerShell analysis cache*'
+            })
+        }
+        @{
             Name = 'teardown-workflow-predicates'
             Kind = 'TeardownWorkflow'
             File = 'tools/Generate-TeardownWorkflow.ps1'

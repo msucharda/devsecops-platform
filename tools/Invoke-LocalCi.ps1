@@ -393,7 +393,21 @@ try {
         $stepScript = $setting.PwshSteps[$name]
         if ($name -eq 'Check PowerShell' -and $mode -eq 'Changed') {
             if ($staticPaths.Count -eq 0) { Skip-Step -Name $name -Reason 'no changed PowerShell file'; continue }
-            $stepScript = "./tools/Test-PowerShell.ps1 -Path $(ConvertTo-PwshList $staticPaths)"
+            # A sibling of the disposable TEMP survives cleanup, under the same validated private root.
+            $cacheDirectory = "$temp-pssa"
+            # Warm cache checks must not pay for another PowerShell process.
+            Invoke-Step -Name $name -Body {
+                try {
+                    $output = @(& (Join-Path $PSScriptRoot 'Test-PowerShell.ps1') -Path $staticPaths -CacheDirectory $cacheDirectory 2>&1 |
+                        ForEach-Object { Add-LogLine "$_"; "$_" })
+                    [pscustomobject]@{ ExitCode = 0; Output = $output }
+                }
+                catch {
+                    Add-LogLine $_.Exception.Message
+                    [pscustomobject]@{ ExitCode = 1; Output = @($_.Exception.Message) }
+                }
+            }
+            continue
         }
         Invoke-Step -Name $name -Body { Invoke-PwshScript -Script $stepScript }
     }
