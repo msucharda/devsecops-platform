@@ -4,6 +4,124 @@ BeforeAll {
     $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 }
 
+Describe 'Local CI step scheduling' {
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot '../LocalCiSteps.psm1') -Force
+    }
+
+    It 'reports every failed step and continues through the remaining steps in each child' {
+        $groups = @(
+            @{ Steps = @(
+                @{ Name = 'Manifests'; Script = "'manifests failed'; throw 'invalid manifest'" }
+                @{ Name = 'Examples'; Script = "'examples failed'; throw 'invalid example'" }
+                @{ Name = 'Generated'; Script = "'generated ran'" }
+            ) }
+            @{ Steps = @(
+                @{ Name = 'Pester'; Script = "'pester failed'; & '$([Environment]::ProcessPath)' -NoProfile -Command 'exit 7'" }
+            ) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 2 -WorkingDirectory $TestDrive -TempPath $TestDrive)
+
+        @($results.Name) | Should -BeExactly @('Manifests', 'Examples', 'Generated', 'Pester')
+        @($results.ExitCode) | Should -Be @(1, 1, 0, 7)
+        ($results[0].Output -join "`n") | Should -Match 'invalid manifest'
+        ($results[1].Output -join "`n") | Should -Match 'invalid example'
+        ($results[2].Output -join "`n") | Should -BeExactly 'generated ran'
+        ($results[3].Output -join "`n") | Should -BeExactly 'pester failed'
+    }
+
+    It 'overlaps groups within the granted slots while keeping grouped steps in one process' {
+        $directory = Join-Path $TestDrive 'overlap'
+        $null = New-Item -ItemType Directory -Path $directory
+        $barrier = @'
+[IO.File]::WriteAllText('ready-NUMBER', '')
+$watch = [Diagnostics.Stopwatch]::StartNew()
+while (-not (Test-Path 'ready-OTHER')) {
+    if ($watch.Elapsed.TotalSeconds -gt 10) { throw 'Groups did not overlap' }
+    Start-Sleep -Milliseconds 20
+}
+"process=$PID; slots=$env:LOCAL_CI_WORKER_BUDGET"
+'@
+        $groups = @(
+            @{ Steps = @(
+                @{ Name = 'Static one'; Script = $barrier.Replace('NUMBER', '1').Replace('OTHER', '2') }
+                @{ Name = 'Static two'; Script = '"process=$PID; slots=$env:LOCAL_CI_WORKER_BUDGET"' }
+                @{ Name = 'Static three'; Script = '"process=$PID; slots=$env:LOCAL_CI_WORKER_BUDGET"' }
+            ) }
+            @{ Steps = @(@{ Name = 'Pester'; Script = $barrier.Replace('NUMBER', '2').Replace('OTHER', '1') }) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 2 -WorkingDirectory $directory -TempPath $directory)
+
+        @($results.ExitCode) | Should -Be @(0, 0, 0, 0)
+        $results[0].Output | Should -BeExactly $results[1].Output
+        $results[0].Output | Should -BeExactly $results[2].Output
+        $results[0].Output | Should -Not -Be $results[3].Output
+        $results[0].Output[0] | Should -Match '; slots=1$'
+        $results[0].Seconds | Should -BeGreaterThan 0
+    }
+
+    It 'queues a group until its full slot share is available' {
+        $directory = Join-Path $TestDrive 'weighted'
+        $null = New-Item -ItemType Directory -Path $directory
+        $groups = @(
+            @{ Slots = 2; Steps = @(@{ Name = 'Pester'; Script = @'
+if ($env:LOCAL_CI_WORKER_BUDGET -ne '2') { throw 'Wrong Pester share' }
+Start-Sleep -Milliseconds 150
+[IO.File]::WriteAllText('pester-done', '')
+'@ }) }
+            @{ Steps = @(@{ Name = 'Static'; Script = "if (-not (Test-Path 'pester-done')) { throw 'Exceeded slot budget' }" }) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 2 -WorkingDirectory $directory -TempPath $directory)
+
+        @($results.ExitCode) | Should -Be @(0, 0)
+    }
+
+    It 'fails a missing result after an abruptly exited child and still runs the next group' {
+        $groups = @(
+            @{ Steps = @(@{ Name = 'Interrupted'; Script = 'exit 0' }) }
+            @{ Steps = @(@{ Name = 'Later'; Script = "'still ran'" }) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 1 -WorkingDirectory $TestDrive -TempPath $TestDrive)
+
+        @($results.ExitCode) | Should -Be @(1, 0)
+        ($results[0].Output -join "`n") | Should -Match 'did not return a valid result'
+        $results[1].Output | Should -BeExactly @('still ran')
+    }
+
+    It 'reports every process-start failure with its actual timing offset' {
+        $groups = @(
+            @{ Steps = @(@{ Name = 'Static'; Script = "'unreachable'" }) }
+            @{ Steps = @(@{ Name = 'Pester'; Script = "'unreachable'" }) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 1 `
+            -WorkingDirectory (Join-Path $TestDrive 'missing') -TempPath $TestDrive)
+
+        @($results.ExitCode) | Should -Be @(1, 1)
+        foreach ($result in $results) {
+            $result.Output[0] | Should -Match '^Cannot start step process:'
+            $result.StartSeconds | Should -BeGreaterThan 0
+        }
+    }
+
+    It 'preserves host output fragments as complete lines for Pester counts and log blocks' {
+        $groups = @(@{ Steps = @(@{ Name = 'Pester'; Script = @'
+Write-Host 'Tests Passed: 3, ' -NoNewline
+Write-Host 'Failed: 0, ' -NoNewline
+Write-Host 'Skipped: 0, NotRun: 0'
+'@ }) })
+
+        $result = Invoke-LocalCiStepSchedule -Group $groups -Slots 1 -WorkingDirectory $TestDrive -TempPath $TestDrive
+
+        @($result.Output) | Should -BeExactly @('Tests Passed: 3, Failed: 0, Skipped: 0, NotRun: 0')
+        (Get-PesterCount -Line $result.Output).Passed | Should -Be 3
+    }
+}
+
 Describe 'Local CI gate change selection' {
     BeforeEach {
         $fixture = Join-Path $TestDrive "selection-$([guid]::NewGuid().ToString('N'))"
@@ -36,6 +154,8 @@ Describe 'Local CI gate change selection' {
         @{ File = 'tools/LocalCi.psm1' }
         @{ File = 'tools/LocalCiGate.psm1' }
         @{ File = 'tools/LocalCiConcurrency.psm1' }
+        @{ File = 'tools/LocalCiSteps.psm1' }
+        @{ File = 'tools/LocalCiTiming.psm1' }
         @{ File = 'tools/Test-LocalCiResult.ps1' }
         @{ File = '.githooks/pre-push' }
     ) {

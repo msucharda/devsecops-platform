@@ -71,6 +71,19 @@ exit 0
         @(git -C $fixture worktree list --porcelain | Where-Object { $_ -like 'worktree *' }).Count | Should -Be 1
     }
 
+    It 'measures only the documentation scenario when explicitly selected' {
+        $output = & ([Environment]::ProcessPath) -NoProfile -File $benchmark -RepositoryRoot $fixture `
+            -Revision baseline -Scenario Documentation -Repeat 1 -OutputPath $report 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $output
+
+        $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+        $result.Status | Should -BeExactly 'passed'
+        @($result.Scenarios.Name) | Should -BeExactly @('Documentation')
+        @($result.Scenarios[0].Samples).Count | Should -Be 1
+        @(git -C $fixture status --porcelain).Count | Should -Be 0
+        @(git -C $fixture worktree list --porcelain | Where-Object { $_ -like 'worktree *' }).Count | Should -Be 1
+    }
+
     It 'refuses a report path that would overwrite a tracked source file' -Tag BenchmarkReportSafety {
         $readme = Join-Path $fixture 'README.md'
         $output = & ([Environment]::ProcessPath) -NoProfile -File $benchmark -RepositoryRoot $fixture -Revision baseline -Repeat 1 -OutputPath $readme 2>&1 | Out-String
