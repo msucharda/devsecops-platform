@@ -395,10 +395,11 @@ try {
             if ($staticPaths.Count -eq 0) { Skip-Step -Name $name -Reason 'no changed PowerShell file'; continue }
             # A sibling of the disposable TEMP survives cleanup, under the same validated private root.
             $cacheDirectory = "$temp-pssa"
+            $analysisPaths = @($staticPaths | ForEach-Object { Join-Path $repo $_ })
             # Warm cache checks must not pay for another PowerShell process.
             Invoke-Step -Name $name -Body {
                 try {
-                    $output = @(& (Join-Path $PSScriptRoot 'Test-PowerShell.ps1') -Path $staticPaths -CacheDirectory $cacheDirectory 2>&1 |
+                    $output = @(& (Join-Path $PSScriptRoot 'Test-PowerShell.ps1') -Path $analysisPaths -CacheDirectory $cacheDirectory 2>&1 |
                         ForEach-Object { Add-LogLine "$_"; "$_" })
                     [pscustomobject]@{ ExitCode = 0; Output = $output }
                 }
