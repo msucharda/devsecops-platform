@@ -18,7 +18,7 @@ function Get-DeploymentPlanChange {
         throw [FormatException]::new("Cloud plan INCOMPLETE: $Name has no readable plan outputs. Apply is blocked.")
     }
     if (-not $outputs.Contains('changes')) {
-        throw [FormatException]::new("Cloud plan INCOMPLETE: $Name is missing the changes output. Regenerate the deployment workflow or promote the updated template to the live .github/workflows in a separate reviewed PR (see docs/vendoring.md). Apply is blocked.")
+        throw [FormatException]::new("Cloud plan INCOMPLETE: $Name is missing the changes output. Promote the updated vendored deployment workflow template to the live .github/workflows in a separate reviewed PR (see platform/docs/vendoring.md). Apply is blocked.")
     }
     if ($outputs['changes'] -isnot [string] -or $outputs['changes'] -cnotin @('true', 'false')) {
         throw [FormatException]::new("Cloud plan INCOMPLETE: $Name has an invalid changes output. Apply is blocked.")
