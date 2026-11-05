@@ -12,6 +12,8 @@ param(
     [string] $RepositoryRoot = (Join-Path $PSScriptRoot '..'),
     [string] $Revision = 'origin/main',
     [ValidateRange(1, 100)][int] $Repeat = 3,
+    [Alias('Scenario')][ValidateSet('Documentation', 'Small change', 'Fan-out')]
+    [string[]] $ScenarioName = @('Documentation', 'Small change', 'Fan-out'),
     [string] $OutputPath
 )
 
@@ -46,6 +48,7 @@ $scenarios = @(
     @{ Name = 'Small change'; Path = 'tools/Select-InstanceModules.ps1'; Comment = '# Local CI benchmark' }
     @{ Name = 'Fan-out'; Path = 'tools/Invoke-Tests.ps1'; Comment = '# Local CI benchmark' }
 )
+$scenarios = @($scenarios | Where-Object { $_.Name -in $ScenarioName })
 $report = [ordered]@{
     Schema = 1
     Revision = $revisionSha
