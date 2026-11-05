@@ -13,6 +13,24 @@ Describe 'Instance setup manual steps through the public wizard' {
         $instanceTemplate['modules'] = @{ application = @{} }
         $instanceYaml = $instanceTemplate | ConvertTo-Yaml
         $instanceJson = $instanceTemplate | ConvertTo-Json -Depth 30
+        $fixtureRoot = Join-Path $PSScriptRoot 'fixtures/runner-modules'
+        $fixtureFiles = @(Get-ChildItem -LiteralPath $fixtureRoot -Recurse -File | ForEach-Object {
+            @{ Source = $_.FullName; Relative = [IO.Path]::GetRelativePath($fixtureRoot, $_.FullName) }
+        })
+        $newFixture = {
+            param([string] $Directory)
+            $work = Join-Path $Directory 'work'
+            $modules = Join-Path $Directory 'modules'
+            $null = [IO.Directory]::CreateDirectory($work)
+            foreach ($file in $fixtureFiles) {
+                $destination = Join-Path $modules $file.Relative
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
+                [IO.File]::Copy($file.Source, $destination)
+            }
+            $instancePath = Join-Path $work 'instance.yaml'
+            [IO.File]::WriteAllText($instancePath, $instanceYaml)
+            return @{ Work = $work; Modules = $modules; InstancePath = $instancePath }
+        }
         $answers = [Collections.Generic.Queue[string]]::new()
         $messages = [Collections.Generic.List[string]]::new()
         $onPrompt = $null
@@ -21,7 +39,17 @@ Describe 'Instance setup manual steps through the public wizard' {
             if ($answers.Count -eq 0) { throw "Unexpected prompt: $Prompt" }
             $answers.Dequeue()
         }
-        Mock Write-Host -ModuleName InstanceSetup { $messages.Add([string] $Object) }
+        # Capture guidance at the host boundary without per-line mock dispatch.
+        $hostOutput = @{ Messages = $messages }
+        & (Get-Module InstanceSetup) {
+            param($Output)
+            $script:ManualStepsTestOutput = $Output
+            function script:Write-Host {
+                [CmdletBinding()]
+                param([AllowEmptyString()][string] $Object, [ConsoleColor] $ForegroundColor)
+                $script:ManualStepsTestOutput.Messages.Add($Object)
+            }
+        } $hostOutput
         Mock Invoke-WebRequest -ModuleName InstanceSetup { throw 'Manual guidance must not call an API.' }
         Mock Start-Process -ModuleName InstanceSetup { throw 'Manual guidance must not launch a process.' }
         $interruptionParallelism = 12
@@ -32,48 +60,14 @@ Describe 'Instance setup manual steps through the public wizard' {
             }
             $interruptionParallelism = [Math]::Min($interruptionParallelism, $budget)
         }
-        # Start lazily so mutation runs filtered to name validation do not launch unrelated children.
-        $startInterruptionChildren = {
-            $initialPromptCount = 0
-            foreach ($scenario in @('Confirmation', 'InitialPending', 'ReconfirmPending')) {
-                foreach ($boundary in @('BeforePublish', 'AfterPublish')) {
-                    foreach ($termination in @('Error', 'Abrupt')) {
-                        $directory = Join-Path $TestDrive "$scenario-$boundary-$termination"
-                        $work = Join-Path $directory 'work'
-                        $modules = Join-Path $directory 'modules'
-                        $null = New-Item -ItemType Directory -Path $work -Force
-                        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/runner-modules') -Destination $modules -Recurse
-                        $instanceYaml | Set-Content -LiteralPath (Join-Path $work 'instance.yaml')
-                        $originalProgress = $null
-                        if ($scenario -ceq 'ReconfirmPending') {
-                            $answers.Enqueue('demo')
-                            $answers.Enqueue('y')
-                            $null = Invoke-InstanceSetup -RepoPath $repoRoot -WorkPath $work -ModulesPath $modules `
-                                -Phase ManualSteps -ManualStep 'application/verify-access'
-                            $originalProgress = [IO.File]::ReadAllText((Join-Path $work 'manual-steps-state.json'))
-                            $initialPromptCount += 2
-                            Should -Invoke Read-Host -ModuleName InstanceSetup -Times $initialPromptCount -Exactly
-                        }
-                        $interruptionChildren["$scenario-$boundary-$termination"] = @{
-                            Work = $work; Modules = $modules; OriginalProgress = $originalProgress
-                            Boundary = $boundary; Termination = $termination
-                            PublicationStatus = $(if ($scenario -ceq 'Confirmation') { 'Confirmed' } else { 'Pending' })
-                            Reconfirm = $scenario -ceq 'ReconfirmPending'
-                        }
-                    }
-                }
+        $pendingChildren = [Collections.Generic.Queue[hashtable]]::new()
+        $runningChildren = [Collections.Generic.List[hashtable]]::new()
+        $startAvailableChildren = {
+            for ($index = $runningChildren.Count - 1; $index -ge 0; $index--) {
+                if ($runningChildren[$index].Process.HasExited) { $runningChildren.RemoveAt($index) }
             }
-            $running = [Collections.Generic.List[Diagnostics.Process]]::new()
-            foreach ($child in $interruptionChildren.Values) {
-                for ($index = $running.Count - 1; $index -ge 0; $index--) {
-                    if ($running[$index].HasExited) { $running.RemoveAt($index) }
-                }
-                if ($running.Count -ge $interruptionParallelism) {
-                    if (-not $running[0].WaitForExit(120000)) {
-                        throw 'The manual-step interruption child did not finish within 120 seconds.'
-                    }
-                    $running.RemoveAt(0)
-                }
+            while ($pendingChildren.Count -gt 0 -and $runningChildren.Count -lt $interruptionParallelism) {
+                $child = $pendingChildren.Dequeue()
                 $start = [Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
                 $start.UseShellExecute = $false
                 $start.RedirectStandardOutput = $true
@@ -88,38 +82,79 @@ Describe 'Instance setup manual steps through the public wizard' {
                 $child.Process = $process
                 $child.Stdout = $process.StandardOutput.ReadToEndAsync()
                 $child.Stderr = $process.StandardError.ReadToEndAsync()
-                $running.Add($process)
+                $runningChildren.Add($child)
             }
+        }
+        # Start lazily so mutation runs filtered to name validation do not launch unrelated children.
+        $startInterruptionChildren = {
+            $initialPromptCount = 0
+            foreach ($scenario in @('Confirmation', 'InitialPending', 'ReconfirmPending')) {
+                foreach ($boundary in @('BeforePublish', 'AfterPublish')) {
+                    foreach ($termination in @('Error', 'Abrupt')) {
+                        $directory = Join-Path $TestDrive "$scenario-$boundary-$termination"
+                        $fixture = & $newFixture $directory
+                        $originalProgress = $null
+                        if ($scenario -ceq 'ReconfirmPending') {
+                            $answers.Enqueue('demo')
+                            $answers.Enqueue('y')
+                            $null = Invoke-InstanceSetup -RepoPath $repoRoot -WorkPath $fixture.Work -ModulesPath $fixture.Modules `
+                                -Phase ManualSteps -ManualStep 'application/verify-access'
+                            $originalProgress = [IO.File]::ReadAllText((Join-Path $fixture.Work 'manual-steps-state.json'))
+                            $initialPromptCount += 2
+                            Should -Invoke Read-Host -ModuleName InstanceSetup -Times $initialPromptCount -Exactly
+                        }
+                        $child = @{
+                            Work = $fixture.Work; Modules = $fixture.Modules
+                            OriginalProgress = $originalProgress
+                            Boundary = $boundary; Termination = $termination
+                            PublicationStatus = $(if ($scenario -ceq 'Confirmation') { 'Confirmed' } else { 'Pending' })
+                            Reconfirm = $scenario -ceq 'ReconfirmPending'
+                        }
+                        $interruptionChildren["$scenario-$boundary-$termination"] = $child
+                        $pendingChildren.Enqueue($child)
+                    }
+                }
+            }
+            & $startAvailableChildren
             return $initialPromptCount
         }
     }
 
     AfterAll {
-        foreach ($child in $interruptionChildren.Values) {
-            if ($child.ContainsKey('Process')) {
-                try {
-                    if (-not $child.Process.HasExited) {
-                        $child.Process.Kill($true)
-                        $child.Process.WaitForExit()
+        try {
+            foreach ($child in $interruptionChildren.Values) {
+                if ($child.ContainsKey('Process')) {
+                    try {
+                        if (-not $child.Process.HasExited) {
+                            $child.Process.Kill($true)
+                            $child.Process.WaitForExit()
+                        }
                     }
+                    finally { $child.Process.Dispose() }
                 }
-                finally { $child.Process.Dispose() }
+            }
+        }
+        finally {
+            & (Get-Module InstanceSetup) {
+                if (Get-Variable -Name ManualStepsTestOutput -Scope Script -ErrorAction SilentlyContinue) {
+                    Remove-Item Function:script:Write-Host
+                    Remove-Variable -Name ManualStepsTestOutput -Scope Script
+                }
             }
         }
     }
 
     BeforeEach {
         $directory = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
-        $work = Join-Path $directory 'work'
-        $modules = Join-Path $directory 'modules'
-        $null = New-Item -ItemType Directory -Path $work -Force
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/runner-modules') -Destination $modules -Recurse
-        $instancePath = Join-Path $work 'instance.yaml'
+        $fixture = & $newFixture $directory
+        $work = $fixture.Work
+        $modules = $fixture.Modules
+        $instancePath = $fixture.InstancePath
         $instance = ConvertFrom-Json -InputObject $instanceJson -AsHashtable
-        $instanceYaml | Set-Content -LiteralPath $instancePath
         $arguments = @{ RepoPath = $repoRoot; WorkPath = $work; ModulesPath = $modules; Phase = 'ManualSteps' }
         $answers = [Collections.Generic.Queue[string]]::new()
         $messages = [Collections.Generic.List[string]]::new()
+        $hostOutput.Messages = $messages
         $onPrompt = $null
     }
 
@@ -301,11 +336,19 @@ Describe 'Instance setup manual steps through the public wizard' {
         $arguments.ModulesPath = $child.Modules
         $path = Join-Path $work 'manual-steps-state.json'
         $originalProgress = $child.OriginalProgress
+        while (-not $child.ContainsKey('Process')) {
+            if (-not $runningChildren[0].Process.WaitForExit(120000)) {
+                throw 'The manual-step interruption child did not finish within 120 seconds.'
+            }
+            & $startAvailableChildren
+        }
         if (-not $child.Process.WaitForExit(120000)) {
             $child.Process.Kill($true)
             throw 'The manual-step interruption child did not finish within 120 seconds.'
         }
         $output = $child.Stdout.GetAwaiter().GetResult() + $child.Stderr.GetAwaiter().GetResult()
+        # Refill slots before this case's assertions and resume validation.
+        & $startAvailableChildren
         $child.Process.ExitCode | Should -Be $ExitCode -Because $output
         (Get-FileHash -LiteralPath $sourcePath).Hash | Should -BeExactly $sourceHash
         if ($ExpectedStatus -ceq 'Missing') {
