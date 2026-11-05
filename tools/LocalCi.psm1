@@ -20,7 +20,7 @@ $script:PesterEscalationFiles = @(
 # Selection fixtures also name gate files, so text references alone cannot establish a new module's dependencies.
 $script:KnownGateFiles = @(
     'tools/Invoke-LocalCi.ps1', 'tools/LocalCi.psm1', 'tools/LocalCiGate.psm1',
-    'tools/LocalCiConcurrency.psm1', 'tools/LocalCiSteps.psm1', 'tools/LocalCiTiming.psm1',
+    'tools/LocalCiConcurrency.psm1', 'tools/LocalCiPester.psm1', 'tools/LocalCiSteps.psm1', 'tools/LocalCiTiming.psm1',
     'tools/Test-LocalCiResult.ps1', '.githooks/pre-push')
 $script:MutationEngineFiles = @(
     'tools/tests/security-checks.psd1',

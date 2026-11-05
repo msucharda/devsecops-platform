@@ -35,6 +35,21 @@ Describe 'File $index' {
 }
 
 Describe 'Pester runner file sharding' {
+    It 'writes CI results to an explicit shard path without touching another run report' {
+        $defaultReport = Join-Path $fixture 'artifacts/pester.xml'
+        $customReport = Join-Path $fixture 'artifacts/private shard.xml'
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path $defaultReport -Parent)
+        Set-Content -LiteralPath $defaultReport -Value 'Another run owns this report'
+        $output = @(& ([Environment]::ProcessPath) -NoProfile -NonInteractive -File (Join-Path $fixture 'tools/Invoke-Tests.ps1') `
+            -CI -Path (Join-Path $fixture 'tools/tests/Case0.Tests.ps1') -ResultPath $customReport 2>&1)
+
+        $LASTEXITCODE | Should -Be 0 -Because ($output -join "`n")
+        Get-Content -LiteralPath $defaultReport | Should -BeExactly 'Another run owns this report'
+        $xml = [xml](Get-Content -LiteralPath $customReport -Raw)
+        @($xml.SelectNodes('//test-case[@executed="True"]')).Count | Should -Be 1
+        Remove-Item -LiteralPath $defaultReport, $customReport
+    }
+
     It 'runs every selected test exactly once across all shards, including nested and new files' {
         $baseline = @(Invoke-FixtureTest)
         $baseline.Count | Should -Be 8

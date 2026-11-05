@@ -76,6 +76,7 @@ $mode = if ($Full) { 'Full' } else { 'Changed' }
 Import-Module (Join-Path $PSScriptRoot 'LocalCi.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'LocalCiGate.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'LocalCiConcurrency.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'LocalCiPester.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'LocalCiSteps.psm1') -Force
 if (-not $StateRoot) { $StateRoot = Get-LocalCiMachineStateRoot }
 if ($env:INVOKE_LOCAL_CI_ACTIVE -and -not $Plan) { Exit-Usage 'Another Invoke-LocalCi run is active in this process tree; nested runs are refused.' }
@@ -347,18 +348,14 @@ function ConvertTo-PwshList {
     return ($Item | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join $Separator
 }
 
-function Get-LocalCiPesterStepGroup {
-    param([string] $Script, [ValidateRange(1, 64)][int] $GrantedShardCount)
-    # #221 replaces this single-process adapter; the scheduler already accounts for the complete Pester share.
-    if ($GrantedShardCount -ne 1) { throw 'The Pester adapter currently supports one granted shard.' }
-    return @{ Slots = $GrantedShardCount; Steps = @(@{ Name = 'Run Pester'; Script = $Script }) }
-}
-
 function Invoke-ChangedCheck {
     $groups = [Collections.Generic.List[object]]::new()
+    $pesterTimingPath = Join-Path $temp 'pester-shards.json'
     if ($selection.PesterPath.Count -gt 0) {
-        $pesterScript = "./tools/Invoke-Tests.ps1 -CI -Path $(ConvertTo-PwshList $selection.PesterPath)"
-        $groups.Add((Get-LocalCiPesterStepGroup -Script $pesterScript -GrantedShardCount 1))
+        # Leave one granted slot for the other groups while Pester occupies its complete share.
+        $pesterSlots = [Math]::Max(1, $machineLease.Slots - 1)
+        $groups.Add((Get-LocalCiPesterStepGroup -RepositoryRoot $repo -Path $selection.PesterPath `
+            -GrantedShardCount $pesterSlots -TimingPath $pesterTimingPath))
     }
     $staticSteps = @(
         foreach ($name in 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {
@@ -396,6 +393,14 @@ Set-Location -LiteralPath $(ConvertTo-PwshList $instanceProject)
     Set-LocalCiTimingPhase -Timing $timing -Name 'Concurrent checks'
     $stepResults = @(Invoke-LocalCiStepSchedule -Group $groups.ToArray() -Slots $machineLease.Slots `
         -WorkingDirectory $repo -TempPath $temp -StartedTimestamp $timing.StartedTimestamp)
+    if ($selection.PesterPath.Count -gt 0) {
+        try { $timing.PesterShards = @(Get-Content -LiteralPath $pesterTimingPath -Raw -ErrorAction Stop | ConvertFrom-Json) }
+        catch {
+            $pesterResult = $stepResults | Where-Object Name -EQ 'Run Pester'
+            $pesterResult.ExitCode = 1
+            $pesterResult.Output += "Cannot read Pester shard timings: $($_.Exception.Message)"
+        }
+    }
     $timing.Steps = @($stepResults | Select-Object Name, StartSeconds, Seconds, ExitCode)
     foreach ($result in $stepResults) {
         Add-LogLine "=== $($result.Name)"

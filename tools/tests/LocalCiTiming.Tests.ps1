@@ -3,6 +3,26 @@ BeforeAll {
 }
 
 Describe 'Local CI timing artifact' {
+    It 'persists shard wall times, counts and per-file durations without truncating nested records' {
+        $timing = New-LocalCiTiming
+        $timing.PesterShards = @(
+            @{ Index = 0; FileCount = 1; Seconds = 2.5; PesterSeconds = 1.25; OverheadSeconds = 1.25
+                Files = @(@{ Path = 'tools/tests/A.Tests.ps1'; Seconds = 1.25 }) }
+        )
+        $timing.Steps = @(@{ Name = 'Run Pester'; StartSeconds = 1; Seconds = 2.5; ExitCode = 0 })
+        $path = Join-Path $TestDrive 'shards.timings.json'
+
+        Save-LocalCiTiming -Timing $timing -Path $path -Mode Changed -ExitCode 0
+
+        $summary = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $summary.PesterShards[0].Seconds | Should -Be 2.5
+        $summary.PesterShards[0].FileCount | Should -Be 1
+        $summary.PesterShards[0].Files[0].Path | Should -BeExactly 'tools/tests/A.Tests.ps1'
+        $summary.PesterShards[0].Files[0].Seconds | Should -Be 1.25
+        $summary.Steps[0].Name | Should -BeExactly 'Run Pester'
+        $summary.Steps[0].Seconds | Should -Be 2.5
+    }
+
     It 'persists queue admission details alongside the measured queue phase' {
         $timing = New-LocalCiTiming
         Set-LocalCiTimingPhase -Timing $timing -Name 'Machine queue'

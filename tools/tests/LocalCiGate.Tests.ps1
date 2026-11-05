@@ -507,7 +507,7 @@ Describe 'Local CI run-all gate' -Tag LocalCiSchedule {
         $tools = Join-Path $fixture 'tools'
         $null = New-Item -ItemType Directory -Force -Path $tools, (Join-Path $tools 'tests'), (Join-Path $fixture '.github/workflows')
         foreach ($name in 'Invoke-LocalCi.ps1', 'LocalCi.psm1', 'LocalCiGate.psm1', 'LocalCiConcurrency.psm1',
-            'LocalCiTiming.psm1', 'LocalCiSteps.psm1', 'requirements.psd1') {
+            'LocalCiTiming.psm1', 'LocalCiSteps.psm1', 'LocalCiPester.psm1', 'pester-durations.psd1', 'requirements.psd1') {
             Copy-Item -LiteralPath (Join-Path $repository "tools/$name") -Destination $tools
         }
         Copy-Item -LiteralPath (Join-Path $repository '.github/workflows/ci.yml') -Destination (Join-Path $fixture '.github/workflows/ci.yml')
@@ -539,14 +539,23 @@ if ($env:LOCAL_CI_FAILED_STEP -in @($name, 'all')) { throw "failure: $name" }
 '@ | Set-Content -LiteralPath (Join-Path $tools 'actionlint.ps1')
         $stub = @'
 param(
-    $Path, $CacheDirectory, $ModulesPath, $InstancePath, $OutputPath,
+    $Path, $CacheDirectory, $ModulesPath, $InstancePath, $OutputPath, $ResultPath,
     [switch] $Check, [switch] $CI
 )
 $name = '%%STEP%%'
 if ($name -eq 'Validate module manifests' -and $ModulesPath -like '*runner-modules') { $name = 'Validate instance examples' }
 "output: $name"
 if ($env:LOCAL_CI_FAILED_STEP -in @($name, 'all')) { throw "failure: $name" }
-if ($name -eq 'Run Pester') { 'Tests Passed: 1, Failed: 0, Skipped: 0, NotRun: 0' }
+if ($name -eq 'Run Pester') {
+    $suites = foreach ($file in $Path) {
+        $escaped = [Security.SecurityElement]::Escape([IO.Path]::GetFullPath($file))
+        '<test-suite name="{0}" result="Success" success="True" time="1"><results><test-case name="{0}" executed="True" result="Success" success="True" time="1" /></results></test-suite>' -f $escaped
+    }
+    $count = @($Path).Count
+    $xml = '<test-results total="{0}" errors="0" failures="0" not-run="0" inconclusive="0" ignored="0" skipped="0" invalid="0" result="Success" success="True" time="1"><test-suite name="Pester" result="Success" success="True" time="1"><results>{1}</results></test-suite></test-results>' -f $count, ($suites -join '')
+    Set-Content -LiteralPath $ResultPath -Value $xml
+    "Tests Passed: $count, Failed: 0, Skipped: 0, NotRun: 0"
+}
 '@
         foreach ($entry in @{
             'Test-PowerShell.ps1' = 'Check PowerShell'
@@ -565,8 +574,9 @@ if ($GitHubOutputPath) {
     if ($env:LOCAL_CI_FAILED_STEP -in @('Discover Terraform roots', 'all')) { throw 'failure: Discover Terraform roots' }
 } else { '[]' }
 '@ | Set-Content -LiteralPath (Join-Path $tools 'Get-TerraformRoots.ps1')
-        Set-Content -LiteralPath (Join-Path $tools 'test-profiles.psd1') "@{ Unit=@('Fixture.Tests.ps1'); Contract=@(); Integration=@(); Interruption=@() }"
+        Set-Content -LiteralPath (Join-Path $tools 'test-profiles.psd1') "@{ Unit=@('Fixture.Tests.ps1', 'Second.Tests.ps1'); Contract=@(); Integration=@(); Interruption=@() }"
         Set-Content -LiteralPath (Join-Path $tools 'tests/Fixture.Tests.ps1') ''
+        Set-Content -LiteralPath (Join-Path $tools 'tests/Second.Tests.ps1') ''
         Set-Content -LiteralPath (Join-Path $fixture '.gitignore') 'artifacts/'
         git -C $fixture init --quiet
         git -C $fixture config user.email 'tests@example.invalid'
@@ -630,6 +640,14 @@ if ($GitHubOutputPath) {
         Test-Path -LiteralPath $receipt | Should -Be ($Failure -eq 'none')
         $summary = Get-Content -LiteralPath ([IO.Path]::ChangeExtension($log, '.timings.json')) -Raw | ConvertFrom-Json
         $summary.MachineQueue.Slots | Should -Be $Budget
+        @($summary.PesterShards).Count | Should -Be $(if ($Budget -eq 1) { 1 } else { 2 })
+        ($summary.PesterShards | Measure-Object FileCount -Sum).Sum | Should -Be 2
+        foreach ($shard in $summary.PesterShards) { $shard.Seconds | Should -BeGreaterThan 0 }
+        if ($Failure -notin @('Run Pester', 'all')) {
+            ($summary.PesterShards.Files | Measure-Object).Count | Should -Be 2
+            $summary.PesterShards.Files.Seconds | Should -BeExactly @(1, 1)
+            Test-Path (Join-Path $fixture 'artifacts/pester.xml') | Should -BeTrue
+        }
         @($summary.Steps.Name | Sort-Object) | Should -BeExactly @($stepNames | Sort-Object)
         $phase = $summary.Phases | Where-Object Name -EQ 'Concurrent checks'
         foreach ($step in $summary.Steps) {
