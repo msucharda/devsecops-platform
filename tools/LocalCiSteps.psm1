@@ -1,6 +1,26 @@
 #Requires -Version 7.4
 Set-StrictMode -Version Latest
 
+# security-check: local-ci-step-result
+function Assert-LocalCiStepResult {
+    [CmdletBinding()]
+    param([AllowNull()][object] $Record, [string] $Name)
+
+    if ($null -eq $Record) { throw 'Step result: missing record.' }
+    foreach ($field in 'Name', 'ExitCode', 'Seconds', 'StartSeconds', 'Output') {
+        if ($field -notin $Record.PSObject.Properties.Name) { throw "Step result: missing field '$field'." }
+    }
+    if ($Record.Name -isnot [string]) { throw 'Step result: Name must be a string.' }
+    if ($Record.Name -cne $Name) { throw 'Step result: name does not match the scheduled step.' }
+    if ($Record.ExitCode -isnot [long]) { throw 'Step result: ExitCode must be an integer.' }
+    foreach ($field in 'Seconds', 'StartSeconds') {
+        if ($Record.$field -isnot [long] -and $Record.$field -isnot [double]) { throw "Step result: $field must be numeric." }
+        if (-not [double]::IsFinite($Record.$field)) { throw "Step result: $field must be finite." }
+        if ($Record.$field -lt 0) { throw "Step result: $field must be nonnegative." }
+    }
+    if ($Record.Output -isnot [array]) { throw 'Step result: Output must be an array.' }
+}
+
 function Invoke-LocalCiStepSchedule {
     <#
     .SYNOPSIS
@@ -124,18 +144,13 @@ exit 0
                 for ($stepIndex = 0; $stepIndex -lt $child.Definition.Steps.Count; $stepIndex++) {
                     $step = $child.Definition.Steps[$stepIndex]
                     $record = if ($stepIndex -lt $records.Count) { $records[$stepIndex] } else { $null }
-                    $valid = $null -ne $record -and
-                        @('Name', 'ExitCode', 'Seconds', 'StartSeconds', 'Output' | Where-Object { $_ -notin $record.PSObject.Properties.Name }).Count -eq 0
-                    if ($valid) {
-                        $valid = $record.Name -ceq $step.Name -and $record.ExitCode -is [long] -and
-                            $record.Seconds -ge 0 -and $record.StartSeconds -ge 0 -and $record.Output -is [array]
-                    }
-                    if (-not $valid) {
+                    try { Assert-LocalCiStepResult -Record $record -Name $step.Name }
+                    catch {
                         $record = [pscustomobject]@{
                             Name = $step.Name; ExitCode = 1
                             StartSeconds = [Diagnostics.Stopwatch]::GetElapsedTime($StartedTimestamp, $child.Start).TotalSeconds
                             Seconds = [Diagnostics.Stopwatch]::GetElapsedTime($child.Start).TotalSeconds
-                            Output = @("Step process did not return a valid result (exit $($child.Process.ExitCode)).", $processOutput)
+                            Output = @("Step process did not return a valid result (exit $($child.Process.ExitCode)): $($_.Exception.Message)", $processOutput)
                         }
                     }
                     $items.Add($record)
@@ -163,4 +178,4 @@ exit 0
     }
 }
 
-Export-ModuleMember -Function Invoke-LocalCiStepSchedule
+Export-ModuleMember -Function Assert-LocalCiStepResult, Invoke-LocalCiStepSchedule

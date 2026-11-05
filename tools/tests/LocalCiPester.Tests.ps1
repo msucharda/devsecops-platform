@@ -26,10 +26,12 @@ Describe 'Local Pester result merging' {
         $xml.'test-results'.SetAttribute('skipped', '1')
         $xml.'test-results'.SetAttribute('ignored', '1')
         $xml.'test-results'.'test-suite'.SetAttribute('result', 'Ignored')
+        $xml.SelectSingleNode('/test-results/test-suite/results/test-suite').SetAttribute('result', 'Ignored')
         $case = $xml.SelectSingleNode('//test-case').CloneNode($true)
         $case.SetAttribute('name', 'skipped case')
         $case.SetAttribute('executed', 'False')
         $case.SetAttribute('result', 'Ignored')
+        $case.SetAttribute('success', 'False')
         $null = $xml.SelectSingleNode('//test-case').ParentNode.AppendChild($case)
         $xml.Save($report)
 
@@ -89,13 +91,30 @@ Describe 'Local Pester result merging' {
         }
     }
 
-    It 'rejects a failing test hidden by successful report metadata' {
+    It 'rejects a hidden test with <Case> despite successful report metadata' -ForEach @(
+        @{ Case = 'a failure'; Executed = 'True'; Result = 'Failure' }
+        @{ Case = 'missing executed'; Executed = $null; Result = 'Failure' }
+        @{ Case = 'unknown executed'; Executed = 'Unknown'; Result = 'Failure' }
+        @{ Case = 'lowercase executed'; Executed = 'true'; Result = 'Success' }
+        @{ Case = 'missing result'; Executed = 'True'; Result = $null }
+        @{ Case = 'unknown result'; Executed = 'True'; Result = 'Unknown' }
+        @{ Case = 'lowercase result'; Executed = 'True'; Result = 'success' }
+        @{ Case = 'unexecuted success'; Executed = 'False'; Result = 'Success' }
+        @{ Case = 'unexecuted failure'; Executed = 'False'; Result = 'Failure' }
+        @{ Case = 'executed ignored'; Executed = 'True'; Result = 'Ignored' }
+        @{ Case = 'lowercase unexecuted'; Executed = 'false'; Result = 'Ignored' }
+        @{ Case = 'lowercase ignored'; Executed = 'False'; Result = 'ignored' }
+        @{ Case = 'unexecuted unknown'; Executed = 'False'; Result = 'Unknown' }
+    ) {
         $report = Join-Path $TestDrive 'inconsistent.xml'
         $output = Join-Path $TestDrive 'inconsistent-merged.xml'
         Write-ShardReport -Path $report -File 'A.Tests.ps1'
         $xml = [xml](Get-Content $report -Raw)
         $case = $xml.SelectSingleNode('//test-case').CloneNode($true)
-        $case.SetAttribute('result', 'Failure')
+        $case.SetAttribute('result', $Result)
+        if ($null -eq $Result) { $case.RemoveAttribute('result') }
+        $case.SetAttribute('executed', $Executed)
+        if ($null -eq $Executed) { $case.RemoveAttribute('executed') }
         $case.SetAttribute('name', 'hidden failure')
         $null = $xml.SelectSingleNode('//test-case').ParentNode.AppendChild($case)
         $xml.'test-results'.SetAttribute('total', '2')
@@ -106,6 +125,70 @@ Describe 'Local Pester result merging' {
 
         $result.ExitCode | Should -Be 1
         ($result.Output -join "`n") | Should -Match 'inconsistent|no passing'
+    }
+
+    It 'accepts an executed inconclusive case alongside a passing case' {
+        $report = Join-Path $TestDrive 'inconclusive.xml'
+        Write-ShardReport -Path $report -File 'A.Tests.ps1'
+        $xml = [xml](Get-Content $report -Raw)
+        $case = $xml.SelectSingleNode('//test-case').CloneNode($true)
+        $case.SetAttribute('result', 'Inconclusive')
+        $case.SetAttribute('success', 'False')
+        $null = $xml.SelectSingleNode('//test-case').ParentNode.AppendChild($case)
+        $xml.'test-results'.SetAttribute('total', '2')
+        $xml.'test-results'.SetAttribute('inconclusive', '1')
+        # Pester 5.7.1 Get-GroupResult emits Inconclusive when no tests failed or skipped.
+        $xml.SelectSingleNode('/test-results/test-suite').SetAttribute('result', 'Inconclusive')
+        $xml.SelectSingleNode('/test-results/test-suite/results/test-suite').SetAttribute('result', 'Inconclusive')
+        $xml.Save($report)
+
+        $result = Merge-LocalCiPesterResult -Shard @(
+            @{ ResultPath = $report; Path = @('A.Tests.ps1'); ExitCode = 0 }
+        ) -RepositoryRoot $TestDrive -OutputPath (Join-Path $TestDrive 'inconclusive-merged.xml')
+
+        $result.ExitCode | Should -Be 0 -Because ($result.Output -join "`n")
+        ([xml](Get-Content (Join-Path $TestDrive 'inconclusive-merged.xml') -Raw)).'test-results'.'test-suite'.result |
+            Should -BeExactly 'Inconclusive'
+    }
+
+    It 'rejects invalid shard metadata <Case> by its own condition' -ForEach @(
+        @{ Case = 'no shards'; Change = 'shards'; Message = 'No Pester shard results' }
+        @{ Case = 'no suite'; Change = 'suite'; Message = 'Invalid Pester shard XML' }
+        @{ Case = 'no root'; Change = 'root'; Message = 'Invalid Pester shard XML' }
+        @{ Case = 'empty selection'; Change = 'selection'; Message = 'coverage.*empty' }
+        @{ Case = 'negative counter'; Change = 'counter'; Field = 'total'; Value = '-1'; Message = "counter 'total'" }
+        @{ Case = 'nonnumeric counter'; Change = 'counter'; Field = 'total'; Value = 'unknown'; Message = "counter 'total'" }
+        @{ Case = 'zero total'; Change = 'counter'; Field = 'total'; Value = '0'; Message = 'counters report failure' }
+        @{ Case = 'errors'; Change = 'counter'; Field = 'errors'; Value = '1'; Message = 'counters report failure' }
+        @{ Case = 'failures'; Change = 'counter'; Field = 'failures'; Value = '1'; Message = 'counters report failure' }
+        @{ Case = 'invalid tests'; Change = 'counter'; Field = 'invalid'; Value = '1'; Message = 'counters report failure' }
+        @{ Case = 'negative duration'; Change = 'attribute'; Field = 'time'; Value = '-1'; Message = 'Invalid Pester shard duration' }
+        @{ Case = 'unknown duration'; Change = 'attribute'; Field = 'time'; Value = 'unknown'; Message = 'Invalid Pester shard duration' }
+        @{ Case = 'NaN duration'; Change = 'attribute'; Field = 'time'; Value = 'NaN'; Message = 'Invalid Pester shard duration' }
+        @{ Case = 'unknown suite result'; Change = 'attribute'; Field = 'result'; Value = 'Unknown'; Message = 'suite outcome' }
+        @{ Case = 'suite result casing'; Change = 'attribute'; Field = 'result'; Value = 'success'; Message = 'suite outcome' }
+        @{ Case = 'suite success casing'; Change = 'attribute'; Field = 'success'; Value = 'true'; Message = 'suite outcome' }
+        @{ Case = 'no passing tests'; Change = 'cases'; Message = 'no passing executed tests' }
+    ) {
+        $report = Join-Path $TestDrive 'metadata.xml'
+        Write-ShardReport -Path $report -File 'A.Tests.ps1'
+        $xml = [xml](Get-Content $report -Raw)
+        $shards = @(@{ ResultPath = $report; Path = @('A.Tests.ps1'); ExitCode = 0 })
+        switch ($Change) {
+            'shards' { $shards = @() }
+            'suite' { $null = $xml.DocumentElement.RemoveChild($xml.SelectSingleNode('/test-results/test-suite')) }
+            'root' { $xml = [xml] '<unexpected />' }
+            'selection' { $shards[0].Path = @() }
+            'counter' { $xml.DocumentElement.SetAttribute($Field, $Value) }
+            'attribute' { $xml.SelectSingleNode('/test-results/test-suite').SetAttribute($Field, $Value) }
+            'cases' { $xml.SelectSingleNode('//test-case').SetAttribute('result', 'Inconclusive') }
+        }
+        $xml.Save($report)
+
+        $result = Merge-LocalCiPesterResult -Shard $shards -RepositoryRoot $TestDrive -OutputPath (Join-Path $TestDrive 'metadata-merged.xml')
+
+        $result.ExitCode | Should -Be 1
+        ($result.Output -join "`n") | Should -Match $Message
     }
 
     It 'preserves all file suites and adds counters and duration into one NUnit report' {
@@ -127,6 +210,51 @@ Describe 'Local Pester result merging' {
         @($xml.SelectNodes('//test-case')).Count | Should -Be 2
         @($xml.SelectNodes('/test-results/test-suite/results/test-suite').name) |
             Should -BeExactly @('A.Tests.ps1', 'B.Tests.ps1')
+    }
+
+    It 'recovers XML publication interrupted <Boundary> with <Termination>' -ForEach @(
+        @{ Boundary = 'BeforeApply'; Termination = 'Error' }
+        @{ Boundary = 'BeforeApply'; Termination = 'Abrupt' }
+        @{ Boundary = 'LoseResponse'; Termination = 'Error' }
+        @{ Boundary = 'LoseResponse'; Termination = 'Abrupt' }
+    ) {
+        $report = Join-Path $TestDrive "$Boundary-$Termination.xml"
+        $output = Join-Path $TestDrive "$Boundary-$Termination-merged.xml"
+        Write-ShardReport -Path $report -File 'A.Tests.ps1'
+        Set-Content -LiteralPath $output -Value 'Stale successful result'
+        $shards = @(@{ ResultPath = $report; Path = @('A.Tests.ps1'); ExitCode = 0 })
+        $boundaryState = @{ Interrupt = $true; Staging = $null; Final = $null; Boundary = $Boundary }
+        Mock Move-LocalCiPesterArtifact -ModuleName LocalCiPester {
+            param($Source, $Destination)
+            if (-not $boundaryState.Interrupt) { [IO.File]::Move($Source, $Destination, $true); return }
+            if ($boundaryState.Boundary -eq 'LoseResponse') { [IO.File]::Move($Source, $Destination, $true) }
+            $boundaryState.Staging = if (Test-Path $Source) { [IO.File]::ReadAllText($Source) } else { $null }
+            $boundaryState.Final = if (Test-Path $Destination) { [IO.File]::ReadAllText($Destination) } else { $null }
+            throw 'Publication interrupted'
+        }
+
+        $result = Merge-LocalCiPesterResult -Shard $shards -RepositoryRoot $TestDrive -OutputPath $output
+
+        $result.ExitCode | Should -Be 1
+        ($result.Output -join "`n") | Should -Match 'Publication interrupted'
+        Test-Path -LiteralPath "$output.new" | Should -BeFalse
+        if ($Boundary -eq 'BeforeApply') {
+            Test-Path -LiteralPath $output | Should -BeFalse
+            ([xml] $boundaryState.Staging).'test-results'.'test-suite'.success | Should -BeExactly 'True'
+        }
+        else { ([xml](Get-Content $output -Raw)).'test-results'.'test-suite'.success | Should -BeExactly 'True' }
+        if ($Termination -eq 'Abrupt') {
+            # Restore the filesystem snapshot from the boundary, discarding finally's cleanup.
+            if ($null -ne $boundaryState.Staging) { [IO.File]::WriteAllText("$output.new", $boundaryState.Staging) }
+            if ($null -ne $boundaryState.Final) { [IO.File]::WriteAllText($output, $boundaryState.Final) }
+        }
+        $boundaryState.Interrupt = $false
+
+        $retry = Merge-LocalCiPesterResult -Shard $shards -RepositoryRoot $TestDrive -OutputPath $output
+
+        $retry.ExitCode | Should -Be 0 -Because ($retry.Output -join "`n")
+        ([xml](Get-Content $output -Raw)).'test-results'.total | Should -BeExactly '1'
+        Test-Path -LiteralPath "$output.new" | Should -BeFalse
     }
 
     Describe 'Local Pester parallel execution' {
@@ -198,6 +326,51 @@ $suites = foreach ($file in $Path) {
             }
             ($result.Output -join "`n") | Should -Match 'Pester shard 0 completed:.*wall'
             ($result.Output -join "`n") | Should -Match 'Pester file.*A.Tests.ps1.*1.000'
+        }
+
+        It 'reserves nested child capacity without overlapping peer shards for <Case>' -ForEach @(
+            @{ Case = 'one file'; Peers = @() }
+            @{ Case = 'multiple files'; Peers = @('tools/tests/A.Tests.ps1', 'tools/tests/B.Tests.ps1') }
+        ) {
+            $nested = 'tools/tests/InstanceSetupManualSteps.Tests.ps1'
+            Set-Content (Join-Path $root $nested) '# Nested-process fixture'
+            Set-Content (Join-Path $root 'tools/pester-durations.psd1') "@{ 'InstanceSetupManualSteps.Tests.ps1'=100 }"
+            Set-Content (Join-Path $root 'tools/Invoke-Tests.ps1') @'
+param([switch] $CI, [string[]] $Path, [string] $ResultPath)
+$ErrorActionPreference = 'Stop'
+$root = Split-Path $PSScriptRoot -Parent
+if ($Path -contains 'tools/tests/InstanceSetupManualSteps.Tests.ps1') {
+    if ($env:LOCAL_CI_WORKER_BUDGET -ne '3') { throw 'Nested suite did not receive its reserved three slots.' }
+    Start-Sleep -Milliseconds 100
+    [IO.File]::WriteAllText((Join-Path $root 'nested-done'), '')
+}
+else {
+    if ($env:LOCAL_CI_WORKER_BUDGET -ne '1') { throw 'Peer shard received unreserved slots.' }
+    if (-not (Test-Path (Join-Path $root 'nested-done'))) { throw 'Peer shard exceeded the reserved capacity.' }
+}
+$suites = foreach ($file in $Path) {
+    "<test-suite name=`"$file`" time=`"1`"><results><test-case executed=`"True`" result=`"Success`" /></results></test-suite>"
+}
+@"
+<test-results total="$($Path.Count)" errors="0" failures="0" not-run="0" inconclusive="0" ignored="0" skipped="0" invalid="0">
+<test-suite result="Success" success="True" time="1"><results>$($suites -join '')</results></test-suite></test-results>
+"@ | Set-Content -LiteralPath $ResultPath
+'@
+            $sidecar = Join-Path $root 'nested-shards.json'
+            $group = Get-LocalCiPesterStepGroup -RepositoryRoot $root -Path (@($nested) + $Peers) -GrantedShardCount 3 -TimingPath $sidecar
+            $group.Slots | Should -Be 3
+            $savedTemp = $env:TEMP
+            try {
+                $env:TEMP = Join-Path $root 'scratch'
+                $output = @(& ([scriptblock]::Create($group.Steps[0].Script)))
+                $LASTEXITCODE | Should -Be 0 -Because ($output -join "`n")
+            }
+            finally { $env:TEMP = $savedTemp }
+            $shards = @(Get-Content $sidecar -Raw | ConvertFrom-Json)
+            $shards.Count | Should -Be (1 + $Peers.Count)
+            ($shards | Where-Object { $_.Path -contains $nested }).Slots | Should -Be 3
+            @($shards | Where-Object { $_.Path -notcontains $nested } | Select-Object -ExpandProperty Slots) |
+                Should -BeExactly @($Peers | ForEach-Object { 1 })
         }
 
         It 'fails the combined result on a shard <Case>, waits for peers, and can rerun safely' -ForEach @(

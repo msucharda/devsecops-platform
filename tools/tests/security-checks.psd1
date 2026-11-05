@@ -4,6 +4,28 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'local-ci-pester-case'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiPester.Tests.ps1'
+                FullName = @('*accepts the Pester Ignored root variant*', '*accepts an executed inconclusive case*', '*rejects a hidden test*')
+            })
+        }
+        @{
+            Name = 'local-ci-pester-result'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiPester.Tests.ps1'
+                FullName = @('*accepts the Pester Ignored root variant*', '*accepts an executed inconclusive case*', '*fails closed for <Case>*',
+                    '*rejects a hidden test*', '*rejects invalid shard metadata*', '*preserves all file suites*')
+            })
+        }
+        @{
+            Name = 'local-ci-step-result'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiGate.Unit.Tests.ps1'
+                FullName = 'Local CI step result acceptance*'
+            })
+        }
+        @{
             Name = 'local-ci-unix-temp-access'
             Tests = @(@{
                 Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'

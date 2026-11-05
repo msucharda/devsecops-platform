@@ -36,6 +36,11 @@ function Set-LocalCiTimingPhase {
     $Timing.PhaseStart = $elapsed
 }
 
+function Move-LocalCiTimingArtifact {
+    param([string] $Source, [string] $Destination)
+    [IO.File]::Move($Source, $Destination, $true)
+}
+
 function Save-LocalCiTiming {
     [CmdletBinding()]
     param(
@@ -45,6 +50,8 @@ function Save-LocalCiTiming {
         [Parameter(Mandatory)][int] $ExitCode
     )
 
+    $staging = "$Path.new"
+    Remove-Item -LiteralPath $Path, $staging -Force -ErrorAction SilentlyContinue
     Set-LocalCiTimingPhase -Timing $Timing -Name 'Complete'
     $summary = [ordered]@{
         Schema = 1
@@ -58,7 +65,11 @@ function Save-LocalCiTiming {
     if ($Timing.ContainsKey('MachineQueue')) { $summary.MachineQueue = $Timing.MachineQueue }
     if ($Timing.ContainsKey('PesterShards')) { $summary.PesterShards = $Timing.PesterShards }
     if ($Timing.ContainsKey('Steps')) { $summary.Steps = $Timing.Steps }
-    $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
+    try {
+        $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $staging -Encoding utf8NoBOM
+        Move-LocalCiTimingArtifact -Source $staging -Destination $Path
+    }
+    finally { Remove-Item -LiteralPath $staging -Force -ErrorAction SilentlyContinue }
 }
 
 Export-ModuleMember -Function New-LocalCiTiming, Set-LocalCiTimingPhase, Save-LocalCiTiming

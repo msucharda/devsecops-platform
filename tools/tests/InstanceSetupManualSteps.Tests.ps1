@@ -117,6 +117,13 @@ Describe 'Instance setup manual steps through the public wizard' {
                 }
             }
             & $startAvailableChildren
+            # The parent lends its share to the children and blocks until all of them return it.
+            while ($runningChildren.Count -gt 0) {
+                if (-not $runningChildren[0].Process.WaitForExit(120000)) {
+                    throw 'The manual-step interruption child did not finish within 120 seconds.'
+                }
+                & $startAvailableChildren
+            }
             return $initialPromptCount
         }
     }
@@ -337,19 +344,9 @@ Describe 'Instance setup manual steps through the public wizard' {
         $arguments.ModulesPath = $child.Modules
         $path = Join-Path $work 'manual-steps-state.json'
         $originalProgress = $child.OriginalProgress
-        while (-not $child.ContainsKey('Process')) {
-            if (-not $runningChildren[0].Process.WaitForExit(120000)) {
-                throw 'The manual-step interruption child did not finish within 120 seconds.'
-            }
-            & $startAvailableChildren
-        }
-        if (-not $child.Process.WaitForExit(120000)) {
-            $child.Process.Kill($true)
-            throw 'The manual-step interruption child did not finish within 120 seconds.'
-        }
         $output = $child.Stdout.GetAwaiter().GetResult() + $child.Stderr.GetAwaiter().GetResult()
-        # Refill slots before this case's assertions and resume validation.
-        & $startAvailableChildren
+        # The parent resumes the wizard only after its full slot share is returned by the children.
+        @($interruptionChildren.Values | Where-Object { -not $_.ContainsKey('Process') -or -not $_.Process.HasExited }).Count | Should -Be 0
         $child.Process.ExitCode | Should -Be $ExitCode -Because $output
         (Get-FileHash -LiteralPath $sourcePath).Hash | Should -BeExactly $sourceHash
         if ($ExpectedStatus -ceq 'Missing') {

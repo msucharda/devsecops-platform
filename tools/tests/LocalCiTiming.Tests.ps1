@@ -3,6 +3,73 @@ BeforeAll {
 }
 
 Describe 'Local CI timing artifact' {
+    It 'recovers a partial timing staging write with <Termination>' -ForEach @(
+        @{ Termination = 'Error' }, @{ Termination = 'Abrupt' }
+    ) {
+        $path = Join-Path $TestDrive "partial-$Termination.timings.json"
+        $boundaryState = @{ Interrupt = $true; Path = $null; Content = '{"Schema":' }
+        Mock Set-Content -ModuleName LocalCiTiming {
+            param($LiteralPath, $Value)
+            if (-not $boundaryState.Interrupt) { [IO.File]::WriteAllText($LiteralPath, [string] $Value); return }
+            [IO.File]::WriteAllText($LiteralPath, $boundaryState.Content)
+            $boundaryState.Path = $LiteralPath
+            throw 'Interrupted staging write'
+        }
+
+        { Save-LocalCiTiming -Timing (New-LocalCiTiming) -Path $path -Mode Changed -ExitCode 0 } |
+            Should -Throw '*Interrupted staging write*'
+
+        Test-Path -LiteralPath $path | Should -BeFalse
+        Test-Path -LiteralPath "$path.new" | Should -BeFalse
+        if ($Termination -eq 'Abrupt') { [IO.File]::WriteAllText($boundaryState.Path, $boundaryState.Content) }
+        $boundaryState.Interrupt = $false
+
+        Save-LocalCiTiming -Timing (New-LocalCiTiming) -Path $path -Mode Changed -ExitCode 0
+
+        (Get-Content $path -Raw | ConvertFrom-Json).Status | Should -BeExactly 'passed'
+        Test-Path -LiteralPath "$path.new" | Should -BeFalse
+    }
+
+    It 'recovers timing publication interrupted <Boundary> with <Termination>' -ForEach @(
+        @{ Boundary = 'BeforeApply'; Termination = 'Error' }
+        @{ Boundary = 'BeforeApply'; Termination = 'Abrupt' }
+        @{ Boundary = 'LoseResponse'; Termination = 'Error' }
+        @{ Boundary = 'LoseResponse'; Termination = 'Abrupt' }
+    ) {
+        $path = Join-Path $TestDrive "$Boundary-$Termination.timings.json"
+        Set-Content -LiteralPath $path -Value 'Stale successful timing'
+        $boundaryState = @{ Interrupt = $true; Staging = $null; Final = $null; Boundary = $Boundary }
+        Mock Move-LocalCiTimingArtifact -ModuleName LocalCiTiming {
+            param($Source, $Destination)
+            if (-not $boundaryState.Interrupt) { [IO.File]::Move($Source, $Destination, $true); return }
+            if ($boundaryState.Boundary -eq 'LoseResponse') { [IO.File]::Move($Source, $Destination, $true) }
+            $boundaryState.Staging = if (Test-Path $Source) { [IO.File]::ReadAllText($Source) } else { $null }
+            $boundaryState.Final = if (Test-Path $Destination) { [IO.File]::ReadAllText($Destination) } else { $null }
+            throw 'Publication interrupted'
+        }
+
+        { Save-LocalCiTiming -Timing (New-LocalCiTiming) -Path $path -Mode Changed -ExitCode 1 } |
+            Should -Throw '*Publication interrupted*'
+
+        Test-Path -LiteralPath "$path.new" | Should -BeFalse
+        if ($Boundary -eq 'BeforeApply') {
+            Test-Path -LiteralPath $path | Should -BeFalse
+            ($boundaryState.Staging | ConvertFrom-Json).Status | Should -BeExactly 'failed'
+        }
+        else { (Get-Content $path -Raw | ConvertFrom-Json).Status | Should -BeExactly 'failed' }
+        if ($Termination -eq 'Abrupt') {
+            # Restore the filesystem snapshot from the boundary, discarding finally's cleanup.
+            if ($null -ne $boundaryState.Staging) { [IO.File]::WriteAllText("$path.new", $boundaryState.Staging) }
+            if ($null -ne $boundaryState.Final) { [IO.File]::WriteAllText($path, $boundaryState.Final) }
+        }
+        $boundaryState.Interrupt = $false
+
+        Save-LocalCiTiming -Timing (New-LocalCiTiming) -Path $path -Mode Changed -ExitCode 0
+
+        (Get-Content $path -Raw | ConvertFrom-Json).Status | Should -BeExactly 'passed'
+        Test-Path -LiteralPath "$path.new" | Should -BeFalse
+    }
+
     It 'persists shard wall times, counts and per-file durations without truncating nested records' {
         $timing = New-LocalCiTiming
         $timing.PesterShards = @(

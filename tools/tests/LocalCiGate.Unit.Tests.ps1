@@ -4,6 +4,54 @@ BeforeAll {
     $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 }
 
+Describe 'Local CI step result acceptance' {
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot '../LocalCiSteps.psm1') -Force
+    }
+
+    BeforeEach {
+        $record = '{"Name":"Pester","ExitCode":0,"Seconds":1.25,"StartSeconds":0.5,"Output":["passed"]}' | ConvertFrom-Json
+    }
+
+    It 'accepts a complete result for exit <Code>' -ForEach @(@{ Code = 0 }, @{ Code = 7 }) {
+        $record.ExitCode = [long] $Code
+        { Assert-LocalCiStepResult -Record $record -Name 'Pester' } | Should -Not -Throw
+    }
+
+    It 'rejects the missing field <Field> by name' -ForEach @(
+        @{ Field = 'Name' }, @{ Field = 'ExitCode' }, @{ Field = 'Seconds' }, @{ Field = 'StartSeconds' }, @{ Field = 'Output' }
+    ) {
+        $record.PSObject.Properties.Remove($Field)
+
+        { Assert-LocalCiStepResult -Record $record -Name 'Pester' } | Should -Throw "*missing field '$Field'*"
+    }
+
+    It 'rejects <Case> by its own condition' -ForEach @(
+        @{ Case = 'a null record'; Field = $null; Value = $null; Message = '*missing record*' }
+        @{ Case = 'an empty name array'; Field = 'Name'; Value = @(); Message = '*Name must be a string*' }
+        @{ Case = 'a single-element name array'; Field = 'Name'; Value = @('Pester'); Message = '*Name must be a string*' }
+        @{ Case = 'a null name'; Field = 'Name'; Value = $null; Message = '*Name must be a string*' }
+        @{ Case = 'a different name'; Field = 'Name'; Value = 'Static'; Message = '*name does not match*' }
+        @{ Case = 'name casing'; Field = 'Name'; Value = 'pester'; Message = '*name does not match*' }
+        @{ Case = 'a string exit code'; Field = 'ExitCode'; Value = '0'; Message = '*ExitCode must be an integer*' }
+        @{ Case = 'a decimal exit code'; Field = 'ExitCode'; Value = 0.5; Message = '*ExitCode must be an integer*' }
+        @{ Case = 'a boolean exit code'; Field = 'ExitCode'; Value = $false; Message = '*ExitCode must be an integer*' }
+        @{ Case = 'a null exit code'; Field = 'ExitCode'; Value = $null; Message = '*ExitCode must be an integer*' }
+        @{ Case = 'negative duration'; Field = 'Seconds'; Value = -0.5; Message = '*Seconds must be nonnegative*' }
+        @{ Case = 'negative start offset'; Field = 'StartSeconds'; Value = -0.5; Message = '*StartSeconds must be nonnegative*' }
+        @{ Case = 'string duration'; Field = 'Seconds'; Value = '1'; Message = '*Seconds must be numeric*' }
+        @{ Case = 'null start offset'; Field = 'StartSeconds'; Value = $null; Message = '*StartSeconds must be numeric*' }
+        @{ Case = 'NaN duration'; Field = 'Seconds'; Value = [double]::NaN; Message = '*Seconds must be finite*' }
+        @{ Case = 'infinite start offset'; Field = 'StartSeconds'; Value = [double]::PositiveInfinity; Message = '*StartSeconds must be finite*' }
+        @{ Case = 'string output'; Field = 'Output'; Value = 'passed'; Message = '*Output must be an array*' }
+        @{ Case = 'null output'; Field = 'Output'; Value = $null; Message = '*Output must be an array*' }
+    ) {
+        if ($null -eq $Field) { $record = $null } else { $record.$Field = $Value }
+
+        { Assert-LocalCiStepResult -Record $record -Name 'Pester' } | Should -Throw $Message
+    }
+}
+
 Describe 'Local CI step scheduling' {
     BeforeAll {
         Import-Module (Join-Path $PSScriptRoot '../LocalCiSteps.psm1') -Force

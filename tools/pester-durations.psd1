@@ -40,8 +40,8 @@
     'WorkflowGenerator.Tests.ps1' = 10
     'TeardownEnterpriseOwner.Tests.ps1' = 6
     'InstanceSetup.Tests.ps1' = 6
-    # Warm Windows ABBA comparison (2026-11-05): median 20.99935 seconds, rounded up.
-    'InstanceSetupManualSteps.Tests.ps1' = 21
+    # Windows targeted run with three reserved nested slots (2026-11-05): 24.21 seconds, rounded up.
+    'InstanceSetupManualSteps.Tests.ps1' = 25
     # Token suites measured in Source CI run 40819725706, rounded up.
     # GitHubAppToken measured in Source CI run 40921301537: 7.6856 seconds, rounded up.
     'GitHubAppToken.Tests.ps1' = 8
