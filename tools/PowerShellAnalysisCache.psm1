@@ -13,8 +13,9 @@ function Assert-PowerShellAnalysisCacheEntry {
     if ($File.Length -gt 4096) { throw 'Cache entry is too large.' }
     $entry = [IO.File]::ReadAllText($File.FullName) | ConvertFrom-Json -AsHashtable -NoEnumerate
     if ($entry['Schema'] -isnot [long] -or $entry['Schema'] -ne 1) { throw 'Invalid cache schema.' }
-    if ($entry['Key'] -isnot [string] -or $entry['Key'] -cne $Key) { throw 'Cache key differs.' }
-    if ($entry['Status'] -isnot [string] -or $entry['Status'] -cne 'Passed') { throw 'Cache result did not pass.' }
+    # Culture-aware string equality ignores some Unicode characters; these ASCII tokens must match exactly.
+    if ($entry['Key'] -isnot [string] -or $entry['Key'] -cnotmatch "\A$Key\z") { throw 'Cache key differs.' }
+    if ($entry['Status'] -isnot [string] -or $entry['Status'] -cnotmatch '\APassed\z') { throw 'Cache result did not pass.' }
     if ($entry['CompletedAtUtcTicks'] -isnot [long]) { throw 'Invalid cache completion time.' }
     $now = [datetime]::UtcNow.Ticks
     if ($entry['CompletedAtUtcTicks'] -gt $now) { throw 'Cache completion time is in the future.' }

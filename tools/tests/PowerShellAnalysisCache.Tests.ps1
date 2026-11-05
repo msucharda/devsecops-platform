@@ -76,12 +76,14 @@ Describe 'PowerShell analysis cache' {
         @{ Case = 'array key'; Field = 'Key'; ArrayKey = $true }
         @{ Case = 'different key'; Field = 'Key'; Value = 'other' }
         @{ Case = 'key casing'; Field = 'Key'; LowerKey = $true }
+        @{ Case = 'key with an ignorable character'; Field = 'Key'; IgnorableKey = $true }
         @{ Case = 'missing status'; Field = 'Status'; Remove = $true }
         @{ Case = 'nonstring status'; Field = 'Status'; Value = $true }
         @{ Case = 'array status'; Field = 'Status'; Value = @('Passed') }
         @{ Case = 'failed status'; Field = 'Status'; Value = 'Failed' }
         @{ Case = 'empty status'; Field = 'Status'; Value = '' }
         @{ Case = 'status casing'; Field = 'Status'; Value = 'passed' }
+        @{ Case = 'status with an ignorable character'; Field = 'Status'; Value = "Pa`u{200B}ssed" }
         @{ Case = 'missing completion'; Field = 'CompletedAtUtcTicks'; Remove = $true }
         @{ Case = 'string completion'; Field = 'CompletedAtUtcTicks'; StringCompletion = $true }
         @{ Case = 'fractional completion'; Field = 'CompletedAtUtcTicks'; Value = 1.5 }
@@ -98,6 +100,7 @@ Describe 'PowerShell analysis cache' {
             if ($_.ContainsKey('Oversized')) { $receipt['Padding'] = 'excess data' }
             elseif ($_.ContainsKey('Remove')) { $receipt.Remove($Field) }
             elseif ($_.ContainsKey('LowerKey')) { $receipt[$Field] = $receipt[$Field].ToLowerInvariant() }
+            elseif ($_.ContainsKey('IgnorableKey')) { $receipt[$Field] = $receipt[$Field].Insert(1, "`u{200B}") }
             elseif ($_.ContainsKey('ArrayKey')) { $receipt[$Field] = @($receipt[$Field]) }
             elseif ($_.ContainsKey('StringCompletion')) { $receipt[$Field] = [string] $receipt[$Field] }
             elseif ($_.ContainsKey('Future')) { $receipt[$Field] = [datetime]::UtcNow.AddDays(1).Ticks }
