@@ -348,7 +348,7 @@ Podle [GitHub kontraktu immutable subject claims](https://docs.github.com/en/act
 
 `approve-apply` vyžaduje platformní tým. Apply modulu `enterprise-baseline` navíc vyžaduje security tým. GitHub v jednom environmentu vyžaduje schválení pouze jednoho z uvedených reviewerů. Teardown proto používá dva navazující gate environmenty: `approve-teardown-platform` vyžaduje platformní tým a `teardown` security tým. Oba nemají secrets, variables ani federated credentials. Workflow `teardown` spustí druhý gate až po úspěchu prvního. Joby destroy čerpají credentials v apply environmentech modulů, mimo oba gate environmenty.
 
-Brána `approve_apply` vyžaduje úspěšné joby `authorize`, `select` a `plan_complete`, povolenou autorizaci a neprázdný výběr modulů na `main` mimo PR. Přeskočené joby nevybraných modulů schválení neblokují. Zrušený běh schválení nenabídne. Každý apply job navíc vyžaduje úspěšnou společnou bránu, vlastní plan a apply svých předpokladů.
+Brána `approve_apply` vyžaduje úspěšné joby `authorize`, `select` a `plan_complete`, povolenou autorizaci, neprázdný výběr modulů na `main` mimo PR a alespoň jeden vybraný plan s `changes=true`. Pokud žádný vybraný plan nemá změny, workflow přeskočí approval i apply. Přeskočené joby nevybraných modulů schválení neblokují. Zrušený běh schválení nenabídne. Každý apply job navíc vyžaduje úspěšnou společnou bránu, vlastní plan a apply svých předpokladů.
 
 ### Opakování, evidence a rotace
 
