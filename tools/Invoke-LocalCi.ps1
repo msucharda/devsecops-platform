@@ -482,6 +482,7 @@ try {
     if ($mode -eq 'Changed' -and $selection.PesterPath.Count -gt 0) {
         Invoke-Step -Name 'Run Pester' -Pester -Body {
             $result = Invoke-LocalCiPester -RepositoryRoot $repo -Path $selection.PesterPath -ShardCount $machineLease.Slots -TempPath $temp
+            $timing.PesterShards = $result.Shards
             foreach ($line in $result.Output) { Add-LogLine $line }
             $result
         }

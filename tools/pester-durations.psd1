@@ -30,8 +30,8 @@
     'Vendoring.Tests.ps1' = 2
     'LocalCi.Tests.ps1' = 9
     'LocalCiConcurrency.Tests.ps1' = 10
-    # Windows targeted run (2026-11-05): 16.33 seconds, rounded up.
-    'LocalCiPester.Tests.ps1' = 17
+    # Windows targeted run with stubbed process-boundary cases (2026-11-05): 6.51 seconds, rounded up.
+    'LocalCiPester.Tests.ps1' = 7
     'InstanceConfiguration.Tests.ps1' = 8
     'GitHubAcceptanceProbe.Tests.ps1' = 7
     # Source CI run 40961020894: 3.7723 seconds, rounded up.

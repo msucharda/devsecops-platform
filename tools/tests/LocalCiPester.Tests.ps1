@@ -179,31 +179,66 @@ $suites = foreach ($file in $Path) {
             foreach ($shard in $result.Shards) {
                 Test-Path -LiteralPath $shard.ResultPath | Should -BeTrue
                 Test-Path -LiteralPath $shard.LogPath | Should -BeTrue
+                $shard.FileCount | Should -Be 2
+                $shard.Seconds | Should -BeGreaterThan 0
+                $shard.Files.Count | Should -Be 2
+                $shard.Files.Seconds | Should -BeExactly @(1, 1)
             }
+            ($result.Output -join "`n") | Should -Match 'Pester shard 0 completed:.*wall'
+            ($result.Output -join "`n") | Should -Match 'Pester file.*A.Tests.ps1.*1.000'
         }
 
         It 'fails the combined result on a shard <Case>, waits for peers, and can rerun safely' -ForEach @(
-                @{ Case = 'nonzero exit'; Tail = 'exit 7'; Message = 'exit 7'; Timeout = 15 }
-                @{ Case = 'crash'; Tail = '[Environment]::Exit(8)'; Message = 'exit 8'; Timeout = 15 }
-                @{ Case = 'missing XML'; Tail = 'Remove-Item -LiteralPath $ResultPath'; Message = 'Missing Pester shard XML'; Timeout = 15 }
-                @{ Case = 'timeout after XML'; Tail = 'Start-Sleep -Seconds 30'; Message = 'timed out'; Timeout = 3 }
-            ) {
-                $runner = Join-Path $root 'tools/Invoke-Tests.ps1'
-                $body = Get-Content $runner -Raw
-                Add-Content $runner "`nif (`$Path -contains 'tools/tests/A.Tests.ps1') { $Tail }"
-                $files = @('tools/tests/A.Tests.ps1', 'tools/tests/B.Tests.ps1')
-                $result = Invoke-LocalCiPester -RepositoryRoot $root -Path $files -ShardCount 2 -TempPath (Join-Path $root 'scratch') -TimeoutSeconds $Timeout
-
-                $result.ExitCode | Should -Be 1
-                ($result.Output -join "`n") | Should -Match $Message
-                @($result.Shards | Where-Object ExitCode -EQ 0).Count | Should -Be $(if ($Case -eq 'missing XML') { 2 } else { 1 })
-                foreach ($shard in $result.Shards) { Test-Path $shard.LogPath | Should -BeTrue }
-                Set-Content $runner $body
-
-                $retry = Invoke-LocalCiPester -RepositoryRoot $root -Path $files -ShardCount 2 -TempPath (Join-Path $root 'scratch')
-                $retry.ExitCode | Should -Be 0 -Because ($retry.Output -join "`n")
-                $retry.Shards[0].ResultPath | Should -Not -Be $result.Shards[0].ResultPath
+            @{ Case = 'nonzero exit'; Message = 'exit 7' }
+            @{ Case = 'crash'; Message = 'exit 8' }
+            @{ Case = 'missing XML'; Message = 'Missing Pester shard XML' }
+            @{ Case = 'timeout after XML'; Message = 'timed out' }
+        ) {
+            $behavior = @{ Mode = $Case }
+            # Stub the operating-system process boundary; the merge and fail-closed paths stay real.
+            Mock Invoke-LocalCiPesterProcess -ModuleName LocalCiPester {
+                param($Path, $ResultPath)
+                $mode = if ($Path -contains 'tools/tests/A.Tests.ps1') { $behavior.Mode } else { 'success' }
+                if ($mode -notin @('missing XML', 'crash')) { Write-ShardReport -Path $ResultPath -File $Path[0] }
+                $stream = [pscustomobject]@{}
+                $stream | Add-Member ScriptMethod ReadToEndAsync { [Threading.Tasks.Task]::FromResult[string]('Stub child output') }
+                $end = [datetime]::UtcNow
+                $process = [pscustomobject]@{
+                    HasExited = $mode -ne 'timeout after XML'; EnableRaisingEvents = $false
+                    ExitCode = if ($mode -eq 'nonzero exit') { 7 } elseif ($mode -eq 'crash') { 8 } else { 0 }
+                    StandardOutput = $stream; StandardError = $stream
+                    StartTime = $end.AddSeconds(-1.5); ExitTime = $end
+                }
+                $process | Add-Member ScriptMethod WaitForExit { param($Milliseconds) if ($null -ne $Milliseconds) { return $false } }
+                $process | Add-Member ScriptMethod Kill { $this.HasExited = $true }
+                $process | Add-Member ScriptMethod Dispose {}
+                return $process
             }
+            $files = @('tools/tests/A.Tests.ps1', 'tools/tests/B.Tests.ps1')
+            $result = Invoke-LocalCiPester -RepositoryRoot $root -Path $files -ShardCount 2 -TempPath (Join-Path $root 'scratch')
+
+            $result.ExitCode | Should -Be 1
+            $result.Shards.Seconds | Should -BeExactly @(1.5, 1.5)
+            ($result.Output -join "`n") | Should -Match $Message
+            @($result.Shards | Where-Object ExitCode -EQ 0).Count | Should -Be $(if ($Case -eq 'missing XML') { 2 } else { 1 })
+            foreach ($shard in $result.Shards) { Test-Path $shard.LogPath | Should -BeTrue }
+            $behavior.Mode = 'success'
+
+            $retry = Invoke-LocalCiPester -RepositoryRoot $root -Path $files -ShardCount 2 -TempPath (Join-Path $root 'scratch')
+            $retry.ExitCode | Should -Be 0 -Because ($retry.Output -join "`n")
+            $retry.Shards[0].ResultPath | Should -Not -Be $result.Shards[0].ResultPath
+        }
+
+        It 'terminates a real sleeping child at the timeout boundary' {
+            Set-Content (Join-Path $root 'tools/Invoke-Tests.ps1') 'param([switch] $CI, [string[]] $Path, [string] $ResultPath); Start-Sleep -Seconds 30'
+
+            $result = Invoke-LocalCiPester -RepositoryRoot $root -Path 'tools/tests/A.Tests.ps1' -ShardCount 1 -TempPath (Join-Path $root 'scratch') -TimeoutSeconds 1
+
+            $result.ExitCode | Should -Be 1
+            ($result.Output -join "`n") | Should -Match 'timed out'
+            $result.Shards[0].Seconds | Should -BeGreaterThan 0
+            Test-Path (Join-Path $root 'artifacts/pester.xml') | Should -BeFalse
+        }
 
             It 'clears an older success even if selection fails before a child starts' {
                 $null = New-Item -ItemType Directory -Force -Path (Join-Path $root 'artifacts')

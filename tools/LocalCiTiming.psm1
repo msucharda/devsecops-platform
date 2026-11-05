@@ -56,7 +56,8 @@ function Save-LocalCiTiming {
         Phases = $Timing.Phases.ToArray()
     }
     if ($Timing.ContainsKey('MachineQueue')) { $summary.MachineQueue = $Timing.MachineQueue }
-    $summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
+    if ($Timing.ContainsKey('PesterShards')) { $summary.PesterShards = $Timing.PesterShards }
+    $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
 }
 
 Export-ModuleMember -Function New-LocalCiTiming, Set-LocalCiTimingPhase, Save-LocalCiTiming

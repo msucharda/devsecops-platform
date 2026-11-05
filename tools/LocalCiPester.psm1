@@ -171,6 +171,24 @@ function Merge-LocalCiPesterResult {
     return [pscustomobject]@{ ExitCode = $code; Output = $messages.ToArray() }
 }
 
+function Invoke-LocalCiPesterProcess {
+    param([string] $RepositoryRoot, [string[]] $Path, [string] $ResultPath, [string] $TempPath)
+    $parameters = @{ CI = $true; Path = $Path; ResultPath = $ResultPath }
+    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($parameters | ConvertTo-Json -Compress)))
+    $runner = (Join-Path $RepositoryRoot 'tools/Invoke-Tests.ps1').Replace("'", "''")
+    $command = "`$ErrorActionPreference = 'Stop'; `$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$payload')) | ConvertFrom-Json -AsHashtable; & '$runner' @p; if (Test-Path variable:\LASTEXITCODE) { exit `$LASTEXITCODE }"
+    $start = [Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
+    $start.UseShellExecute = $false
+    $start.WorkingDirectory = $RepositoryRoot
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    foreach ($argument in '-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand',
+        [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))) { $start.ArgumentList.Add($argument) }
+    foreach ($name in 'TEMP', 'TMP', 'TMPDIR') { $start.Environment[$name] = $TempPath }
+    $start.Environment['LOCAL_CI_WORKER_BUDGET'] = '1'
+    return [Diagnostics.Process]::Start($start)
+}
+
 function Invoke-LocalCiPester {
     <#
     .SYNOPSIS
@@ -198,6 +216,8 @@ function Invoke-LocalCiPester {
         $null = New-Item -ItemType Directory -Force -Path $run
         foreach ($shard in $plan) {
             $worker = [pscustomobject]@{
+                Index = $shard.Index; FileCount = $shard.Path.Count; EstimatedSeconds = $shard.Seconds
+                Seconds = 0.0; PesterSeconds = $null; OverheadSeconds = $null; Files = @(); StartedAt = $null
                 Path = $shard.Path; ResultPath = Join-Path $run "$($shard.Index).xml"
                 LogPath = Join-Path $run "$($shard.Index).log"; Process = $null
                 Stdout = $null; Stderr = $null; Watch = [Diagnostics.Stopwatch]::StartNew(); ExitCode = 1
@@ -206,20 +226,9 @@ function Invoke-LocalCiPester {
             try {
                 $directory = Join-Path $TempPath "p$($shard.Index)"
                 $null = New-Item -ItemType Directory -Force -Path $directory
-                $parameters = @{ CI = $true; Path = $shard.Path; ResultPath = $worker.ResultPath }
-                $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($parameters | ConvertTo-Json -Compress)))
-                $runner = (Join-Path $RepositoryRoot 'tools/Invoke-Tests.ps1').Replace("'", "''")
-                $command = "`$ErrorActionPreference = 'Stop'; `$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$payload')) | ConvertFrom-Json -AsHashtable; & '$runner' @p; if (Test-Path variable:\LASTEXITCODE) { exit `$LASTEXITCODE }"
-                $start = [Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
-                $start.UseShellExecute = $false
-                $start.WorkingDirectory = $RepositoryRoot
-                $start.RedirectStandardOutput = $true
-                $start.RedirectStandardError = $true
-                foreach ($argument in '-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand',
-                    [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))) { $start.ArgumentList.Add($argument) }
-                foreach ($name in 'TEMP', 'TMP', 'TMPDIR') { $start.Environment[$name] = $directory }
-                $start.Environment['LOCAL_CI_WORKER_BUDGET'] = '1'
-                $worker.Process = [Diagnostics.Process]::Start($start)
+                $worker.Process = Invoke-LocalCiPesterProcess -RepositoryRoot $RepositoryRoot -Path $shard.Path -ResultPath $worker.ResultPath -TempPath $directory
+                $worker.StartedAt = $worker.Process.StartTime.ToUniversalTime()
+                $worker.Process.EnableRaisingEvents = $true
                 $worker.Stdout = $worker.Process.StandardOutput.ReadToEndAsync()
                 $worker.Stderr = $worker.Process.StandardError.ReadToEndAsync()
                 $messages.Add("Pester shard $($shard.Index): $($shard.Path.Count) files; estimated $($shard.Seconds)s; XML $($worker.ResultPath)")
@@ -235,9 +244,31 @@ function Invoke-LocalCiPester {
                 $worker.Process.WaitForExit()
             }
             else { $worker.ExitCode = $worker.Process.ExitCode }
+            $worker.Seconds = ($worker.Process.ExitTime.ToUniversalTime() - $worker.StartedAt).TotalSeconds
             $text = $worker.Stdout.GetAwaiter().GetResult() + $worker.Stderr.GetAwaiter().GetResult()
             Set-Content -LiteralPath $worker.LogPath -Value $text -Encoding utf8NoBOM
             $messages.AddRange([string[]] ($text -split '\r?\n' | ForEach-Object { $_ -replace '\x1b\[[0-9;]*[A-Za-z]', '' }))
+            try {
+                $xml = Read-LocalCiPesterXml -Path $worker.ResultPath
+                $suite = $xml.SelectSingleNode('/test-results/test-suite')
+                $worker.PesterSeconds = [double]::Parse($suite.GetAttribute('time'), [Globalization.CultureInfo]::InvariantCulture)
+                $worker.OverheadSeconds = [Math]::Max(0, $worker.Seconds - $worker.PesterSeconds)
+                $worker.Files = @($suite.SelectNodes('results/test-suite') | ForEach-Object {
+                    [pscustomobject]@{
+                        Path = [IO.Path]::GetRelativePath($RepositoryRoot, [IO.Path]::GetFullPath(
+                            [IO.Path]::Combine($RepositoryRoot, $_.GetAttribute('name')))).Replace('\', '/')
+                        Seconds = [double]::Parse($_.GetAttribute('time'), [Globalization.CultureInfo]::InvariantCulture)
+                    }
+                })
+            }
+            catch { $messages.Add("Pester shard $($worker.Index) timing unavailable: $($_.Exception.Message)") }
+            $messages.Add([string]::Format([Globalization.CultureInfo]::InvariantCulture,
+                'Pester shard {0} completed: {1} files; wall {2:F4}s; Pester {3:F4}s; overhead {4:F4}s; estimated {5:F4}s',
+                $worker.Index, $worker.FileCount, $worker.Seconds, $worker.PesterSeconds, $worker.OverheadSeconds, $worker.EstimatedSeconds))
+            foreach ($file in $worker.Files) {
+                $messages.Add([string]::Format([Globalization.CultureInfo]::InvariantCulture,
+                    'Pester file [shard {0}]: {1} [{2:F4}s]', $worker.Index, $file.Path, $file.Seconds))
+            }
         }
         $merged = Merge-LocalCiPesterResult -Shard $workers.ToArray() -RepositoryRoot $RepositoryRoot -OutputPath $outputPath
         $messages.AddRange([string[]] $merged.Output)
@@ -260,7 +291,7 @@ function Invoke-LocalCiPester {
     }
     return [pscustomobject]@{
         ExitCode = $code; Output = $messages.ToArray()
-        Shards = @($workers | Select-Object Path, ResultPath, LogPath, ExitCode)
+        Shards = @($workers | Select-Object Index, FileCount, EstimatedSeconds, Seconds, PesterSeconds, OverheadSeconds, Path, ResultPath, LogPath, ExitCode, Files)
     }
 }
 
