@@ -45,6 +45,7 @@ Describe 'Instance setup manual steps through the public wizard' {
             param($Output)
             $script:ManualStepsTestOutput = $Output
             function script:Write-Host {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Matches the Write-Host boundary; these tests assert text, not color.')]
                 [CmdletBinding()]
                 param([AllowEmptyString()][string] $Object, [ConsoleColor] $ForegroundColor)
                 $script:ManualStepsTestOutput.Messages.Add($Object)
