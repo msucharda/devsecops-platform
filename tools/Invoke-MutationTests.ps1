@@ -12,6 +12,7 @@ check accepts more input. Worker processes run the configured tests in their own
 A surviving mutant without an exception, an error, a failed baseline, an unfinished job or a stale exception fails the run.
 Baseline and mutant execution each receive their own time budget; preparation and cleanup do not consume either budget.
 Identical test selections share one baseline. The report records phase wall time, queue size and completed worker time.
+The inventory hash versions the classification policy so aggregation rejects reports from older kill semantics.
 LOCAL_CI_WORKER_BUDGET, when set to a positive integer, caps the requested worker count. Invalid values fail the run.
 
 .EXAMPLE
@@ -64,8 +65,9 @@ $markers = @(Get-SecurityCheckMarker -RepoPath $RepoPath -Configuration $configu
 Assert-SecurityCheckConfiguration -Marker $markers -Configuration $configuration
 $inventory = @(Get-SecurityCheckMutant -RepoPath $RepoPath -Marker $markers)
 $inventoryText = ConvertTo-Json -InputObject @($inventory | Sort-Object Id | Select-Object Id, Check, File, Text) -Depth 4 -Compress
+$classificationPolicyVersion = 'teardown-assertion-evidence-v1'
 $inventoryHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(
-            $inventoryText + (Get-Content -LiteralPath $ConfigurationPath -Raw)
+            $classificationPolicyVersion + $inventoryText + (Get-Content -LiteralPath $ConfigurationPath -Raw)
         )))
 $merging = $PSCmdlet.ParameterSetName -eq 'Merge'
 $workers = 0

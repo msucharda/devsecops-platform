@@ -55,6 +55,65 @@ Describe 'Sample controls' {
 
 AfterAll { $env:LOCAL_CI_WORKER_BUDGET = $savedWorkerBudget }
 
+Describe 'Mutation worker missing failure evidence' -Tag MissingErrorRecord {
+    It 'classifies a null error record as <Expected> for assertion-only <AssertionOnly>' -ForEach @(
+        @{ AssertionOnly = $false; Expected = 'Killed'; Errors = 0 }
+        @{ AssertionOnly = $true; Expected = 'Error'; Errors = 1 }
+    ) {
+        Import-Module (Join-Path $PSScriptRoot '../MutationTesting.psm1') -Force
+        $runtime = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $workerPath = Join-Path $runtime 'tools/tests/Invoke-MutationWorker.ps1'
+        $repository = Join-Path $runtime 'repository'
+        $null = New-Item -ItemType Directory -Path (Split-Path $workerPath -Parent), $repository -Force
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Invoke-MutationWorker.ps1') -Destination $workerPath
+        @'
+function Get-ToolDependencyPath {
+    param($Name, $ToolsPath, [switch] $ReuseLoaded)
+    Join-Path $PSScriptRoot 'Pester.psm1'
+}
+'@ | Set-Content -LiteralPath (Join-Path $runtime 'tools/ToolDependencies.psm1')
+        @'
+function New-PesterConfiguration {
+    [pscustomobject]@{
+        Run = [pscustomobject]@{ Path = $null; PassThru = $false; SkipRemainingOnFailure = $null }
+        Filter = [pscustomobject]@{ FullName = $null }
+        Output = [pscustomobject]@{ Verbosity = $null }
+    }
+}
+function Invoke-Pester {
+    param($Configuration)
+    # Deliberately invalid failure evidence: Pester returned a failed test without an error record.
+    [pscustomobject]@{
+        PassedCount = 0; FailedCount = 1; FailedContainersCount = 0; FailedBlocksCount = 0
+        Failed = @([pscustomobject]@{ ExpandedPath = 'Missing evidence.test'; ErrorRecord = $null })
+    }
+}
+'@ | Set-Content -LiteralPath (Join-Path $runtime 'tools/Pester.psm1')
+        $target = Join-Path $repository 'target.ps1'
+        'original' | Set-Content -LiteralPath $target -NoNewline
+        $jobsPath = Join-Path $runtime 'jobs.json'
+        $resultPath = Join-Path $runtime 'results.jsonl'
+        $jobs = @(@{
+            Id = 'missing-record'; File = 'target.ps1'; Text = 'mutated'; RequireAssertionFailure = $AssertionOnly
+            Tests = @(@{ Path = 'Sample.Tests.ps1'; FullName = @('*') })
+        })
+        ConvertTo-Json -InputObject $jobs -Depth 6 | Set-Content -LiteralPath $jobsPath
+
+        & (Get-Process -Id $PID).Path -NoLogo -NoProfile -NonInteractive -File $workerPath -RepoPath $repository -JobsPath $jobsPath -ResultPath $resultPath
+
+        $LASTEXITCODE | Should -Be 0
+        $results = @(Get-Content -LiteralPath $resultPath | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable })
+        $results.Count | Should -Be 1
+        $results[0].Failed | Should -Be 1
+        $results[0].Errors | Should -Be $Errors
+        @($results[0].FailedTests).Count | Should -Be 1
+        $results[0].FailedTests[0].ExpandedPath | Should -BeExactly 'Missing evidence.test'
+        @($results[0].FailedTests[0].FullyQualifiedErrorId).Count | Should -Be 0
+        (Get-MutationJobStatus -Result $results[0])[0] | Should -BeExactly $Expected
+        Get-Content -LiteralPath $target -Raw | Should -BeExactly 'original'
+    }
+}
+
 Describe 'Mutation runner verified runtime boundary' -Tag Integration {
     It 'keeps YAML imports usable across different baseline suites in one worker' {
         $path = Join-Path $TestDrive 'runtime-boundary.json'
@@ -107,6 +166,7 @@ Describe 'Mutation runner public interface' {
         @{ Case = 'unknown status'; Message = '*unknown status*' }
         @{ Case = 'empty status'; Message = '*unknown status*' }
         @{ Case = 'changed inventory'; Message = '*inventory differs*' }
+        @{ Case = 'legacy classification policy'; Message = '*inventory differs*' }
         @{ Case = 'failed shard'; Message = '*contains problems*' }
         @{ Case = 'missing problems'; Message = '*has no problem list*' }
         @{ Case = 'null problems'; Message = '*has no problem list*' }
@@ -132,6 +192,16 @@ Describe 'Mutation runner public interface' {
             'unknown status' { $inputs[0]['mutants'][0]['Status'] = 'Unknown' }
             'empty status' { $inputs[0]['mutants'][0]['Status'] = '' }
             'changed inventory' { $inputs[0]['inventoryHash'] = 'different' }
+            'legacy classification policy' {
+                $markers = @(Get-SecurityCheckMarker -RepoPath $sample)
+                $inventory = @(Get-SecurityCheckMutant -RepoPath $sample -Marker $markers)
+                $text = ConvertTo-Json -InputObject @($inventory | Sort-Object Id | Select-Object Id, Check, File, Text) -Depth 4 -Compress
+                # The pre-assertion-policy report hashed only mutant source and configuration.
+                $legacyHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(
+                    $text + (Get-Content -LiteralPath $configuration -Raw)
+                )))
+                foreach ($inputReport in $inputs) { $inputReport['inventoryHash'] = $legacyHash }
+            }
             'failed shard' { $inputs[0]['problems'] = @('worker failed') }
             'missing problems' { $null = $inputs[0].Remove('problems') }
             'null problems' { $inputs[0]['problems'] = $null }

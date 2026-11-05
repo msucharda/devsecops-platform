@@ -70,7 +70,7 @@ foreach ($job in $jobs) {
             $result.Failed += $run.FailedCount
             $result.Errors += $run.FailedContainersCount + $run.FailedBlocksCount
             foreach ($failedTest in @($run.Failed)) {
-                $errorIds = @($failedTest.ErrorRecord | ForEach-Object { $_.FullyQualifiedErrorId })
+                $errorIds = @($failedTest.ErrorRecord | Where-Object { $null -ne $_ } | ForEach-Object { $_.FullyQualifiedErrorId })
                 $result.FailedTests += @{
                     ExpandedPath = $failedTest.ExpandedPath
                     FullyQualifiedErrorId = $errorIds
