@@ -49,7 +49,7 @@ Describe 'Deployment plan status' {
     It 'rejects plan change output <Case> without publishing a successful decision' -ForEach @(
         @{ Case = 'missing outputs'; Outputs = $null; Reason = 'no readable plan outputs' }
         @{ Case = 'an array instead of outputs'; Outputs = @(@{ changes = 'false' }); Reason = 'no readable plan outputs' }
-        @{ Case = 'missing changes'; Outputs = @{}; Reason = 'missing the changes output' }
+        @{ Case = 'missing changes'; Outputs = @{}; Reason = 'missing the changes output. Promote the updated vendored deployment workflow template to the live .github/workflows in a separate reviewed PR (see platform/docs/vendoring.md)' }
         foreach ($value in @('', 'unknown', 'TRUE', 'FALSE', $null, $true, $false, 0, @('false'), @{ value = 'false' })) {
             @{ Case = "invalid changes [$value]"; Outputs = @{ changes = $value }; Reason = 'invalid changes output' }
         }
