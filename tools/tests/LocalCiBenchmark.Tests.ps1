@@ -11,7 +11,7 @@ Describe 'Local CI benchmark CLI' {
         git -C $fixture config user.name 'Local CI benchmark tests'
         Set-Content (Join-Path $fixture '.gitignore') 'artifacts/'
         Set-Content (Join-Path $fixture 'README.md') '# Fixture'
-        Set-Content (Join-Path $fixture 'tools/DeploymentIdentifier.psm1') '# Fixture'
+        Set-Content (Join-Path $fixture 'tools/Select-InstanceModules.ps1') '# Fixture'
         Set-Content (Join-Path $fixture 'tools/Invoke-Tests.ps1') '# Fixture'
         # The child process is the system boundary: no real CI steps run in this isolated repository.
         Set-Content (Join-Path $fixture 'tools/Invoke-LocalCi.ps1') @'
@@ -78,5 +78,13 @@ exit 0
         $output | Should -Match 'tracked'
         Get-Content -LiteralPath $readme | Should -BeExactly '# Fixture'
         @(git -C $fixture status --porcelain).Count | Should -Be 0
+    }
+
+    It 'refuses a report path outside artifacts without changing Git metadata' -Tag BenchmarkReportSafety {
+        $metadata = Join-Path $fixture '.git/HEAD'
+        $before = Get-Content -LiteralPath $metadata -Raw
+        $output = & ([Environment]::ProcessPath) -NoProfile -File $benchmark -RepositoryRoot $fixture -Revision baseline -Repeat 1 -OutputPath $metadata 2>&1 | Out-String
+        $LASTEXITCODE | Should -Not -Be 0 -Because $output
+        Get-Content -LiteralPath $metadata -Raw | Should -BeExactly $before
     }
 }

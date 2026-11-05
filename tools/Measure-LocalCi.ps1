@@ -25,6 +25,9 @@ $OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromP
 $null = & git -C $RepositoryRoot --literal-pathspecs ls-files --error-unmatch -- $OutputPath 2>$null
 if ($LASTEXITCODE -eq 0) { throw "Benchmark report path is tracked: '$OutputPath'." }
 if ($LASTEXITCODE -ne 1) { throw "Cannot validate benchmark report path '$OutputPath' inside the source checkout." }
+$artifactRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot 'artifacts')) + [IO.Path]::DirectorySeparatorChar
+$comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+if (-not $OutputPath.StartsWith($artifactRoot, $comparison)) { throw 'Benchmark report path must be below artifacts in the source checkout.' }
 $runRoot = Join-Path $RepositoryRoot "artifacts/local-ci/b-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 $null = New-Item -ItemType Directory -Force -Path $runRoot, (Split-Path $OutputPath -Parent)
 
@@ -40,7 +43,7 @@ function Invoke-BenchmarkGit {
 $revisionSha = Invoke-BenchmarkGit -ArgumentList @('rev-parse', '--verify', "$Revision^{commit}")
 $scenarios = @(
     @{ Name = 'Documentation'; Path = 'README.md'; Comment = '<!-- Local CI benchmark -->' }
-    @{ Name = 'Small change'; Path = 'tools/DeploymentIdentifier.psm1'; Comment = '# Local CI benchmark' }
+    @{ Name = 'Small change'; Path = 'tools/Select-InstanceModules.ps1'; Comment = '# Local CI benchmark' }
     @{ Name = 'Fan-out'; Path = 'tools/Invoke-Tests.ps1'; Comment = '# Local CI benchmark' }
 )
 $report = [ordered]@{
