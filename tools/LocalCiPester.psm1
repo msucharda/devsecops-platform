@@ -123,7 +123,7 @@ function Merge-LocalCiPesterResult {
                     [Globalization.CultureInfo]::InvariantCulture, [ref] $seconds) -or
                 -not [double]::IsFinite($seconds) -or $seconds -lt 0) { throw 'Invalid Pester shard duration.' }
             $duration += $seconds
-            if ($suite.GetAttribute('result') -cne 'Success' -or $suite.GetAttribute('success') -cne 'True') { $code = 1 }
+            if ($suite.GetAttribute('result') -cnotin @('Success', 'Ignored') -or $suite.GetAttribute('success') -cne 'True') { $code = 1 }
             $actual = @($suite.SelectNodes('results/test-suite') | ForEach-Object {
                 [IO.Path]::GetFullPath([IO.Path]::Combine($RepositoryRoot, $_.GetAttribute('name')))
             })
@@ -159,7 +159,7 @@ function Merge-LocalCiPesterResult {
         foreach ($key in $totals.Keys) { $root.SetAttribute($key, $totals[$key].ToString([Globalization.CultureInfo]::InvariantCulture)) }
         $suite = $merged.SelectSingleNode('/test-results/test-suite')
         $suite.SetAttribute('time', $duration.ToString('0.####', [Globalization.CultureInfo]::InvariantCulture))
-        $suite.SetAttribute('result', $(if ($code -eq 0) { 'Success' } else { 'Failure' }))
+        $suite.SetAttribute('result', $(if ($code -ne 0) { 'Failure' } elseif ($totals.ignored -gt 0) { 'Ignored' } else { 'Success' }))
         $suite.SetAttribute('success', $(if ($code -eq 0) { 'True' } else { 'False' }))
         $null = New-Item -ItemType Directory -Force -Path (Split-Path $OutputPath -Parent)
         $merged.Save($staging)

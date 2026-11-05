@@ -17,6 +17,30 @@ BeforeAll {
 }
 
 Describe 'Local Pester result merging' {
+    It 'accepts the Pester Ignored root variant for passing suites with skipped tests' {
+        $report = Join-Path $TestDrive 'skipped.xml'
+        $output = Join-Path $TestDrive 'skipped-merged.xml'
+        Write-ShardReport -Path $report -File 'A.Tests.ps1'
+        $xml = [xml](Get-Content $report -Raw)
+        $xml.'test-results'.SetAttribute('total', '2')
+        $xml.'test-results'.SetAttribute('skipped', '1')
+        $xml.'test-results'.SetAttribute('ignored', '1')
+        $xml.'test-results'.'test-suite'.SetAttribute('result', 'Ignored')
+        $case = $xml.SelectSingleNode('//test-case').CloneNode($true)
+        $case.SetAttribute('name', 'skipped case')
+        $case.SetAttribute('executed', 'False')
+        $case.SetAttribute('result', 'Ignored')
+        $null = $xml.SelectSingleNode('//test-case').ParentNode.AppendChild($case)
+        $xml.Save($report)
+
+        $result = Merge-LocalCiPesterResult -Shard @(
+            @{ ResultPath = $report; Path = @('A.Tests.ps1'); ExitCode = 0 }
+        ) -RepositoryRoot $TestDrive -OutputPath $output
+
+        $result.ExitCode | Should -Be 0 -Because ($result.Output -join "`n")
+        ([xml](Get-Content $output -Raw)).'test-results'.skipped | Should -Be '1'
+    }
+
     It 'fails closed for <Case> without reusing an older merged success' -ForEach @(
         @{ Case = 'missing XML'; Change = 'missing'; Message = 'Missing Pester shard XML' }
         @{ Case = 'malformed XML'; Change = 'malformed'; Message = 'unexpected|parse|root|Data|invalid' }
