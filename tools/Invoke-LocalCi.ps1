@@ -23,14 +23,19 @@ param(
     [string] $StateRoot,
     [ValidateRange(0, 64)][int] $WorkerBudget = 0,
     [ValidateRange(1, 86400)][int] $QueueWaitSeconds = 900,
-    [Parameter(DontShow)][switch] $WorkerProcess
+    [Parameter(DontShow)][switch] $WorkerProcess,
+    [Parameter(DontShow)][long] $StartedTimestamp = [Diagnostics.Stopwatch]::GetTimestamp(),
+    [Parameter(DontShow)][datetimeoffset] $StartedAt = [datetimeoffset]::UtcNow
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath
-$started = [Diagnostics.Stopwatch]::StartNew()
+Import-Module (Join-Path $PSScriptRoot 'LocalCiTiming.psm1') -Force
+$timing = New-LocalCiTiming -StartedTimestamp $StartedTimestamp -StartedAt $StartedAt
+$timingExitCode = 1
+$timingOwner = $true
 if (-not $LogPath) { $LogPath = Join-Path $repo "artifacts/local-ci/$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')-$PID.log" }
 $LogPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogPath)
 $null = New-Item -ItemType Directory -Force -Path (Split-Path $LogPath -Parent)
@@ -49,6 +54,7 @@ function Write-Console {
 
 function Exit-Usage {
     param([string] $Message)
+    $script:timingExitCode = 2
     Write-Console "ERROR: $Message"
     Write-Console "Log: $LogPath"
     exit 2
@@ -63,6 +69,7 @@ function Invoke-Git {
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
 }
 
+try {
 if ($Changed -and $Full) { Exit-Usage '-Changed and -Full are mutually exclusive.' }
 $mode = if ($Full) { 'Full' } else { 'Changed' }
 
@@ -79,8 +86,11 @@ if ($IsWindows -and -not $Plan -and -not $WorkerProcess) {
     }
     $forward.WorkerProcess = $true
     $forward.LogPath = $LogPath
+    $forward.StartedTimestamp = $StartedTimestamp
+    $forward.StartedAt = $StartedAt.ToString('o')
     $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($forward | ConvertTo-Json -Compress)))
     $command = "`$parameters = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$payload')) | ConvertFrom-Json -AsHashtable; & '$($PSCommandPath.Replace("'", "''"))' @parameters; exit `$LASTEXITCODE"
+    $timingOwner = $false
     & ([Environment]::ProcessPath) -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)))
     exit $LASTEXITCODE
 }
@@ -92,8 +102,10 @@ $worktreeLease = $null
 $machineLease = $null
 try {
 if (-not $Plan) {
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Worktree lock'
     try { $worktreeLease = Enter-LocalCiWorktreeLock -RepositoryRoot $repo }
     catch { Exit-Usage $_.Exception.Message }
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Source state'
     # A failed or abruptly interrupted rerun must never leave an earlier success usable.
     Clear-LocalCiGateResult -RepositoryRoot $repo
 }
@@ -113,6 +125,7 @@ $moduleProbe = {
 # ci.yml is parsed with powershell-yaml, so missing modules must be reported before parsing.
 $moduleProblems = @(Get-LocalCiModuleProblem -Requirements $requirements -ModuleProbe $moduleProbe)
 if ($moduleProblems.Count -gt 0) {
+    $timingExitCode = 2
     foreach ($problem in $moduleProblems) { Add-LogLine "ERROR $problem"; Write-Information "ERROR $problem" -InformationAction Continue }
     Write-Console "Log: $LogPath"
     exit 2
@@ -123,6 +136,7 @@ catch { Exit-Usage "Cannot read .github/workflows/ci.yml: $($_.Exception.Message
 if (-not $TempRoot -and $IsWindows) { $TempRoot = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.dci' }
 $temp = if ($TempRoot) { Get-LocalCiTempPath -RepoPath $repo -DataRoot $TempRoot } else { Get-LocalCiTempPath -RepoPath $repo }
 # Selection
+Set-LocalCiTimingPhase -Timing $timing -Name 'Test selection'
 $changedFiles = @()
 $newFiles = @()
 # The gate is offline. Refresh remote refs explicitly before it, not during the measured run.
@@ -209,7 +223,7 @@ if (-not $Full) {
     foreach ($path in $testProfile.Remote) { $planLines.Add("  remote: $path") }
 }
 foreach ($line in $planLines) { Write-Console $line }
-if ($Plan) { exit 0 }
+if ($Plan) { $timingExitCode = 0; exit 0 }
 
 # Environment
 $savedEnvironment = @{}
@@ -282,6 +296,7 @@ function Invoke-Step {
     Runs one step unless an earlier step failed. The body returns the native result; a non-zero exit code fails the step.
     #>
     param([string] $Name, [scriptblock] $Body, [switch] $Pester)
+    Set-LocalCiTimingPhase -Timing $timing -Name $Name
     if ($script:failed) { Add-Result -Name $Name -Status 'SKIP' -Seconds 0 -Note 'fail-fast'; return }
     Add-LogLine "=== $Name"
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -316,6 +331,7 @@ function Invoke-Step {
 
 function Skip-Step {
     param([string] $Name, [string] $Reason)
+    Set-LocalCiTimingPhase -Timing $timing -Name $Name
     $note = if ($script:failed) { 'fail-fast' } else { $Reason }
     Add-Result -Name $Name -Status 'SKIP' -Seconds 0 -Note $note
 }
@@ -327,6 +343,7 @@ function ConvertTo-PwshList {
 
 try {
     $env:INVOKE_LOCAL_CI_ACTIVE = '1'
+    Set-LocalCiTimingPhase -Timing $timing -Name 'TEMP setup'
     try { Assert-LocalCiWindowsTempRoot -Path $TempRoot -UserProfile ([Environment]::GetFolderPath('UserProfile')) -Windows $IsWindows }
     catch { Exit-Usage $_.Exception.Message }
     Assert-LocalCiTempPath -Path $temp
@@ -336,7 +353,9 @@ try {
         Initialize-LocalCiPrivateTempDirectory -Path $temp
     }
     # Acquire the machine turn before clearing or using the worktree's shared TEMP.
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Machine queue'
     $machineLease = Enter-LocalCiMachineQueue -StateRoot $StateRoot -WorkerBudget $WorkerBudget -WaitSeconds $QueueWaitSeconds
+    Set-LocalCiTimingPhase -Timing $timing -Name 'TEMP setup'
     Enable-LocalCiLeaseInheritance -Handle @($worktreeLease, $machineLease.Handle, $machineLease.TicketHandle)
     $env:LOCAL_CI_WORKER_BUDGET = [string] $machineLease.WorkerBudget
     Write-Console "Machine queue admitted; worker budget: $($machineLease.WorkerBudget)"
@@ -348,6 +367,7 @@ try {
     Remove-Item Env:PESTER_SHARD -ErrorAction SilentlyContinue
 
     # 1. Preflight
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Preflight'
     $watch = [Diagnostics.Stopwatch]::StartNew()
     if ($mode -eq 'Full' -and $selection.TerraformRoot.Count -gt 0) {
         try {
@@ -377,6 +397,7 @@ try {
         -NeedsTerraformTools:($selection.TerraformRoot.Count -gt 0) -SkipTerraform:($mode -eq 'Changed') -ModuleProbe $moduleProbe -ToolProbe $toolProbe)
     foreach ($problem in $problems) { Write-Console "$(if ($problem.Severity -eq 'Error') { 'ERROR' } else { 'WARN' }) $($problem.Message)" }
     if (@($problems | Where-Object Severity -eq 'Error').Count -gt 0) {
+        $timingExitCode = 2
         Add-Result -Name 'Preflight' -Status 'FAIL' -Seconds $watch.Elapsed.TotalSeconds
         Write-Console "Log: $LogPath"
         exit 2
@@ -478,6 +499,7 @@ finally {
 }
 
 # Summary
+Set-LocalCiTimingPhase -Timing $timing -Name 'Summary'
 $passed = @($results | Where-Object Status -eq 'PASS').Count
 $failedCount = @($results | Where-Object Status -eq 'FAIL').Count
 $skipped = @($results | Where-Object Status -eq 'SKIP').Count
@@ -488,12 +510,12 @@ if ($pesterCounts.Count -gt 0) {
         ($pesterCounts | Measure-Object Passed -Sum).Sum, ($pesterCounts | Measure-Object Failed -Sum).Sum, ($pesterCounts | Measure-Object NotRun -Sum).Sum)
 }
 Write-Console "Mapped test files: $pesterLabel Pester, $interruptionLabel interruption; Terraform roots: $($selection.TerraformRoot.Count)"
-Write-Console ('Duration: {0:hh\:mm\:ss}' -f $started.Elapsed)
 Write-Console "Log: $LogPath"
 if ($mode -eq 'Changed') {
     Write-Console 'Not covered locally: process integration suites, unselected isolated suites, all Terraform roots, interruption and mutation. Linux CI must pass on the PR head before merge.'
 }
 if (-not $failed) {
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Result persistence'
     $endState = Get-LocalCiContentState -RepositoryRoot $repo -Base $Base
     foreach ($key in 'Head', 'BaseSha', 'MergeBase', 'Fingerprint') {
         if ($endState[$key] -cne $startState[$key]) { throw "Local gate result is stale: $key changed during the run." }
@@ -501,9 +523,23 @@ if (-not $failed) {
     Save-LocalCiGateResult -RepositoryRoot $repo -State $startState -GateProfile $(if ($Full) { 'Full' } else { 'Local' })
     Write-Console "Selected local gate passed (vybran`u{fd} lok`u{e1}ln`u{ed} gate pro`u{161}el); HEAD $($startState.Head); base $($startState.BaseSha); fingerprint $($startState.Fingerprint)"
 }
-exit $(if ($failed) { 1 } else { 0 })
+$timingExitCode = if ($failed) { 1 } else { 0 }
+exit $timingExitCode
 }
 finally {
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Cleanup'
     try { if ($null -ne $machineLease) { Exit-LocalCiMachineQueue -Lease $machineLease } }
     finally { if ($null -ne $worktreeLease) { $worktreeLease.Dispose() } }
+}
+}
+finally {
+    if ($timingOwner) {
+        $timingPath = [IO.Path]::ChangeExtension($LogPath, '.timings.json')
+        Save-LocalCiTiming -Timing $timing -Path $timingPath -Mode $(if ($Plan) { 'Plan' } elseif ($Full) { 'Full' } else { 'Changed' }) -ExitCode $timingExitCode
+        foreach ($phase in $timing.Phases) {
+            Write-Console ('TIMING {0}: {1:F6}s' -f $phase.Name, $phase.Seconds)
+        }
+        Write-Console ('Duration: {0:hh\:mm\:ss} ({1:F6}s)' -f [timespan]::FromSeconds($timing.PhaseStart), $timing.PhaseStart)
+        Write-Console "Timings: $timingPath"
+    }
 }
