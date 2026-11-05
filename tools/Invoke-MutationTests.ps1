@@ -6,11 +6,13 @@ Weakens every marked security check and verifies that its configured tests fail 
 .DESCRIPTION
 Functions marked with '# security-check: <name>' are configured in tools/tests/security-checks.psd1.
 The explicit TeardownWorkflow adapter mutates emitted teardown predicates through bounded generator source templates.
+This adapter requires PesterAssertionFailed evidence; unexpected exceptions inside a test count as errors, not kills.
 Each mutant changes one guard condition, logical operand, boolean result or case-sensitive comparison so that the
 check accepts more input. Worker processes run the configured tests in their own copy of the repository.
 A surviving mutant without an exception, an error, a failed baseline, an unfinished job or a stale exception fails the run.
 Baseline and mutant execution each receive their own time budget; preparation and cleanup do not consume either budget.
 Identical test selections share one baseline. The report records phase wall time, queue size and completed worker time.
+The inventory hash versions the classification policy so aggregation rejects reports from older kill semantics.
 LOCAL_CI_WORKER_BUDGET, when set to a positive integer, caps the requested worker count. Invalid values fail the run.
 
 .EXAMPLE
@@ -63,8 +65,9 @@ $markers = @(Get-SecurityCheckMarker -RepoPath $RepoPath -Configuration $configu
 Assert-SecurityCheckConfiguration -Marker $markers -Configuration $configuration
 $inventory = @(Get-SecurityCheckMutant -RepoPath $RepoPath -Marker $markers)
 $inventoryText = ConvertTo-Json -InputObject @($inventory | Sort-Object Id | Select-Object Id, Check, File, Text) -Depth 4 -Compress
+$classificationPolicyVersion = 'teardown-assertion-evidence-v1'
 $inventoryHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(
-            $inventoryText + (Get-Content -LiteralPath $ConfigurationPath -Raw)
+            $classificationPolicyVersion + $inventoryText + (Get-Content -LiteralPath $ConfigurationPath -Raw)
         )))
 $merging = $PSCmdlet.ParameterSetName -eq 'Merge'
 $workers = 0
@@ -140,6 +143,9 @@ else {
     }
     $testsByCheck = @{}
     foreach ($item in @($configuration['Checks'])) { $testsByCheck[$item['Name']] = @($item['Tests']) }
+    $assertionOnlyChecks = @($configuration['Checks'] | Where-Object {
+        $_.Contains('Kind') -and $_['Kind'] -ceq 'TeardownWorkflow'
+    } | ForEach-Object { $_['Name'] })
     $phases['discovery'] = @{ seconds = [Math]::Round($started.Elapsed.TotalSeconds, 2) }
     $workerScript = Join-Path $PSScriptRoot 'tests/Invoke-MutationWorker.ps1'
     $work = Join-Path ([IO.Path]::GetTempPath()) "security-check-mutation-$([guid]::NewGuid().ToString('N'))"
@@ -275,7 +281,10 @@ else {
         foreach ($slot in $slots) { $slot.Jobs.Clear(); $slot.Load = 0.0 }
         foreach ($mutant in @($mutants | Sort-Object -Stable { $baselineSeconds[$_.Check] } -Descending)) {
             $slot = $slots | Sort-Object Load, Index | Select-Object -First 1
-            $slot.Jobs.Add(@{ Id = $mutant.Id; File = $mutant.File; Text = $mutant.Text; Tests = $testsByCheck[$mutant.Check] })
+            $slot.Jobs.Add(@{
+                Id = $mutant.Id; File = $mutant.File; Text = $mutant.Text; Tests = $testsByCheck[$mutant.Check]
+                RequireAssertionFailure = $mutant.Check -cin $assertionOnlyChecks
+            })
             $slot.Load += $baselineSeconds[$mutant.Check]
         }
         Write-Information "Mutants: $($mutants.Count)."

@@ -73,6 +73,17 @@ BeforeAll {
         Get-SecurityCheckMutant -RepoPath $Repository -Marker $markers | Where-Object Check -CEQ $checkName
     }
 
+    function Write-TeardownMutationConfiguration {
+        param([string] $Path, [hashtable] $Test = $contract)
+
+        $entries = @(foreach ($check in $configuration.Checks) {
+            $adapter = if ($check.ContainsKey('Kind')) { "; Kind = '$($check.Kind)'; File = '$($check.File)'" } else { '' }
+            $patterns = @($Test.FullName | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '
+            "@{ Name = '$($check.Name)'$adapter; Tests = @(@{ Path = '$($Test.Path)'; FullName = @($patterns) }) }"
+        })
+        "@{ Checks = @($($entries -join "`n")); Exceptions = @() }" | Set-Content -LiteralPath $Path
+    }
+
     function Get-EmittedPredicate {
         param([System.Collections.IDictionary] $Workflow, [string] $Target)
 
@@ -274,7 +285,7 @@ Describe 'Teardown mutation execution through the existing worker and runner' -T
         }
         $jobs = @(
             @{ Id = 'baseline-before'; File = $mutant.File; Text = $null; Tests = @($cancellationContract) }
-            @{ Id = $mutant.Id; File = $mutant.File; Text = $mutant.Text; Tests = @($cancellationContract) }
+            @{ Id = $mutant.Id; File = $mutant.File; Text = $mutant.Text; Tests = @($cancellationContract); RequireAssertionFailure = $true }
             @{ Id = 'baseline-after'; File = $mutant.File; Text = $null; Tests = @($cancellationContract) }
         )
         $jobsPath = Join-Path $repo 'jobs.json'
@@ -294,18 +305,82 @@ Describe 'Teardown mutation execution through the existing worker and runner' -T
         $results[1].Errors | Should -Be 0
         $results[1].Failed | Should -BeGreaterThan 0
         $results[1].Failures -join ' ' | Should -Match 'does not destroy identity when the run is cancelled after preceding modules finished'
+        @($results[1].FailedTests).Count | Should -Be 1
+        $results[1].FailedTests[0].ExpandedPath | Should -BeExactly $cancellationContract.FullName[0]
+        @($results[1].FailedTests[0].FullyQualifiedErrorId) | Should -BeExactly @('PesterAssertionFailed')
         (Get-MutationJobStatus -Result $results[1])[0] | Should -BeExactly 'Killed'
         [Convert]::ToBase64String([IO.File]::ReadAllBytes($generator)) | Should -BeExactly ([Convert]::ToBase64String($generatorBytes))
     }
 
+    It 'does not count an unexpected exception inside It as a killed generated mutant' {
+        $inventory = @(Get-TeardownMutationInventory -Repository $repo -Configuration $configuration)
+        $mutant = @($inventory | Where-Object Id -CEQ "${checkName}: cancellation#1")[0]
+        $unexpectedContract = @{
+            Path = 'tools/tests/Unexpected.Tests.ps1'
+            FullName = @('Unexpected contract failure.rejects cancellation')
+        }
+        @'
+BeforeAll {
+    $generator = Join-Path $PSScriptRoot '../Generate-TeardownWorkflow.ps1'
+}
+Describe 'Unexpected contract failure' {
+    It 'rejects cancellation' {
+        $output = Join-Path $TestDrive 'unexpected.yml'
+        & $generator -ModulesPath (Join-Path $PSScriptRoot 'fixtures/modules') -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        if ($workflow.jobs.destroy_application.if -notmatch [regex]::Escape('!cancelled()')) {
+            throw [InvalidOperationException]::new('Unexpected exception inside It.')
+        }
+        $workflow.jobs.destroy_application.if | Should -Not -BeNullOrEmpty
+    }
+}
+'@ | Set-Content -LiteralPath (Join-Path $repo $unexpectedContract.Path)
+        $jobs = @(
+            @{ Id = 'unexpected-baseline-before'; File = $mutant.File; Text = $null; Tests = @($unexpectedContract) }
+            @{ Id = $mutant.Id; File = $mutant.File; Text = $mutant.Text; Tests = @($unexpectedContract); RequireAssertionFailure = $true }
+            @{ Id = 'unexpected-baseline-after'; File = $mutant.File; Text = $null; Tests = @($unexpectedContract) }
+        )
+        $jobsPath = Join-Path $repo 'unexpected-jobs.json'
+        $resultsPath = Join-Path $repo 'unexpected-results.jsonl'
+        ConvertTo-Json -InputObject $jobs -Depth 6 | Set-Content -LiteralPath $jobsPath
+
+        & (Get-Process -Id $PID).Path -NoLogo -NoProfile -NonInteractive -File $worker -RepoPath $repo -JobsPath $jobsPath -ResultPath $resultsPath
+
+        $LASTEXITCODE | Should -Be 0
+        $results = @(Get-Content -LiteralPath $resultsPath | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable })
+        $results.Count | Should -Be 3
+        foreach ($index in @(0, 2)) {
+            (Get-MutationJobStatus -Result $results[$index])[0] | Should -BeExactly 'Survived'
+            $results[$index].Passed | Should -Be 1
+            @($results[$index].FailedTests).Count | Should -Be 0
+        }
+        $results[1].Failed | Should -Be 1
+        @($results[1].FailedTests).Count | Should -Be 1
+        $results[1].FailedTests[0].ExpandedPath | Should -BeExactly $unexpectedContract.FullName[0]
+        @($results[1].FailedTests[0].FullyQualifiedErrorId) | Should -BeExactly @('Unexpected exception inside It.')
+        (Get-MutationJobStatus -Result $results[1])[0] | Should -BeExactly 'Error'
+        $results[1].Errors | Should -Be 1
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($generator)) | Should -BeExactly ([Convert]::ToBase64String($generatorBytes))
+
+        $configurationPath = Join-Path $repo 'unexpected-checks.psd1'
+        Write-TeardownMutationConfiguration -Path $configurationPath -Test $unexpectedContract
+        $reportPath = Join-Path $repo 'unexpected-report.json'
+
+        { & $runner -RepoPath $repo -ConfigurationPath $configurationPath -Check $checkName -ThrottleLimit 1 -ReportPath $reportPath 6>$null } |
+            Should -Throw '*Mutation testing failed*'
+
+        $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+        $cancelled = @($report.mutants | Where-Object Id -CEQ $mutant.Id)
+        $cancelled.Count | Should -Be 1
+        $cancelled[0].Status | Should -BeExactly 'Error'
+        $cancelled[0].Detail | Should -Match '\[Unexpected exception inside It\.\]'
+        @($report.mutants | Where-Object Status -CEQ 'Killed').Count | Should -Be 0
+        $report.problems -join ' ' | Should -Match 'cancellation#1 ended with Error'
+    }
+
     It 'runs every configured generated mutant through the normal report machinery without survivors or exemptions' {
         $configurationPath = Join-Path $repo 'checks.psd1'
-        $entries = @(foreach ($check in $configuration.Checks) {
-                $adapter = if ($check.ContainsKey('Kind')) { "; Kind = '$($check.Kind)'; File = '$($check.File)'" } else { '' }
-                $patterns = @($check.Tests[0].FullName | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '
-                "@{ Name = '$($check.Name)'$adapter; Tests = @(@{ Path = '$($contract.Path)'; FullName = @($patterns) }) }"
-            })
-        "@{ Checks = @($($entries -join "`n")); Exceptions = @() }" | Set-Content -LiteralPath $configurationPath
+        Write-TeardownMutationConfiguration -Path $configurationPath
         $reportPath = Join-Path $repo 'report.json'
 
         & $runner -RepoPath $repo -ConfigurationPath $configurationPath -Check $checkName -Shard 0/1 -ThrottleLimit 1 -ReportPath $reportPath 6>$null
@@ -315,6 +390,9 @@ Describe 'Teardown mutation execution through the existing worker and runner' -T
         @($report.mutants).Count | Should -Be $targetNames.Count
         $report.mutants.Status | Select-Object -Unique | Should -BeExactly 'Killed'
         $report.mutants.Detail -join ' ' | Should -Match 'Teardown (workflow generation|identity approval boundary)'
+        foreach ($mutant in $report.mutants) {
+            $mutant.Detail | Should -Match '\[PesterAssertionFailed\]'
+        }
         $report.phases.baseline.completed | Should -Be 1
         $report.phases.mutant.completed | Should -Be $targetNames.Count
         $report.phases.mutant.unfinished | Should -Be 0
