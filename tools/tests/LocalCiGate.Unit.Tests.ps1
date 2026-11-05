@@ -1,6 +1,156 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot '../LocalCi.psm1') -Force
     $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+}
+
+Describe 'Local CI gate change selection' {
+    BeforeEach {
+        $fixture = Join-Path $TestDrive "selection-$([guid]::NewGuid().ToString('N'))"
+        $files = @{
+            'tools/Invoke-LocalCi.ps1' = 'param()'
+            'tools/tests/LocalCiGate.Unit.Tests.ps1' = "'LocalCiGate.psm1'"
+            'tools/tests/LocalCiConcurrency.Tests.ps1' = "'LocalCiConcurrency.psm1'"
+            'tools/tests/LocalCiRuntimeProbe.Tests.ps1' = "'Test-LocalCiRuntimeProbe.ps1'"
+            'tools/tests/RunnerConsumer.Tests.ps1' = "'Invoke-LocalCi.ps1'"
+            'tools/tests/Unrelated.Tests.ps1' = "'Other.ps1'"
+            'tools/tests/RunnerIntegration.Tests.ps1' = "'Invoke-LocalCi.ps1'"
+            'tools/test-profiles.psd1' = @"
+@{
+    Unit = @('LocalCiGate.Unit.Tests.ps1', 'LocalCiRuntimeProbe.Tests.ps1', 'RunnerConsumer.Tests.ps1', 'Unrelated.Tests.ps1')
+    Contract = @('LocalCiConcurrency.Tests.ps1')
+    Integration = @('RunnerIntegration.Tests.ps1')
+    Interruption = @()
+}
+"@
+        }
+        foreach ($path in $files.Keys) {
+            $fullPath = Join-Path $fixture $path
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path $fullPath -Parent)
+            Set-Content -LiteralPath $fullPath -Value $files[$path]
+        }
+    }
+
+    It 'selects gate suites and isolated references rather than the whole profile for <File>' -ForEach @(
+        @{ File = 'tools/Invoke-LocalCi.ps1' }
+        @{ File = 'tools/LocalCi.psm1' }
+        @{ File = 'tools/LocalCiGate.psm1' }
+        @{ File = 'tools/LocalCiConcurrency.psm1' }
+        @{ File = 'tools/LocalCiNewWorker.psm1' }
+        @{ File = 'tools/Test-LocalCiResult.ps1' }
+        @{ File = '.githooks/pre-push' }
+    ) {
+        $fullPath = Join-Path $fixture $File
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path $fullPath -Parent)
+        Set-Content -LiteralPath $fullPath -Value 'param()'
+        $reference = "'$([IO.Path]::GetFileName($File))'"
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value $reference
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerIntegration.Tests.ps1') -Value $reference
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile $File -TerraformRoot @()
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
+
+        $testProfile.Selected | Should -BeExactly @(
+            'tools/tests/LocalCiConcurrency.Tests.ps1'
+            'tools/tests/LocalCiGate.Unit.Tests.ps1'
+            'tools/tests/LocalCiRuntimeProbe.Tests.ps1'
+            'tools/tests/RunnerConsumer.Tests.ps1'
+        )
+        $testProfile.Remote | Should -Contain 'tools/tests/RunnerIntegration.Tests.ps1'
+    }
+
+    It 'selects the whole isolated profile for shared infrastructure <File>' -ForEach @(
+        @{ File = 'tools/Invoke-Tests.ps1' }
+        @{ File = 'tools/requirements.psd1' }
+        @{ File = 'tools/test-profiles.psd1' }
+        @{ File = 'tools/Test-PowerShell.ps1' }
+        @{ File = '.github/workflows/ci.yml' }
+    ) {
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile $File -TerraformRoot @()
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
+
+        $testProfile.Selected | Should -BeExactly @(
+            'tools/tests/LocalCiConcurrency.Tests.ps1'
+            'tools/tests/LocalCiGate.Unit.Tests.ps1'
+            'tools/tests/LocalCiRuntimeProbe.Tests.ps1'
+            'tools/tests/RunnerConsumer.Tests.ps1'
+            'tools/tests/Unrelated.Tests.ps1'
+        )
+    }
+
+    It 'falls back to the whole isolated profile when gate references are unknown or only name a longer file' {
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/LocalCiNewWorker.psm1') -Value 'param()'
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value "'LocalCiNewWorker.psm1.extra'"
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/LocalCiNewWorker.psm1' -TerraformRoot @()
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
+
+        $selection.AllPester | Should -BeTrue
+        $selection.Reason | Should -Contain 'tools/LocalCiNewWorker.psm1: gate dependencies are uncertain; every Pester and interruption test runs.'
+        $testProfile.Selected | Should -Contain 'tools/tests/Unrelated.Tests.ps1'
+    }
+
+    It 'falls back to the whole isolated profile when a gate file was deleted' {
+        Remove-Item -LiteralPath (Join-Path $fixture 'tools/Invoke-LocalCi.ps1')
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+
+        $selection.AllPester | Should -BeTrue
+        (Get-LocalCiProfile -RepositoryRoot $fixture -AllPester:$selection.AllPester).Selected |
+            Should -Contain 'tools/tests/Unrelated.Tests.ps1'
+    }
+
+    It 'falls back to the whole isolated profile when no gate suite can be identified' {
+        Get-ChildItem -LiteralPath (Join-Path $fixture 'tools/tests') -Filter 'LocalCi*.Tests.ps1' | Remove-Item
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/test-profiles.psd1') -Value @"
+@{
+    Unit = @('RunnerConsumer.Tests.ps1', 'Unrelated.Tests.ps1')
+    Contract = @()
+    Integration = @('RunnerIntegration.Tests.ps1')
+    Interruption = @()
+}
+"@
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+
+        $selection.AllPester | Should -BeTrue
+        (Get-LocalCiProfile -RepositoryRoot $fixture -AllPester:$selection.AllPester).Selected |
+            Should -BeExactly @('tools/tests/RunnerConsumer.Tests.ps1', 'tools/tests/Unrelated.Tests.ps1')
+    }
+
+    It 'includes a gate reference with different Windows path casing' {
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value "'invoke-localci.ps1'"
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+
+        $selection.PesterPath | Should -Contain 'tools/tests/RunnerConsumer.Tests.ps1'
+        $selection.AllPester | Should -BeFalse
+    }
+
+    It 'falls back to the whole isolated profile when a test source cannot be read' {
+        Mock Get-Content -ModuleName LocalCi {
+            throw 'Test source is unreadable'
+        } -ParameterFilter { $LiteralPath -like '*Unrelated.Tests.ps1' }
+
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+
+        $selection.AllPester | Should -BeTrue
+        $selection.Warning | Should -Contain 'Cannot read tools/tests/Unrelated.Tests.ps1; test dependencies are uncertain.'
+    }
+
+    It 'explains each selected suite and keeps all causes when multiple changes select it' {
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile @(
+            'tools/Invoke-LocalCi.ps1', 'tools/tests/RunnerConsumer.Tests.ps1'
+        ) -TerraformRoot @()
+
+        $selection.PesterReason['tools/tests/LocalCiGate.Unit.Tests.ps1'] | Should -Contain 'gate suite for tools/Invoke-LocalCi.ps1'
+        $selection.PesterReason['tools/tests/RunnerConsumer.Tests.ps1'] | Should -Contain 'references tools/Invoke-LocalCi.ps1'
+        $selection.PesterReason['tools/tests/RunnerConsumer.Tests.ps1'] | Should -Contain 'affected by tools/tests/RunnerConsumer.Tests.ps1'
+    }
+
+    It 'explains every suite selected by a whole-profile fallback' {
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile '.github/workflows/ci.yml' -TerraformRoot @()
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
+
+        foreach ($path in $testProfile.Selected) {
+            $selection.PesterReason[$path] | Should -Contain '.github/workflows/ci.yml changed: every Pester and interruption test runs.'
+        }
+    }
 }
 
 Describe 'Local CI profiles' {

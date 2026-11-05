@@ -114,7 +114,9 @@ Před pushem musí projít rychlý lokální gate. Před merge musí projít úp
 
 - Před každým pushem spusť `./tools/Invoke-LocalCi.ps1` (výchozí režim `-Changed`). Platí to i pro změny jen v dokumentaci. Push je povolený jen po návratovém kódu 0.
   - `-Changed` analyzuje změněné PowerShell soubory, ověří manifesty a generované workflow a spustí dotčené izolované unit a contract suites. Kategorie určuje `tools/test-profiles.psd1`; nový test musí mít právě jednu kategorii.
-  - `-Plan` vypíše lokální výběr i soubory ponechané vzdálenému CI. Terraform, integration suites, harness přerušení a mutace zůstávají v úplném profilu. Změna runneru lokálně vybere izolované suites, nikoli celou těžkou sadu.
+  - Změna `tools/Invoke-LocalCi.ps1`, `tools/LocalCi*.psm1`, `tools/Test-LocalCiResult.ps1` nebo `.githooks/pre-push` vybere lokální suites `LocalCi*.Tests.ps1` a lokální testy, které odkazují na změněný soubor. Při chybějícím souboru, nenalezených odkazech, chybějících suites gate nebo nečitelném zdroji testu vybere celý izolovaný profil.
+  - Změna `tools/Invoke-Tests.ps1`, `tools/requirements.psd1`, `tools/test-profiles.psd1`, `tools/Test-PowerShell.ps1` nebo `.github/workflows/ci.yml` vždy vybere celý izolovaný profil.
+  - `-Plan` vypíše důvod výběru každého lokálního testového souboru i soubory ponechané vzdálenému CI. Terraform, integration suites, harness přerušení a mutace zůstávají v úplném profilu.
   - Cíl je 5 minut, nikoli timeout měnící nedokončený běh na úspěch. Pass znamená jen „vybraný lokální gate prošel“.
   - Návratový kód 2 znamená chybějící nástroj, špatnou verzi modulu nebo chybný parametr. Skript vypíše instrukci k opravě.
 - Commit vytvoř před gate. Výsledek platí jen pro stejný HEAD, base SHA a obsah všech sledovaných i neignorovaných nových souborů. Gate odmítne index s `assume-unchanged` nebo `skip-worktree` (včetně sparse-checkout), protože tyto příznaky skrývají změny před kontrolou čistoty. Před pushem ho ověř přes `tools/Test-LocalCiResult.ps1`. Push prováděj přes `git -c core.hooksPath=.githooks push`, aby pre-push hook ověřil i skutečně odesílaný commit. Po změně kódu nebo commitu gate zopakuj.
