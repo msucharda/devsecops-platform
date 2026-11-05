@@ -238,6 +238,7 @@ $suites = foreach ($file in $Path) {
 
             $retry = Invoke-LocalCiPester -RepositoryRoot $root -Path $files -ShardCount 2 -TempPath (Join-Path $root 'scratch')
             $retry.ExitCode | Should -Be 0 -Because ($retry.Output -join "`n")
+            $retry.Shards.OverheadSeconds | Should -BeExactly @(0.25, 0.25)
             $retry.Shards[0].ResultPath | Should -Not -Be $result.Shards[0].ResultPath
         }
 

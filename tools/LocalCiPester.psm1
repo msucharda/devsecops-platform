@@ -252,7 +252,7 @@ function Invoke-LocalCiPester {
                 $xml = Read-LocalCiPesterXml -Path $worker.ResultPath
                 $suite = $xml.SelectSingleNode('/test-results/test-suite')
                 $worker.PesterSeconds = [double]::Parse($suite.GetAttribute('time'), [Globalization.CultureInfo]::InvariantCulture)
-                $worker.OverheadSeconds = [Math]::Max(0, $worker.Seconds - $worker.PesterSeconds)
+                $worker.OverheadSeconds = [Math]::Max(0.0, $worker.Seconds - $worker.PesterSeconds)
                 $worker.Files = @($suite.SelectNodes('results/test-suite') | ForEach-Object {
                     [pscustomobject]@{
                         Path = [IO.Path]::GetRelativePath($RepositoryRoot, [IO.Path]::GetFullPath(
