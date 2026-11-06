@@ -2,7 +2,7 @@ BeforeDiscovery {
     Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
     $skipUnixReadPermissions = $IsWindows
     if (-not $IsWindows) {
-        $id = Get-Command -Name id -CommandType Application -ErrorAction Stop
+        $id = Get-Command -Name id -CommandType Application -ErrorAction Stop | Select-Object -First 1
         $effectiveUid = & $id.Source -u
         if ($LASTEXITCODE -ne 0 -or $effectiveUid -isnot [string] -or $effectiveUid -cnotmatch '^(0|[1-9][0-9]*)$') {
             throw 'Cannot determine the effective UID for the Unix read-permission regression.'
