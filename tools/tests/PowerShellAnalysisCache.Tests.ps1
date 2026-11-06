@@ -200,6 +200,19 @@ Describe 'PowerShell analysis cache' {
         Should -Invoke Invoke-ScriptAnalyzer -ModuleName PowerShellAnalysisCache -Times 2 -Exactly
     }
 
+    It 'rejects reparse-point file metadata before reading an otherwise valid receipt' {
+        Invoke-CachedPowerShellAnalysis @parameters
+        $entry = Get-ChildItem -LiteralPath $cache -Filter '*.json'
+        # Stub only the filesystem metadata boundary; the receipt and all other file fields remain valid.
+        $entry | Add-Member -MemberType NoteProperty -Name Attributes -Value ([IO.FileAttributes]::ReparsePoint) -Force
+        Mock Get-Item -ModuleName PowerShellAnalysisCache { $entry }
+
+        $output = @(Invoke-CachedPowerShellAnalysis @parameters -Verbose 4>&1)
+
+        ($output -join "`n") | Should -Match 'Cache entry is a reparse point'
+        Should -Invoke Invoke-ScriptAnalyzer -ModuleName PowerShellAnalysisCache -Times 2 -Exactly
+    }
+
     It 'does not trust or repair a cache directory with a broader Windows ACL' -Skip:(-not $IsWindows) {
         Invoke-CachedPowerShellAnalysis @parameters
         $directory = [IO.DirectoryInfo]::new($cache)

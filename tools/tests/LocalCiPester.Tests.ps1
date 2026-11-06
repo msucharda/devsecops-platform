@@ -25,7 +25,10 @@ BeforeAll {
 }
 
 Describe 'Local Pester result merging' {
-    It 'accepts the Pester Ignored root variant for passing suites with skipped tests' {
+    It 'accepts the Pester Ignored root variant for passing suites with <Case>' -ForEach @(
+        @{ Case = 'skipped tests'; Inconclusive = $false }
+        @{ Case = 'skipped and inconclusive tests'; Inconclusive = $true }
+    ) {
         $report = Join-Path $TestDrive 'skipped.xml'
         $output = Join-Path $TestDrive 'skipped-merged.xml'
         Write-ShardReport -Path $report -File 'A.Tests.ps1'
@@ -41,6 +44,15 @@ Describe 'Local Pester result merging' {
         $case.SetAttribute('result', 'Ignored')
         $case.SetAttribute('success', 'False')
         $null = $xml.SelectSingleNode('//test-case').ParentNode.AppendChild($case)
+        if ($Inconclusive) {
+            $case = $case.CloneNode($true)
+            $case.SetAttribute('name', 'inconclusive case')
+            $case.SetAttribute('executed', 'True')
+            $case.SetAttribute('result', 'Inconclusive')
+            $null = $xml.SelectSingleNode('//test-case').ParentNode.AppendChild($case)
+            $xml.'test-results'.SetAttribute('total', '3')
+            $xml.'test-results'.SetAttribute('inconclusive', '1')
+        }
         $xml.Save($report)
 
         $result = Merge-LocalCiPesterResult -Shard @(
@@ -49,6 +61,7 @@ Describe 'Local Pester result merging' {
 
         $result.ExitCode | Should -Be 0 -Because ($result.Output -join "`n")
         ([xml](Get-Content $output -Raw)).'test-results'.skipped | Should -Be '1'
+        ([xml](Get-Content $output -Raw)).'test-results'.'test-suite'.result | Should -BeExactly 'Ignored'
     }
 
     It 'fails closed for <Case> without reusing an older merged success' -ForEach @(
@@ -227,12 +240,17 @@ Describe 'Local Pester result merging' {
             Should -BeExactly @('A.Tests.ps1', 'B.Tests.ps1')
     }
 
-    It 'rejects a selected file suite without cases even when total covers both files' {
+    It 'rejects a selected file suite without cases with <Case>' -ForEach @(
+        @{ Case = 'total=2 but only one passing case'; CaseCount = 1; Message = "counter 'total'.*test cases" }
+        @{ Case = 'total=2 and both cases in the other file'; CaseCount = 2; Message = 'file coverage.*no test cases.*B.Tests.ps1' }
+    ) {
         $report = Join-Path $TestDrive 'empty-file.xml'
         Write-ShardReport -Path $report -File 'A.Tests.ps1'
         $xml = [xml](Get-Content $report -Raw)
         $fileSuite = $xml.SelectSingleNode('/test-results/test-suite/results/test-suite')
-        $null = $fileSuite.SelectSingleNode('results').AppendChild($fileSuite.SelectSingleNode('.//test-case').CloneNode($true))
+        if ($CaseCount -eq 2) {
+            $null = $fileSuite.SelectSingleNode('results').AppendChild($fileSuite.SelectSingleNode('.//test-case').CloneNode($true))
+        }
         $empty = $fileSuite.CloneNode($true)
         $empty.SetAttribute('name', 'B.Tests.ps1')
         $empty.SelectSingleNode('results').RemoveAll()
@@ -245,7 +263,7 @@ Describe 'Local Pester result merging' {
         ) -RepositoryRoot $TestDrive -OutputPath (Join-Path $TestDrive 'empty-file-merged.xml')
 
         $result.ExitCode | Should -Be 1
-        ($result.Output -join "`n") | Should -Match 'file coverage.*no test cases.*B.Tests.ps1'
+        ($result.Output -join "`n") | Should -Match $Message
     }
 
     It 'recovers XML publication interrupted <Boundary> with <Termination>' -ForEach @(

@@ -671,6 +671,8 @@ if ($GitHubOutputPath) {
         $savedActive = $env:INVOKE_LOCAL_CI_ACTIVE
         Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
         try {
+            Save-LocalCiGateResult -RepositoryRoot $fixture -State (Get-LocalCiContentState -RepositoryRoot $fixture -Base baseline) -GateProfile Local
+            Test-LocalCiGateResult -RepositoryRoot $fixture -Base baseline | Should -BeTrue
             Remove-Item -LiteralPath $timingPath, "$timingPath.new" -Force -ErrorAction SilentlyContinue
             if ($Boundary -eq 'abrupt before timings') {
                 $wrapper = Join-Path $fixture 'artifacts/interrupt-finalization.ps1'

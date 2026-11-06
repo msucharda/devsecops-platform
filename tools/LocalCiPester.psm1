@@ -197,7 +197,7 @@ function Merge-LocalCiPesterResult {
         foreach ($key in $totals.Keys) { $root.SetAttribute($key, $totals[$key].ToString([Globalization.CultureInfo]::InvariantCulture)) }
         $suite = $merged.SelectSingleNode('/test-results/test-suite')
         $suite.SetAttribute('time', $duration.ToString('0.####', [Globalization.CultureInfo]::InvariantCulture))
-        $suite.SetAttribute('result', $(if ($code -ne 0) { 'Failure' } elseif ($totals.ignored -gt 0) { 'Ignored' }
+        $suite.SetAttribute('result', $(if ($code -ne 0) { 'Failure' } elseif ($totals.skipped -gt 0) { 'Ignored' }
             elseif ($totals.inconclusive -gt 0) { 'Inconclusive' } else { 'Success' }))
         $suite.SetAttribute('success', $(if ($code -eq 0) { 'True' } else { 'False' }))
         $null = New-Item -ItemType Directory -Force -Path (Split-Path $OutputPath -Parent)
