@@ -14,6 +14,13 @@ Default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `read
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### Vývojový postup
+
+Před návrhem nebo implementací načti [vývojový postup](docs/agents/development.md).
+Skills jsou verzované v `.github/skills`. Implementaci zahajuje `/implement-spec`
+přímo v aktuální session; nevyžaduje kickoff ani povinný custom agent profil.
+Při volbě modelu nebo spouštění subagenta načti [model routing](docs/agents/model-routing.md).
+
 ## Coding standards
 
 Pravidla platí pro implementaci i code review. Code review je ověřuje podle sekce [Code review](#code-review).
@@ -110,39 +117,17 @@ CI workflow `Source CI` běží s oprávněním `contents: read`. Pester, harnes
 
 ### Lokální validace
 
-Před pushem musí projít rychlý lokální gate. Před merge musí projít úplné Linux Source CI na přesném head SHA PR.
-
-- Před každým pushem spusť `./tools/Invoke-LocalCi.ps1` (výchozí režim `-Changed`). Platí to i pro změny jen v dokumentaci. Push je povolený jen po návratovém kódu 0.
-  - `-Changed` analyzuje změněné PowerShell soubory, ověří manifesty a generované workflow a spustí dotčené izolované unit a contract suites. Kategorie určuje `tools/test-profiles.psd1`; nový test musí mít právě jednu kategorii.
-  - Změna `tools/Invoke-LocalCi.ps1`, `tools/LocalCi*.psm1`, `tools/Test-LocalCiResult.ps1` nebo `.githooks/pre-push` vybere lokální suites `LocalCi*.Tests.ps1` a lokální testy, které odkazují na změněný soubor. Při neznámém gate souboru, chybějícím souboru, nenalezených odkazech, chybějících suites gate nebo nečitelném zdroji testu vybere celý izolovaný profil. Známé soubory určuje `KnownGateFiles` v `tools/LocalCi.psm1`; samotná zmínka názvu ve fixture neprokazuje závislost nového souboru.
-  - Změna `tools/Invoke-Tests.ps1`, `tools/requirements.psd1`, `tools/test-profiles.psd1`, `tools/Test-PowerShell.ps1` nebo `.github/workflows/ci.yml` vždy vybere celý izolovaný profil.
-  - `-Plan` vypíše důvod výběru každého lokálního testového souboru i soubory ponechané vzdálenému CI. Terraform, integration suites, harness přerušení a mutace zůstávají v úplném profilu.
-  - `-Changed` spustí všechny vybrané kontroly a nahlásí všechna selhání. Manifesty, instance examples a generované workflow ověří v jednom child procesu se samostatnými výsledky; tento proces souběžně s PSScriptAnalyzer, actionlint a Pester sdílí přidělené sloty. Při jednom slotu běží skupiny sériově. Každý krok má v logu vlastní nepřerušovaný blok. `-Full` zachovává sériový fail-fast.
-  - Cíl je 5 minut, nikoli timeout měnící nedokončený běh na úspěch. Pass znamená jen „vybraný lokální gate prošel“.
-  - Návratový kód 2 znamená chybějící nástroj, špatnou verzi modulu nebo chybný parametr. Skript vypíše instrukci k opravě.
-- Gate zapisuje fáze jako `TIMING` do logu a do souboru se stejným názvem a příponou `.timings.json`, také při chybě a při `-Plan`. Souhrn `Schema = 1` obsahuje `StartedAt` (UTC), `Mode`, `Status`, `ExitCode`, `TotalSeconds` a `Phases` (`Name`, `StartSeconds`, `Seconds`). Fáze se nepřekrývají a pokrývají běh od vstupu do skriptu včetně Windows workeru, fronty, worktree zámku, setupu TEMP, výběru testů a úklidu. Fáze `Concurrent checks` měří společný wall-clock úsek; samostatné pole `Steps` obsahuje skutečné časy kroků (`Name`, `StartSeconds`, `Seconds`, `ExitCode`). Kroky se mohou překrývat, proto jejich časy nesčítej jako délku gate. Zápis samotného souhrnu a jeho výpis do konzole následují po měřeném úseku. Gate znovu ověří zdroj a publikuje pass receipt až po úspěšné finalizaci včetně timings a výpisu, stále pod worktree zámkem. Při chybě finalizace ani přerušení před timings nesmí zůstat použitelný receipt.
-- Benchmark na Windows i Linuxu spusť přes `./tools/Measure-LocalCi.ps1 -Revision origin/main -Repeat 3`. Měří wall-clock čas tří scénářů: změnu `README.md`, změnu `tools/Select-InstanceModules.ps1` a fan-out změnou `tools/Invoke-Tests.ps1`. Jen režii bez Pesteru změří `-Scenario Documentation -Repeat 1`. Revizi připne na SHA, každý scénář commituje v odděleném detached worktree pod `artifacts/local-ci/` a spouští původní gate této revize. Sledované soubory ani HEAD výchozího checkoutu nemění. Přebírá jeho obnovenou cache závislostí; gate ji dál ověřuje proti pinům dané revize. JSON uchovává revizi, platformu, jednotlivé vzorky, cesty k logům a mediány. Vlastní `-OutputPath` musí ležet pod `artifacts/` výchozího checkoutu, nesmí označovat sledovaný soubor a nesmí obsahovat reparse point v položce ani v žádném předku. Čas zahrnuje čekání ve frontě a start `pwsh`, nikoli přípravu worktree. Selhání gate ukončí benchmark chybou; částečný souhrn se stavem `failed` není baseline.
-- Commit vytvoř před gate. Výsledek platí jen pro stejný HEAD, base SHA a obsah všech sledovaných i neignorovaných nových souborů. Gate odmítne index s `assume-unchanged` nebo `skip-worktree` (včetně sparse-checkout), protože tyto příznaky skrývají změny před kontrolou čistoty. Před pushem ho ověř přes `tools/Test-LocalCiResult.ps1`. Push prováděj přes `git -c core.hooksPath=.githooks push`, aby pre-push hook ověřil i skutečně odesílaný commit. Po změně kódu nebo commitu gate zopakuj.
-- `-Base` má výchozí hodnotu `origin/main`; u stacked PR použij jeho base branch. Runner pracuje offline s místními refs; jejich aktualizaci proveď před gate. Ověření výsledku převezme base z uloženého pass.
-- Plnou sadu spouští Linux CI beze změny kategorií či počtu původních případů. `-Full` je dostupný lokálně na výslovné vyžádání, nikoli jako automatická eskalace rychlého gate. Chybějící, neúplný, zastaralý nebo nedostupný vzdálený výsledek blokuje merge; úspěšný lokální gate dovoluje push i při výpadku CI.
-- `Check PowerShell` v `-Changed` ukládá jen úspěšnou analýzu do privátní cache vedle worktree TEMP (`<TEMP>-pssa`), se stejnou kontrolou ACL. Klíč zahrnuje SHA-256 souboru a nastavení, verzi PSScriptAnalyzer a PowerShell; nečitelná, poškozená či neúplná položka vynutí novou analýzu. Cache přijímá výsledky nejvýš 7 dní staré a drží nejvýš 256 souborů včetně přerušených zápisů; `-Full` a Linux Source CI cache nepoužívají.
-- Pester v `-Changed` rozděluje vybrané soubory přes `Invoke-LocalCiPester` z `tools/LocalCiPester.psm1` do `min(přidělené sloty, počet souborů)` procesů. Každý soubor běží právě jednou. Plán používá poslední dostupný lokální čas souboru z `artifacts/pester.xml` a nejvýš 10 posledních sloučených reportů pod `artifacts/local-ci/pester/`; chybějící či nečitelný čas nahradí odhad z `tools/pester-durations.psd1`, jinak 1 s. Každý shard má vlastní TEMP a XML a běží přes `tools/Invoke-Tests.ps1 -CI -Path ... -ResultPath ...`. Běžný shard rezervuje jeden slot. Shard s `InstanceSetupManualSteps.Tests.ps1`, `LocalCiPester.Tests.ps1` nebo `LocalCiGate.Unit.Tests.ps1` rezervuje celý přidělený podíl Pesteru a předá jej v `LOCAL_CI_WORKER_BUDGET` svým vnořeným runnerům; ostatní shardy po dobu rezervace čekají. Runner čeká na všechny shardy a sloučí jejich suites a počty do `artifacts/pester.xml`. Nenulový exit, pád, timeout (výchozí 900 s od startu shardu, i při pozdějším přečtení již ukončeného procesu), chybějící či neplatné XML a neúplné nebo duplicitní pokrytí souborů znamenají selhání. Každý vybraný file suite musí obsahovat test case. Counters `total`, `inconclusive` a `skipped` musí odpovídat skutečným cases; Pester 5.7.1 zapisuje `ignored = 0` a vynechává nevykonané filtrované testy (`not-run`) z XML. Každý test case musí mít přesnou kombinaci `executed`/`result`: `True`/`Success`, `True`/`Inconclusive` nebo `False`/`Ignored`. Shard musí obsahovat aspoň jeden vykonaný úspěšný test. Starší sloučený výsledek runner nepoužije jako úspěch; logy a XML shardů uchová pod `artifacts/local-ci/pester/`. `-Full` zachovává původní běh.
-- Log a `*.timings.json` obsahují i skutečné časy Pester shardů. Pole `PesterShards` uvádí `Index`, rezervované `Slots`, `FileCount`, `EstimatedSeconds`, wall time procesu `Seconds`, čas z XML `PesterSeconds`, nezáporný rozdíl `OverheadSeconds` a jednotlivé soubory `Files` (`Path`, `Seconds`). Wall time vychází ze startu a konce procesu, nikoli z pořadí, ve kterém rodič přečte výsledky. Rozdíl zahrnuje start PowerShellu, importy a další režii mimo měření Pesteru; při chybějícím či nečitelném XML zůstanou XML časy prázdné. Log uvádí dobu každého shardu i souboru. Sloučené XML a `*.timings.json` runner zapisuje do souboru `.new` a publikuje atomickým přejmenováním. Další pokus odstraní starý výsledek i staging; přerušený zápis se tak nezamění za úspěšný výsledek. Suite s vnořenými interruption procesy během jejich běhu čeká; aserce a obnovu wizardu provede až po ukončení všech potomků.
-- Lokální běhy drží worktree zámek a sdílejí jednu strojovou FIFO frontu. Explicitní `-WorkerBudget` má přednost a ukládá se pro celý stroj. Bez uložené hodnoty runner použije `min(4, floor(počet logických jader / 2))`, nejméně 1. Změnu rozpočtu provede až po uvolnění všech slotů. Běh `-Changed` jedním požadavkem rezervuje sloty pro vybrané skupiny, nejvýš strojový rozpočet; `-Full` nadále celý rozpočet. Scheduler spouští skupiny jen do přiděleného počtu slotů a drží lease až do ukončení všech child procesů. Pester adaptér `Get-LocalCiPesterStepGroup` dostává nejvýš počet přidělených slotů minus 1, nejméně 1. Bez suite s vnořenými child procesy omezí rezervaci také počtem vybraných souborů. Jeden slot tak zůstává pro ostatní skupiny; při jediném slotu běží skupiny sériově. Adaptér uloží metadata shardů do privátního sidecaru, který rodič načte do `PesterShards`. Součet přidělených slotů nesmí překročit rozpočet. Každý child proces dostává v `LOCAL_CI_WORKER_BUDGET` jen svůj podíl; na Linuxu dědí všechny handles lease. Log a soubor `*.timings.json` uvádějí čekání ve frontě, počet slotů a strojový rozpočet. `-QueueWaitSeconds` omezuje čekání chybou, nikoli úspěchem. Plán zámky nebere.
-- Na Windows běží gate ve vlastním PowerShell procesu s process-lifetime jobem; ukončení workeru ukončí i jeho potomky. Na Linuxu potomci dědí zámky, takže po přerušení runneru nový běh čeká na jejich konec. Další běh nesmí vyčistit jejich TEMP ani překročit rozpočet souběhu. Integrace mutačního runneru s `LOCAL_CI_WORKER_BUDGET` v `-Full` závisí na #107; samotný export proměnné její dodržení neprokazuje.
-- Na Windows runner používá krátký soukromý TEMP mimo checkout (výchozí kořen `<UserProfile>\.dci`). `-TempRoot` smí být pouze přímý podadresář `UserProfile`; jiné umístění včetně `C:\t`, kořene svazku a cesty přes mezilehlou junction runner odmítne. Mimo Windows není `-TempRoot` podporovaný; ponech výchozí soukromý datový adresář. Výsledná Windows cesta smí mít nejvýš 64 znaků. Nové adresáře vzniknou s chráněným ACL jen pro aktuálního uživatele a SYSTEM. Existující kořen, mezisložka `devsecops-local-ci` i worktree adresář musí mít stejné omezení; runner cizí vlastnictví, širší ACL ani reparse point neopravuje, ale odmítne. Lokální Windows Unit sada ověřuje i skutečný ACL a junction v izolované fixture.
-- Preflight spustí sondu `pwsh` jen v `-Full` s alespoň jedním vybraným Terraform rootem. Skutečný Terraform provede `init`, `plan` a `show -json` nad dočasným rootem s `data "external"`. Verzi a hashe provideru přebírá z lockfile `modules/organizations`; `init -lockfile=readonly` brání změně pinu. Root, data i cache provideru zůstávají v soukromém TEMP. Sonda vyžaduje mapu řetězců `probe = "local-ci"` a `version` alespoň 7.4. Nefunkční alias `pwsh` oprav instalací funkčního PowerShell a jeho procesovým PATH. `-Changed` nevyžaduje Terraform ani Go.
-- Lokální gate používá pinovaný actionlint z archivu v `tools/.dependencies/`. Obnov ho přes `./tools/Install-ToolDependencies.ps1 -Binary Actionlint`. Před každým během ověří hash archivu a extrahuje novou binárku do soukromého TEMP; existující extrahované binárce nedůvěřuje. Instalátor podporuje Windows a Linux amd64. Volitelný `-Binary Terraform` obnoví Terraform do stejné worktree cache, bez globální instalace.
-- CI ověřuje skutečnou pozitivní a negativní sondu přes `tools/Test-LocalCiRuntimeProbe.ps1` jen v Terraform jobu pro `modules/organizations`, po jeho `init`. Skript používá offline filesystem mirror již nainstalovaného provideru a vypíná síťové kontroly verzí Terraformu. Pester tuto síťovou závislost nepřebírá; veřejný vstupní bod testuje proti stubu.
-- Pester spouštěj jen přes `tools/Invoke-Tests.ps1` (cílený běh přes `-Path`). Skript nastaví `Set-StrictMode -Version Latest` a verzi Pester z `tools/requirements.psd1`. Bez StrictMode test projde i při čtení nedefinované proměnné a v CI pak selže.
-- Kroky CI, které `Invoke-LocalCi.ps1` nepokrývá, spouštěj příkazy z `.github/workflows/ci.yml` beze změny parametrů.
-- Na CI čekej přes `./tools/Wait-PullRequestChecks.ps1 -Pr <číslo>`. Skript se vrátí nejpozději po `-MaxSeconds` (výchozí hodnota 230 s) s řádkem stavu checks a Copilot review. Návratové kódy: 0 prošlo, 1 selhalo, 2 stále běží, 3 chyba.
+Před spuštěním lokálního gate nebo pushem a při změně či review runneru načti
+[pravidla lokálního CI](docs/agents/local-ci.md). Před každým pushem musí projít
+commit-bound gate; před merge úplné Linux Source CI na přesném head SHA.
+Podrobný postup, výsledky, cache, rozpočty a pravidla bezpečného TEMP mají jediný
+zdroj v odkazovaném dokumentu.
 
 ### Security checkpoint během implementace
 
 Spouštěč: návrh bezpečnostní nebo identitní kontroly je hotový včetně testů, celá změna ještě ne. Checkpoint se týká validace vlastníka, instalace, oprávnění, hranic, revokace tokenu a mazání. Netýká se dokumentace ani refaktoringu beze změny chování.
 
-- Implementátor spustí review subagenta s jiným modelem (Opus ↔ GPT Sol) a s čerstvým kontextem.
+- Implementátor použije skill `security-checkpoint`. Reviewer musí mít čerstvý kontext a jinou modelovou rodinu podle [model routingu](docs/agents/model-routing.md); modely se zde neduplikují.
 - Reviewer dostane jen diff, zadání a odkazy na primární dokumentaci API. Zdůvodnění ani poznámky implementátora nedostane.
 - Reviewer ověří jen tři oblasti: tvar externího API proti dokumentaci, fail-open stavy a obnovu po přerušení podle pravidel výše.
 - Implementátor nálezy opraví hned. Koncové code review a Copilot review v PR zůstávají beze změny.
@@ -160,11 +145,37 @@ Skill `code-review` čte tato pravidla jako coding standards repozitáře. Osa S
 
 Pravidla platí pro každého agenta v repozitáři.
 
+### Vlastnictví práce a delegování
+
+- Výchozí režim je přímá práce aktuální session. Jedna dodávka má jednoho vlastníka implementace, integrace, závěrečného review, validace a handoffu.
+- Ticket určuje výsledek a akceptační kritéria, ne počet agentů, sessions ani PR. Nová child session vzniká kvůli izolované větvi nebo samostatnému životnímu cyklu, ne automaticky pro další krok.
+- Subagent dostane ohraničený výsledek, potřebné zdroje a podmínku ukončení. Zadavatel stejnou práci souběžně neopakuje. Krátké lookupy a jeden souvislý průchod kódem řeší přímo.
+- Paralelní implementace vyžaduje výslovný souhlas uživatele; počáteční limit jsou dva souběžní implementátoři. Delegovaný implementer nerozděluje implementaci dalším implementerům. Povinné nezávislé review a security checkpoint zůstávají.
+- Předání používá odkazy na zdroje a stručné nové informace, ne kopii celé spec nebo obecných pravidel. Vlastníkem závěrečného procesu zůstává jedna session; běžná integrace ani opravy nepotřebují dalšího agenta.
+- Retrospektiva ani retrospektivní subagent nejsou podmínkou dokončení. Zrušení dřívějšího rozhodnutí zaznamenává [ADR 0019](docs/adr/0019-session-retrospectives-enforced-by-merge-gate.md).
+
+### Čekání a blokace
+
+- Stav `hotovo` vyžaduje všechny předepsané výsledky. Stav `blocked` umožňuje pozastavit práci při externí závislosti, běžící CI, nedostupné službě nebo vyčerpaném schváleném rozpočtu; neznamená úspěch.
+- Při pozastavení uveď přesný blocker, poslední ověřené SHA, rozpracované změny a podmínku obnovení. Sledování stejného stavu má jednoho vlastníka.
+- Použij dostupnou notifikaci nebo ne-modelový monitor. Pokud je nutná jednorázová kontrola, použij `tools/Wait-PullRequestChecks.ps1`. Při nezměněném čekajícím stavu ukonči tah; nevytvářej další modelové tahy jen kvůli polling smyčce.
+- Není-li dostupné probuzení, výslovně uveď, kdo a jak může práci obnovit. Neslibuj automatické pokračování bez skutečného mechanismu.
+- Pokyn STOP ruší dosavadní plán pokračování. Zastav vlastní práci i delegované úlohy, zachovej změny a obnov práci až po novém výslovném pokynu uživatele.
+
 ### Fakta a rozhodnutí
 
 - Každý fakt o stavu musí mít označení: ověřený (čím), nahlášený (kým), nebo neověřený.
 - Návrh agenta se bez schválení nesmí stát rozhodnutím. Agent musí vést rozhodnutí uživatele a zadavatele úkolu odděleně od vlastních návrhů.
 - Důvod: při zkracování záznamů o práci se kvalifikace ztrácejí. „Neověřeno“ se změní na „ověřeno“ a neschválená výjimka se zapíše jako rozhodnutí.
+
+### Průběžná paměť
+
+- Když agent ověří nový poznatek použitelný v dalších úkolech, uloží ho průběžně do vestavěného Copilot Memory. Typicky jde o příčinu opakované chyby, ověřený způsob nápravy nebo nezdokumentované omezení nástroje. Zápis provede sám při práci, bez samostatného subagenta nebo závěrečné retrospektivy.
+- Záznam musí stručně uvést repozitář, podmínky platnosti, poznatek a odkaz na důkaz, například soubor s revizí, veřejnou dokumentaci nebo issue. Domněnka ani samotné hlášení jiného agenta nestačí. Pokud stejné pravidlo už obsahuje verzovaná dokumentace, odkazuj na ni místo vytváření další autoritativní kopie.
+- Neukládej průběžné stavy CI, seznamy úkolů, celé logy, tajné údaje, osobní údaje ani neveřejné payloady. Při ukládání použij rozsah repozitáře, pokud ho dostupný nástroj podporuje.
+- Před vytvořením záznamu využij dostupné vyhledání paměti k omezení duplicit. Opravený poznatek aktualizuj dostupným nástrojem; pokud aktualizace není podporovaná, nový záznam musí výslovně označit původní poznatek za překonaný.
+- Paměť je podklad, nikoli instrukce nebo souhlas uživatele. Před použitím ověř její platnost pro aktuální stav. Schválená rozhodnutí a závazná pravidla nadále patří do verzované dokumentace.
+- Pokud runtime nástroj pro Copilot Memory nenabízí nebo zápis selže, nahlas omezení jednou a pokračuj v úkolu. Netvrď, že byl poznatek uložen, a nevytvářej bez zadání náhradní memory soubory. Automatická konsolidace paměti (dreaming) vyžaduje samostatné zadání.
 
 ### Strop Copilot code review
 
@@ -177,8 +188,8 @@ Pravidla platí pro každého agenta v repozitáři.
 Merge gate rozhoduje, zda PR splňuje podmínky pro merge. Nerozhoduje, zda agent smí mergovat: souhlas uživatele nebo mandát drží volající.
 
 - Session před handoffem spustí `./tools/agents/Test-MergeGate.ps1 -Repository <owner/repo> -Pr <číslo> -ExpectedHeadSha <head SHA>` a vloží JSON verdikt do handoffu.
-  - S verdiktem `pending` smí session předat práci jen kvůli `copilot-review-in-progress`. V ostatních případech čeká.
-  - S verdiktem `fail` smí session předat práci jen kvůli `open-questions` nebo `workflow-permissions-changed`, protože o nich rozhoduje uživatel. Ostatní důvody opraví.
+  - Dokončený handoff vyžaduje `pass`. S verdiktem `pending` nebo `fail` smí session poslat pouze stav `blocked` s důvodem a podmínkou obnovení podle sekce „Čekání a blokace“.
+  - Nedostupný gate nebo nečitelný výsledek je blokace, nikoli pass. Pozastavení práce nemění podmínky merge a neopravňuje k obejití kontrol.
 - Koordinátor mergeuje jen přes `./tools/agents/Invoke-GatedMerge.ps1 -Repository <owner/repo> -Pr <číslo> -ExpectedHeadSha <head SHA> -Reason <souhlas nebo mandát>`. Skript vždy vyhodnotí gate znovu a mergeuje jen při `pass` přes `--squash --match-head-commit`. Merge queue gate nepodporuje (`merge-queue-unsupported`), protože fronta by PR zamergovala později bez gate.
 - Koordinátor spouští verzi z `origin/main`, aby větev nemohla oslabit vlastní gate. Do důvěryhodného dočasného adresáře rozbalí celé `tools/` z této revize (`git archive origin/main tools | tar -xf - -C <adresář>`), včetně přibaleného YAML parseru a jeho hashů. Samostatná kopie skriptů z `tools/agents/` tento runtime neobsahuje. Závislosti nesmí načítat z větve PR.
 - Agent nesmí použít `gh pr merge --admin`, `--auto` ani `gh pr ready` a merge v jednom kroku. Verdikt `blocked-by-rules` znamená chybu v rulesetu, ne důvod k obejití pravidel.

@@ -1,5 +1,19 @@
 # Retrospektivy implementačních session vynucuje merge gate
 
+**Stav: zrušeno rozhodnutím uživatele 6. 11. 2026.**
+
+Uživatel zrušil povinnou retrospektivu a zadal její odstranění ze skills.
+Aktivní vývojový postup je v [docs/agents/development.md](../agents/development.md);
+průběžné poznatky se ukládají do vestavěného Copilot Memory podle `AGENTS.md`.
+Dreaming zůstává samostatnou budoucí prací.
+
+Následující text uchovává historické rozhodnutí z 5. 11. 2026, nikoli platné
+instrukce. Nezakládá povinnost retrospektivy, `issue-kickoff`, retrospektivního
+agenta ani výjimky merge gate. Tato změna nepřebírá nedokončenou implementaci
+z PR #240 a nemění ostatní kontroly merge gate.
+
+## Historické rozhodnutí
+
 Každá implementační session v tomto repozitáři musí před handoffem commitnout retrospektivu do `docs/agents/retros/`. Merge gate bez ní PR zamítne. Denní destilace převádí opakované nálezy na pravidla v `docs/agents/guide/`. Rozhodnutí schválil uživatel 5. 11. 2026. Důvod: agenti opakovaně hledají stejná fakta a opakují stejné chyby, protože poznatek z jedné session se do další nepřenese.
 
 Mechanismus platí jen pro tento repozitář.
