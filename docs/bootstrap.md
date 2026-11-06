@@ -179,7 +179,7 @@ Pokud cílové organizace ještě neexistují, nejprve nasaď `organizations`. P
 
 ### Nový živý krok: časná Code Security fáze před prvním úplným deploy
 
-**Blokující předpoklad:** První živé nasazení `code-security` a `catalog` zůstává blokované do splnění živých kritérií [#157](https://github.com/msucharda/devsecops-platform/issues/157). Úspěšné offline testy ani tato dokumentační oprava živou akceptaci nenahrazují.
+**Splněný předpoklad:** [Závěrečný komentář #157](https://github.com/msucharda/devsecops-platform/issues/157#issuecomment-6626222075) uvádí úspěšnou živou akceptaci kontroly markeru a provenance release `v0.1.0-rc.14` před App credentials pro `code-security`, `catalog` i `full`. Issue [#157](https://github.com/msucharda/devsecops-platform/issues/157) je od 4. 11. 2026 uzavřené a první staged nasazení už neblokuje. Nový release musí projít živým ověřením importu a nasazení; úspěšné offline testy je nenahrazují.
 
 Rozhodnutí koordinátora: První nasazení má pořadí `code-security` → `catalog` → import a povýšení workflow → `full`. Pro oba staged běhy otevři v repozitáři instance **Actions → Deploy instance → Run workflow** na chráněné větvi `main`. Jde o dva nové živé uživatelské kroky. Výchozí volba `full` spouští běžný deploy; `push` a PR dál používají úplný graf. Nepodporovanou, prázdnou nebo jinak velkými písmeny zapsanou hodnotu dispatch odmítne první job bez credentials ještě před autorizací.
 
