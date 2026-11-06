@@ -325,7 +325,7 @@ Describe 'Actions policy' {
             $stub.Requests | Should -BeNullOrEmpty
         }
 
-        It 'reports an enterprise conflict without recommending a policy change (HTTP 409)' {
+        It 'reports an enterprise conflict without recommending a policy change (HTTP 409)' -Tag 'TeardownRecovery' {
             $stub.Override['setWorkflow'] = { @{ Status = 409; Body = '{"message":"Conflict"}' } }
 
             $failure = { Set-ActionsPolicy @target -Policy $managedPolicy } |
@@ -335,6 +335,9 @@ Describe 'Actions policy' {
             $failure.Exception.Message | Should -Match 'Stop and inspect the organization policy'
             $failure.Exception.Message | Should -Match 'Do not change the enterprise policy'
             $failure.Exception.Message | Should -Not -Match 'Align the enterprise|remove the enterprise restriction'
+            $failure.Exception.Message | Should -Match 'modules/enterprise-baseline/README\.md'
+            $failure.Exception.Message | Should -Match 'platform/modules/enterprise-baseline/README\.md'
+            $failure.Exception.Message | Should -Not -Match 'promoted-workflow recovery runbook in README\.md'
         }
 
         It 'fails when GitHub accepts a write but keeps another value' {
