@@ -8,11 +8,14 @@ param(
     [string[]] $Path,
     # Zero-based index/count. File estimates balance the shards; unknown files are included automatically.
     [ValidatePattern('^(0|[1-9][0-9]*)/([1-9][0-9]*)$')]
-    [string] $Shard
+    [string] $Shard,
+    # Isolates XML output when a caller runs multiple preselected file groups concurrently.
+    [string] $ResultPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($ResultPath -and -not $CI) { throw '-ResultPath requires -CI.' }
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
 Import-Module (Get-ToolDependencyPath -Name Pester)
 $env:PSModulePath = "$(Join-Path $PSScriptRoot 'vendor')$([IO.Path]::PathSeparator)$env:PSModulePath"
@@ -63,7 +66,7 @@ else { $configuration.Filter.ExcludeTag = 'Interruption' }
 if ($CI) {
     $configuration.TestResult.Enabled = $true
     $resultName = if ($Shard) { "pester-$($parts[0])-of-$($parts[1]).xml" } else { 'pester.xml' }
-    $configuration.TestResult.OutputPath = Join-Path $PSScriptRoot "../artifacts/$resultName"
+    $configuration.TestResult.OutputPath = if ($ResultPath) { $ResultPath } else { Join-Path $PSScriptRoot "../artifacts/$resultName" }
 }
 $result = Invoke-Pester -Configuration $configuration
 # Pester counts tests excluded by the tag filter as not run; only selected tests must run.

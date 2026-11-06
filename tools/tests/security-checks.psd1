@@ -4,6 +4,64 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'local-ci-benchmark-output-entry'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiBenchmark.Tests.ps1'
+                FullName = @('*refuses a reparse-point*', '*measures only the documentation scenario*')
+            })
+        }
+        @{
+            Name = 'local-ci-pester-case'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiPester.Tests.ps1'
+                FullName = @('*accepts the Pester Ignored root variant*', '*accepts an executed inconclusive case*', '*rejects a hidden test*')
+            })
+        }
+        @{
+            Name = 'local-ci-pester-result'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiPester.Tests.ps1'
+                FullName = @('*accepts the Pester Ignored root variant*', '*accepts an executed inconclusive case*', '*fails closed for <Case>*',
+                    '*rejects a hidden test*', '*rejects invalid shard metadata*', '*preserves all file suites*',
+                    '*rejects a selected file suite*')
+            })
+        }
+        @{
+            Name = 'local-ci-step-result'
+            Tests = @(@{
+                Path = 'tools/tests/LocalCiGate.Unit.Tests.ps1'
+                FullName = 'Local CI step result acceptance*'
+            })
+        }
+        @{
+            Name = 'local-ci-unix-temp-access'
+            Tests = @(@{
+                Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'
+                FullName = 'Local CI Unix private directory access*'
+            })
+        }
+        @{
+            Name = 'powershell-analysis-source-binding'
+            Tests = @(@{
+                Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'
+                FullName = @('*analyzes a cold file*', '*rejects a file changed during analysis*')
+            })
+        }
+        @{
+            Name = 'powershell-analysis-success'
+            Tests = @(@{
+                Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'
+                FullName = @('*analyzes a cold file*', '*never caches analyzer warnings*')
+            })
+        }
+        @{
+            Name = 'powershell-analysis-cache-entry'
+            Tests = @(@{
+                Path = 'tools/tests/PowerShellAnalysisCache.Tests.ps1'
+                FullName = 'PowerShell analysis cache*'
+            })
+        }
+        @{
             Name = 'teardown-workflow-predicates'
             Kind = 'TeardownWorkflow'
             File = 'tools/Generate-TeardownWorkflow.ps1'

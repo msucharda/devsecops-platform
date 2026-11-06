@@ -1,6 +1,341 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot '../LocalCi.psm1') -Force
     $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+    $testWorkerBudget = 64
+    if ($null -ne $env:LOCAL_CI_WORKER_BUDGET) {
+        if (-not [int]::TryParse($env:LOCAL_CI_WORKER_BUDGET, [ref] $testWorkerBudget) -or $testWorkerBudget -le 0) {
+            throw 'LOCAL_CI_WORKER_BUDGET must be a positive integer.'
+        }
+    }
+    $schedulerSlots = [Math]::Min(2, $testWorkerBudget)
+}
+
+Describe 'Local CI step result acceptance' {
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot '../LocalCiSteps.psm1') -Force
+    }
+
+    BeforeEach {
+        $record = '{"Name":"Pester","ExitCode":0,"Seconds":1.25,"StartSeconds":0.5,"Output":["passed"]}' | ConvertFrom-Json
+    }
+
+    It 'accepts a complete result for exit <Code>' -ForEach @(@{ Code = 0 }, @{ Code = 7 }) {
+        $record.ExitCode = [long] $Code
+        { Assert-LocalCiStepResult -Record $record -Name 'Pester' } | Should -Not -Throw
+    }
+
+    It 'rejects the missing field <Field> by name' -ForEach @(
+        @{ Field = 'Name' }, @{ Field = 'ExitCode' }, @{ Field = 'Seconds' }, @{ Field = 'StartSeconds' }, @{ Field = 'Output' }
+    ) {
+        $record.PSObject.Properties.Remove($Field)
+
+        { Assert-LocalCiStepResult -Record $record -Name 'Pester' } | Should -Throw "*missing field '$Field'*"
+    }
+
+    It 'rejects <Case> by its own condition' -ForEach @(
+        @{ Case = 'a null record'; Field = $null; Value = $null; Message = '*missing record*' }
+        @{ Case = 'an empty name array'; Field = 'Name'; Value = @(); Message = '*Name must be a string*' }
+        @{ Case = 'a single-element name array'; Field = 'Name'; Value = @('Pester'); Message = '*Name must be a string*' }
+        @{ Case = 'a null name'; Field = 'Name'; Value = $null; Message = '*Name must be a string*' }
+        @{ Case = 'a different name'; Field = 'Name'; Value = 'Static'; Message = '*name does not match*' }
+        @{ Case = 'name casing'; Field = 'Name'; Value = 'pester'; Message = '*name does not match*' }
+        @{ Case = 'a string exit code'; Field = 'ExitCode'; Value = '0'; Message = '*ExitCode must be an integer*' }
+        @{ Case = 'a decimal exit code'; Field = 'ExitCode'; Value = 0.5; Message = '*ExitCode must be an integer*' }
+        @{ Case = 'a boolean exit code'; Field = 'ExitCode'; Value = $false; Message = '*ExitCode must be an integer*' }
+        @{ Case = 'a null exit code'; Field = 'ExitCode'; Value = $null; Message = '*ExitCode must be an integer*' }
+        @{ Case = 'negative duration'; Field = 'Seconds'; Value = -0.5; Message = '*Seconds must be nonnegative*' }
+        @{ Case = 'negative start offset'; Field = 'StartSeconds'; Value = -0.5; Message = '*StartSeconds must be nonnegative*' }
+        @{ Case = 'string duration'; Field = 'Seconds'; Value = '1'; Message = '*Seconds must be numeric*' }
+        @{ Case = 'null start offset'; Field = 'StartSeconds'; Value = $null; Message = '*StartSeconds must be numeric*' }
+        @{ Case = 'NaN duration'; Field = 'Seconds'; Value = [double]::NaN; Message = '*Seconds must be finite*' }
+        @{ Case = 'infinite start offset'; Field = 'StartSeconds'; Value = [double]::PositiveInfinity; Message = '*StartSeconds must be finite*' }
+        @{ Case = 'string output'; Field = 'Output'; Value = 'passed'; Message = '*Output must be an array*' }
+        @{ Case = 'null output'; Field = 'Output'; Value = $null; Message = '*Output must be an array*' }
+    ) {
+        if ($null -eq $Field) { $record = $null } else { $record.$Field = $Value }
+
+        { Assert-LocalCiStepResult -Record $record -Name 'Pester' } | Should -Throw $Message
+    }
+}
+
+Describe 'Local CI step scheduling' {
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot '../LocalCiSteps.psm1') -Force
+    }
+
+    It 'reports every failed step and continues through the remaining steps in each child' {
+        $groups = @(
+            @{ Steps = @(
+                @{ Name = 'Manifests'; Script = "'manifests failed'; throw 'invalid manifest'" }
+                @{ Name = 'Examples'; Script = "'examples failed'; throw 'invalid example'" }
+                @{ Name = 'Generated'; Script = "'generated ran'" }
+            ) }
+            @{ Steps = @(
+                @{ Name = 'Pester'; Script = "'pester failed'; & '$([Environment]::ProcessPath)' -NoProfile -Command 'exit 7'" }
+            ) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots $schedulerSlots -WorkingDirectory $TestDrive -TempPath $TestDrive)
+
+        @($results.Name) | Should -BeExactly @('Manifests', 'Examples', 'Generated', 'Pester')
+        @($results.ExitCode) | Should -Be @(1, 1, 0, 7)
+        ($results[0].Output -join "`n") | Should -Match 'invalid manifest'
+        ($results[1].Output -join "`n") | Should -Match 'invalid example'
+        ($results[2].Output -join "`n") | Should -BeExactly 'generated ran'
+        ($results[3].Output -join "`n") | Should -BeExactly 'pester failed'
+    }
+
+    It 'runs groups within the granted slots while keeping grouped steps in one process' {
+        $directory = Join-Path $TestDrive 'overlap'
+        $null = New-Item -ItemType Directory -Path $directory
+        $barrier = @'
+[IO.File]::WriteAllText('ready-NUMBER', '')
+$watch = [Diagnostics.Stopwatch]::StartNew()
+while (TOTAL -gt 1 -and -not (Test-Path 'ready-OTHER')) {
+    if ($watch.Elapsed.TotalSeconds -gt 10) { throw 'Groups did not overlap' }
+    Start-Sleep -Milliseconds 20
+}
+"process=$PID; slots=$env:LOCAL_CI_WORKER_BUDGET"
+'@
+        $groups = @(
+            @{ Steps = @(
+                @{ Name = 'Static one'; Script = $barrier.Replace('NUMBER', '1').Replace('OTHER', '2').Replace('TOTAL', [string] $schedulerSlots) }
+                @{ Name = 'Static two'; Script = '"process=$PID; slots=$env:LOCAL_CI_WORKER_BUDGET"' }
+                @{ Name = 'Static three'; Script = '"process=$PID; slots=$env:LOCAL_CI_WORKER_BUDGET"' }
+            ) }
+            @{ Steps = @(@{ Name = 'Pester'; Script = $barrier.Replace('NUMBER', '2').Replace('OTHER', '1').Replace('TOTAL', [string] $schedulerSlots) }) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots $schedulerSlots -WorkingDirectory $directory -TempPath $directory)
+
+        @($results.ExitCode) | Should -Be @(0, 0, 0, 0)
+        $results[0].Output | Should -BeExactly $results[1].Output
+        $results[0].Output | Should -BeExactly $results[2].Output
+        $results[0].Output | Should -Not -Be $results[3].Output
+        $results[0].Output[0] | Should -Match '; slots=1$'
+        $results[0].Seconds | Should -BeGreaterThan 0
+    }
+
+    It 'queues a group until its full slot share is available' {
+        $directory = Join-Path $TestDrive 'weighted'
+        $null = New-Item -ItemType Directory -Path $directory
+        $groups = @(
+            @{ Slots = $schedulerSlots; Steps = @(@{ Name = 'Pester'; Script = @'
+if ($env:LOCAL_CI_WORKER_BUDGET -ne 'SLOTS') { throw 'Wrong Pester share' }
+Start-Sleep -Milliseconds 150
+[IO.File]::WriteAllText('pester-done', '')
+'@.Replace('SLOTS', [string] $schedulerSlots) }) }
+            @{ Steps = @(@{ Name = 'Static'; Script = "if (-not (Test-Path 'pester-done')) { throw 'Exceeded slot budget' }" }) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots $schedulerSlots -WorkingDirectory $directory -TempPath $directory)
+
+        @($results.ExitCode) | Should -Be @(0, 0)
+    }
+
+    It 'fails a missing result after an abruptly exited child and still runs the next group' {
+        $groups = @(
+            @{ Steps = @(@{ Name = 'Interrupted'; Script = 'exit 0' }) }
+            @{ Steps = @(@{ Name = 'Later'; Script = "'still ran'" }) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 1 -WorkingDirectory $TestDrive -TempPath $TestDrive)
+
+        @($results.ExitCode) | Should -Be @(1, 0)
+        ($results[0].Output -join "`n") | Should -Match 'did not return a valid result'
+        $results[1].Output | Should -BeExactly @('still ran')
+    }
+
+    It 'reports every process-start failure with its actual timing offset' {
+        $groups = @(
+            @{ Steps = @(@{ Name = 'Static'; Script = "'unreachable'" }) }
+            @{ Steps = @(@{ Name = 'Pester'; Script = "'unreachable'" }) }
+        )
+
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 1 `
+            -WorkingDirectory (Join-Path $TestDrive 'missing') -TempPath $TestDrive)
+
+        @($results.ExitCode) | Should -Be @(1, 1)
+        foreach ($result in $results) {
+            $result.Output[0] | Should -Match '^Cannot start step process:'
+            $result.StartSeconds | Should -BeGreaterThan 0
+        }
+    }
+
+    It 'preserves host output fragments as complete lines for Pester counts and log blocks' {
+        $groups = @(@{ Steps = @(@{ Name = 'Pester'; Script = @'
+Write-Host 'Tests Passed: 3, ' -NoNewline
+Write-Host 'Failed: 0, ' -NoNewline
+Write-Host 'Skipped: 0, NotRun: 0'
+'@ }) })
+
+        $result = Invoke-LocalCiStepSchedule -Group $groups -Slots 1 -WorkingDirectory $TestDrive -TempPath $TestDrive
+
+        @($result.Output) | Should -BeExactly @('Tests Passed: 3, Failed: 0, Skipped: 0, NotRun: 0')
+        (Get-PesterCount -Line $result.Output).Passed | Should -Be 3
+    }
+}
+
+Describe 'Local CI gate change selection' {
+    BeforeEach {
+        $fixture = Join-Path $TestDrive "selection-$([guid]::NewGuid().ToString('N'))"
+        $files = @{
+            'tools/Invoke-LocalCi.ps1' = 'param()'
+            'tools/tests/LocalCiGate.Unit.Tests.ps1' = "'LocalCiGate.psm1'"
+            'tools/tests/LocalCiConcurrency.Tests.ps1' = "'LocalCiConcurrency.psm1'"
+            'tools/tests/LocalCiRuntimeProbe.Tests.ps1' = "'Test-LocalCiRuntimeProbe.ps1'"
+            'tools/tests/RunnerConsumer.Tests.ps1' = "'Invoke-LocalCi.ps1'"
+            'tools/tests/Unrelated.Tests.ps1' = "'Other.ps1'"
+            'tools/tests/RunnerIntegration.Tests.ps1' = "'Invoke-LocalCi.ps1'"
+            'tools/test-profiles.psd1' = @"
+@{
+    Unit = @('LocalCiGate.Unit.Tests.ps1', 'LocalCiRuntimeProbe.Tests.ps1', 'RunnerConsumer.Tests.ps1', 'Unrelated.Tests.ps1')
+    Contract = @('LocalCiConcurrency.Tests.ps1')
+    Integration = @('RunnerIntegration.Tests.ps1')
+    Interruption = @()
+}
+"@
+        }
+        foreach ($path in $files.Keys) {
+            $fullPath = Join-Path $fixture $path
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path $fullPath -Parent)
+            Set-Content -LiteralPath $fullPath -Value $files[$path]
+        }
+    }
+
+    It 'selects gate suites and isolated references rather than the whole profile for <File>' -ForEach @(
+        @{ File = 'tools/Invoke-LocalCi.ps1' }
+        @{ File = 'tools/LocalCi.psm1' }
+        @{ File = 'tools/LocalCiGate.psm1' }
+        @{ File = 'tools/LocalCiConcurrency.psm1' }
+        @{ File = 'tools/LocalCiSteps.psm1' }
+        @{ File = 'tools/LocalCiTiming.psm1' }
+        @{ File = 'tools/Test-LocalCiResult.ps1' }
+        @{ File = '.githooks/pre-push' }
+    ) {
+        $fullPath = Join-Path $fixture $File
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path $fullPath -Parent)
+        Set-Content -LiteralPath $fullPath -Value 'param()'
+        $reference = "'$([IO.Path]::GetFileName($File))'"
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value $reference
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerIntegration.Tests.ps1') -Value $reference
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile $File -TerraformRoot @()
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
+
+        $testProfile.Selected | Should -BeExactly @(
+            'tools/tests/LocalCiConcurrency.Tests.ps1'
+            'tools/tests/LocalCiGate.Unit.Tests.ps1'
+            'tools/tests/LocalCiRuntimeProbe.Tests.ps1'
+            'tools/tests/RunnerConsumer.Tests.ps1'
+        )
+        $testProfile.Remote | Should -Contain 'tools/tests/RunnerIntegration.Tests.ps1'
+    }
+
+    It 'selects the whole isolated profile for shared infrastructure <File>' -ForEach @(
+        @{ File = 'tools/Invoke-Tests.ps1' }
+        @{ File = 'tools/requirements.psd1' }
+        @{ File = 'tools/test-profiles.psd1' }
+        @{ File = 'tools/Test-PowerShell.ps1' }
+        @{ File = '.github/workflows/ci.yml' }
+    ) {
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile $File -TerraformRoot @()
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
+
+        $testProfile.Selected | Should -BeExactly @(
+            'tools/tests/LocalCiConcurrency.Tests.ps1'
+            'tools/tests/LocalCiGate.Unit.Tests.ps1'
+            'tools/tests/LocalCiRuntimeProbe.Tests.ps1'
+            'tools/tests/RunnerConsumer.Tests.ps1'
+            'tools/tests/Unrelated.Tests.ps1'
+        )
+    }
+
+    It 'falls back to the whole isolated profile when gate references are unknown or only name a longer file' {
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value "'Invoke-LocalCi.ps1.extra'"
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerIntegration.Tests.ps1') -Value ''
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
+
+        $selection.AllPester | Should -BeTrue
+        $selection.Reason | Should -Contain 'tools/Invoke-LocalCi.ps1: gate dependencies are uncertain; every Pester and interruption test runs.'
+        $testProfile.Selected | Should -Contain 'tools/tests/Unrelated.Tests.ps1'
+    }
+
+    It 'does not treat selection fixture mentions as dependency evidence for a new gate module' {
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/LocalCiNewWorker.psm1') -Value 'param()'
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value "@{ File = 'LocalCiNewWorker.psm1' }"
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/LocalCiNewWorker.psm1' -TerraformRoot @()
+
+        $selection.AllPester | Should -BeTrue
+        $selection.Reason | Should -Contain 'tools/LocalCiNewWorker.psm1: gate dependencies are uncertain; every Pester and interruption test runs.'
+        (Get-LocalCiProfile -RepositoryRoot $fixture -AllPester:$selection.AllPester).Selected |
+            Should -Contain 'tools/tests/Unrelated.Tests.ps1'
+    }
+
+    It 'falls back to the whole isolated profile when a gate file was deleted' {
+        Remove-Item -LiteralPath (Join-Path $fixture 'tools/Invoke-LocalCi.ps1')
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+
+        $selection.AllPester | Should -BeTrue
+        (Get-LocalCiProfile -RepositoryRoot $fixture -AllPester:$selection.AllPester).Selected |
+            Should -Contain 'tools/tests/Unrelated.Tests.ps1'
+    }
+
+    It 'falls back to the whole isolated profile when no gate suite can be identified' {
+        Get-ChildItem -LiteralPath (Join-Path $fixture 'tools/tests') -Filter 'LocalCi*.Tests.ps1' | Remove-Item
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/test-profiles.psd1') -Value @"
+@{
+    Unit = @('RunnerConsumer.Tests.ps1', 'Unrelated.Tests.ps1')
+    Contract = @()
+    Integration = @('RunnerIntegration.Tests.ps1')
+    Interruption = @()
+}
+"@
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+
+        $selection.AllPester | Should -BeTrue
+        (Get-LocalCiProfile -RepositoryRoot $fixture -AllPester:$selection.AllPester).Selected |
+            Should -BeExactly @('tools/tests/RunnerConsumer.Tests.ps1', 'tools/tests/Unrelated.Tests.ps1')
+    }
+
+    It 'includes a gate reference with different Windows path casing' {
+        Set-Content -LiteralPath (Join-Path $fixture 'tools/tests/RunnerConsumer.Tests.ps1') -Value "'invoke-localci.ps1'"
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+
+        $selection.PesterPath | Should -Contain 'tools/tests/RunnerConsumer.Tests.ps1'
+        $selection.AllPester | Should -BeFalse
+    }
+
+    It 'falls back to the whole isolated profile when a test source cannot be read' {
+        Mock Get-Content -ModuleName LocalCi {
+            throw 'Test source is unreadable'
+        } -ParameterFilter { $LiteralPath -like '*Unrelated.Tests.ps1' }
+
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile 'tools/Invoke-LocalCi.ps1' -TerraformRoot @()
+
+        $selection.AllPester | Should -BeTrue
+        $selection.Warning | Should -Contain 'Cannot read tools/tests/Unrelated.Tests.ps1; test dependencies are uncertain.'
+    }
+
+    It 'explains each selected suite and keeps all causes when multiple changes select it' {
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile @(
+            'tools/Invoke-LocalCi.ps1', 'tools/tests/RunnerConsumer.Tests.ps1'
+        ) -TerraformRoot @()
+
+        $selection.PesterReason['tools/tests/LocalCiGate.Unit.Tests.ps1'] | Should -Contain 'gate suite for tools/Invoke-LocalCi.ps1'
+        $selection.PesterReason['tools/tests/RunnerConsumer.Tests.ps1'] | Should -Contain 'references tools/Invoke-LocalCi.ps1'
+        $selection.PesterReason['tools/tests/RunnerConsumer.Tests.ps1'] | Should -Contain 'affected by tools/tests/RunnerConsumer.Tests.ps1'
+    }
+
+    It 'explains every suite selected by a whole-profile fallback' {
+        $selection = Get-LocalCiSelection -RepoPath $fixture -ChangedFile '.github/workflows/ci.yml' -TerraformRoot @()
+        $testProfile = Get-LocalCiProfile -RepositoryRoot $fixture -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
+
+        foreach ($path in $testProfile.Selected) {
+            $selection.PesterReason[$path] | Should -Contain '.github/workflows/ci.yml changed: every Pester and interruption test runs.'
+        }
+    }
 }
 
 Describe 'Local CI profiles' {

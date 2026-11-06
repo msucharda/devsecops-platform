@@ -9,10 +9,12 @@
         'GitHubTokenRevocation.Tests.ps1'
         'InstanceSetupManualSteps.Tests.ps1'
         'LocalCiGate.Unit.Tests.ps1'
+        'LocalCiTiming.Tests.ps1'
         'LocalCiRuntimeProbe.Tests.ps1'
         'ModuleOrder.Tests.ps1'
         'ModuleSelection.Tests.ps1'
         'OrganizationScope.Tests.ps1'
+        'PowerShellAnalysisCache.Tests.ps1'
         'TerraformTestProcess.Tests.ps1'
     )
     Contract = @(
@@ -24,6 +26,7 @@
         'GitHubApiFixture.Tests.ps1'
         'GitHubRetryIntegration.Tests.ps1'
         'LocalCiConcurrency.Tests.ps1'
+        'LocalCiPester.Tests.ps1'
         'MicrosoftApiFixture.Tests.ps1'
         'ModuleParameters.Tests.ps1'
         'ReleaseContent.Tests.ps1'
@@ -62,6 +65,7 @@
         'InvokeTests.Tests.ps1'
         'LocalCi.Tests.ps1'
         'LocalCiGate.Tests.ps1'
+        'LocalCiBenchmark.Tests.ps1'
         'MergeGate.Tests.ps1'
         'ModuleRunner.Tests.ps1'
         'MutationRunner.Tests.ps1'
