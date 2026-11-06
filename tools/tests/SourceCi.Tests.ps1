@@ -4,6 +4,25 @@ BeforeAll {
 }
 
 Describe 'Source CI job dependencies' {
+    It 'restores pinned dependencies but always verifies them in <Job>' -ForEach @(
+        @{ Job = 'platform-checks' }, @{ Job = 'pester' },
+        @{ Job = 'interruption' }, @{ Job = 'mutation-shards' }
+    ) {
+        $steps = @($workflow.jobs[$Job].steps)
+        $cache = @($steps | Where-Object { $_['name'] -eq 'Cache verified tool dependencies' })
+        $cache.Count | Should -Be 1
+        $cache[0].uses | Should -BeExactly 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        $cache[0].with.path | Should -BeExactly 'tools/.dependencies'
+        $cache[0].with.key | Should -BeExactly 'tool-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(''tools/requirements.psd1'', ''tools/ToolDependencies.psm1'', ''tools/Install-ToolDependencies.ps1'') }}'
+        $cache[0].with['restore-keys'] | Should -BeNullOrEmpty
+        $install = @($steps | Where-Object { $_['name'] -eq 'Install tool dependencies' })
+        $install.Count | Should -Be 1
+        $install[0].run | Should -BeExactly './tools/Install-ToolDependencies.ps1 -Development'
+        $install[0]['if'] | Should -BeNullOrEmpty
+        $install[0]['continue-on-error'] | Should -Not -BeTrue
+        [array]::IndexOf($steps, $cache[0]) | Should -BeLessThan ([array]::IndexOf($steps, $install[0]))
+    }
+
     It 'requires all four mutation shards before the stable mutation check can pass' {
         $shards = $workflow.jobs['mutation-shards']
         $shards['timeout-minutes'] | Should -Be 15

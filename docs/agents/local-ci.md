@@ -2,6 +2,15 @@
 
 Před pushem musí projít rychlý lokální gate. Před merge musí projít úplné Linux Source CI na přesném head SHA PR.
 
+Vzdálené `Source CI` sdílí cache vývojových závislostí mezi statickými kontrolami,
+Pesterem, harness přerušení a mutacemi. Klíč obsahuje OS, architekturu a hash
+`requirements.psd1`, `ToolDependencies.psm1` a `Install-ToolDependencies.ps1`.
+Obnovení cache nenahrazuje ověření: každý job vždy spustí instalátor, který
+zkontroluje SHA256 archivů a shodu všech souborů modulů. Chybějící cache vyvolá
+běžnou instalaci; poškozená cache způsobí selhání. První běh pro nový klíč proto
+nemusí zrychlit. Bootstrap testy připravují release fixture jednou za suite,
+ale každý test dostane vlastní kopii; kontroly workflow při bootstrapu zůstávají.
+
 - Před každým pushem spusť `./tools/Invoke-LocalCi.ps1` (výchozí režim `-Changed`). Platí to i pro změny jen v dokumentaci. Push je povolený jen po návratovém kódu 0.
   - `-Changed` analyzuje změněné PowerShell soubory, ověří manifesty a generované workflow a spustí dotčené izolované unit a contract suites. Kategorie určuje `tools/test-profiles.psd1`; nový test musí mít právě jednu kategorii.
   - Změna `tools/Invoke-LocalCi.ps1`, `tools/LocalCi*.psm1`, `tools/Test-LocalCiResult.ps1` nebo `.githooks/pre-push` vybere lokální suites `LocalCi*.Tests.ps1` a lokální testy, které odkazují na změněný soubor. Při neznámém gate souboru, chybějícím souboru, nenalezených odkazech, chybějících suites gate nebo nečitelném zdroji testu vybere celý izolovaný profil. Známé soubory určuje `KnownGateFiles` v `tools/LocalCi.psm1`; samotná zmínka názvu ve fixture neprokazuje závislost nového souboru.
@@ -27,4 +36,3 @@ Před pushem musí projít rychlý lokální gate. Před merge musí projít úp
 - Pester spouštěj jen přes `tools/Invoke-Tests.ps1` (cílený běh přes `-Path`). Skript nastaví `Set-StrictMode -Version Latest` a verzi Pester z `tools/requirements.psd1`. Bez StrictMode test projde i při čtení nedefinované proměnné a v CI pak selže.
 - Kroky CI, které `Invoke-LocalCi.ps1` nepokrývá, spouštěj příkazy z `.github/workflows/ci.yml` beze změny parametrů.
 - Na CI čekej přes `./tools/Wait-PullRequestChecks.ps1 -Pr <číslo>`. Skript se vrátí nejpozději po `-MaxSeconds` (výchozí hodnota 230 s) s řádkem stavu checks a Copilot review. Návratové kódy: 0 prošlo, 1 selhalo, 2 stále běží, 3 chyba.
-

@@ -108,6 +108,18 @@ BeforeAll {
     $privateKey = $rsa.ExportRSAPrivateKeyPem()
     $rsa.Dispose()
 
+    # Generate the immutable release once; each test still gets its own writable copy.
+    $releaseTemplate = Join-Path $TestDrive 'bootstrap-release-template'
+    $null = New-Item -ItemType Directory -Path $releaseTemplate
+    Copy-Item -LiteralPath (Join-Path (Split-Path $tools -Parent) 'templates') -Destination $releaseTemplate -Recurse
+    Copy-Item -LiteralPath (Join-Path (Split-Path $tools -Parent) 'schemas') -Destination $releaseTemplate -Recurse
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination (Join-Path $releaseTemplate 'modules') -Recurse
+    $templateTools = New-Item -ItemType Directory -Path (Join-Path $releaseTemplate 'tools')
+    Get-ChildItem -LiteralPath $tools -File | Copy-Item -Destination $templateTools.FullName
+    Copy-Item (Join-Path $tools 'vendor') -Destination $templateTools.FullName -Recurse
+    & (Join-Path $templateTools.FullName 'Generate-DeploymentWorkflow.ps1') -ModulesPath (Join-Path $releaseTemplate 'modules') `
+        -OutputPath (Join-Path $releaseTemplate 'templates/instance/.github/workflows/deploy.yml')
+
     function Initialize-TestInventoryUpgrade {
         param($Arguments, $Cloud, $Inventory, $Bootstrap, $From = '0.1.0-rc.5', $To = '0.1.0-rc.10')
 
@@ -239,15 +251,9 @@ Describe 'GitHub bootstrap public interface' {
         }
         $casePath = Join-Path $TestDrive ([guid]::NewGuid().ToString())
         $release = Join-Path $casePath 'release'
-        New-Item -ItemType Directory -Path $release -Force | Out-Null
-        Copy-Item -LiteralPath (Join-Path (Split-Path $tools -Parent) 'templates') -Destination $release -Recurse
-        Copy-Item -LiteralPath (Join-Path (Split-Path $tools -Parent) 'schemas') -Destination $release -Recurse
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination (Join-Path $release 'modules') -Recurse
-        $releaseTools = New-Item -ItemType Directory -Path (Join-Path $release 'tools')
-        Get-ChildItem -LiteralPath $tools -File | Copy-Item -Destination $releaseTools.FullName
-        Copy-Item (Join-Path $tools 'vendor') -Destination $releaseTools.FullName -Recurse
-        & (Join-Path $releaseTools.FullName 'Generate-DeploymentWorkflow.ps1') -ModulesPath (Join-Path $release 'modules') `
-            -OutputPath (Join-Path $release 'templates/instance/.github/workflows/deploy.yml')
+        $null = New-Item -ItemType Directory -Path $casePath
+        Copy-Item -LiteralPath $releaseTemplate -Destination $release -Recurse
+        $releaseTools = Get-Item -LiteralPath (Join-Path $release 'tools')
         $instance = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
         $instance.modules = @{ application = @{} }
         $instance.bootstrap = @{
@@ -740,6 +746,17 @@ Describe 'GitHub bootstrap public interface' {
         $global:PSDefaultParameterValues = $savedGlobalPSDefaultParameterValues
         foreach ($name in $savedTokens.Keys) { [Environment]::SetEnvironmentVariable($name, $savedTokens[$name]) }
         if (Test-Path -LiteralPath $sourceInventory) { Remove-Item -LiteralPath $sourceInventory }
+    }
+
+    It 'keeps the prepared release unchanged when a test edits its private copy' -Tag 'ReleaseFixture' {
+        $relativePath = 'templates/instance/.github/workflows/deploy.yml'
+        $prepared = Join-Path $releaseTemplate $relativePath
+        $original = [IO.File]::ReadAllBytes($prepared)
+        Set-Content -LiteralPath (Join-Path $release $relativePath) -Value 'changed by this test'
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($prepared)) |
+            Should -BeExactly ([Convert]::ToBase64String($original))
+        & (Join-Path $releaseTemplate 'tools/Generate-DeploymentWorkflow.ps1') `
+            -ModulesPath (Join-Path $releaseTemplate 'modules') -OutputPath $prepared -Check
     }
 
     It 'prepares main-only vendoring environments with isolated approvals and no cloud credentials' -Tag 'Vendoring', 'EnvironmentProtection' {

@@ -51,6 +51,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache verified tool dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tools/.dependencies
+          key: tool-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/requirements.psd1', 'tools/ToolDependencies.psm1', 'tools/Install-ToolDependencies.ps1') }}
       - name: Install tool dependencies
         shell: pwsh
         run: ./tools/Install-ToolDependencies.ps1 -Development
@@ -104,6 +109,11 @@ jobs:
       PESTER_SHARD: ${{ matrix.shard }}/4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache verified tool dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tools/.dependencies
+          key: tool-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/requirements.psd1', 'tools/ToolDependencies.psm1', 'tools/Install-ToolDependencies.ps1') }}
       - name: Install tool dependencies
         shell: pwsh
         run: ./tools/Install-ToolDependencies.ps1 -Development
@@ -138,6 +148,11 @@ jobs:
       INTERRUPTION_SHARD: ${{ matrix.shard }}/4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache verified tool dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tools/.dependencies
+          key: tool-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/requirements.psd1', 'tools/ToolDependencies.psm1', 'tools/Install-ToolDependencies.ps1') }}
       - name: Install tool dependencies
         shell: pwsh
         run: ./tools/Install-ToolDependencies.ps1 -Development
@@ -157,6 +172,11 @@ jobs:
       MUTATION_SHARD: ${{ matrix.shard }}/4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache verified tool dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tools/.dependencies
+          key: tool-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/requirements.psd1', 'tools/ToolDependencies.psm1', 'tools/Install-ToolDependencies.ps1') }}
       - name: Install tool dependencies
         shell: pwsh
         run: ./tools/Install-ToolDependencies.ps1 -Development
