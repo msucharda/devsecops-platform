@@ -4,6 +4,48 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'retro-distillation-source-pr'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Tests.ps1'
+                FullName = @('*ignores a foreign*', '*ignores a PR targeting*', '*makes no changes when an open*', '*accepts the documented nullable head*', '*rejects a failed PR lookup*')
+            })
+        }
+        @{
+            Name = 'retro-distillation-closed-history'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Tests.ps1'
+                FullName = @('*blocks closed unmerged*', '*accepts merged history*')
+            })
+        }
+        @{
+            Name = 'retro-distillation-inventory'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Tests.ps1'
+                FullName = @('*rejects unreadable*', '*accepts the documented nullable*', '*rejects an unknown PR*', '*makes no changes when an open*')
+            })
+        }
+        @{
+            Name = 'retro-distillation-checkpoint'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Tests.ps1'
+                FullName = @('*rejects a remote checkpoint*', '*preserves the pushed output*')
+            })
+        }
+        @{
+            Name = 'retro-distillation-pr-response'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Tests.ps1'
+                FullName = @('*rejects creation response*', '*publishes the three-input*')
+            })
+        }
+        @{
+            Name = 'retro-distillation-output'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Tests.ps1'
+                FullName = @('*rejects a checkpoint*', '*rejects PR body*', '*rejects a nonregular*', '*publishes the three-input*')
+            })
+        }
+        @{
             Name = 'teardown-workflow-predicates'
             Kind = 'TeardownWorkflow'
             File = 'tools/Generate-TeardownWorkflow.ps1'

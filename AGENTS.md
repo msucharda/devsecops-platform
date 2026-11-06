@@ -157,6 +157,10 @@ Pravidla platí pro každého agenta v repozitáři.
 - Každá implementační session v `msucharda/devsecops-platform` musí běžet jako repo-level custom agent `implementer` z `.github/agents/implementer.agent.md`, včetně session spuštěné bez skillu `issue-kickoff`.
 - Před handoffem musí session dokončit postup retrospektivy podle [ADR 0019](docs/adr/0019-session-retrospectives-enforced-by-merge-gate.md). Formát pro agenta `session-retro`, G12 a destilaci určuje [README retrospektiv](docs/agents/retros/README.md).
 
+### Průvodce agentů
+
+- Při destilaci retrospektiv nebo obnově její publikace načti [postup destilace](docs/agents/guide/distillation.md).
+
 ### Fakta a rozhodnutí
 
 - Každý fakt o stavu musí mít označení: ověřený (čím), nahlášený (kým), nebo neověřený.

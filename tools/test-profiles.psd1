@@ -29,6 +29,7 @@
         'ReleaseContent.Tests.ps1'
         'RulesetCodeSecurity.Tests.ps1'
         'SourceCi.Tests.ps1'
+        'RetroDistillation.Contract.Tests.ps1'
     )
     # Full CI retains these setup, stateful scenario-matrix, and Terraform suites unchanged.
     Integration = @(
@@ -80,6 +81,7 @@
         'RulesetBypassVisibility.Tests.ps1'
         'Rulesets.Tests.ps1'
         'RulesetsTerraform.Tests.ps1'
+        'RetroDistillation.Tests.ps1'
         'TeardownEnterpriseOwner.Tests.ps1'
         'TeardownMainCommit.Tests.ps1'
         'TeardownMutation.Tests.ps1'
@@ -111,6 +113,7 @@
         'Organizations.Interruption.Tests.ps1'
         'PlatformRelease.Interruption.Tests.ps1'
         'RemoveBootstrap.Interruption.Tests.ps1'
+        'RetroDistillation.Interruption.Tests.ps1'
         'VendoredRuntime.Interruption.Tests.ps1'
         'VendoringPullRequest.Interruption.Tests.ps1'
     )
