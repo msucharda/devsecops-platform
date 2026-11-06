@@ -40,9 +40,33 @@ podpůrné skills zůstávají vyvolatelné agentem.
 Převzaté osobní skills: `grill-with-docs`, `to-spec`, `to-tickets`,
 `implement-spec`, `implement`, `code-review`, `grilling`, `domain-modeling`,
 `tdd`, `codebase-design` a `security-checkpoint`. Zdrojové balíčky byly lokální
-soubory uživatele, nikoli doložený upstream Git commit. Související šablony
-a metadata zůstávají součástí balíčků. Jazykový skill `controlled-czech`
+soubory uživatele; revize jejich původní instalace není doložená. Související
+šablony a metadata zůstávají součástí balíčků. Jazykový skill `controlled-czech`
 je nadále osobní závislostí popsanou v `AGENTS.md`; tato migrace ho nemění.
+
+### Upstream původ a licence
+
+Deset balíčků vychází z repozitáře
+[`mattpocock/skills`](https://github.com/mattpocock/skills/tree/4ae2317ddb22b046e26455e4f9c9b3aaaf62212d).
+Původ byl ověřen porovnáním migračních záloh s revizí
+`4ae2317ddb22b046e26455e4f9c9b3aaaf62212d`; jde o srovnávací revizi,
+nikoli tvrzení o revizi původní instalace.
+
+| Zdejší balíčky | Upstream cesta v uvedené revizi |
+|---|---|
+| `grill-with-docs`, `to-spec`, `to-tickets`, `implement-spec`, `implement`, `code-review`, `domain-modeling`, `tdd`, `codebase-design` | [`skills/engineering/<název>`](https://github.com/mattpocock/skills/tree/4ae2317ddb22b046e26455e4f9c9b3aaaf62212d/skills/engineering) |
+| `grilling` | [`skills/productivity/grilling`](https://github.com/mattpocock/skills/tree/4ae2317ddb22b046e26455e4f9c9b3aaaf62212d/skills/productivity/grilling) |
+
+Instrukce jsou upravené pro zdejší workflow. Převzaté části a podpůrné soubory
+zachovávají copyright `Copyright (c) 2026 Matt Pocock` a úplné znění
+[MIT licence](../../.github/skills/LICENSE.mattpocock), převzaté z
+[upstream licence](https://github.com/mattpocock/skills/blob/4ae2317ddb22b046e26455e4f9c9b3aaaf62212d/LICENSE).
+Například `tdd/mocking.md` odpovídá upstream blobu
+`71cbfee674d93244ce81d1830b930ca9a69200bd` po normalizaci konců řádků.
+`security-checkpoint` pochází z lokálního skillu uživatele a tomuto upstreamu
+se nepřisuzuje. Při dalším kopírování převzatých částí přilož také jejich licenci.
+
+### Postup migrace
 
 Při přechodu nejdřív zachovej přesnou zálohu osobních balíčků mimo adresáře,
 ve kterých runtime hledá skills. Ověř repo kopie a jejich relativní odkazy,
