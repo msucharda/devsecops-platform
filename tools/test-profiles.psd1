@@ -65,6 +65,7 @@
         'LocalCi.Tests.ps1'
         'LocalCiGate.Tests.ps1'
         'MergeGate.Tests.ps1'
+        'MergeGate.Retro.Tests.ps1'
         'ModuleRunner.Tests.ps1'
         'MutationRunner.Tests.ps1'
         'MutationTesting.Tests.ps1'

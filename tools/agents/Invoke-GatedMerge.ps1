@@ -13,6 +13,7 @@ Writes one JSON object to stdout. Exit codes: 0 merged and verified, 1 fail, 2 p
 input, 5 evaluation error or failed post-merge verification.
 
 Authorization stays with the caller: Reason records the user consent or mandate and goes only into the output.
+A retro-waived warning requires AcknowledgeRetroWaiver for the current head even though read-only G12 passes.
 
 .EXAMPLE
 ./tools/agents/Invoke-GatedMerge.ps1 -Repository msucharda/devsecops-platform -Pr 85 -ExpectedHeadSha <sha> -Reason 'user: "merge #85" 2026-10-22'
@@ -24,6 +25,7 @@ param(
     [Parameter(Mandatory)][string] $ExpectedHeadSha,
     [Parameter(Mandatory)][string] $Reason,
     [string] $AcknowledgeWorkflowChanges,
+    [string] $AcknowledgeRetroWaiver,
     [ValidateRange(0, 240)][int] $WaitPendingMinutes = 0
 )
 

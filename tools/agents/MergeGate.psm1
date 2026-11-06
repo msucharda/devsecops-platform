@@ -16,6 +16,7 @@ API contract (X-GitHub-Api-Version 2026-03-10; GraphQL schema github/docs src/gr
 - GET /repos/{owner}/{repo}/commits/{ref}/status: https://docs.github.com/en/enterprise-cloud@latest/rest/commits/statuses#get-the-combined-status-for-a-specific-reference
 - GET /repos/{owner}/{repo}/rules/branches/{branch}: https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-rules-for-a-branch
 - GET /repos/{owner}/{repo}/compare/{basehead}: https://docs.github.com/en/enterprise-cloud@latest/rest/commits/commits#compare-two-commits
+- GET /repos/{owner}/{repo}/pulls/{pull_number}: https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#get-a-pull-request
 - GET /repos/{owner}/{repo}/pulls/{pull_number}/files: https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests-files
 - GET /repos/{owner}/{repo}/git/trees/{tree_sha}: https://docs.github.com/en/enterprise-cloud@latest/rest/git/trees#get-a-tree
 - GET /repos/{owner}/{repo}/git/commits/{commit_sha}: https://docs.github.com/en/enterprise-cloud@latest/rest/git/commits#get-a-commit-object
@@ -23,7 +24,7 @@ API contract (X-GitHub-Api-Version 2026-03-10; GraphQL schema github/docs src/gr
 - GET /repos/{owner}/{repo}/rulesets/rule-suites: https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rule-suites#list-repository-rule-suites
 #>
 
-$script:GateVersion = '1.1.1'
+$script:GateVersion = '1.2.0'
 $script:ApiVersion = '2026-03-10'
 $script:CopilotLogins = [string[]] @('copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]', 'Copilot')
 $script:CopilotCheckName = 'copilot-pull-request-reviewer'
@@ -38,7 +39,7 @@ $script:MaxRestPages = 10
 $script:MaxFilePages = 30
 $script:MaxThreadPages = 10
 $script:ExitCodes = @{ 'pass' = 0; 'fail' = 1; 'pending' = 2; 'already-merged' = 3 }
-$script:CheckOrder = [string[]] @('pr-state', 'draft', 'head-pin', 'ci-checks', 'review-threads', 'copilot-review', 'mergeability', 'behind-base', 'open-questions', 'github-changes')
+$script:CheckOrder = [string[]] @('pr-state', 'draft', 'head-pin', 'ci-checks', 'review-threads', 'copilot-review', 'mergeability', 'behind-base', 'open-questions', 'github-changes', 'retro')
 
 $script:PullRequestQuery = @'
 query($owner: String!, $name: String!, $number: Int!, $threads: String) {
@@ -816,7 +817,8 @@ function Get-MergeGateWorkflowContent {
     param(
         [Parameter(Mandatory)][hashtable] $Target,
         [Parameter(Mandatory)][string] $Path,
-        [Parameter(Mandatory)][string] $Sha
+        [Parameter(Mandatory)][string] $Sha,
+        [ValidatePattern('\A[0-9a-f]{40}\z')][string] $BlobSha
     )
 
     $encoded = ($Path.Split('/') | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
@@ -828,6 +830,9 @@ function Get-MergeGateWorkflowContent {
     }
     if ($file['path'] -cne $Path) { throw "Content path does not match '$Path'." }
     if ($file.Contains('submodule_git_url') -or $file.Contains('target')) { throw "Content at '$Path' is a submodule or symlink." }
+    if ($PSBoundParameters.ContainsKey('BlobSha')) {
+        if ($file['sha'] -cne $BlobSha) { throw "Content blob SHA does not match the pinned tree at '$Path'." }
+    }
     $bytes = [Convert]::FromBase64String($file['content'])
     return [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
 }
@@ -917,6 +922,7 @@ function Get-MergeGatePinnedFile {
         if (@($sides | Where-Object { $_['type'] -ne 'tree' }).Count -eq 0) { continue }
         $status = if (-not $hasBase) { 'added' } elseif (-not $hasHead) { 'removed' } else { 'modified' }
         $result.Add($path, @{ filename = $path; status = $status })
+        if ($hasHead) { $result[$path]['headEntry'] = $after[$path] }
         if (Test-MergeGateWorkflowPath -Path $path) {
             foreach ($side in $sides) {
                 if (-not (Test-MergeGateRegularWorkflowEntry -Entry $side)) {
@@ -1156,6 +1162,146 @@ function Get-MergeGateGitHubChange {
     }
 }
 
+# security-check: merge-gate-retro-metadata
+function Assert-MergeGateRetroFrontmatter {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string] $Content,
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][int] $Number
+    )
+
+    # UTF-8 decoding preserves a BOM; permit exactly the optional leading encoding signature.
+    $frontmatter = [regex]::Match($Content, '\A\uFEFF?---\r?\n(?<yaml>[\s\S]*?)\r?\n---(?:\r?\n|\z)')
+    if (-not $frontmatter.Success) { throw 'The retrospective has no leading YAML frontmatter.' }
+    Import-Module (Join-Path $PSScriptRoot '../ToolDependencies.psm1') -ErrorAction Stop
+    Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded) -ErrorAction Stop
+    $text = $frontmatter.Groups['yaml'].Value
+    $parser = [YamlDotNet.Core.Parser]::new([IO.StringReader]::new($text))
+    while ($parser.MoveNext()) {
+        if ($parser.Current -is [YamlDotNet.Core.Events.NodeEvent]) {
+            if (-not $parser.Current.Anchor.IsEmpty -or -not $parser.Current.Tag.IsEmpty) {
+                throw 'Retrospective YAML tags, anchors or aliases are not supported.'
+            }
+        }
+    }
+    $yaml = [YamlDotNet.RepresentationModel.YamlStream]::new()
+    $yaml.Load([IO.StringReader]::new($text))
+    if ($yaml.Documents.Count -ne 1) { throw 'Retrospective YAML must contain exactly one document.' }
+    $root = $yaml.Documents[0].RootNode
+    if ($root -isnot [YamlDotNet.RepresentationModel.YamlMappingNode]) { throw 'Retrospective YAML must have a mapping root.' }
+    $fields = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    $keys = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $root.Children.GetEnumerator()) {
+        if ($entry.Key -isnot [YamlDotNet.RepresentationModel.YamlScalarNode] -or $entry.Value -isnot [YamlDotNet.RepresentationModel.YamlScalarNode]) {
+            throw 'Retrospective YAML keys and values must be scalars.'
+        }
+        if (-not $keys.Add($entry.Key.Value)) { throw 'Retrospective YAML has duplicate or case-colliding keys.' }
+        $fields.Add($entry.Key.Value, $entry.Value)
+    }
+    foreach ($key in @('session', 'issue', 'pr', 'date', 'model')) {
+        if (-not $fields.ContainsKey($key)) { throw "Retrospective YAML is missing '$key'." }
+    }
+    foreach ($key in @('issue', 'pr')) {
+        if ($fields[$key].Style -ne [YamlDotNet.Core.ScalarStyle]::Plain -or $fields[$key].Value -notmatch '\A[1-9][0-9]*\z') {
+            throw "Retrospective '$key' must be a positive integer."
+        }
+    }
+    if ($fields['pr'].Value -ne [string] $Number) { throw 'The retrospective PR number does not match the evaluated PR.' }
+    $metadata = ConvertFrom-Yaml -Yaml $text
+    foreach ($key in @('session', 'model')) {
+        if ($metadata[$key] -isnot [string] -or [string]::IsNullOrWhiteSpace($metadata[$key])) {
+            throw "Retrospective '$key' must be a nonempty string."
+        }
+    }
+    $session = $metadata['session']
+    if ($session -match '[/\\]') { throw 'The retrospective session must not contain a path separator.' }
+    if ($session -match '\A[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\z' -and $session -cne $session.ToLowerInvariant()) {
+        throw 'A retrospective UUID session must be lowercase.'
+    }
+    $date = $fields['date']
+    $calendar = [datetime]::MinValue
+    if ($date.Style -notin @([YamlDotNet.Core.ScalarStyle]::SingleQuoted, [YamlDotNet.Core.ScalarStyle]::DoubleQuoted) -or
+        -not [datetime]::TryParseExact($date.Value, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref] $calendar)) {
+        throw 'The retrospective date must be a quoted calendar date YYYY-MM-DD.'
+    }
+    if ($Path -cne "docs/agents/retros/$($date.Value)-$session.md") { throw 'The retrospective filename must match its date and session.' }
+}
+
+# security-check: merge-gate-retro-author
+function Test-MergeGateDependabot {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [AllowNull()] $PullRequest,
+        [Parameter(Mandatory)][string] $HeadSha,
+        [Parameter(Mandatory)][int] $Number,
+        [AllowEmptyString()][string] $Body
+    )
+
+    $numberValue = Get-MergeGateValue -Node $PullRequest -Path 'number'
+    if ($numberValue -isnot [long] -or $numberValue -ne $Number) { throw 'The author snapshot has a mismatched or invalid PR number.' }
+    if ((Get-MergeGateValue -Node $PullRequest -Path 'head.sha') -cne $HeadSha) { throw 'The author snapshot has a mismatched head.' }
+    if (-not $PullRequest.Contains('body')) { throw 'The author snapshot is missing the required body field.' }
+    $bodyValue = Get-MergeGateValue -Node $PullRequest -Path 'body'
+    # REST permits null for an empty body; GraphQL returns an empty string.
+    if ($null -ne $bodyValue -and $bodyValue -isnot [string]) { throw 'The author snapshot has an invalid body.' }
+    if ([string] $bodyValue -cne $Body) { throw 'The author snapshot has a mismatched body.' }
+    $author = Get-MergeGateValue -Node $PullRequest -Path 'user'
+    if ($author -isnot [System.Collections.IDictionary]) { throw 'The PR author is not an object.' }
+    foreach ($field in @('login', 'type')) {
+        if ($author[$field] -isnot [string] -or [string]::IsNullOrWhiteSpace($author[$field])) { throw "The PR author has no valid '$field'." }
+    }
+    return $author['login'] -ceq 'dependabot[bot]' -and $author['type'] -ceq 'Bot'
+}
+
+# security-check: merge-gate-retro-waiver
+function Get-MergeGateRetroWaiver {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([AllowEmptyString()][string] $Body)
+
+    # Count declarations case-insensitively before validating the one supported, case-sensitive form.
+    $declarations = [regex]::Matches($Body, '(?i)<!--\s*retro\b')
+    if ($declarations.Count -eq 0) { return '' }
+    if ($declarations.Count -ne 1) { throw 'The PR body must contain exactly one valid retrospective waiver marker.' }
+    $marker = [regex]::Match($Body, '<!--\s*retro:\s+none\s+(?<reason>bootstrap|human|distillation)\s*-->')
+    if (-not $marker.Success) { throw 'The PR body must contain exactly one valid retrospective waiver marker.' }
+    return $marker.Groups['reason'].Value
+}
+
+# security-check: merge-gate-retro
+function Get-MergeGateRetro {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable] $Target,
+        [AllowEmptyCollection()][object[]] $Files,
+        [Parameter(Mandatory)][string] $HeadSha,
+        [Parameter(Mandatory)][int] $Number,
+        [AllowEmptyString()][string] $Body
+    )
+
+    $errors = [ordered]@{}
+    try { $waiver = Get-MergeGateRetroWaiver -Body $Body }
+    catch {
+        return [ordered]@{ finding = @('fail:retro-invalid'); path = $null; errors = $errors; error = $_.Exception.Message; waiverReason = $null }
+    }
+    if ($waiver) { return [ordered]@{ finding = @(); path = $null; errors = $errors; error = $null; waiverReason = $waiver } }
+    foreach ($file in $Files) {
+        if ($file['status'] -ne 'added' -or $file['filename'] -cnotmatch '\Adocs/agents/retros/[0-9]{4}-[0-9]{2}-[0-9]{2}-[^/\\]+\.md\z') { continue }
+        $path = $file['filename']
+        try {
+            if ($file['headEntry']['mode'] -notin @('100644', '100755')) { throw 'The retrospective must be a regular file in the pinned tree.' }
+            $content = Get-MergeGateWorkflowContent -Target $Target -Path $path -Sha $HeadSha -BlobSha $file['headEntry']['sha']
+            Assert-MergeGateRetroFrontmatter -Content $content -Path $path -Number $Number
+            return [ordered]@{ finding = @(); path = $path; errors = $errors; error = $null; waiverReason = $null }
+        }
+        catch { $errors[$path] = "Retrospective YAML or content is invalid: $($_.Exception.Message)" }
+    }
+    $finding = if ($errors.Count -gt 0) { 'fail:retro-invalid' } else { 'fail:retro-missing' }
+    return [ordered]@{ finding = @($finding); path = $null; errors = $errors; error = $null; waiverReason = $null }
+}
+
 function Get-MergeGateRuleSummary {
     [CmdletBinding()]
     [OutputType([hashtable])]
@@ -1227,6 +1373,8 @@ function Get-MergeGateMessage {
         'behind-base' { return 'The head is behind the base branch.' }
         'open-questions' { return 'The pull request body has open questions for the user.' }
         'workflow-permissions-changed' { return 'Workflow or action changes touch permissions, triggers, secrets or runners and need a human acknowledgement for the head SHA.' }
+        'retro-missing' { return 'The pull request must add a session retrospective whose frontmatter pr matches its number.' }
+        'retro-invalid' { return 'The retrospective metadata, pinned content or waiver marker is invalid or unreadable; see details.retro.' }
     }
     return $Code
 }
@@ -1298,7 +1446,7 @@ function Get-MergeGateEmptyResult {
 function Invoke-MergeGate {
     <#
     .SYNOPSIS
-    Evaluates the merge gate G1-G11 for one pull request with read-only API calls.
+    Evaluates the merge gate G1-G12 for one pull request with read-only API calls.
     .OUTPUTS
     An ordered dictionary in the JSON schema of the gate; exitCode holds the process exit code (0-5) and is not
     part of the JSON output.
@@ -1310,6 +1458,7 @@ function Invoke-MergeGate {
         [Parameter(Mandatory)][int] $Pr,
         [AllowEmptyString()][string] $ExpectedHeadSha,
         [AllowEmptyString()][string] $AcknowledgeWorkflowChanges,
+        [AllowEmptyString()][string] $AcknowledgeRetroWaiver,
         [switch] $ExpectMerged,
         [int] $CopilotRoundCap = 2,
         [bool] $RequireCopilotReview = $true,
@@ -1328,6 +1477,7 @@ function Invoke-MergeGate {
         if ($Pr -lt 1) { throw [MergeGateInputError]::new("Pr $Pr must be a positive pull request number.") }
         $expected = ConvertTo-MergeGateSha -Value $ExpectedHeadSha -Parameter 'ExpectedHeadSha'
         $acknowledged = ConvertTo-MergeGateSha -Value $AcknowledgeWorkflowChanges -Parameter 'AcknowledgeWorkflowChanges'
+        $retroAcknowledged = ConvertTo-MergeGateSha -Value $AcknowledgeRetroWaiver -Parameter 'AcknowledgeRetroWaiver'
     }
     catch [MergeGateInputError] {
         $result = Get-MergeGateEmptyResult -Target $target -Number $Pr -Now $clock -ExpectedHeadSha ''
@@ -1340,6 +1490,7 @@ function Invoke-MergeGate {
     try {
         $evaluation = @{
             Result = $result; Target = $target; Number = $Pr; ExpectedHeadSha = $expected; AcknowledgedSha = $acknowledged
+            RetroAcknowledgedSha = $retroAcknowledged
             ExpectMerged = $ExpectMerged; CopilotRoundCap = $CopilotRoundCap; RequireCopilotReview = $RequireCopilotReview
             RequireCopilotOnHead = $RequireCopilotOnHead; RequireUpToDate = $RequireUpToDate; ExpectedWorkflows = $ExpectedWorkflows
             MissingCheckGraceMinutes = $MissingCheckGraceMinutes; CopilotPostGraceMinutes = $CopilotPostGraceMinutes; Now = $clock
@@ -1363,6 +1514,7 @@ function Complete-MergeGateEvaluation {
         [Parameter(Mandatory)][int] $Number,
         [AllowEmptyString()][string] $ExpectedHeadSha,
         [AllowEmptyString()][string] $AcknowledgedSha,
+        [AllowEmptyString()][string] $RetroAcknowledgedSha,
         [switch] $ExpectMerged,
         [int] $CopilotRoundCap,
         [bool] $RequireCopilotReview,
@@ -1523,9 +1675,13 @@ function Complete-MergeGateEvaluation {
     $files = Get-MergeGateRestList -Target $Target -Path "repos/$slug/pulls/$Number/files" -MaxPages $script:MaxFilePages
     $files = Get-MergeGatePinnedFile -Target $Target -BaseSha $workflowBaseSha -HeadSha $head -BaseTipSha $baseSha -Files $files
     $change = Get-MergeGateGitHubChange -Files $files -Target $Target -BaseSha $workflowBaseSha -HeadSha $head
+    $authorSnapshot = Invoke-MergeGateRest -Target $Target -Path "repos/$slug/pulls/$Number"
+    $dependabot = Test-MergeGateDependabot -PullRequest $authorSnapshot -HeadSha $head -Number $Number -Body $body
+    $retro = if ($dependabot) { [ordered]@{ finding = @(); path = $null; errors = @{}; error = $null; waiverReason = $null } }
+    else { Get-MergeGateRetro -Target $Target -Files $files -HeadSha $head -Number $Number -Body $body }
     # Reject a lasting ref change as well; the pinned trees also cover a ref that moves away and back.
     $current = Get-MergeGatePullRequest -Target $Target -Number $Number
-    if ($current['headRefOid'] -cne $head -or $current['baseRefOid'] -cne $baseSha) { throw 'The pull request head or base changed while reading workflow files.' }
+    if ($current['headRefOid'] -cne $head -or $current['baseRefOid'] -cne $baseSha -or $current['body'] -cne $body) { throw 'The pull request head, base or body changed while reading workflow files and retrospectives.' }
     $workflowEvidence = @{ 'workflow-permissions-changed' = [ordered]@{ sensitiveLines = $change.SensitiveLines; acknowledgedFor = if ($AcknowledgedSha) { $AcknowledgedSha } else { $null } } }
     $workflowFinding = @(Get-MergeGateWorkflowFinding -SensitiveLines $change.SensitiveLines -HeadSha $head -AcknowledgedSha $AcknowledgedSha)
     foreach ($reason in @(ConvertTo-MergeGateReason -Check 'github-changes' -Finding $workflowFinding -Evidence $workflowEvidence)) { $reasons.Add($reason) }
@@ -1546,6 +1702,17 @@ function Complete-MergeGateEvaluation {
         mergeQueue = $ruleSummary.MergeQueue
         requiredContexts = $ruleSummary.RequiredContexts
     }
+
+    # G12
+    $Result.details['retro'] = [ordered]@{
+        path = $retro.path; headSha = $head; errors = $retro.errors; error = $retro.error
+        waiverReason = $retro.waiverReason; acknowledgedFor = if ($RetroAcknowledgedSha) { $RetroAcknowledgedSha } else { $null }
+        exemptAuthor = if ($dependabot) { 'dependabot[bot]' } else { $null }
+    }
+    if ($retro.waiverReason) {
+        $warnings.Add([pscustomobject][ordered]@{ check = 'retro'; code = 'retro-waived'; message = 'The retrospective is waived; merging requires an acknowledgement for this head.'; evidence = $Result.details['retro'] })
+    }
+    foreach ($reason in @(ConvertTo-MergeGateReason -Check 'retro' -Finding $retro.finding)) { $reasons.Add($reason) }
 
     $ordered = @(foreach ($check in $script:CheckOrder) { $reasons | Where-Object { $_.check -ceq $check } })
     $Result.reasons = $ordered
@@ -1602,6 +1769,20 @@ function Test-MergeGateMergeAllowed {
     )
 
     return $Gate['verdict'] -ceq 'pass' -and $Gate['exitCode'] -eq 0 -and $Gate['headSha'] -ceq $ExpectedHeadSha
+}
+
+# security-check: merge-gate-retro-acknowledgement
+function Test-MergeGateRetroWaiverAcknowledged {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][System.Collections.IDictionary] $Gate)
+
+    $retro = Get-MergeGateValue -Node $Gate -Path 'details.retro'
+    if ($retro -isnot [System.Collections.IDictionary]) { return $false }
+    if (-not $retro.Contains('waiverReason')) { return $false }
+    if ($null -eq $retro['waiverReason']) { return $true }
+    return $retro['waiverReason'] -cin @('bootstrap', 'human', 'distillation') -and
+        $retro['acknowledgedFor'] -ceq $Gate['headSha']
 }
 
 # security-check: merge-gate-post-merge
@@ -1723,6 +1904,7 @@ function Invoke-GatedMerge {
         # The user consent or mandate behind the merge; it goes only into the output.
         [Parameter(Mandatory)][AllowEmptyString()][string] $Reason,
         [AllowEmptyString()][string] $AcknowledgeWorkflowChanges,
+        [AllowEmptyString()][string] $AcknowledgeRetroWaiver,
         [ValidateRange(0, 240)][int] $WaitPendingMinutes = 0,
         [AllowNull()] $Now
     )
@@ -1734,7 +1916,10 @@ function Invoke-GatedMerge {
         $output['exitCode'] = 4
         return $output
     }
-    $gateParameters = @{ Repository = $Repository; Pr = $Pr; ExpectedHeadSha = $ExpectedHeadSha; AcknowledgeWorkflowChanges = $AcknowledgeWorkflowChanges; Now = $Now }
+    $gateParameters = @{
+        Repository = $Repository; Pr = $Pr; ExpectedHeadSha = $ExpectedHeadSha
+        AcknowledgeWorkflowChanges = $AcknowledgeWorkflowChanges; AcknowledgeRetroWaiver = $AcknowledgeRetroWaiver; Now = $Now
+    }
 
     # Always a fresh evaluation: an earlier result is never reused.
     $gate = Invoke-MergeGate @gateParameters
@@ -1755,6 +1940,10 @@ function Invoke-GatedMerge {
     if (-not (Test-MergeGateMergeAllowed -Gate $gate -ExpectedHeadSha ([string] $gate['expectedHeadSha']))) {
         $output['reason'] = "gate-$($gate['verdict'])"
         $output['exitCode'] = $gate['exitCode']
+        return $output
+    }
+    if (-not (Test-MergeGateRetroWaiverAcknowledged -Gate $gate)) {
+        $output['reason'] = 'retro-waiver-unacknowledged'
         return $output
     }
 

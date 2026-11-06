@@ -31,7 +31,18 @@ Describe 'Gated merge interruption harness' -Tag 'Interruption' {
         $merge = @{ Repository = 'msucharda/devsecops-platform'; Pr = 78; ExpectedHeadSha = '5a86d28aa232fff72af137c29c1abd9e75f398a3'; Reason = 'harness'; Now = '2026-10-22T10:26:36Z' }
     }
 
-    It 'recovers from an interruption of the merge' {
+    It 'recovers from an interruption of the merge <Case>' -ForEach @(
+        @{ Case = 'with a retrospective'; Waiver = $false }
+        @{ Case = 'with an acknowledged retrospective waiver'; Waiver = $true }
+    ) {
+        $reset = {
+            $state.Stub = Initialize-MergeGateStub -Scenario pr-78
+            if ($Waiver) {
+                $state.Stub.Retro = $null
+                $state.Stub.PullRequest.body += "`n<!-- retro: none human -->"
+            }
+        }
+        if ($Waiver) { $merge['AcknowledgeRetroWaiver'] = $merge.ExpectedHeadSha }
         $run = {
             $result = Invoke-GatedMerge @merge
             if ($result['exitCode'] -notin @(0, 3)) { throw "Invoke-GatedMerge ended with exit code $($result['exitCode']): $($result['reason'])" }

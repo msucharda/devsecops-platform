@@ -55,6 +55,9 @@ function Initialize-MergeGateStub {
         Number = $definition.Number
         Now = $definition.Now
         PullRequest = $pullRequest
+        RestPullRequest = Get-GitHubApiFixture -Name 'pulls/get' -Set @{
+            number = $definition.Number; 'head.sha' = $pullRequest.headRefOid; body = $pullRequest.body
+        }
         DecisionAuthors = Get-GitHubApiFixture -Name 'graphql/pull-request-decision-authors'
         WorkflowRuns = Get-GitHubApiFixture -Name "actions/list-workflow-runs-for-repo.merge-gate-$($definition.Rest)"
         CheckRuns = Get-GitHubApiFixture -Name "checks/list-for-ref.merge-gate-$($definition.Rest)"
@@ -71,6 +74,12 @@ function Initialize-MergeGateStub {
         Contents = @{}
         Trees = @{}
         TreeRefs = @{ $pullRequest.baseRefOid = 'd' * 40; $pullRequest.headRefOid = 'e' * 40 }
+        # Synthetic G12 prerequisite for historical replay scenarios; not part of their recorded API fixtures.
+        Retro = @{
+            Path = 'docs/agents/retros/2026-11-06-test-session.md'
+            Content = "---`nsession: test-session`nissue: 227`npr: $($definition.Number)`ndate: `"2026-11-06`"`nmodel: test-model`n---`n# Retrospektiva session"
+            Mode = '100644'
+        }
         Merges = 0
     }
 }
@@ -162,10 +171,11 @@ function Invoke-MergeGateStub {
             $treeRef = $Matches['ref']
             $ref = @($Stub.TreeRefs.Keys | Where-Object { $Stub.TreeRefs[$_] -ceq $treeRef })[0]
             if ($Stub.Trees.ContainsKey($ref)) {
-                return ConvertTo-Json -InputObject $Stub.Trees[$ref] -Depth 50
+                $response = $Stub.Trees[$ref].Clone()
             }
-            $template = (Get-GitHubApiFixture -Name 'git/get-tree').tree[0]
-            $entries = @(foreach ($file in $Stub.Files) {
+            else {
+                $template = (Get-GitHubApiFixture -Name 'git/get-tree').tree[0]
+                $entries = @(foreach ($file in $Stub.Files) {
                 $isBase = $ref -ceq $pullRequest.baseRefOid
                 if ($isBase -and $file.status -eq 'added') { continue }
                 if (-not $isBase -and $file.status -eq 'removed') { continue }
@@ -174,8 +184,15 @@ function Invoke-MergeGateStub {
                 $entry.path = $name
                 $entry.sha = if ($isBase) { 'b' * 40 } else { 'a' * 40 }
                 $entry
-            })
-            $response = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ tree = $entries; sha = $treeRef }
+                })
+                $response = Get-GitHubApiFixture -Name 'git/get-tree' -Set @{ tree = $entries; sha = $treeRef }
+            }
+            if ($Stub.Retro -and $ref -ceq $pullRequest.headRefOid -and $response.tree -is [System.Collections.IList]) {
+                $retroEntry = (Get-GitHubApiFixture -Name 'git/get-tree' -Set @{
+                    'tree.0.path' = $Stub.Retro.Path; 'tree.0.mode' = $Stub.Retro.Mode; 'tree.0.sha' = 'f' * 40
+                }).tree[0]
+                $response.tree = @($response.tree) + @($retroEntry)
+            }
             return ConvertTo-Json -InputObject $response -Depth 50
         }
         '/contents/(?<file>[^?]+)\?ref=(?<ref>[0-9a-f]{40})$' {
@@ -183,6 +200,7 @@ function Invoke-MergeGateStub {
             $key = "$($Matches['ref'])/$file"
             # Synthetic YAML for unchanged settings; individual G10 cases supply their own base/head documents.
             $content = if ($Stub.Contents.ContainsKey($key)) { $Stub.Contents[$key] } else { "name: CI`non: push`njobs: {build: {runs-on: ubuntu-latest}}" }
+            if ($Stub.Retro -and $file -ceq $Stub.Retro.Path) { $content = $Stub.Retro.Content }
             if ($Stub.Scenario -eq 'pr-70' -and $file -eq '.github/workflows/release.yml') {
                 $content = (@($Stub.Files | Where-Object { $_.filename -eq $file })[0].patch -split "`n" |
                     Where-Object { $_.StartsWith('+') -and -not $_.StartsWith('+++') } |
@@ -192,6 +210,7 @@ function Invoke-MergeGateStub {
                 path = $file; content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($content))
                 size = [Text.Encoding]::UTF8.GetByteCount($content)
             }
+            if ($Stub.Retro -and $file -ceq $Stub.Retro.Path) { $response.sha = 'f' * 40 }
             return ConvertTo-Json -InputObject $response -Depth 50
         }
         '/rules/branches/' { return ConvertTo-Json -InputObject (Get-MergeGateStubPage -Items $Stub.Rules -Page $page) -Depth 50 }
@@ -210,6 +229,11 @@ function Invoke-MergeGateStub {
         }
         '/compare/' { return ConvertTo-Json -InputObject $Stub.Compare -Depth 50 }
         '/pulls/\d+/files\?' { return ConvertTo-Json -InputObject (Get-MergeGateStubPage -Items @($Stub.Files) -Page $page) -Depth 50 }
+        '/pulls/\d+$' {
+            $response = $Stub.RestPullRequest.Clone()
+            $response.body = $pullRequest.body
+            return ConvertTo-Json -InputObject $response -Depth 50
+        }
         '/rulesets/rule-suites\?' { return ConvertTo-Json -InputObject (Get-MergeGateStubPage -Items @($Stub.RuleSuites) -Page $page) -Depth 50 }
     }
     throw "The merge gate stub has no response for '$request'."

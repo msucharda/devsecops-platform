@@ -876,6 +876,7 @@
             Name = 'merge-gate-workflow-content'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 rejects*content*', '*G10 rejects*API*', '*G10 ignores*') }
+                @{ Path = 'tools/tests/MergeGate.Retro.Tests.ps1'; FullName = @('*G12 rejects an invalid content snapshot*', '*G12 accepts a retrospective*') }
             )
         }
         @{
@@ -965,6 +966,36 @@
             Name = 'merge-gate-workflow-changes'
             Tests = @(
                 @{ Path = 'tools/tests/MergeGate.Tests.ps1'; FullName = @('*G10 finding*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-retro'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Retro.Tests.ps1'; FullName = @('*G12 refuses*', '*G12 accepts a retrospective*', '*G12 requires an exactly*', '*G12 does not count*', '*G12 rejects a non-regular*', '*G12 rejects an unreadable*', '*G12 accepts the explicit waiver*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-retro-metadata'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Retro.Tests.ps1'; FullName = @('*G12 rejects invalid frontmatter*', '*G12 accepts a UTF-8 BOM*', '*G12 accepts a retrospective*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-retro-author'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Retro.Tests.ps1'; FullName = @('*G12 exempts Dependabot*', '*G12 requires a retrospective for*', '*G12 fails closed on malformed or mismatched author snapshot*', '*G12 author contract*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-retro-waiver'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Retro.Tests.ps1'; FullName = @('*G12 accepts the explicit waiver*', '*G12 rejects malformed or ambiguous waiver*', '*G12 refuses*') }
+            )
+        }
+        @{
+            Name = 'merge-gate-retro-acknowledgement'
+            Tests = @(
+                @{ Path = 'tools/tests/MergeGate.Retro.Tests.ps1'; FullName = @('*G12 merge*', '*G12 acknowledgement contract*') }
             )
         }
         @{

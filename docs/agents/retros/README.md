@@ -16,7 +16,7 @@ Soubor musí začínat YAML frontmatter ohraničeným samostatnými řádky `---
 | `date` | Řetězec v uvozovkách ve formátu `YYYY-MM-DD`; musí odpovídat datu v názvu souboru. |
 | `model` | Neprázdný řetězec: model, který retrospektivu vytvořil, nikoli model implementátora. |
 
-Agent nesmí použít duplicitní klíče, kolekce, YAML tags, anchors ani aliases. Následující hodnoty jsou syntetický příklad:
+Agent nesmí použít duplicitní klíče ani klíče lišící se pouze velikostí písmen, kolekce, YAML tags, anchors ani aliases. Následující hodnoty jsou syntetický příklad:
 
 ```yaml
 ---
@@ -29,6 +29,12 @@ model: "claude-opus-5.5"
 ```
 
 **Výjimka pro první bootstrap ukázku #226:** pokud integrační PR ještě neexistuje, soubor může dočasně obsahovat `pr: null`. Koordinátor musí hodnotu nahradit skutečným číslem PR. `null` nesplňuje běžný formát ani podmínku G12. Bootstrap PR musí obsahovat marker `<!-- retro: none bootstrap -->`; marker a jeho potvrzení se řídí ADR 0019.
+
+### Mechanická kontrola G12
+
+G12 ověřuje přidání regular souboru v rozdílu pevných merge-base a head trees, přesnou cestu a všech pět polí frontmatter podle tabulky. Obsah musí být UTF-8; úvodní BOM je povolený. Hodnoty `issue` a `pr` musí být kladná celá čísla v desítkovém zápisu bez uvozovek. G12 porovnává `pr` s číslem PR a datum i session s názvem souboru. Existující upravený soubor nestačí.
+
+G12 nekontroluje strukturu těla dokumentu ani pravdivost důkazů. Agent `session-retro` musí dodat celý dokument podle následujících sekcí; kontrola metadat tuto povinnost nenahrazuje. Pravidla výjimky a potvrzení koordinátorem určuje sekce [Merge gate v AGENTS.md](../../../AGENTS.md#merge-gate).
 
 ## Struktura dokumentu
 
