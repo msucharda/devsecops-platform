@@ -103,10 +103,18 @@ function Get-LocalCiContentState {
     $hash = [Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
     try {
         foreach ($path in @($paths | Sort-Object -Unique -CaseSensitive)) {
-            $file = Join-Path $RepositoryRoot $path
-            $contentHash = if (Test-Path -LiteralPath $file -PathType Leaf) { (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
-            elseif (-not (Test-Path -LiteralPath $file)) { 'deleted' }
-            else { throw "Cannot fingerprint non-file Git entry: $path" }
+            $file = [IO.Path]::Combine($RepositoryRoot, $path)
+            $attributes = try { [IO.File]::GetAttributes($file) }
+            catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { $null }
+            $contentHash = if ($null -eq $attributes) { 'deleted' }
+            elseif (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
+                throw "Cannot fingerprint non-file Git entry: $path"
+            }
+            else {
+                $stream = [IO.File]::OpenRead($file)
+                try { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)) }
+                finally { $stream.Dispose() }
+            }
             $hash.AppendData([Text.Encoding]::UTF8.GetBytes("$($path.Length):$path=$contentHash`n"))
         }
         $fingerprint = [Convert]::ToHexString($hash.GetHashAndReset()).ToLowerInvariant()
