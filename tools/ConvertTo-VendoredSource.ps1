@@ -110,7 +110,15 @@ foreach ($file in $files) {
             }
         }
         if ($isManifest) {
-            & $collectSteps (& $getValue (& $getValue $root 'runs') 'steps')
+            $runs = & $getValue $root 'runs'
+            $runtime = & $getValue $runs 'using'
+            if ($runtime -is [YamlDotNet.RepresentationModel.YamlScalarNode] -and $runtime.Value -ieq 'docker') {
+                $image = & $getValue $runs 'image'
+                if ($image -isnot [YamlDotNet.RepresentationModel.YamlScalarNode] -or $image.Value -cne 'Dockerfile') {
+                    throw "Docker actions must use a local Dockerfile in '$relative'; external images are not supported."
+                }
+            }
+            & $collectSteps (& $getValue $runs 'steps')
         }
         else {
             $jobs = & $getValue $root 'jobs'

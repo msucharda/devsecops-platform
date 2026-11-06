@@ -470,6 +470,19 @@ Describe 'Deployment workflow generation' {
             Should -Be '* @example-platform/platform'
     }
 
+    It 'runs candidate validation only after deployment authorization' {
+        $output = Join-Path $TestDrive 'authorized-validation.yml'
+        & $generator -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        $workflow.jobs.validate.needs | Should -BeExactly 'authorize'
+        $workflow.jobs.validate.if | Should -BeExactly '${{ needs.authorize.outputs.allowed == ''true'' }}'
+
+        $context = Get-SubsetWorkflowContext $workflow
+        (Get-WorkflowConditionResult $workflow 'validate' $context).Allowed | Should -BeTrue
+        Set-WorkflowConditionValue $context 'needs.authorize.outputs.allowed' 'false'
+        (Get-WorkflowConditionResult $workflow 'validate' $context).Allowed | Should -BeFalse
+    }
+
     It 'creates a deployment job for each module manifest' {
         $output = Join-Path $TestDrive 'deploy.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output

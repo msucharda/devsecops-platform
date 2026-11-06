@@ -297,6 +297,36 @@ jobs:
         Test-Path -LiteralPath $output | Should -BeFalse
     }
 
+    It 'rejects external Docker images <Image> for runtime <Runtime>' -Tag 'Docker' -ForEach @(
+        @{ Runtime = 'docker'; Image = 'docker://alpine:3' }
+        @{ Runtime = 'docker'; Image = 'alpine:3' }
+        @{ Runtime = 'Docker'; Image = 'docker://alpine:3' }
+        @{ Runtime = 'DOCKER'; Image = 'alpine:3' }
+    ) {
+        $source = Join-Path $TestDrive "docker-$([guid]::NewGuid().ToString('N'))"
+        $null = New-Item -ItemType Directory -Path $source
+        "runs: { using: $Runtime, image: $Image }" | Set-Content -LiteralPath (Join-Path $source 'action.yml')
+        $output = Join-Path $TestDrive "docker-output-$([guid]::NewGuid().ToString('N'))"
+
+        { & $prepare -SourcePath $source -OutputPath $output -CatalogPath (Join-Path $fixtures 'catalog.json') `
+            -ActionsOrganization customer-actions -Kind action } |
+            Should -Throw '*Docker actions must use a local Dockerfile*'
+        Test-Path -LiteralPath $output | Should -BeFalse
+    }
+
+    It 'allows a Docker action that builds from its local Dockerfile' -Tag 'Docker' {
+        $source = Join-Path $TestDrive 'local-docker'
+        $null = New-Item -ItemType Directory -Path $source
+        'runs: { using: docker, image: Dockerfile }' | Set-Content -LiteralPath (Join-Path $source 'action.yml')
+        'FROM scratch' | Set-Content -LiteralPath (Join-Path $source 'Dockerfile')
+        $output = Join-Path $TestDrive 'local-docker-output'
+
+        & $prepare -SourcePath $source -OutputPath $output -CatalogPath (Join-Path $fixtures 'catalog.json') `
+            -ActionsOrganization customer-actions -Kind action
+
+        Test-Path -LiteralPath (Join-Path $output 'Dockerfile') | Should -BeTrue
+    }
+
     It 'rejects YAML anchors rather than leaving unresolved or unrewritten action aliases' {
         $source = Join-Path $TestDrive 'anchors'
         $null = New-Item -ItemType Directory -Path $source
