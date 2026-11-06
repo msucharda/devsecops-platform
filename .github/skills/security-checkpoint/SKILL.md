@@ -5,8 +5,8 @@ description: "Independently review a completed security or identity control desi
 
 # Security checkpoint
 
-The `Security checkpoint během implementace` section of `AGENTS.md` defines the trigger
-and scope. This skill defines execution, not another review for every ticket.
+The [repository checkpoint rules](../../../docs/agents/repository-rules.md#security-checkpoint-během-implementace)
+define the trigger and scope. This skill defines execution, not another review for every ticket.
 
 1. Prepare a fixed snapshot of the change, including tests and new files. Use the selected
    base revision and record its SHA; do not automatically fetch and change a shared ref
@@ -41,5 +41,5 @@ the blocker and cause, and do not repeat the same failed attempt without new inf
 
 After a change to the reviewed security behavior, independently verify fixes and their effects
 again. Changed conditions, contracts and recovery determine the scope, not the line count.
-A newly completed control triggers a checkpoint according to `AGENTS.md`.
+A newly completed control triggers a checkpoint according to the repository checkpoint rules.
 Do not resubmit an unchanged snapshot with an evidenced completed checkpoint.

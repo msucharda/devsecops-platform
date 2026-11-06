@@ -1,29 +1,91 @@
 # Vývojový postup
 
-Výchozí postup má jednu návrhovou session a jednu implementační session.
-Každá pracuje přímo. Ticket popisuje ověřitelný výsledek, ne počet agentů.
-Závazná pravidla delegování, paměti, validace a merge jsou v
-[`AGENTS.md`](../../AGENTS.md); modely v [model routingu](model-routing.md).
+Uživatelský tok je `/grill-with-docs → /to-spec → /to-tickets → /lever deliver #<spec>`.
+Tento dokument je jediný zdroj pravidel pro organizaci dodávky a předávání.
+[`AGENTS.md`](../../AGENTS.md) směruje na ostatní závazná pravidla;
+modely určuje [model routing](model-routing.md).
 
 ## Návrh
 
 Uživatel ve stejné session spustí `/grill-with-docs`, potom `/to-spec`
 a `/to-tickets`. Interview zaznamenává rozhodnutí do doménové dokumentace;
-spec a tickets jsou v issue trackeru. Návrhový PR přijme dokumentaci před
-zahájením implementace. Nová implementační session dostane odkazy na spec,
-tickets a přijaté ADR, ne kopii celé konverzace nebo další kickoff dokument.
+spec a tickets jsou v issue trackeru. Předání do implementace vyžaduje
+schválenou spec, schválený graf tickets a přijatý návrhový PR, pokud návrh
+měnil verzovanou dokumentaci. Samotné zveřejnění issue neznamená schválení.
 
-## Implementace a dokončení
+### Kontrakt předání
 
-Uživatel spustí `/implement-spec` v nové session nad přijatým návrhem.
-Session implementuje připravené tickets sekvenčně na přidělené větvi pomocí
-`implement` v dílčím režimu. Interní závislosti odblokuje ověřená implementace;
-externí závislosti musí být skutečně splněné.
+Spec obsahuje původní zadání, akceptační kritéria a odkazy na přijatá rozhodnutí.
+Každý ticket odkazuje na konkrétní kritéria spec a uvádí skutečné blokující
+závislosti. Parent spec eviduje všechny tickets; souhrn pokrytí musí ukázat,
+že žádné kritérium nechybí. Otevřená rozhodnutí blokující implementaci musí
+být vyřešená před předáním.
 
-Vlastník celku ověří pokrytí spec a provede závěrečné `code-review`.
-Opravy zpracuje sám. Repo gate před pushem a Linux CI na finálním SHA
-zůstávají povinné. Publikace má jeden PR; tento postup nezavádí stack.
-Merge vyžaduje samostatný mandát a předepsaný merge gate.
+Koordinátor dostane odkaz na spec, její tickets a přijaté ADR. Použije tyto
+zdroje místo kopie celé konverzace, nového briefu nebo dalšího kickoff dokumentu.
+Při změně spec ověří dopad na rozpracované tickets a vrátí nové rozhodnutí
+uživateli; sám scope nerozšíří.
+
+## Implementace přes lever
+
+Uživatel zahájí nebo obnoví dodávku explicitním `/lever deliver #<spec>`.
+Příkaz nevyvolává návrhová session automaticky. Lever je závislost z instalovaného
+pluginu; repo jeho kopii ani stejnojmenný router neobsahuje. Pokud příkaz není
+dostupný, agent nahlásí blokaci a požadavek na zpřístupnění pluginu. Samotná
+zmínka o leveru ani dokončení `/to-tickets` dodávku nespouští.
+
+### Organizace a rozsah
+
+- Aktuální session koordinuje dodávku a vlastní pokrytí celé spec, graf závislostí,
+  integraci a závěrečný audit. Implementaci deleguje vlastníkům jednotlivých větví práce.
+- Explicitní `deliver` povoluje nejvýš dva souběžné implementátory, nevyžaduje další
+  potvrzení paralelismu. Menší počet stačí pro provázanou práci. Limit zahrnuje všechny
+  implementátory dodávky; delegovaný implementátor další implementátory nespouští.
+  Nezávislé review a security checkpoint tento limit nespotřebovávají.
+- Ticket určuje výsledek, ne session ani PR. Koordinátor seskupí provázané tickets
+  k jednomu implementátorovi. Nezávisle přijatelná větev práce má vlastní branch a PR;
+  samostatný ticket je dostatečný důvod pro nový PR jen tehdy, když lze jeho výsledek
+  přijmout nezávisle. Sdílené soubory, kontrakty a fixtures patří do grafu závislostí.
+- Implementátor vlastní změny, cílené ověření, review, opravy a publikaci své větve
+  pomocí `implement` v samostatném režimu. Přiřazení zahrnuje odkazy na zdroje, rozsah,
+  podmínku dokončení a podíl rozpočtu. Běžné opravy nevyžadují nového vlastníka.
+- Uvnitř jedné větve může ověřená implementace odblokovat navazující ticket před merge.
+  Mezi větvemi se závislost uvolní až po přijetí předpokladu do cílové větve;
+  jiný postup včetně stacku vyžaduje výslovný souhlas. Externí závislost musí být
+  skutečně splněná. Lokální implementace sama issue neuzavírá.
+
+### Nastavení a stav
+
+Koordinátor převezme existující spec jako parent issue a existující tickets jako
+podúlohy podle [pravidel trackeru](issue-tracker.md). Doplní pouze provozní metadata
+leveru: vlastníka, marker koordinátora, stav, důkazy a blokace. Zachová zadání,
+schválená kritéria, rozhodnutí i původní issue čísla; nevytváří druhý brief ani
+duplicitní tickets. Při cizím aktivním vlastníkovi zůstane read-only do předání.
+
+Před delegováním vyřeší spend, konečný rozpočet běhu a merge mandát podle nastavení
+leveru, omezení repozitáře a platformy. Chybějící rozpočet nebo mandát si nesmí
+domyslet. Osobní spend není počet povinných větví práce a nezvyšuje zdejší limit.
+Samotný `deliver` není nový merge ani release mandát.
+
+Výchozí běh je konečný: jen schválené tickets, bez doplňování backlogu, pravidelných
+sweepů, automatických restartů po STOP nebo změn osobních či pluginových instrukcí.
+Po splnění spec skončí. Dlouhodobý běh, automation, nový scope a release vyžadují
+samostatné zadání. Čekání, resume a STOP se řídí `AGENTS.md`, nikoli výchozím
+refill nebo takeover režimem pluginu.
+
+### Dokončení
+
+Vlastník každého PR provede `code-review` své integrované změny podle
+[pravidel review](repository-rules.md#code-review). Koordinátor převezme důkazy
+na přesném head SHA, ověří pokrytí spec a vazby mezi větvemi. Stejné review
+nezadává znovu jen kvůli předání; změněný sdílený kontrakt nebo nový integrační
+rozdíl vyžaduje review dotčeného celku.
+
+[Lokální CI](local-ci.md) a [merge gate](repository-rules.md#merge-gate) platí pro
+každý PR. Koordinátor ověří gate znovu před merge; tvrzení implementátora ho
+nenahrazuje. Stav parent issue může být `hotovo` až po splnění všech kritérií
+a předepsaných podmínek předání. Nezamergovaný nebo blokovaný PR není dokončená
+dodávka. Uzavření issues se řídí trackerem.
 
 Retrospektiva ani samostatný retrospektivní agent nejsou součástí dokončení.
 Dřívější rozhodnutí zrušil [PR #248](https://github.com/msucharda/devsecops-platform/pull/248).
@@ -34,10 +96,11 @@ Dreaming není součástí tohoto workflow.
 
 Autoritativní verze workflow je v `.github/skills`. Toto umístění podporuje
 [Copilot app a CLI](https://docs.github.com/en/copilot/concepts/customizations/agent-skills).
-Čtyři uživatelské příkazy zachovávají `disable-model-invocation: true`;
-podpůrné skills zůstávají vyvolatelné agentem.
+Tři návrhové uživatelské příkazy zachovávají `disable-model-invocation: true`;
+podpůrné skills zůstávají vyvolatelné agentem. `/implement-spec` byl nahrazen
+explicitním `/lever deliver`; jeho skill a metadata se z discovery odstraňují.
 
-Převzaté osobní skills: `grill-with-docs`, `to-spec`, `to-tickets`,
+Historicky převzaté osobní skills: `grill-with-docs`, `to-spec`, `to-tickets`,
 `implement-spec`, `implement`, `code-review`, `grilling`, `domain-modeling`,
 `tdd`, `codebase-design` a `security-checkpoint`. Zdrojové balíčky byly lokální
 soubory uživatele; revize jejich původní instalace není doložená. Související

@@ -11,8 +11,9 @@ Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
 
 For this repository, select models using [model routing](../../../docs/agents/model-routing.md).
-The delivery owner requests the final review once for the integrated change, not once per ticket
-and again for the same integrated revision. Reviewers return findings; the delivery owner fixes them.
+Review ownership and integration boundaries follow the
+[development workflow](../../../docs/agents/development.md#dokončení).
+Reviewers return findings; the owner of the reviewed change fixes them.
 
 ## Reuse and follow-up
 
@@ -112,7 +113,7 @@ before it reaches either reviewer; record omitted evidence as a review limitatio
 
 - The same sanitized diff snapshot, resolved base/head SHAs, scope and sanitized commit list.
 - The screened spec contents, or an explicit statement that no spec is available.
-- The repository's mandatory Spec-axis checks from the `Code review` section of `AGENTS.md`, with its relevant references. Apply them whether or not a separate spec exists; mark a check not applicable only when the diff has no relevant surface.
+- The repository's mandatory [Spec-axis checks](../../../docs/agents/repository-rules.md#code-review), with their relevant references. Apply them whether or not a separate spec exists; mark a check not applicable only when the diff has no relevant surface.
 - The brief: "Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Under 400 words."
 
 Without a spec, omit only (a)-(c) from the brief. Always run the Spec sub-agent for the
