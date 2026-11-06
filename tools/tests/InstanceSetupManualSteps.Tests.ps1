@@ -1,12 +1,30 @@
 BeforeAll {
     Import-Module powershell-yaml -RequiredVersion 0.4.12
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+    $platformTools = Import-Module (Join-Path $repoRoot 'tools/PlatformTools.psm1') -Force -PassThru
     Import-Module (Join-Path $repoRoot 'tools/InstanceSetup.psm1') -Force
 }
 
 Describe 'Instance setup manual steps through the public wizard' {
     BeforeAll {
         $interruptionChildren = @{}
+        $schemaLoader = $null
+        $schemaLoader = & $platformTools { (Get-Command Get-PlatformJsonSchema -CommandType Function).ScriptBlock }
+        # These tests change fixture data, never the repository schemas. Prepare each with the real loader.
+        & $platformTools {
+            $script:ManualStepsTestSchemaJson = @{}
+            foreach ($name in @('module', 'instance')) {
+                $script:ManualStepsTestSchemaJson[$name] = ConvertTo-Json -InputObject (Get-PlatformJsonSchema -Name $name) -Depth 100 -Compress
+            }
+            function script:Get-PlatformJsonSchema {
+                [CmdletBinding()]
+                [OutputType([System.Collections.IDictionary])]
+                param([Parameter(Mandatory)][ValidateSet('instance', 'module')][string] $Name)
+
+                # Instance validation adds module-specific properties; no caller may share a mutable schema.
+                return ConvertFrom-Json -InputObject $script:ManualStepsTestSchemaJson[$Name] -AsHashtable
+            }
+        }
         $sourcePath = Join-Path $repoRoot 'tools/InstanceSetup.ManualSteps.ps1'
         $sourceHash = (Get-FileHash -LiteralPath $sourcePath).Hash
         $instanceTemplate = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/instance.yaml') -Raw)
@@ -143,10 +161,21 @@ Describe 'Instance setup manual steps through the public wizard' {
             }
         }
         finally {
-            & (Get-Module InstanceSetup) {
-                if (Get-Variable -Name ManualStepsTestOutput -Scope Script -ErrorAction SilentlyContinue) {
-                    Remove-Item Function:script:Write-Host
-                    Remove-Variable -Name ManualStepsTestOutput -Scope Script
+            try {
+                & (Get-Module InstanceSetup) {
+                    if (Get-Variable -Name ManualStepsTestOutput -Scope Script -ErrorAction SilentlyContinue) {
+                        Remove-Item Function:script:Write-Host
+                        Remove-Variable -Name ManualStepsTestOutput -Scope Script
+                    }
+                }
+            }
+            finally {
+                if ($schemaLoader) {
+                    & $platformTools {
+                        param([scriptblock] $Original)
+                        Set-Item -Path Function:script:Get-PlatformJsonSchema -Value $Original
+                        Remove-Variable -Name ManualStepsTestSchemaJson -Scope Script -ErrorAction SilentlyContinue
+                    } $schemaLoader
                 }
             }
         }
