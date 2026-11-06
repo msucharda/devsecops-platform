@@ -322,11 +322,26 @@ function Assert-LocalCiTempAccess {
     }
 }
 
+# security-check: local-ci-unix-temp-access
+function Assert-LocalCiUnixTempAccess {
+    param([Parameter(Mandatory)][hashtable] $Access)
+    if ($Access.Directory -isnot [bool] -or -not $Access.Directory -or
+        $Access.ReparsePoint -isnot [bool] -or $Access.ReparsePoint) { throw 'Unsafe CI TEMP: not a regular directory.' }
+    if ($Access.Mode -isnot [int] -or $Access.Mode -ne 448) { throw 'Unsafe CI TEMP: Unix directory mode must be 0700.' }
+}
+
 function Initialize-LocalCiPrivateTempDirectory {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Path)
     if (-not $IsWindows) {
-        $null = New-Item -ItemType Directory -Force -Path $Path
+        $mode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute
+        $null = [IO.Directory]::CreateDirectory([IO.Path]::GetFullPath($Path), $mode)
+        $directory = Get-Item -LiteralPath $Path -Force
+        Assert-LocalCiUnixTempAccess -Access @{
+            Directory = $directory.PSIsContainer
+            ReparsePoint = [bool] ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)
+            Mode = [int] [IO.File]::GetUnixFileMode($Path)
+        }
         return
     }
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -364,4 +379,5 @@ function Initialize-LocalCiPrivateTempDirectory {
 }
 
 Export-ModuleMember -Function Get-LocalCiProfile, Get-LocalCiChangedFile, Get-LocalCiContentState, Clear-LocalCiGateResult, Save-LocalCiGateResult,
-    Test-LocalCiGateResult, Assert-LocalCiTempPath, Test-LocalCiRuntime, Assert-LocalCiWindowsTempRoot, Assert-LocalCiTempAccess, Initialize-LocalCiPrivateTempDirectory
+    Test-LocalCiGateResult, Assert-LocalCiTempPath, Test-LocalCiRuntime, Assert-LocalCiWindowsTempRoot, Assert-LocalCiTempAccess,
+    Assert-LocalCiUnixTempAccess, Initialize-LocalCiPrivateTempDirectory

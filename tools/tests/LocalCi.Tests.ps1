@@ -19,6 +19,7 @@ BeforeAll {
             'tools/tests/ApiOther.Tests.ps1' = 'Get-GitHubApiFixture -Name apps/get-app.owner-simple-user'
             'tools/tests/Contract.Tests.ps1' = "Join-Path `$PSScriptRoot 'fixtures/github-api'"
             'tools/tests/Fix.Tests.ps1' = "Join-Path `$PSScriptRoot 'fixtures/rulesets'"
+            'tools/tests/ReleaseContent.Tests.ps1' = "'LICENSE'"
         }
         foreach ($path in $files.Keys) {
             $full = Join-Path $root $path
@@ -106,6 +107,18 @@ Describe 'Local CI selection for -Changed' {
 
     It 'ignores a deleted test file' {
         (Get-Selection -Changed 'tools/tests/Gone.Tests.ps1').PesterPath | Should -BeNullOrEmpty
+    }
+
+    It 'maps a <State> root LICENSE to the release content contract' -ForEach @(
+        @{ State = 'modified'; Exists = $true }
+        @{ State = 'deleted'; Exists = $false }
+    ) {
+        $licenseRepo = Build-FakeRepository
+        if ($Exists) { Set-Content -LiteralPath (Join-Path $licenseRepo 'LICENSE') -Value 'MIT License' }
+        $selection = Get-LocalCiSelection -RepoPath $licenseRepo -ChangedFile @('LICENSE') -TerraformRoot @()
+        $selection.PesterPath | Should -BeExactly @('tools/tests/ReleaseContent.Tests.ps1')
+        $selection.AllPester | Should -BeFalse
+        $selection.Warning | Should -BeNullOrEmpty
     }
 
     It 'maps a changed script to the tests that name it, interruption tests separately' {
@@ -362,6 +375,65 @@ Describe 'Invoke-Tests.ps1 -Path' {
     It 'fails when a given path does not exist' {
         & ([Environment]::ProcessPath) -NoProfile -NonInteractive -File (Join-Path $toolRoot 'Invoke-Tests.ps1') -Path (Join-Path $TestDrive 'Missing.Tests.ps1') 2>&1 | Out-Null
         $LASTEXITCODE | Should -Not -Be 0
+    }
+}
+
+Describe 'Local CI plan selection reasons' {
+    BeforeAll {
+        $planRepository = Build-FakeRepository
+        foreach ($name in @(
+            'Invoke-LocalCi.ps1', 'LocalCi.psm1', 'LocalCiGate.psm1', 'LocalCiConcurrency.psm1', 'LocalCiPester.psm1', 'LocalCiTiming.psm1', 'LocalCiSteps.psm1',
+            'ToolDependencies.psm1', 'Get-TerraformRoots.ps1', 'requirements.psd1'
+        )) {
+            Copy-Item -LiteralPath (Join-Path $toolRoot $name) -Destination (Join-Path $planRepository "tools/$name")
+        }
+        foreach ($name in 'vendor', '.dependencies') {
+            Copy-Item -LiteralPath (Join-Path $toolRoot $name) -Destination (Join-Path $planRepository "tools/$name") -Recurse
+        }
+        $workflowDirectory = Join-Path $planRepository '.github/workflows'
+        $null = New-Item -ItemType Directory -Force -Path $workflowDirectory
+        Copy-Item -LiteralPath $workflowPath -Destination (Join-Path $workflowDirectory 'ci.yml')
+        Set-Content -LiteralPath (Join-Path $planRepository 'tools/tests/LocalCiGate.Unit.Tests.ps1') -Value "'LocalCiGate.psm1'"
+        Set-Content -LiteralPath (Join-Path $planRepository 'tools/tests/GateConsumer.Tests.ps1') -Value "'Invoke-LocalCi.ps1'"
+        $testNames = @(Get-ChildItem (Join-Path $planRepository 'tools/tests') -Filter '*.Tests.ps1' |
+            ForEach-Object { "'$($_.Name)'" })
+        Set-Content -LiteralPath (Join-Path $planRepository 'tools/test-profiles.psd1') -Value (
+            "@{ Unit=@($($testNames -join ',')); Contract=@(); Integration=@(); Interruption=@() }")
+        Set-Content -LiteralPath (Join-Path $planRepository '.gitignore') -Value @('.dependencies/', 'artifacts/')
+        git -C $planRepository init --quiet
+        git -C $planRepository config user.email 'tests@example.invalid'
+        git -C $planRepository config user.name 'Local CI plan tests'
+        git -C $planRepository config commit.gpgsign false
+        git -C $planRepository add .
+        git -C $planRepository commit --quiet -m initial
+    }
+
+    It 'prints a reason for every selected suite when <File> changes' -ForEach @(
+        @{ File = 'tools/Invoke-LocalCi.ps1'; WholeProfile = $false }
+        @{ File = 'tools/requirements.psd1'; WholeProfile = $true }
+    ) {
+        $base = (git -C $planRepository rev-parse HEAD).Trim()
+        Add-Content -LiteralPath (Join-Path $planRepository $File) -Value ''
+        git -C $planRepository add .
+        git -C $planRepository commit --quiet -m 'Change a selection input'
+        $log = Join-Path $TestDrive "plan-$([guid]::NewGuid().ToString('N')).log"
+        $output = & ([Environment]::ProcessPath) -NoProfile -NonInteractive -File (
+            Join-Path $planRepository 'tools/Invoke-LocalCi.ps1') -Base $base -Plan -LogPath $log 2>&1 | Out-String
+
+        $LASTEXITCODE | Should -Be 0 -Because $output
+        $selected = [regex]::Matches($output, '(?m)^  test: (.+)$')
+        $selected.Count | Should -BeGreaterThan 0
+        foreach ($line in $selected) { $line.Value.TrimEnd() | Should -Match '\[reason: .+\]$' }
+        if ($WholeProfile) {
+            $output | Should -Match 'test: tools/tests/FooBar.Tests.ps1 \[reason: tools/requirements.psd1 changed:'
+        }
+        else {
+            $selected.Count | Should -Be 2
+            $output | Should -Match 'test: tools/tests/LocalCiGate.Unit.Tests.ps1 \[reason: gate suite for tools/Invoke-LocalCi.ps1\]'
+            $output | Should -Match 'test: tools/tests/GateConsumer.Tests.ps1 \[reason: references tools/Invoke-LocalCi.ps1\]'
+            $output | Should -Not -Match 'test: tools/tests/FooBar.Tests.ps1'
+        }
+        $output | Should -Not -Match 'PASS Preflight'
     }
 }
 

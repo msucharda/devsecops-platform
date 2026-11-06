@@ -14,7 +14,14 @@ $script:TerraformStepCommands = [ordered]@{
     'Trivy' = @(, @('trivy', 'config', '--exit-code', '1', '--severity', 'HIGH,CRITICAL', '{root}'))
 }
 
-$script:PesterEscalationFiles = @('tools/Invoke-Tests.ps1', 'tools/requirements.psd1')
+$script:PesterEscalationFiles = @(
+    'tools/Invoke-Tests.ps1', 'tools/requirements.psd1', 'tools/test-profiles.psd1',
+    'tools/Test-PowerShell.ps1', '.github/workflows/ci.yml')
+# Selection fixtures also name gate files, so text references alone cannot establish a new module's dependencies.
+$script:KnownGateFiles = @(
+    'tools/Invoke-LocalCi.ps1', 'tools/LocalCi.psm1', 'tools/LocalCiGate.psm1',
+    'tools/LocalCiConcurrency.psm1', 'tools/LocalCiPester.psm1', 'tools/LocalCiSteps.psm1', 'tools/LocalCiTiming.psm1',
+    'tools/Test-LocalCiResult.ps1', '.githooks/pre-push')
 $script:MutationEngineFiles = @(
     'tools/tests/security-checks.psd1',
     'tools/MutationTesting.psm1',
@@ -170,9 +177,10 @@ function Get-CiWorkflowSetting {
 function Test-TextContainsToken {
     [CmdletBinding()]
     [OutputType([bool])]
-    param([Parameter(Mandatory)][AllowEmptyString()][string] $Text, [Parameter(Mandatory)][string] $Token)
+    param([Parameter(Mandatory)][AllowEmptyString()][string] $Text, [Parameter(Mandatory)][string] $Token, [switch] $IgnoreCase)
 
-    return [regex]::IsMatch($Text, '(?<![A-Za-z0-9_.-])' + [regex]::Escape($Token) + '(?![A-Za-z0-9_/-]|\.[A-Za-z0-9_-])')
+    $options = if ($IgnoreCase) { [Text.RegularExpressions.RegexOptions]::IgnoreCase } else { [Text.RegularExpressions.RegexOptions]::None }
+    return [regex]::IsMatch($Text, '(?<![A-Za-z0-9_.-])' + [regex]::Escape($Token) + '(?![A-Za-z0-9_/-]|\.[A-Za-z0-9_-])', $options)
 }
 
 function Get-LocalCiSelection {
@@ -195,16 +203,25 @@ function Get-LocalCiSelection {
     )
 
     $testRoot = Join-Path $RepoPath 'tools/tests'
+    $warnings = [System.Collections.Generic.List[string]]::new()
     $tests = @(Get-ChildItem -LiteralPath $testRoot -Recurse -File -Filter '*.Tests.ps1' | ForEach-Object {
+        $path = [IO.Path]::GetRelativePath($RepoPath, $_.FullName).Replace('\', '/')
+        $text = try { Get-Content -LiteralPath $_.FullName -Raw -ErrorAction Stop }
+        catch {
+            $warnings.Add("Cannot read $path; test dependencies are uncertain.")
+            ''
+        }
         [pscustomobject]@{
-            Path = [IO.Path]::GetRelativePath($RepoPath, $_.FullName).Replace('\', '/')
-            Text = Get-Content -LiteralPath $_.FullName -Raw
+            Path = $path
+            Text = [string] $text
         }
     })
     $selected = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
-    $warnings = [System.Collections.Generic.List[string]]::new()
+    $pesterReason = @{}
     $reasons = [System.Collections.Generic.List[string]]::new()
-    $escalatePester = $false
+    $escalationReasons = [System.Collections.Generic.List[string]]::new()
+    $escalatePester = $warnings.Count -gt 0
+    if ($escalatePester) { $escalationReasons.Add('Unreadable test sources: every Pester and interruption test runs.') }
     $allMutation = $false
     $checks = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
     $roots = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
@@ -214,19 +231,31 @@ function Get-LocalCiSelection {
         $exists = Test-Path -LiteralPath $fullPath -PathType Leaf
         $leaf = [IO.Path]::GetFileName($file)
         $mapped = [System.Collections.Generic.List[string]]::new()
+        $gateFile = $file -cmatch '^tools/(Invoke-LocalCi\.ps1|LocalCi[^/]*\.psm1|Test-LocalCiResult\.ps1)$' -or
+            $file -ceq '.githooks/pre-push'
 
         if ($file -cin $script:PesterEscalationFiles) {
             $escalatePester = $true
-            $reasons.Add("$file changed: every Pester and interruption test runs.")
+            $escalationReasons.Add("$file changed: every Pester and interruption test runs.")
         }
         if ($file -cin $script:MutationEngineFiles) {
             $allMutation = $true
             $reasons.Add("$file changed: every security check is mutated.")
         }
         if ($file -clike 'tools/tests/*.Tests.ps1' -and $exists) { $mapped.Add($file) }
-        if ($file -clike '*.ps1' -or $file -clike '*.psm1') {
+        if ($file -ceq 'LICENSE') { $mapped.Add('tools/tests/ReleaseContent.Tests.ps1') }
+        if ($gateFile) {
+            $gateTests = @($tests | Where-Object { [IO.Path]::GetFileName($_.Path) -clike 'LocalCi*.Tests.ps1' })
+            $references = @($tests | Where-Object { Test-TextContainsToken -Text $_.Text -Token $leaf -IgnoreCase })
+            if ($file -cnotin $script:KnownGateFiles -or -not $exists -or $gateTests.Count -eq 0 -or $references.Count -eq 0) {
+                $escalatePester = $true
+                $escalationReasons.Add("${file}: gate dependencies are uncertain; every Pester and interruption test runs.")
+            }
+            foreach ($test in $gateTests) { $mapped.Add($test.Path) }
+        }
+        if ($file -clike '*.ps1' -or $file -clike '*.psm1' -or $gateFile) {
             foreach ($test in $tests) {
-                if ($test.Path -cne $file -and (Test-TextContainsToken -Text $test.Text -Token $leaf)) { $mapped.Add($test.Path) }
+                if ($test.Path -cne $file -and (Test-TextContainsToken -Text $test.Text -Token $leaf -IgnoreCase:$gateFile)) { $mapped.Add($test.Path) }
             }
             if ($exists -and (Get-Content -LiteralPath $fullPath -Raw) -cmatch '(?m)^\s*# security-check: ') {
                 foreach ($match in [regex]::Matches((Get-Content -LiteralPath $fullPath -Raw), '(?m)^\s*# security-check: (?<name>[a-z0-9-]+)\s*$')) {
@@ -262,7 +291,16 @@ function Get-LocalCiSelection {
                 elseif ($test.Text.Contains("fixtures/$top", [StringComparison]::Ordinal)) { $mapped.Add($test.Path) }
             }
         }
-        foreach ($path in $mapped) { $null = $selected.Add($path) }
+        foreach ($path in $mapped) {
+            $null = $selected.Add($path)
+            if (-not $pesterReason.ContainsKey($path)) { $pesterReason[$path] = [System.Collections.Generic.List[string]]::new() }
+            $reason = if ($gateFile) {
+                if ([IO.Path]::GetFileName($path) -clike 'LocalCi*.Tests.ps1') { "gate suite for $file" }
+                else { "references $file" }
+            }
+            else { "affected by $file" }
+            if (-not $pesterReason[$path].Contains($reason)) { $pesterReason[$path].Add($reason) }
+        }
         if (($file -clike '*.ps1' -or $file -clike '*.psm1' -or $file -clike '*.psd1') -and $mapped.Count -eq 0 -and
             $file -cnotin $script:PesterEscalationFiles) {
             $warnings.Add("$file maps to no Pester test.")
@@ -282,6 +320,13 @@ function Get-LocalCiSelection {
         foreach ($root in $TerraformRoot) { $null = $roots.Add($root) }
     }
 
+    $reasons.AddRange($escalationReasons)
+    if ($escalatePester) {
+        foreach ($test in $tests) {
+            if (-not $pesterReason.ContainsKey($test.Path)) { $pesterReason[$test.Path] = [System.Collections.Generic.List[string]]::new() }
+            $pesterReason[$test.Path].AddRange($escalationReasons)
+        }
+    }
     $pester = @($selected | Where-Object { $_ -cnotlike '*.Interruption.Tests.ps1' })
     $interruption = @($selected | Where-Object { $_ -clike '*.Interruption.Tests.ps1' })
     return [pscustomobject]@{
@@ -294,6 +339,7 @@ function Get-LocalCiSelection {
         TerraformRoot = [string[]] @($roots)
         Warning = [string[]] $warnings.ToArray()
         Reason = [string[]] $reasons.ToArray()
+        PesterReason = $pesterReason
     }
 }
 

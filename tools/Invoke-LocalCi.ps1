@@ -8,7 +8,7 @@ Runs the selected local pre-push gate, or the complete CI profile on explicit re
 Terraform, process integration tests, interruption and mutation run in authoritative Linux CI. -Full runs every CI step.
 The local result is bound to HEAD, base SHA and working-tree content. Pester always runs through
 tools/Invoke-Tests.ps1, so StrictMode and the Pester version from tools/requirements.psd1 apply.
-The script stops at the first failing step.
+The Changed profile runs every selected check and reports all failures. The Full profile remains serial and fail-fast.
 
 Exit codes: 0 all selected steps passed, 1 a step failed, 2 preflight or usage error.
 #>
@@ -23,14 +23,22 @@ param(
     [string] $StateRoot,
     [ValidateRange(0, 64)][int] $WorkerBudget = 0,
     [ValidateRange(1, 86400)][int] $QueueWaitSeconds = 900,
-    [Parameter(DontShow)][switch] $WorkerProcess
+    [Parameter(DontShow)][switch] $WorkerProcess,
+    [Parameter(DontShow)][long] $StartedTimestamp = [Diagnostics.Stopwatch]::GetTimestamp(),
+    [Parameter(DontShow)][datetimeoffset] $StartedAt = [datetimeoffset]::UtcNow
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath
-$started = [Diagnostics.Stopwatch]::StartNew()
+Import-Module (Join-Path $PSScriptRoot 'LocalCiTiming.psm1') -Force
+$timing = New-LocalCiTiming -StartedTimestamp $StartedTimestamp -StartedAt $StartedAt
+$timingExitCode = 1
+$timingOwner = $true
+$worktreeLease = $null
+$gateReady = $false
+$cleanupSucceeded = $false
 if (-not $LogPath) { $LogPath = Join-Path $repo "artifacts/local-ci/$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')-$PID.log" }
 $LogPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogPath)
 $null = New-Item -ItemType Directory -Force -Path (Split-Path $LogPath -Parent)
@@ -49,6 +57,7 @@ function Write-Console {
 
 function Exit-Usage {
     param([string] $Message)
+    $script:timingExitCode = 2
     Write-Console "ERROR: $Message"
     Write-Console "Log: $LogPath"
     exit 2
@@ -63,12 +72,15 @@ function Invoke-Git {
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
 }
 
+try {
 if ($Changed -and $Full) { Exit-Usage '-Changed and -Full are mutually exclusive.' }
 $mode = if ($Full) { 'Full' } else { 'Changed' }
 
 Import-Module (Join-Path $PSScriptRoot 'LocalCi.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'LocalCiGate.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'LocalCiConcurrency.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'LocalCiPester.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'LocalCiSteps.psm1') -Force
 if (-not $StateRoot) { $StateRoot = Get-LocalCiMachineStateRoot }
 if ($env:INVOKE_LOCAL_CI_ACTIVE -and -not $Plan) { Exit-Usage 'Another Invoke-LocalCi run is active in this process tree; nested runs are refused.' }
 if ($IsWindows -and -not $Plan -and -not $WorkerProcess) {
@@ -79,8 +91,11 @@ if ($IsWindows -and -not $Plan -and -not $WorkerProcess) {
     }
     $forward.WorkerProcess = $true
     $forward.LogPath = $LogPath
+    $forward.StartedTimestamp = $StartedTimestamp
+    $forward.StartedAt = $StartedAt.ToString('o')
     $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($forward | ConvertTo-Json -Compress)))
     $command = "`$parameters = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$payload')) | ConvertFrom-Json -AsHashtable; & '$($PSCommandPath.Replace("'", "''"))' @parameters; exit `$LASTEXITCODE"
+    $timingOwner = $false
     & ([Environment]::ProcessPath) -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)))
     exit $LASTEXITCODE
 }
@@ -92,8 +107,10 @@ $worktreeLease = $null
 $machineLease = $null
 try {
 if (-not $Plan) {
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Worktree lock'
     try { $worktreeLease = Enter-LocalCiWorktreeLock -RepositoryRoot $repo }
     catch { Exit-Usage $_.Exception.Message }
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Source state'
     # A failed or abruptly interrupted rerun must never leave an earlier success usable.
     Clear-LocalCiGateResult -RepositoryRoot $repo
 }
@@ -113,6 +130,7 @@ $moduleProbe = {
 # ci.yml is parsed with powershell-yaml, so missing modules must be reported before parsing.
 $moduleProblems = @(Get-LocalCiModuleProblem -Requirements $requirements -ModuleProbe $moduleProbe)
 if ($moduleProblems.Count -gt 0) {
+    $timingExitCode = 2
     foreach ($problem in $moduleProblems) { Add-LogLine "ERROR $problem"; Write-Information "ERROR $problem" -InformationAction Continue }
     Write-Console "Log: $LogPath"
     exit 2
@@ -123,6 +141,7 @@ catch { Exit-Usage "Cannot read .github/workflows/ci.yml: $($_.Exception.Message
 if (-not $TempRoot -and $IsWindows) { $TempRoot = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.dci' }
 $temp = if ($TempRoot) { Get-LocalCiTempPath -RepoPath $repo -DataRoot $TempRoot } else { Get-LocalCiTempPath -RepoPath $repo }
 # Selection
+Set-LocalCiTimingPhase -Timing $timing -Name 'Test selection'
 $changedFiles = @()
 $newFiles = @()
 # The gate is offline. Refresh remote refs explicitly before it, not during the measured run.
@@ -163,12 +182,7 @@ else {
     $selection = Get-LocalCiSelection -RepoPath $repo -ChangedFile $changedFiles -TerraformRoot $allRoots -AllTerraformRoots:$ciChanged
 }
 
-$testProfile = Get-LocalCiProfile -RepositoryRoot $repo -PesterPath $selection.PesterPath -AllPester:(
-    $selection.AllPester -or @($changedFiles | Where-Object { $_ -in @(
-        'tools/Invoke-LocalCi.ps1', 'tools/LocalCi.psm1', 'tools/LocalCiGate.psm1', 'tools/LocalCiConcurrency.psm1',
-        'tools/test-profiles.psd1', 'tools/Test-PowerShell.ps1', 'tools/Test-LocalCiResult.ps1',
-        '.githooks/pre-push', '.github/workflows/ci.yml'
-    ) }).Count -gt 0)
+$testProfile = Get-LocalCiProfile -RepositoryRoot $repo -PesterPath $selection.PesterPath -AllPester:$selection.AllPester
 $staticPaths = @($changedFiles | Where-Object {
     $_ -match '\.(ps1|psm1|psd1)$' -and (Test-Path -LiteralPath (Join-Path $repo $_) -PathType Leaf)
 })
@@ -204,7 +218,7 @@ $planLines.Add('Steps: Preflight, Check PowerShell, Validate module manifests, V
     'Validate deployment workflow syntax, Validate instance workflows that call local reusable workflows, Discover Terraform roots, ' +
     'Terraform per root, Run Pester, Interrupt every state-changing step, Weaken every marked security check')
 $planLines.Add("Pester: $pesterLabel")
-foreach ($path in $selection.PesterPath) { $planLines.Add("  test: $path") }
+foreach ($path in $selection.PesterPath) { $planLines.Add("  test: $path [reason: $($selection.PesterReason[$path] -join '; ')]") }
 $planLines.Add("Interruption: $interruptionLabel")
 foreach ($path in $selection.InterruptionPath) { $planLines.Add("  test: $path") }
 $planLines.Add("Mutation: $mutationLabel")
@@ -214,7 +228,7 @@ if (-not $Full) {
     foreach ($path in $testProfile.Remote) { $planLines.Add("  remote: $path") }
 }
 foreach ($line in $planLines) { Write-Console $line }
-if ($Plan) { exit 0 }
+if ($Plan) { $timingExitCode = 0; exit 0 }
 
 # Environment
 $savedEnvironment = @{}
@@ -281,12 +295,35 @@ function Write-FailureDetail {
     foreach ($line in $detail) { Write-Console "    $line" }
 }
 
+function Write-StepOutcome {
+    param([string] $Name, [int] $Code, [string[]] $Output, [double] $Seconds, [switch] $Pester)
+    if ($Pester) {
+        $count = Get-PesterCount -Line $Output
+        if ($count) { $pesterCounts.Add($count) }
+    }
+    if ($Code -eq 0) { Add-Result -Name $Name -Status 'PASS' -Seconds $Seconds; return }
+    $script:failed = $true
+    Add-Result -Name $Name -Status 'FAIL' -Seconds $Seconds -Note "exit code $Code"
+    Write-FailureDetail -Output $Output -Pester:$Pester
+    if ($Pester) {
+        $failedFiles = @(Get-PesterFailureDetail -Line $Output | Where-Object { $_ -match '^\s+at ' })
+        $failedNew = @($newFiles | Where-Object {
+            $leaf = [IO.Path]::GetFileName($_)
+            $_ -clike '*.Tests.ps1' -and @($failedFiles | Where-Object { $_ -match "[\\/]$([regex]::Escape($leaf)):\d+$" }).Count -gt 0
+        })
+        if ($failedNew.Count -gt 0) {
+            Write-Console "    Hint: $($failedNew -join ', ') is new in this diff. Rerun once to rule out a race before you change code."
+        }
+    }
+}
+
 function Invoke-Step {
     <#
     .SYNOPSIS
     Runs one step unless an earlier step failed. The body returns the native result; a non-zero exit code fails the step.
     #>
     param([string] $Name, [scriptblock] $Body, [switch] $Pester)
+    Set-LocalCiTimingPhase -Timing $timing -Name $Name
     if ($script:failed) { Add-Result -Name $Name -Status 'SKIP' -Seconds 0 -Note 'fail-fast'; return }
     Add-LogLine "=== $Name"
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -299,39 +336,88 @@ function Invoke-Step {
         $output.AddRange([string[]] $item.Output)
         if ($item.ExitCode -ne 0) { break }
     }
-    if ($Pester) {
-        $count = Get-PesterCount -Line $output.ToArray()
-        if ($count) { $pesterCounts.Add($count) }
-    }
-    if ($code -eq 0) { Add-Result -Name $Name -Status 'PASS' -Seconds $watch.Elapsed.TotalSeconds; return }
-    $script:failed = $true
-    Add-Result -Name $Name -Status 'FAIL' -Seconds $watch.Elapsed.TotalSeconds -Note "exit code $code"
-    Write-FailureDetail -Output $output.ToArray() -Pester:$Pester
-    if ($Pester) {
-        $failedFiles = @(Get-PesterFailureDetail -Line $output.ToArray() | Where-Object { $_ -match '^\s+at ' })
-        $failedNew = @($newFiles | Where-Object {
-            $leaf = [IO.Path]::GetFileName($_)
-            $_ -clike '*.Tests.ps1' -and @($failedFiles | Where-Object { $_ -match "[\\/]$([regex]::Escape($leaf)):\d+$" }).Count -gt 0
-        })
-        if ($failedNew.Count -gt 0) {
-            Write-Console "    Hint: $($failedNew -join ', ') is new in this diff. Rerun once to rule out a race before you change code."
-        }
-    }
+    Write-StepOutcome -Name $Name -Code $code -Output $output.ToArray() -Seconds $watch.Elapsed.TotalSeconds -Pester:$Pester
 }
 
 function Skip-Step {
     param([string] $Name, [string] $Reason)
-    $note = if ($script:failed) { 'fail-fast' } else { $Reason }
+    Set-LocalCiTimingPhase -Timing $timing -Name $Name
+    $note = if ($Full -and $script:failed) { 'fail-fast' } else { $Reason }
     Add-Result -Name $Name -Status 'SKIP' -Seconds 0 -Note $note
 }
 
 function ConvertTo-PwshList {
-    param([string[]] $Item)
-    return ($Item | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ','
+    param([string[]] $Item, [string] $Separator = ',')
+    return ($Item | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join $Separator
+}
+
+function Invoke-ChangedCheck {
+    $groups = [Collections.Generic.List[object]]::new()
+    $pesterTimingPath = Join-Path $temp 'pester-shards.json'
+    if ($selection.PesterPath.Count -gt 0) {
+        # Leave one granted slot for the other groups while Pester occupies its complete share.
+        $pesterSlots = [Math]::Max(1, $machineLease.Slots - 1)
+        $groups.Add((Get-LocalCiPesterStepGroup -RepositoryRoot $repo -Path $selection.PesterPath `
+            -GrantedShardCount $pesterSlots -TimingPath $pesterTimingPath))
+    }
+    $staticSteps = @(
+        foreach ($name in 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {
+            @{ Name = $name; Script = $setting.PwshSteps[$name] }
+        }
+        @{ Name = 'Discover Terraform roots'; Script = "./tools/Get-TerraformRoots.ps1 -GitHubOutputPath $(ConvertTo-PwshList (Join-Path $temp 'github-output.txt'))" }
+    )
+    $groups.Add(@{ Steps = $staticSteps })
+    if ($staticPaths.Count -gt 0) {
+        $analysisPaths = @($staticPaths | ForEach-Object { Join-Path $repo $_ })
+        $groups.Add(@{ Steps = @(@{
+            Name = 'Check PowerShell'
+            Script = "./tools/Test-PowerShell.ps1 -Path $(ConvertTo-PwshList $analysisPaths) -CacheDirectory $(ConvertTo-PwshList "$temp-pssa")"
+        }) })
+    }
+    $instanceProject = Join-Path $temp 'actionlint-instance'
+    $workflows = Join-Path $instanceProject '.github/workflows'
+    $null = New-Item -ItemType Directory -Force -Path $workflows
+    foreach ($file in $setting.InstanceWorkflowFiles) { Copy-Item -LiteralPath (Join-Path $repo $file) -Destination $workflows }
+    $groups.Add(@{ Steps = @(
+        @{
+            Name = 'Validate deployment workflow syntax'
+            Script = "& $(ConvertTo-PwshList $actionlintPath) $(ConvertTo-PwshList $setting.ActionlintArguments -Separator ' ')"
+        }
+        @{
+            Name = 'Validate instance workflows that call local reusable workflows'
+            Script = @"
+git init -q $(ConvertTo-PwshList $instanceProject)
+if (`$LASTEXITCODE -ne 0) { throw 'git init failed for the instance actionlint project.' }
+Set-Location -LiteralPath $(ConvertTo-PwshList $instanceProject)
+& $(ConvertTo-PwshList $actionlintPath) $(ConvertTo-PwshList $setting.InstanceActionlintArguments -Separator ' ')
+"@
+        }
+    ) })
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Concurrent checks'
+    $stepResults = @(Invoke-LocalCiStepSchedule -Group $groups.ToArray() -Slots $machineLease.Slots `
+        -WorkingDirectory $repo -TempPath $temp -StartedTimestamp $timing.StartedTimestamp)
+    if ($selection.PesterPath.Count -gt 0) {
+        try { $timing.PesterShards = @(Get-Content -LiteralPath $pesterTimingPath -Raw -ErrorAction Stop | ConvertFrom-Json) }
+        catch {
+            $pesterResult = $stepResults | Where-Object Name -EQ 'Run Pester'
+            $pesterResult.ExitCode = 1
+            $pesterResult.Output += "Cannot read Pester shard timings: $($_.Exception.Message)"
+        }
+    }
+    $timing.Steps = @($stepResults | Select-Object Name, StartSeconds, Seconds, ExitCode)
+    foreach ($result in $stepResults) {
+        Add-LogLine "=== $($result.Name)"
+        foreach ($line in $result.Output) { Add-LogLine $line }
+        Write-StepOutcome -Name $result.Name -Code $result.ExitCode -Output $result.Output -Seconds $result.Seconds -Pester:($result.Name -eq 'Run Pester')
+    }
+    if ($staticPaths.Count -eq 0) { Skip-Step -Name 'Check PowerShell' -Reason 'no changed PowerShell file' }
+    if ($selection.PesterPath.Count -eq 0) { Skip-Step -Name 'Run Pester' -Reason 'no test file mapped' }
+    Skip-Step -Name 'Terraform' -Reason 'remote-only in the Local profile'
 }
 
 try {
     $env:INVOKE_LOCAL_CI_ACTIVE = '1'
+    Set-LocalCiTimingPhase -Timing $timing -Name 'TEMP setup'
     try { Assert-LocalCiWindowsTempRoot -Path $TempRoot -UserProfile ([Environment]::GetFolderPath('UserProfile')) -Windows $IsWindows }
     catch { Exit-Usage $_.Exception.Message }
     Assert-LocalCiTempPath -Path $temp
@@ -341,10 +427,19 @@ try {
         Initialize-LocalCiPrivateTempDirectory -Path $temp
     }
     # Acquire the machine turn before clearing or using the worktree's shared TEMP.
-    $machineLease = Enter-LocalCiMachineQueue -StateRoot $StateRoot -WorkerBudget $WorkerBudget -WaitSeconds $QueueWaitSeconds
-    Enable-LocalCiLeaseInheritance -Handle @($worktreeLease, $machineLease.Handle, $machineLease.TicketHandle)
-    $env:LOCAL_CI_WORKER_BUDGET = [string] $machineLease.WorkerBudget
-    Write-Console "Machine queue admitted; worker budget: $($machineLease.WorkerBudget)"
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Machine queue'
+    $requestedSlots = if ($Full) { 0 } else { 2 + [int] ($staticPaths.Count -gt 0) + [int] ($selection.PesterPath.Count -gt 0) }
+    $machineLease = Enter-LocalCiMachineQueue -StateRoot $StateRoot -WorkerBudget $WorkerBudget -Slots $requestedSlots -CapToBudget -WaitSeconds $QueueWaitSeconds
+    Set-LocalCiTimingPhase -Timing $timing -Name 'TEMP setup'
+    $timing.MachineQueue = @{
+        Slots = $machineLease.Slots
+        WorkerBudget = $machineLease.WorkerBudget
+        WaitSeconds = $timing.Phases[$timing.Phases.Count - 1].Seconds
+    }
+    Enable-LocalCiLeaseInheritance -Handle (@($worktreeLease, $machineLease.Handle, $machineLease.TicketHandle) + $machineLease.SlotHandles)
+    $env:LOCAL_CI_WORKER_BUDGET = [string] $machineLease.Slots
+    Write-Console ('Machine queue admitted after {0:F6}s; slots: {1}; worker budget: {2}' -f
+        $timing.MachineQueue.WaitSeconds, $machineLease.Slots, $machineLease.WorkerBudget)
     # The default C:\Windows\TEMP allows creating files but denies deleting and enumerating them, so every run uses its own.
     Clear-LocalCiTemp -Path $temp
     foreach ($name in 'TEMP', 'TMP', 'TMPDIR') { [Environment]::SetEnvironmentVariable($name, $temp) }
@@ -353,6 +448,7 @@ try {
     Remove-Item Env:PESTER_SHARD -ErrorAction SilentlyContinue
 
     # 1. Preflight
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Preflight'
     $watch = [Diagnostics.Stopwatch]::StartNew()
     if ($mode -eq 'Full' -and $selection.TerraformRoot.Count -gt 0) {
         try {
@@ -382,19 +478,18 @@ try {
         -NeedsTerraformTools:($selection.TerraformRoot.Count -gt 0) -SkipTerraform:($mode -eq 'Changed') -ModuleProbe $moduleProbe -ToolProbe $toolProbe)
     foreach ($problem in $problems) { Write-Console "$(if ($problem.Severity -eq 'Error') { 'ERROR' } else { 'WARN' }) $($problem.Message)" }
     if (@($problems | Where-Object Severity -eq 'Error').Count -gt 0) {
+        $timingExitCode = 2
         Add-Result -Name 'Preflight' -Status 'FAIL' -Seconds $watch.Elapsed.TotalSeconds
         Write-Console "Log: $LogPath"
         exit 2
     }
     Add-Result -Name 'Preflight' -Status 'PASS' -Seconds $watch.Elapsed.TotalSeconds
 
+    if ($mode -eq 'Changed') { Invoke-ChangedCheck }
+    else {
     # 2.-5. pwsh steps, in full and unchanged from ci.yml
     foreach ($name in 'Check PowerShell', 'Validate module manifests', 'Validate instance examples', 'Check generated workflows') {
         $stepScript = $setting.PwshSteps[$name]
-        if ($name -eq 'Check PowerShell' -and $mode -eq 'Changed') {
-            if ($staticPaths.Count -eq 0) { Skip-Step -Name $name -Reason 'no changed PowerShell file'; continue }
-            $stepScript = "./tools/Test-PowerShell.ps1 -Path $(ConvertTo-PwshList $staticPaths)"
-        }
         Invoke-Step -Name $name -Body { Invoke-PwshScript -Script $stepScript }
     }
 
@@ -442,6 +537,7 @@ try {
     else { $pesterScript = $null }
     if ($pesterScript) { Invoke-Step -Name 'Run Pester' -Pester -Body { Invoke-PwshScript -Script $pesterScript } }
     else { Skip-Step -Name 'Run Pester' -Reason 'no test file mapped' }
+    }
 
     # 10. Interruption harness, all shards
     if ($runInterruption) {
@@ -468,6 +564,7 @@ finally {
 }
 
 # Summary
+Set-LocalCiTimingPhase -Timing $timing -Name 'Summary'
 $passed = @($results | Where-Object Status -eq 'PASS').Count
 $failedCount = @($results | Where-Object Status -eq 'FAIL').Count
 $skipped = @($results | Where-Object Status -eq 'SKIP').Count
@@ -478,22 +575,49 @@ if ($pesterCounts.Count -gt 0) {
         ($pesterCounts | Measure-Object Passed -Sum).Sum, ($pesterCounts | Measure-Object Failed -Sum).Sum, ($pesterCounts | Measure-Object NotRun -Sum).Sum)
 }
 Write-Console "Mapped test files: $pesterLabel Pester, $interruptionLabel interruption; Terraform roots: $($selection.TerraformRoot.Count)"
-Write-Console ('Duration: {0:hh\:mm\:ss}' -f $started.Elapsed)
 Write-Console "Log: $LogPath"
 if ($mode -eq 'Changed') {
     Write-Console 'Not covered locally: process integration suites, unselected isolated suites, all Terraform roots, interruption and mutation. Linux CI must pass on the PR head before merge.'
 }
 if (-not $failed) {
-    $endState = Get-LocalCiContentState -RepositoryRoot $repo -Base $Base
-    foreach ($key in 'Head', 'BaseSha', 'MergeBase', 'Fingerprint') {
-        if ($endState[$key] -cne $startState[$key]) { throw "Local gate result is stale: $key changed during the run." }
-    }
-    Save-LocalCiGateResult -RepositoryRoot $repo -State $startState -GateProfile $(if ($Full) { 'Full' } else { 'Local' })
-    Write-Console "Selected local gate passed (vybran`u{fd} lok`u{e1}ln`u{ed} gate pro`u{161}el); HEAD $($startState.Head); base $($startState.BaseSha); fingerprint $($startState.Fingerprint)"
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Result persistence'
+    $gateReady = $true
 }
-exit $(if ($failed) { 1 } else { 0 })
+$timingExitCode = if ($failed) { 1 } else { 0 }
+exit $timingExitCode
 }
 finally {
-    try { if ($null -ne $machineLease) { Exit-LocalCiMachineQueue -Lease $machineLease } }
+    Set-LocalCiTimingPhase -Timing $timing -Name 'Cleanup'
+    try {
+        if ($null -ne $machineLease) { Exit-LocalCiMachineQueue -Lease $machineLease }
+        $cleanupSucceeded = $true
+    }
+    catch { $timingExitCode = 1; throw }
+}
+}
+finally {
+    try {
+    if ($timingOwner) {
+        $timingPath = [IO.Path]::ChangeExtension($LogPath, '.timings.json')
+        Save-LocalCiTiming -Timing $timing -Path $timingPath -Mode $(if ($Plan) { 'Plan' } elseif ($Full) { 'Full' } else { 'Changed' }) -ExitCode $timingExitCode
+        foreach ($phase in $timing.Phases) {
+            Write-Console ('TIMING {0}: {1:F6}s' -f $phase.Name, $phase.Seconds)
+        }
+        Write-Console ('Duration: {0:hh\:mm\:ss} ({1:F6}s)' -f [timespan]::FromSeconds($timing.PhaseStart), $timing.PhaseStart)
+        Write-Console "Timings: $timingPath"
+    }
+    if ($gateReady -and $cleanupSucceeded) {
+        $endState = Get-LocalCiContentState -RepositoryRoot $repo -Base $Base
+        foreach ($key in 'Head', 'BaseSha', 'MergeBase', 'Fingerprint') {
+            if ($endState[$key] -cne $startState[$key]) { throw "Local gate result is stale: $key changed during the run." }
+        }
+        Write-Console "Selected local gate passed (vybran`u{fd} lok`u{e1}ln`u{ed} gate pro`u{161}el); HEAD $($startState.Head); base $($startState.BaseSha); fingerprint $($startState.Fingerprint)"
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $startState -GateProfile $(if ($Full) { 'Full' } else { 'Local' })
+    }
+    }
+    catch {
+        if ($null -ne $worktreeLease) { Clear-LocalCiGateResult -RepositoryRoot $repo }
+        throw
+    }
     finally { if ($null -ne $worktreeLease) { $worktreeLease.Dispose() } }
 }
