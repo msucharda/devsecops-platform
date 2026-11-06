@@ -1163,7 +1163,7 @@ function Get-MergeGateGitHubChange {
 }
 
 # security-check: merge-gate-retro-metadata
-function Assert-MergeGateRetroMetadata {
+function Assert-MergeGateRetroFrontmatter {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string] $Content,
@@ -1293,7 +1293,7 @@ function Get-MergeGateRetro {
         try {
             if ($file['headEntry']['mode'] -notin @('100644', '100755')) { throw 'The retrospective must be a regular file in the pinned tree.' }
             $content = Get-MergeGateWorkflowContent -Target $Target -Path $path -Sha $HeadSha -BlobSha $file['headEntry']['sha']
-            Assert-MergeGateRetroMetadata -Content $content -Path $path -Number $Number
+            Assert-MergeGateRetroFrontmatter -Content $content -Path $path -Number $Number
             return [ordered]@{ finding = @(); path = $path; errors = $errors; error = $null; waiverReason = $null }
         }
         catch { $errors[$path] = "Retrospective YAML or content is invalid: $($_.Exception.Message)" }
