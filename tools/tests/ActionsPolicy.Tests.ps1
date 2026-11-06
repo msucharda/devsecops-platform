@@ -325,10 +325,16 @@ Describe 'Actions policy' {
             $stub.Requests | Should -BeNullOrEmpty
         }
 
-        It 'reports an enterprise policy that blocks the organization setting (HTTP 409)' {
+        It 'reports an enterprise conflict without recommending a policy change (HTTP 409)' {
             $stub.Override['setWorkflow'] = { @{ Status = 409; Body = '{"message":"Conflict"}' } }
 
-            { Set-ActionsPolicy @target -Policy $managedPolicy } | Should -Throw '*HTTP 409*enterprise policy prevents*'
+            $failure = { Set-ActionsPolicy @target -Policy $managedPolicy } |
+                Should -Throw '*HTTP 409*enterprise policy prevents*' -PassThru
+
+            $failure.Exception.Data['StatusCode'] | Should -Be 409
+            $failure.Exception.Message | Should -Match 'Stop and inspect the organization policy'
+            $failure.Exception.Message | Should -Match 'Do not change the enterprise policy'
+            $failure.Exception.Message | Should -Not -Match 'Align the enterprise|remove the enterprise restriction'
         }
 
         It 'fails when GitHub accepts a write but keeps another value' {
