@@ -8,8 +8,9 @@ Pesterem, harness přerušení a mutacemi. Klíč obsahuje OS, architekturu a ha
 Obnovení cache nenahrazuje ověření: každý job vždy spustí instalátor, který
 zkontroluje SHA256 archivů a shodu všech souborů modulů. Chybějící cache vyvolá
 běžnou instalaci; poškozená cache způsobí selhání. První běh pro nový klíč proto
-nemusí zrychlit. Bootstrap testy připravují release fixture jednou za suite,
-ale každý test dostane vlastní kopii; kontroly workflow při bootstrapu zůstávají.
+nemusí zrychlit. Bootstrap testy připravují release fixture při prvním použití
+veřejného rozhraní a dál ji sdílejí, ale každý test dostane vlastní kopii.
+Izolované testy guardů fixture nepřipravují. Kontroly workflow při bootstrapu zůstávají.
 
 - Před každým pushem spusť `./tools/Invoke-LocalCi.ps1` (výchozí režim `-Changed`). Platí to i pro změny jen v dokumentaci. Push je povolený jen po návratovém kódu 0.
   - `-Changed` analyzuje změněné PowerShell soubory, ověří manifesty a generované workflow a spustí dotčené izolované unit a contract suites. Kategorie určuje `tools/test-profiles.psd1`; nový test musí mít právě jednu kategorii.

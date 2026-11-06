@@ -8,8 +8,8 @@
     # Source CI run 40961020894: 539.4744 seconds, rounded up.
     'EnterpriseBaseline.Tests.ps1' = 540
     'EnterpriseBaselinePatchContract.Tests.ps1' = 5
-    # Source CI run 40921301537: 712.3353 seconds, rounded up.
-    'GitHubBootstrap.Tests.ps1' = 713
+    # Source CI run 42280050069: 626.6974 seconds, rounded up.
+    'GitHubBootstrap.Tests.ps1' = 627
     'RulesetsTerraform.Tests.ps1' = 178
     'OrganizationRolePrograms.Tests.ps1' = 105
     'RemoveBootstrap.Tests.ps1' = 45

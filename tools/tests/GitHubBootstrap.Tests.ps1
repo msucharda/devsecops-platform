@@ -108,17 +108,20 @@ BeforeAll {
     $privateKey = $rsa.ExportRSAPrivateKeyPem()
     $rsa.Dispose()
 
-    # Generate the immutable release once; each test still gets its own writable copy.
     $releaseTemplate = Join-Path $TestDrive 'bootstrap-release-template'
-    $null = New-Item -ItemType Directory -Path $releaseTemplate
-    Copy-Item -LiteralPath (Join-Path (Split-Path $tools -Parent) 'templates') -Destination $releaseTemplate -Recurse
-    Copy-Item -LiteralPath (Join-Path (Split-Path $tools -Parent) 'schemas') -Destination $releaseTemplate -Recurse
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination (Join-Path $releaseTemplate 'modules') -Recurse
-    $templateTools = New-Item -ItemType Directory -Path (Join-Path $releaseTemplate 'tools')
-    Get-ChildItem -LiteralPath $tools -File | Copy-Item -Destination $templateTools.FullName
-    Copy-Item (Join-Path $tools 'vendor') -Destination $templateTools.FullName -Recurse
-    & (Join-Path $templateTools.FullName 'Generate-DeploymentWorkflow.ps1') -ModulesPath (Join-Path $releaseTemplate 'modules') `
-        -OutputPath (Join-Path $releaseTemplate 'templates/instance/.github/workflows/deploy.yml')
+    function Initialize-TestReleaseTemplate {
+        # Isolated guard selections never need a release; public tests reuse its immutable template.
+        if (Test-Path -LiteralPath $releaseTemplate) { return }
+        $null = New-Item -ItemType Directory -Path $releaseTemplate
+        Copy-Item -LiteralPath (Join-Path (Split-Path $tools -Parent) 'templates') -Destination $releaseTemplate -Recurse
+        Copy-Item -LiteralPath (Join-Path (Split-Path $tools -Parent) 'schemas') -Destination $releaseTemplate -Recurse
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/modules') -Destination (Join-Path $releaseTemplate 'modules') -Recurse
+        $templateTools = New-Item -ItemType Directory -Path (Join-Path $releaseTemplate 'tools')
+        Get-ChildItem -LiteralPath $tools -File | Copy-Item -Destination $templateTools.FullName
+        Copy-Item (Join-Path $tools 'vendor') -Destination $templateTools.FullName -Recurse
+        & (Join-Path $templateTools.FullName 'Generate-DeploymentWorkflow.ps1') -ModulesPath (Join-Path $releaseTemplate 'modules') `
+            -OutputPath (Join-Path $releaseTemplate 'templates/instance/.github/workflows/deploy.yml')
+    }
 
     function Initialize-TestInventoryUpgrade {
         param($Arguments, $Cloud, $Inventory, $Bootstrap, $From = '0.1.0-rc.5', $To = '0.1.0-rc.10')
@@ -238,6 +241,7 @@ BeforeAll {
 
 Describe 'GitHub bootstrap public interface' {
     BeforeEach {
+        Initialize-TestReleaseTemplate
         $savedGlobalPSDefaultParameterValues = $global:PSDefaultParameterValues
         $PSDefaultParameterValues = @{} + $PSDefaultParameterValues
         $PSDefaultParameterValues['New-PlatformGitHubToken.ps1:IssuanceStatePath'] = Join-Path $TestDrive "issuance-$([guid]::NewGuid())/pending.json"
