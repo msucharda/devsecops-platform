@@ -9,7 +9,8 @@ Describe 'Local CI benchmark CLI' {
         git -C $fixture init --quiet
         git -C $fixture config user.email 'tests@example.invalid'
         git -C $fixture config user.name 'Local CI benchmark tests'
-        Set-Content (Join-Path $fixture '.gitignore') 'artifacts/'
+        # Directory-only patterns do not ignore the artifacts symlink used by the refusal tests.
+        Set-Content (Join-Path $fixture '.gitignore') '/artifacts'
         Set-Content (Join-Path $fixture 'README.md') '# Fixture'
         Set-Content (Join-Path $fixture 'tools/Select-InstanceModules.ps1') '# Fixture'
         Set-Content (Join-Path $fixture 'tools/Invoke-Tests.ps1') '# Fixture'
@@ -127,6 +128,7 @@ exit 0
         if ($Entry -eq 'output entry' -and -not $IsWindows) { $target = $source }
         $null = New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $link -Target $target
         try {
+            @(git -C $fixture status --porcelain).Count | Should -Be 0 -Because 'the reparse-point fixture itself must leave a clean checkout'
             $output = & ([Environment]::ProcessPath) -NoProfile -File $benchmark -RepositoryRoot $fixture `
                 -Revision baseline -Repeat 1 -OutputPath $report 2>&1 | Out-String
 
