@@ -33,7 +33,9 @@
             Set-Content (Join-Path $target 'AGENTS.md')
         "# Kandidáti`n`n## Opakování nápovědy`n`n- **Počet nezávislých session:** 1`n- **Zdroje:** [fixture-c R1](https://github.com/msucharda/devsecops-platform/blob/$Source/docs/agents/retros/2026-11-06-fixture-c.md)" |
             Set-Content (Join-Path $target 'docs\agents\retros\candidates.md')
-        Get-ChildItem (Join-Path $target 'docs\agents\retros\2026-*.md') | Remove-Item
+        foreach ($inputFile in Get-ChildItem (Join-Path $target 'docs\agents\retros\2026-*.md')) {
+            Remove-Item -LiteralPath $inputFile.FullName
+        }
         $bodyPath = Join-Path $TestDrive 'pr-body.txt'
         "## Zdroj`n`n$Source`n`n## Otevřené otázky`n`nŽádné`n`n<!-- retro: none distillation -->" |
             Set-Content $bodyPath
@@ -158,11 +160,47 @@ BeforeEach {
         (& $publisher -Mode Inspect -RepositoryPath $target).Reason | Should -BeExactly 'threshold'
     }
 
-    It 'blocks closed unmerged history even after its remote branch was deleted' -Tag RetroHistory {
+    It 'blocks the same closed unmerged batch even after its remote branch was deleted' -Tag RetroHistory {
+        Add-RetroBatch
+        $sha = & $gitExecutable -C $target rev-parse main
+        $checkpoint = Initialize-RetroOutput -Source $sha
+        $pull = Get-RetroPullFixture -Branch $checkpoint.Branch -Sha $checkpoint.HeadSha -State closed
+        $pull.body = $checkpoint.Body
+        $cloud.pulls.Add($pull)
+        { & $publisher -Mode Inspect -RepositoryPath $target } | Should -Throw '*unmerged*'
+        $cloud.writes | Should -Be 0
+    }
+
+    It 'publishes a new batch after another retrospective is added to a rejected batch' -Tag RetroHistory {
+        Add-RetroBatch
+        $source = & $gitExecutable -C $target rev-parse main
+        $checkpoint = Initialize-RetroOutput -Source $source
+        $pull = Get-RetroPullFixture -Branch $checkpoint.Branch -Sha $checkpoint.HeadSha -State closed
+        $pull.body = $checkpoint.Body
+        $cloud.pulls.Add($pull)
+        & $gitExecutable -C $target switch --quiet --detach $source
+        Copy-Item (Join-Path $PSScriptRoot 'fixtures\retro-distillation\2026-11-06-fixture-a.md') `
+            (Join-Path $target 'docs\agents\retros\2026-11-06-fixture-d.md')
+        & $gitExecutable -C $target add .
+        & $gitExecutable -C $target commit --quiet -m 'Add another synthetic input'
+        & $gitExecutable -C $target push --quiet origin HEAD:main
+        $inspection = & $publisher -Mode Inspect -RepositoryPath $target
+        $inspection.Action | Should -BeExactly 'Prepare'
+        $inspection.Retrospectives.Count | Should -Be 4
+        $next = Initialize-RetroOutput -Source $inspection.SourceSha
+        $next.Body | Should -Not -BeExactly $checkpoint.Body
+        $result = & $publisher -Mode Publish -RepositoryPath $target
+        $result.Action | Should -BeExactly 'Published'
+        $cloud.writes | Should -Be 1
+        $cloud.pulls.Count | Should -Be 2
+        $cloud.pulls[1].body | Should -MatchExactly "<!-- distillation-batch: sha256:$($inspection.BatchId) -->"
+    }
+
+    It 'blocks rejected history with an unreadable batch identity' -Tag RetroHistory {
         Add-RetroBatch
         $sha = & $gitExecutable -C $target rev-parse main
         $cloud.pulls.Add((Get-RetroPullFixture -Branch "retro-distillation/$sha" -Sha $sha -State closed))
-        { & $publisher -Mode Inspect -RepositoryPath $target } | Should -Throw '*unmerged*'
+        { & $publisher -Mode Inspect -RepositoryPath $target } | Should -Throw '*readable batch identity*'
         $cloud.writes | Should -Be 0
     }
 

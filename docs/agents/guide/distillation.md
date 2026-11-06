@@ -37,14 +37,20 @@ Veřejný vstup `tools/agents/Invoke-RetroDistillation.ps1` podporuje tři reži
 
 Identita větve je `retro-distillation/<plné-zdrojové-SHA>`. Pushed commit je checkpoint: má právě jednoho parenta rovného zdrojovému SHA a jeden trailer `Retro-Body` s Base64 UTF-8 tělem PR. Base64 není šifrování; tělo smí obsahovat jen veřejné údaje. Helper ověřuje povolené cesty, regular soubory, zachování `AGENTS.md` mimo index a smazání alespoň tří vstupů.
 
+Identitu dávky určuje množina cest všech vstupních retrospektiv z pevného zdrojového SHA. Helper seřadí cesty ordinálně, spojí je znakem LF bez koncového LF a spočítá SHA-256 z UTF-8. Režim `Commit` doplní do těla PR marker `<!-- distillation-batch: sha256:<64 malých hexadecimálních znaků> -->` a ověří shodu se skutečně smazanými cestami. Marker uloží do checkpointu před push. Existující marker musí být právě jeden, kanonický a odpovídat dávce.
+
+**Rozhodnutí uživatele pro #239, varianta B:** zavřené PR bez merge blokuje pouze tutéž množinu vstupních souborů. Přidání nebo odebrání retrospektivy dovoluje novou dávku; změna zdrojového SHA, obsahu nebo pořadí stejných cest identitu nemění. Otevřené destilační PR vždy ukončí běh bez změn. Chybějící, nečitelný nebo nejednoznačný marker zavřeného PR bez merge blokuje běh pro rozhodnutí uživatele; helper identitu neodhaduje z názvu větve. Platně sloučená historie další dávku neblokuje.
+
 | Hranice přerušení | Další běh |
 |---|---|
-| Před commitem nebo před push | Vzdálený checkpoint neexistuje; další automation běží v novém izolovaném worktree a znovu připraví dávku z aktuálního pevného SHA. |
+| Před commitem, včetně přerušení mezi mazáním retrospektiv, nebo před push | Vzdálený checkpoint neexistuje; další automation běží v novém izolovaném worktree a znovu připraví dávku z aktuálního pevného SHA. Při ruční obnově stejného worktree agent znovu přečte úplný inventář a obsah z původního zdrojového SHA, nikoli jen dosud nesmazané soubory. |
 | Po push, před vytvořením PR; i při ztrátě odpovědi na push | Inventář najde čekající větev před volbou nové dávky. Agent použije její commit a uložené tělo PR bez nové destilace. |
 | Po vytvoření PR; i při ztrátě odpovědi na vytvoření | Inventář najde otevřené PR a skončí bez změny. |
 | Souběžná změna větve nebo více čekajících větví | Helper změnu odmítne. Agent zachová checkpoint a nahlásí blokující stav. |
 | Posun main pouze mimo `AGENTS.md`, `docs/agents/` a `docs/adr/` | Obnova použije původní checkpoint a původní SHA; gate se spustí nad tímto SHA. |
-| Posun main uvnitř těchto vstupů, neznámý stav nebo zavřené PR bez merge | Agent zachová stav pro rozhodnutí uživatele; nevytváří náhradní větev. |
+| Posun main uvnitř těchto vstupů nebo neznámý stav | Agent zachová checkpoint pro rozhodnutí uživatele; nevytváří náhradní větev. |
+| Zavřené PR bez merge se shodnou identitou dávky | Helper blokuje opakování téže dávky. Jiná množina vstupních souborů může pokračovat do nového PR. |
+| Zavřené PR bez merge bez jednoznačné identity dávky | Helper blokuje běh; uživatel musí nejprve vyřešit identitu historického PR. |
 
 Helper stránkuje GitHub REST přes `gh api --paginate --slurp`. Používá operace [list pull requests](https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests) a [create a pull request](https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#create-a-pull-request), verzi API `2026-03-10`. Nullable autor seznamu není chyba ani důkaz typu session. Helper nevyžaduje autora typu Bot.
 
@@ -65,6 +71,6 @@ Izolovaná unit sada ověřuje stejné veřejné příkazy se stuby procesových
 ./tools/Invoke-Tests.ps1 -Path ./tools/tests/RetroDistillation.Interruption.Tests.ps1 -Tag Interruption
 ```
 
-Harness ověřuje přerušení před zápisem a ztrátu odpovědi pro push i vytvoření PR, včetně ukončení `Error` a `Abrupt`. Každý další běh musí dosáhnout stejného vzdáleného výstupu bez duplicitní větve či PR. Lokální gate v izolované fixture nahrazuje skript s exit code; skutečný gate se spouští samostatně nad implementací.
+Harness ověřuje přerušení před zápisem a ztrátu odpovědi pro smazání každé vstupní retrospektivy, push i vytvoření PR, včetně ukončení `Error` a `Abrupt`. Každý další běh musí zachovat zdroj každého nálezu a dosáhnout stejného vzdáleného výstupu bez duplicitní větve či PR. Lokální gate v izolované fixture nahrazuje skript s exit code; skutečný gate se spouští samostatně nad implementací.
 
 **Neověřeno touto ukázkou:** významová destilace modelem, skutečné GitHub PR nad alespoň třemi reálnými retrospektivami, aktivace app-local automation a skutečné spuštění profile z této automation. Fixtures se nesmí vydávat za skutečné retrospektivy ani kopírovat do produkčního `docs/agents/retros/`.

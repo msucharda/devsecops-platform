@@ -4,6 +4,13 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'retro-distillation-mode'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*Mode*', '*allows a complete publication*')
+            })
+        }
+        @{
             Name = 'retro-distillation-origin'
             Tests = @(@{
                 Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
@@ -46,10 +53,17 @@
             })
         }
         @{
+            Name = 'retro-distillation-batch-identity'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*History*', '*Batch*', '*allows a complete publication*')
+            })
+        }
+        @{
             Name = 'retro-distillation-output'
             Tests = @(@{
                 Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
-                FullName = @('*Output*', '*allows a complete publication*')
+                FullName = @('*Output*', '*Batch*', '*allows a complete publication*')
             })
         }
         @{

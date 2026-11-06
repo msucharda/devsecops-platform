@@ -167,6 +167,14 @@ Describe 'Merge gate G12' {
         $result.warnings.code | Should -Not -Contain 'retro-waived'
     }
 
+    It 'G12 accepts the explicit waiver alongside a distillation batch identity' {
+        $stub.PullRequest.body += "`n<!-- retro: none distillation -->`n<!-- distillation-batch: sha256:$('d' * 64) -->"
+        $result = Invoke-RetroGate
+        $result.verdict | Should -Be 'pass'
+        $result.warnings.code | Should -Contain 'retro-waived'
+        $result.details.retro.waiverReason | Should -BeExactly 'distillation'
+    }
+
     It 'G12 requires a retrospective for a non-Dependabot author: <Case>' -ForEach @(
         @{ Case = 'different bot'; Login = 'another[bot]'; Type = 'Bot' }
         @{ Case = 'login case'; Login = 'Dependabot[bot]'; Type = 'Bot' }
@@ -188,11 +196,15 @@ Describe 'Merge gate G12' {
         @{ Case = 'null type'; Field = 'user.type'; Value = $null; Error = "author.*type" }
         @{ Case = 'wrong head'; Field = 'head.sha'; Value = 'a' * 40; Error = 'author snapshot.*head' }
         @{ Case = 'head case'; Field = 'head.sha'; Value = '5A86D28AA232FFF72AF137C29C1ABD9E75F398A3'; Error = 'author snapshot.*head' }
+        @{ Case = 'repeated head array'; Field = 'head.sha'; Value = @('5a86d28aa232fff72af137c29c1abd9e75f398a3', '5a86d28aa232fff72af137c29c1abd9e75f398a3'); Error = 'author snapshot.*head' }
+        @{ Case = 'single head array'; Field = 'head.sha'; Value = @('5a86d28aa232fff72af137c29c1abd9e75f398a3'); Error = 'author snapshot.*head' }
+        @{ Case = 'login array'; Field = 'user.login'; Value = @('dependabot[bot]', 'dependabot[bot]'); Error = 'author.*login' }
+        @{ Case = 'type array'; Field = 'user.type'; Value = @('Bot', 'Bot'); Error = 'author.*type' }
         @{ Case = 'wrong PR'; Field = 'number'; Value = 79; Error = 'author snapshot.*number' }
         @{ Case = 'quoted PR'; Field = 'number'; Value = '78'; Error = 'author snapshot.*number' }
         @{ Case = 'missing head'; Field = 'head'; Value = $null; Error = 'author snapshot.*head' }
     ) {
-        # Deliberately malformed API responses test fail-closed identity verification.
+        # Intentionally invalid API input: scalar fields (including head.sha) must not be arrays.
         $parts = $Field.Split('.')
         $node = $stub.RestPullRequest
         for ($i = 0; $i -lt $parts.Count - 1; $i++) { $node = $node[$parts[$i]] }

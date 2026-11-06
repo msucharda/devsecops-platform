@@ -9,7 +9,8 @@
             return $state.FetchUrls
         }
         if ($Arguments -contains 'fetch' -or $Arguments -contains 'merge-base' -or
-            $Arguments -contains 'add' -or $Arguments -contains 'switch' -or $Arguments -contains 'status') { return }
+            $Arguments -contains 'status') { return }
+        if ($Arguments -contains 'add' -or $Arguments -contains 'switch') { $state.Writes++; return }
         if ($Arguments -contains 'rev-parse') {
             if ($Arguments[-1] -ceq 'HEAD') { return $state.Head }
             return $state.Source
@@ -33,8 +34,8 @@
             return
         }
         if ($Arguments -contains 'write-tree') { return $state.Tree }
-        if ($Arguments -contains 'commit') { $state.Head = $state.Commit; return }
-        if ($Arguments -contains 'push') { $state.Remote = $true; return }
+        if ($Arguments -contains 'commit') { $state.Writes++; $state.Head = $state.Commit; return }
+        if ($Arguments -contains 'push') { $state.Writes++; $state.Remote = $true; return }
         throw "Unexpected Git boundary: $($Arguments -join ' ')"
     }
     function gh {
@@ -44,6 +45,7 @@
             if ($null -ne $state.RawPages) { return $state.RawPages }
             return ConvertTo-Json -InputObject ([object[]] @(,$state.Pulls)) -Depth 100 -Compress
         }
+        $state.Writes++
         $set = @{
             number = 1; html_url = 'https://github.com/msucharda/devsecops-platform/pull/1'
             state = 'open'; 'head.ref' = $state.Branch; 'head.sha' = $state.Commit
@@ -80,7 +82,7 @@ Describe 'Distillation security at process boundaries' {
     BeforeEach {
         $source = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
         $commit = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-        $body = "## Zdroj`n$source`n## Otevřené otázky`nŽádné`n<!-- retro: none distillation -->"
+        $body = "## Zdroj`n$source`n## Otevřené otázky`nŽádné`n<!-- retro: none distillation -->`n<!-- distillation-batch: sha256:8e28ad4fe99818fd777938e94997ba0c22777c4dc9d45c419b5ffef0b5baa0c5 -->"
         $state = @{
             Source = $source; Commit = $commit; Head = $commit
             Branch = "retro-distillation/$source"; Tree = 'cccccccccccccccccccccccccccccccccccccccc'
@@ -88,7 +90,7 @@ Describe 'Distillation security at process boundaries' {
             Body = $body; Message = 'Retro-Body: ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($body))
             FetchUrls = @('https://github.com/msucharda/devsecops-platform.git')
             PushUrls = @('https://github.com/msucharda/devsecops-platform.git')
-            Pulls = @(); Creation = @{}; ApiExit = 0; RawPages = $null
+            Pulls = @(); Creation = @{}; ApiExit = 0; RawPages = $null; Writes = 0
             Agents = "# Original`n`n### Průvodce agentů`n`n- Téma: [průvodce](docs/agents/guide/topic.md)."
             FileMode = '100644'
             Retrospectives = @(
@@ -111,6 +113,29 @@ Describe 'Distillation security at process boundaries' {
 
     It 'allows a complete publication at the public command boundary' {
         (& $publisher -Mode Publish -RepositoryPath $TestDrive).Action | Should -BeExactly 'Published'
+    }
+
+    It 'Mode inspection <Mode> never writes even with a ready checkpoint' -ForEach @(
+        @{ Mode = 'Inspect' }, @{ Mode = 'inspect' }, @{ Mode = 'iNsPeCt' }, @{ Mode = 'INSPECT' }
+    ) {
+        (& $publisher -Mode $Mode -RepositoryPath $TestDrive).Action | Should -BeExactly 'Prepare'
+        $state.Writes | Should -Be 0
+        $state.Remote | Should -BeFalse
+    }
+
+    It 'Mode <Mode> commits locally without publication' -ForEach @(
+        @{ Mode = 'Commit' }, @{ Mode = 'commit' }, @{ Mode = 'cOmMiT' }
+    ) {
+        $state.Head = $state.Source
+        (& $publisher -Mode $Mode -RepositoryPath $TestDrive -SourceSha $state.Source -BodyPath $bodyPath).Action |
+            Should -BeExactly 'Resume'
+        $state.Remote | Should -BeFalse
+        $state.Writes | Should -Be 2
+    }
+
+    It 'Mode explicitly publishes with mixed casing' {
+        (& $publisher -Mode pUbLiSh -RepositoryPath $TestDrive).Action | Should -BeExactly 'Published'
+        $state.Remote | Should -BeTrue
     }
 
     It 'Origin rejects <Case>' -ForEach @(
@@ -176,6 +201,16 @@ Describe 'Distillation security at process boundaries' {
         (& $publisher -Mode Inspect -RepositoryPath $TestDrive).Reason | Should -BeExactly 'open-pr'
     }
 
+    It 'History leaves an open PR untouched even with unreadable closed history' {
+        $open = Get-ListedPull
+        $closed = Get-ListedPull
+        $closed.state = 'closed'
+        $closed.body = $null
+        $state.Pulls = @($open, $closed)
+        (& $publisher -Mode Publish -RepositoryPath $TestDrive).Reason | Should -BeExactly 'open-pr'
+        $state.Writes | Should -Be 0
+    }
+
     It 'Source rejects a failed lookup with valid stdout' {
         $state.ApiExit = 1
         { & $publisher -Mode Inspect -RepositoryPath $TestDrive } | Should -Throw '*listing failed*'
@@ -201,6 +236,71 @@ Describe 'Distillation security at process boundaries' {
         $pull.state = 'closed'
         $state.Pulls = @($pull)
         { & $publisher -Mode Inspect -RepositoryPath $TestDrive } | Should -Throw '*unmerged*'
+    }
+
+    It 'History permits a different batch after a closed unmerged PR' {
+        $pull = Get-ListedPull
+        $pull.state = 'closed'
+        $pull.body = $pull.body.Replace('8e28ad4fe99818fd777938e94997ba0c22777c4dc9d45c419b5ffef0b5baa0c5', ('d' * 64))
+        $state.Pulls = @($pull)
+        $result = & $publisher -Mode Inspect -RepositoryPath $TestDrive
+        $result.Action | Should -BeExactly 'Prepare'
+        $result.BatchId | Should -BeExactly '8e28ad4fe99818fd777938e94997ba0c22777c4dc9d45c419b5ffef0b5baa0c5'
+        $state.Writes | Should -Be 0
+    }
+
+    It 'History blocks the same path set despite source SHA or inventory order changes' {
+        $pull = Get-ListedPull
+        $pull.state = 'closed'
+        $state.Pulls = @($pull)
+        $state.Source = 'e' * 40
+        [Array]::Reverse($state.Retrospectives)
+        { & $publisher -Mode Inspect -RepositoryPath $TestDrive } | Should -Throw '*unmerged*same batch*'
+        $state.Writes | Should -Be 0
+    }
+
+    It 'History fails closed on unreadable batch identity <Case>' -ForEach @(
+        @{ Case = 'missing'; Marker = ''; Error = '*exactly one readable batch identity*' }
+        @{ Case = 'null body'; Marker = $null; Error = '*exactly one readable batch identity*' }
+        @{ Case = 'duplicate'; Marker = "<!-- distillation-batch: sha256:$('d' * 64) --><!-- distillation-batch: sha256:$('e' * 64) -->"; Error = '*exactly one readable batch identity*' }
+        @{ Case = 'uppercase declaration'; Marker = "<!-- DISTILLATION-BATCH: sha256:$('d' * 64) -->"; Error = '*canonical batch identity*' }
+        @{ Case = 'uppercase digest'; Marker = "<!-- distillation-batch: sha256:$('D' * 64) -->"; Error = '*canonical batch identity*' }
+        @{ Case = 'short digest'; Marker = '<!-- distillation-batch: sha256:abc -->'; Error = '*canonical batch identity*' }
+        @{ Case = 'unknown scheme'; Marker = "<!-- distillation-batch: sha1:$('d' * 64) -->"; Error = '*canonical batch identity*' }
+    ) {
+        $pull = Get-ListedPull
+        $pull.state = 'closed'
+        $pull.body = $Marker
+        $state.Pulls = @($pull)
+        { & $publisher -Mode Inspect -RepositoryPath $TestDrive } | Should -Throw $Error
+        $state.Writes | Should -Be 0
+    }
+
+    It 'History rejects an unknown merge timestamp <Case>' -ForEach @(
+        @{ Case = 'string'; Value = 'unknown' }
+        @{ Case = 'array'; Value = @('2026-11-06T09:00:00Z', '2026-11-06T09:00:00Z') }
+    ) {
+        $pull = Get-ListedPull
+        $pull.state = 'closed'
+        # Intentionally invalid API input: merged_at is a nullable date-time scalar.
+        $pull.merged_at = $Value
+        $state.Pulls = @($pull)
+        { & $publisher -Mode Inspect -RepositoryPath $TestDrive } | Should -Throw '*unknown distillation merge state*'
+    }
+
+    It 'Batch commit persists an automatically generated identity before publication' {
+        $state.Head = $state.Source
+        [IO.File]::WriteAllText($bodyPath, ($state.Body -split "`n<!-- distillation-batch:")[0])
+        $result = & $publisher -Mode Commit -RepositoryPath $TestDrive -SourceSha $state.Source -BodyPath $bodyPath
+        $result.Body | Should -BeExactly $state.Body
+        $state.Remote | Should -BeFalse
+    }
+
+    It 'Batch output rejects an identity for a different deletion set' {
+        $state.Head = $state.Source
+        [IO.File]::WriteAllText($bodyPath, $state.Body.Replace('8e28ad4fe99818fd777938e94997ba0c22777c4dc9d45c419b5ffef0b5baa0c5', ('d' * 64)))
+        { & $publisher -Mode Commit -RepositoryPath $TestDrive -SourceSha $state.Source -BodyPath $bodyPath } |
+            Should -Throw '*deletions must match*batch identity*'
     }
 
     It 'History accepts a merged retained branch with a deserialized date' {
@@ -259,6 +359,8 @@ Describe 'Distillation security at process boundaries' {
     It 'Creation rejects <Field> with an invalid scalar or identity' -ForEach @(
         @{ Field = 'head'; Value = @(); Error = '*PR creation response: head.*' }
         @{ Field = 'head.sha'; Value = 'wrong'; Error = '*PR creation response: head.sha' }
+        @{ Field = 'head.sha'; Value = @('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'); Error = '*PR creation response: head.sha' }
+        @{ Field = 'head.ref'; Value = @('retro-distillation/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'retro-distillation/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); Error = '*PR creation response: head.ref' }
         @{ Field = 'state'; Value = @(); Error = '*PR creation response: state' }
         @{ Field = 'state'; Value = @('open', 'open'); Error = '*PR creation response: state' }
         @{ Field = 'base.ref'; Value = 'MAIN'; Error = '*PR creation response: base.ref' }

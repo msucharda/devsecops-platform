@@ -1241,7 +1241,8 @@ function Test-MergeGateDependabot {
 
     $numberValue = Get-MergeGateValue -Node $PullRequest -Path 'number'
     if ($numberValue -isnot [long] -or $numberValue -ne $Number) { throw 'The author snapshot has a mismatched or invalid PR number.' }
-    if ((Get-MergeGateValue -Node $PullRequest -Path 'head.sha') -cne $HeadSha) { throw 'The author snapshot has a mismatched head.' }
+    $snapshotHead = Get-MergeGateValue -Node $PullRequest -Path 'head.sha'
+    if ($snapshotHead -isnot [string] -or $snapshotHead -cne $HeadSha) { throw 'The author snapshot has a mismatched or invalid head.' }
     if (-not $PullRequest.Contains('body')) { throw 'The author snapshot is missing the required body field.' }
     $bodyValue = Get-MergeGateValue -Node $PullRequest -Path 'body'
     # REST permits null for an empty body; GraphQL returns an empty string.

@@ -17,6 +17,7 @@ Načti `AGENTS.md`, [ADR 0019](../../docs/adr/0019-session-retrospectives-enforc
 3. Výsledek `Resume` obsahuje původní `SourceSha`, `HeadSha`, větev a uložené tělo PR. Ověř čistý checkout a přepni pouze vlastní worktree na tento `HeadSha`. Zachovej publikovaný obsah; destilaci neopakuj. Spusť lokální gate s `-Base <SourceSha>` a pokračuj krokem 3 níže.
 4. Výsledek `Prepare` obsahuje pevné `SourceSha` a seznam retrospektiv. Ověř čistý checkout a přepni vlastní worktree na toto SHA. Čti inventář, retrospektivy, kandidáty, průvodce, `AGENTS.md` a relevantní ADR přes `git show <SourceSha>:<cesta>` nebo z checkoutu přesně tohoto SHA. Pohyblivý `origin/main` použij jen k počátečnímu vyřešení SHA v helperu.
 5. Validuj každý vstup podle README retrospektiv. `README.md` ani `candidates.md` není vstupní retrospektiva. Neplatný vstup, včetně `pr: null`, nahlas jako blokující omezení a zachovej všechny vstupy. Helper počítá názvy souborů; nenahrazuje obsahovou validaci agenta.
+6. Zavřené PR bez merge blokuje podle rozhodnutí uživatele pro #239 pouze stejnou množinu vstupních retrospektiv. Helper ji porovná přes uložený marker `distillation-batch`; jiná množina může pokračovat. Nečitelnou nebo nejednoznačnou historickou identitu nahlas jako blokující stav. Otevřené PR vždy znamená `NoOp`.
 
 Hotovo: existuje jedna platná dávka alespoň tří retrospektiv z pevného SHA, nebo obnovený checkpoint, nebo hlášení bez změny. Chybu API, nečitelný stav, více čekajících větví či změnu vstupů na main nahlas; nevytvářej náhradní větev.
 
@@ -29,13 +30,14 @@ Hotovo: existuje jedna platná dávka alespoň tří retrospektiv z pevného SHA
 5. Každé nové téma přidej jedním řádkem s podmínkou čtení a odkazem do sekce `### Průvodce agentů` v `AGENTS.md`. Ostatní části souboru zachovej. Přesun pravidla do `AGENTS.md` může schválit jen uživatel.
 6. Důkazy odkazuj přes úplné zdrojové SHA, aby odkazy fungovaly po smazání retrospektiv. Zachovej označení ověřeného, nahlášeného a neověřeného stavu. Dodrž veřejný obsah podle README a ADR 0012.
 7. Smaž přesně zpracované retrospektivy v téže dávce jako průvodce a kandidáty. Zachovej README a dosud nezpracované zdroje. Nové retrospektivy na pozdějším main do této dávky nepřidávej.
+8. Při obnově po přerušení mazání v témže worktree znovu načti úplný inventář a všechny nálezy přes původní `SourceSha`. Dávku dokonči ze všech původních zdrojů, nikoli pouze ze zbývajících souborů checkoutu. Před commitem musí mít každý původní nález pravidlo, kandidáta nebo doloženou duplicitu.
 
 Hotovo: každý nález má pravidlo, kandidáta nebo doloženou duplicitu; každé pravidlo má zdroje a počet nezávislých session. Diff mění pouze tematický průvodce, kandidáty, index a odstranění zpracovaných retrospektiv.
 
 ## 3. Checkpoint a publikace
 
 1. Pro novou dávku připrav tělo PR v ignorovaném `artifacts/retro-distillation/pr-body.md`. Použij skill `pr` a zachovej šablonu repozitáře. Uveď úplné zdrojové SHA, seznam zpracovaných retrospektiv s pinovanými odkazy, nové návrhy, kandidáty, výsledky validace a sekci `## Otevřené otázky`. Bez rozporů do ní napiš `Žádné`. Přidej právě jeden marker `<!-- retro: none distillation -->`. Výjimku ani návrhy nevydávej za schválení uživatele.
-2. Spusť `tools/agents/Invoke-RetroDistillation.ps1 -Mode Commit -SourceSha <SourceSha> -BodyPath artifacts/retro-distillation/pr-body.md`. Helper commitne výstup přímo nad zdrojovým SHA a uloží tělo PR do commitu před vzdáleným zápisem. Potom spusť `tools/Invoke-LocalCi.ps1 -Base <SourceSha>`; vyžaduj exit code 0. Po změně výstupu či commitu gate zopakuj.
+2. Spusť `tools/agents/Invoke-RetroDistillation.ps1 -Mode Commit -SourceSha <SourceSha> -BodyPath artifacts/retro-distillation/pr-body.md`. Helper doplní deterministický marker `distillation-batch`, ověří shodu se smazanými vstupy, commitne výstup přímo nad zdrojovým SHA a uloží tělo PR do commitu před vzdáleným zápisem. Existující marker zachovej; neplatnou identitu helper odmítne. Potom spusť `tools/Invoke-LocalCi.ps1 -Base <SourceSha>`; vyžaduj exit code 0. Po změně výstupu či commitu gate zopakuj.
 3. Spusť `tools/agents/Invoke-RetroDistillation.ps1 -Mode Publish`. Helper znovu ověří lokální gate, stav PR, main a vzdálenou větev. Novou větev vytvoří pouze tehdy, pokud ještě neexistuje; používá pre-push hook a create-only lease. Obnovený checkpoint nepřepisuje. Před vytvořením PR znovu načte stav. Při ztrátě odpovědi další běh objeví tutéž větev nebo PR.
 4. Pokud helper vrátí `Published`, uveď URL a přesné head SHA. Počkej na kontroly přes `tools/Wait-PullRequestChecks.ps1` a vyhodnoť `tools/agents/Test-MergeGate.ps1` podle pravidel handoffu v `AGENTS.md`. Nezelený gate ani otevřené otázky nejsou souhlas k merge.
 

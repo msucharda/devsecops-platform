@@ -87,6 +87,31 @@ function Get-RetroPull {
     }
 }
 
+function Get-RetroBatchId {
+    param([AllowEmptyCollection()][string[]] $Paths)
+    $sorted = [string[]] @($Paths)
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes(($sorted -join "`n")))).ToLowerInvariant()
+}
+
+function Get-RetroInputs {
+    param([string] $Source)
+    Invoke-RetroGit -Arguments @('ls-tree', '-r', '--name-only', $Source, '--', 'docs/agents/retros') |
+        Where-Object { $_ -cmatch '^docs/agents/retros/\d{4}-\d{2}-\d{2}-[^/]+\.md$' }
+}
+
+# security-check: retro-distillation-batch-identity
+function Get-RetroBatchIdentity {
+    param([AllowNull()][AllowEmptyString()][string] $Body)
+    if ([regex]::Matches($Body, '(?i)<!--\s*distillation-batch\b').Count -ne 1) {
+        throw 'Distillation PR requires exactly one readable batch identity.'
+    }
+    $marker = [regex]::Match($Body, '<!-- distillation-batch: sha256:(?<id>[a-f0-9]{64}) -->')
+    if (-not $marker.Success) { throw 'Distillation PR requires a canonical batch identity.' }
+    return $marker.Groups['id'].Value
+}
+
 # security-check: retro-distillation-checkpoint
 function Get-RetroCheckpoint {
     param([string] $Branch, [string] $HeadSha)
@@ -137,13 +162,13 @@ function Assert-RetroOutput {
     }
     if (-not $Body.Contains($Source, [StringComparison]::Ordinal)) { throw 'PR body must identify the source SHA.' }
     if ($Body -cnotmatch '(?m)^## Otevřené otázky\r?$') { throw 'PR body requires the open-questions section.' }
-    $deleted = 0
+    $deleted = @()
     foreach ($line in @(Invoke-RetroGit -Arguments @('diff', '--name-status', '--no-renames', $Source, $Tree))) {
         $parts = $line.Split("`t")
         $status = $parts[0]
         $path = $parts[1]
         if ($status -eq 'D' -and $path -cmatch '^docs/agents/retros/\d{4}-\d{2}-\d{2}-[^/]+\.md$') {
-            $deleted++
+            $deleted += $path
             continue
         }
         if ($line -cnotmatch '^[AM]\t(AGENTS\.md|docs/agents/retros/candidates\.md|docs/agents/guide/[a-z0-9-]+\.md)$') {
@@ -160,14 +185,27 @@ function Assert-RetroOutput {
             }
         }
     }
-    if ($deleted -lt 3) { throw 'A distillation checkpoint must delete at least three retrospective inputs.' }
+    if ($deleted.Count -lt 3) { throw 'A distillation checkpoint must delete at least three retrospective inputs.' }
+    if ((Get-RetroBatchIdentity -Body $Body) -cne (Get-RetroBatchId -Paths $deleted)) {
+        throw 'Checkpoint deletions must match the persisted batch identity.'
+    }
+}
+
+# security-check: retro-distillation-mode
+function Test-RetroPublicationMode {
+    param([string] $Mode)
+    return $Mode -ieq 'Publish'
 }
 
 Assert-RetroOrigin
-if ($Mode -ceq 'Commit') {
+if ($Mode -ieq 'Commit') {
     if ($SourceSha -cnotmatch '^[a-f0-9]{40}$') { throw 'Commit requires a full source SHA.' }
     $head = (Invoke-RetroGit -Arguments @('rev-parse', 'HEAD')) -join ''
     $body = Get-Content -LiteralPath $BodyPath -Raw
+    if (-not [regex]::IsMatch($body, '(?i)<!--\s*distillation-batch\b')) {
+        $batchId = Get-RetroBatchId -Paths @(Get-RetroInputs -Source $SourceSha)
+        $body += "`n<!-- distillation-batch: sha256:$batchId -->"
+    }
     if ($head -cne $SourceSha) {
         $saved = Get-RetroCheckpoint -Branch "retro-distillation/$SourceSha" -HeadSha $head
         if ($saved.Body -cne $body) { throw 'A local checkpoint already exists with another PR body.' }
@@ -188,9 +226,11 @@ function Get-RetroPlan {
     if ($open.Count -gt 0) {
         return [pscustomobject] @{ Action = 'NoOp'; Reason = 'open-pr'; PullRequests = @($open.number) }
     }
-    Assert-RetroHistory -ClosedPull @($pulls | Where-Object { $_.state -ceq 'closed' })
     $null = Invoke-RetroGit -Arguments @('fetch', '--quiet', 'origin', 'main')
     $source = (Invoke-RetroGit -Arguments @('rev-parse', 'refs/remotes/origin/main')) -join ''
+    $retros = @(Get-RetroInputs -Source $source)
+    $batchId = Get-RetroBatchId -Paths $retros
+    Assert-RetroHistory -ClosedPull @($pulls | Where-Object { $_.state -ceq 'closed' }) -BatchId $batchId
     $orphans = @()
     foreach ($line in @(Invoke-RetroGit -Arguments @('ls-remote', '--heads', 'origin', 'refs/heads/retro-distillation/*'))) {
         if ($line -cnotmatch '^([a-f0-9]{40})\s+refs/heads/(retro-distillation/[a-f0-9]{40})$') { throw 'Invalid distillation remote ref.' }
@@ -209,25 +249,27 @@ function Get-RetroPlan {
         if ($drift.Count) { throw 'Distillation inputs changed on main; preserve the checkpoint for human review.' }
         return $pending
     }
-    $paths = @(Invoke-RetroGit -Arguments @('ls-tree', '-r', '--name-only', $source, '--', 'docs/agents/retros'))
-    $retros = @($paths | Where-Object { $_ -cmatch '^docs/agents/retros/\d{4}-\d{2}-\d{2}-[^/]+\.md$' })
     if ($retros.Count -lt 3) {
         return [pscustomobject] @{ Action = 'NoOp'; Reason = 'threshold'; SourceSha = $source; Retrospectives = $retros }
     }
-    return [pscustomobject] @{ Action = 'Prepare'; Reason = 'ready'; SourceSha = $source; Branch = "retro-distillation/$source"; Retrospectives = $retros }
+    return [pscustomobject] @{ Action = 'Prepare'; Reason = 'ready'; SourceSha = $source; Branch = "retro-distillation/$source"; Retrospectives = $retros; BatchId = $batchId }
 }
 
 # security-check: retro-distillation-closed-history
 function Assert-RetroHistory {
-    param([object[]] $ClosedPull)
+    param([object[]] $ClosedPull, [string] $BatchId)
     foreach ($pull in $ClosedPull) {
         # ConvertFrom-Json in the supported PowerShell runtime deserializes RFC 3339 timestamps as DateTime.
-        if ($pull.merged_at -isnot [datetime]) { throw 'An unmerged or unknown distillation PR requires human review.' }
+        if ($pull.merged_at -is [datetime]) { continue }
+        if ($null -ne $pull.merged_at) { throw 'An unknown distillation merge state requires human review.' }
+        if ((Get-RetroBatchIdentity -Body $pull.body) -ceq $BatchId) {
+            throw 'An unmerged distillation PR for the same batch requires human review.'
+        }
     }
 }
 
 $distillationPlan = Get-RetroPlan
-if ($Mode -ceq 'Inspect' -or $distillationPlan.Action -ceq 'NoOp') { return $distillationPlan }
+if (-not (Test-RetroPublicationMode -Mode $Mode) -or $distillationPlan.Action -ceq 'NoOp') { return $distillationPlan }
 if (@(Invoke-RetroGit -Arguments @('status', '--porcelain', '--untracked-files=all')).Count) {
     throw 'Publication requires a clean checkout.'
 }
