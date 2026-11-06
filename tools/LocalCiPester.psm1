@@ -136,6 +136,18 @@ function Read-LocalCiPesterShardResult {
         foreach ($case in $cases) {
             if (-not (Test-LocalCiPesterCase -Case $case)) { throw "Pester shard has inconsistent test results (possibly no passing executed tests): $($item.ResultPath)" }
         }
+        if ($counters.total -ne $cases.Count) { throw "Pester shard counter 'total' does not match its test cases." }
+        foreach ($fileSuite in $suite.SelectNodes('results/test-suite')) {
+            if ($fileSuite.SelectNodes('.//test-case').Count -eq 0) {
+                throw "Pester shard file coverage has no test cases for '$($fileSuite.GetAttribute('name'))'."
+            }
+        }
+        $inconclusive = @($cases | Where-Object { $_.GetAttribute('result') -ceq 'Inconclusive' }).Count
+        $skipped = @($cases | Where-Object { $_.GetAttribute('result') -ceq 'Ignored' }).Count
+        if ($counters.inconclusive -ne $inconclusive) { throw "Pester shard counter 'inconclusive' does not match its test cases." }
+        if ($counters.skipped -ne $skipped) { throw "Pester shard counter 'skipped' does not match its test cases." }
+        # Pester 5.7.1 excludes NotRun tests from XML and always emits ignored=0.
+        if ($counters.ignored -ne 0) { throw "Pester shard counter 'ignored' must be zero." }
         $successes = @($cases | Where-Object { $_.GetAttribute('executed') -ceq 'True' -and $_.GetAttribute('result') -ceq 'Success' }).Count
         if ($successes -eq 0) { throw "Pester shard has no passing executed tests: $($item.ResultPath)" }
         [pscustomobject]@{ Xml = $xml; Counters = $counters; Seconds = $seconds; Passed = $successes }
@@ -223,7 +235,7 @@ function Invoke-LocalCiPester {
     .DESCRIPTION
     The caller owns machine/worktree leases and enables Linux handle inheritance before calling.
     TempPath must be inside the caller's validated private TEMP. This function never acquires additional slots.
-    A shard containing the manual-step interruption suite reserves the complete granted share for its children.
+    A shard containing a nested-process suite reserves the complete granted share for its children.
     Peer shards wait until that reservation is released; ordinary shards reserve one slot each.
     #>
     [CmdletBinding()]
@@ -246,7 +258,9 @@ function Invoke-LocalCiPester {
         finally { Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue }
         $null = New-Item -ItemType Directory -Force -Path $run
         foreach ($shard in $plan) {
-            $nested = @($shard.Path | Where-Object { [IO.Path]::GetFileName($_) -eq 'InstanceSetupManualSteps.Tests.ps1' }).Count -gt 0
+            $nested = @($shard.Path | Where-Object { [IO.Path]::GetFileName($_) -in @(
+                'InstanceSetupManualSteps.Tests.ps1', 'LocalCiPester.Tests.ps1', 'LocalCiGate.Unit.Tests.ps1'
+            ) }).Count -gt 0
             $worker = [pscustomobject]@{
                 Index = $shard.Index; FileCount = $shard.Path.Count; EstimatedSeconds = $shard.Seconds
                 Slots = if ($nested) { $WorkerSlots } else { 1 }
@@ -280,13 +294,16 @@ function Invoke-LocalCiPester {
             if ($active.Count -eq 0) { continue }
             $worker = $active.Dequeue()
             $remaining = [int] [Math]::Max(0, ($TimeoutSeconds - $worker.Watch.Elapsed.TotalSeconds) * 1000)
-            if (-not $worker.Process.HasExited -and -not $worker.Process.WaitForExit($remaining)) {
-                $messages.Add("Pester shard timed out after $TimeoutSeconds seconds: $($worker.ResultPath)")
+            $timedOut = -not $worker.Process.HasExited -and -not $worker.Process.WaitForExit($remaining)
+            if ($timedOut) {
                 $worker.Process.Kill($true)
                 $worker.Process.WaitForExit()
             }
-            else { $worker.ExitCode = $worker.Process.ExitCode }
             $worker.Seconds = ($worker.Process.ExitTime.ToUniversalTime() - $worker.StartedAt).TotalSeconds
+            if ($timedOut -or $worker.Seconds -gt $TimeoutSeconds) {
+                $messages.Add("Pester shard timed out after $TimeoutSeconds seconds: $($worker.ResultPath)")
+            }
+            else { $worker.ExitCode = $worker.Process.ExitCode }
             $text = $worker.Stdout.GetAwaiter().GetResult() + $worker.Stderr.GetAwaiter().GetResult()
             Set-Content -LiteralPath $worker.LogPath -Value $text -Encoding utf8NoBOM
             $messages.AddRange([string[]] ($text -split '\r?\n' | ForEach-Object { $_ -replace '\x1b\[[0-9;]*[A-Za-z]', '' }))
@@ -352,7 +369,9 @@ function Get-LocalCiPesterStepGroup {
     )
     $count = [Math]::Min($GrantedShardCount, $Path.Count)
     if ($count -lt 1) { throw 'Pester selection is empty.' }
-    $nested = @($Path | Where-Object { [IO.Path]::GetFileName($_) -eq 'InstanceSetupManualSteps.Tests.ps1' }).Count -gt 0
+    $nested = @($Path | Where-Object { [IO.Path]::GetFileName($_) -in @(
+        'InstanceSetupManualSteps.Tests.ps1', 'LocalCiPester.Tests.ps1', 'LocalCiGate.Unit.Tests.ps1'
+    ) }).Count -gt 0
     $slots = if ($nested) { $GrantedShardCount } else { $count }
     $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
         RepositoryRoot = $RepositoryRoot; Path = $Path; ShardCount = $count; WorkerSlots = $slots

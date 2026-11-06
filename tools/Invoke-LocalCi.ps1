@@ -36,6 +36,9 @@ Import-Module (Join-Path $PSScriptRoot 'LocalCiTiming.psm1') -Force
 $timing = New-LocalCiTiming -StartedTimestamp $StartedTimestamp -StartedAt $StartedAt
 $timingExitCode = 1
 $timingOwner = $true
+$worktreeLease = $null
+$gateReady = $false
+$cleanupSucceeded = $false
 if (-not $LogPath) { $LogPath = Join-Path $repo "artifacts/local-ci/$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')-$PID.log" }
 $LogPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogPath)
 $null = New-Item -ItemType Directory -Force -Path (Split-Path $LogPath -Parent)
@@ -578,23 +581,22 @@ if ($mode -eq 'Changed') {
 }
 if (-not $failed) {
     Set-LocalCiTimingPhase -Timing $timing -Name 'Result persistence'
-    $endState = Get-LocalCiContentState -RepositoryRoot $repo -Base $Base
-    foreach ($key in 'Head', 'BaseSha', 'MergeBase', 'Fingerprint') {
-        if ($endState[$key] -cne $startState[$key]) { throw "Local gate result is stale: $key changed during the run." }
-    }
-    Save-LocalCiGateResult -RepositoryRoot $repo -State $startState -GateProfile $(if ($Full) { 'Full' } else { 'Local' })
-    Write-Console "Selected local gate passed (vybran`u{fd} lok`u{e1}ln`u{ed} gate pro`u{161}el); HEAD $($startState.Head); base $($startState.BaseSha); fingerprint $($startState.Fingerprint)"
+    $gateReady = $true
 }
 $timingExitCode = if ($failed) { 1 } else { 0 }
 exit $timingExitCode
 }
 finally {
     Set-LocalCiTimingPhase -Timing $timing -Name 'Cleanup'
-    try { if ($null -ne $machineLease) { Exit-LocalCiMachineQueue -Lease $machineLease } }
-    finally { if ($null -ne $worktreeLease) { $worktreeLease.Dispose() } }
+    try {
+        if ($null -ne $machineLease) { Exit-LocalCiMachineQueue -Lease $machineLease }
+        $cleanupSucceeded = $true
+    }
+    catch { $timingExitCode = 1; throw }
 }
 }
 finally {
+    try {
     if ($timingOwner) {
         $timingPath = [IO.Path]::ChangeExtension($LogPath, '.timings.json')
         Save-LocalCiTiming -Timing $timing -Path $timingPath -Mode $(if ($Plan) { 'Plan' } elseif ($Full) { 'Full' } else { 'Changed' }) -ExitCode $timingExitCode
@@ -604,4 +606,18 @@ finally {
         Write-Console ('Duration: {0:hh\:mm\:ss} ({1:F6}s)' -f [timespan]::FromSeconds($timing.PhaseStart), $timing.PhaseStart)
         Write-Console "Timings: $timingPath"
     }
+    if ($gateReady -and $cleanupSucceeded) {
+        $endState = Get-LocalCiContentState -RepositoryRoot $repo -Base $Base
+        foreach ($key in 'Head', 'BaseSha', 'MergeBase', 'Fingerprint') {
+            if ($endState[$key] -cne $startState[$key]) { throw "Local gate result is stale: $key changed during the run." }
+        }
+        Write-Console "Selected local gate passed (vybran`u{fd} lok`u{e1}ln`u{ed} gate pro`u{161}el); HEAD $($startState.Head); base $($startState.BaseSha); fingerprint $($startState.Fingerprint)"
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $startState -GateProfile $(if ($Full) { 'Full' } else { 'Local' })
+    }
+    }
+    catch {
+        if ($null -ne $worktreeLease) { Clear-LocalCiGateResult -RepositoryRoot $repo }
+        throw
+    }
+    finally { if ($null -ne $worktreeLease) { $worktreeLease.Dispose() } }
 }

@@ -185,12 +185,17 @@ Describe 'PowerShell analysis cache' {
         Should -Invoke Invoke-ScriptAnalyzer -ModuleName PowerShellAnalysisCache -Times 2 -Exactly
     }
 
-    It 'analyzes instead of following a cache entry symbolic link' {
+    It 'analyzes instead of following a cache entry reparse point' {
         Invoke-CachedPowerShellAnalysis @parameters
         $entry = Get-ChildItem -LiteralPath $cache -Filter '*.json'
         $target = Join-Path $TestDrive 'external-receipt.json'
         Move-Item -LiteralPath $entry.FullName -Destination $target
-        $null = New-Item -ItemType SymbolicLink -Path $entry.FullName -Value $target
+        if ($IsWindows) {
+            $directoryTarget = Join-Path $TestDrive 'external-receipt-dir'
+            $null = New-Item -ItemType Directory -Path $directoryTarget
+            $null = New-Item -ItemType Junction -Path $entry.FullName -Target $directoryTarget
+        }
+        else { $null = New-Item -ItemType SymbolicLink -Path $entry.FullName -Target $target }
         Invoke-CachedPowerShellAnalysis @parameters
         Should -Invoke Invoke-ScriptAnalyzer -ModuleName PowerShellAnalysisCache -Times 2 -Exactly
     }

@@ -100,4 +100,42 @@ exit 0
         $LASTEXITCODE | Should -Not -Be 0 -Because $output
         Get-Content -LiteralPath $metadata -Raw | Should -BeExactly $before
     }
+
+    It 'refuses a reparse-point <Entry> before writing a report or creating worktrees' -Tag BenchmarkReportSafety -ForEach @(
+        @{ Entry = 'output entry' }
+        @{ Entry = 'parent' }
+        @{ Entry = 'ancestor above a missing parent' }
+        @{ Entry = 'artifacts root' }
+    ) {
+        $target = Join-Path $fixture 'tools'
+        $source = Join-Path $target 'Select-InstanceModules.ps1'
+        $before = [IO.File]::ReadAllText($source)
+        $artifacts = Join-Path $fixture 'artifacts'
+        if ($Entry -eq 'artifacts root') {
+            $link = $artifacts
+            $report = Join-Path $link 'Select-InstanceModules.ps1'
+        }
+        else {
+            $null = New-Item -ItemType Directory -Path $artifacts
+            $link = Join-Path $artifacts 'redirect'
+            $report = switch ($Entry) {
+                'output entry' { $link }
+                'parent' { Join-Path $link 'Select-InstanceModules.ps1' }
+                'ancestor above a missing parent' { Join-Path $link 'missing/report.json' }
+            }
+        }
+        if ($Entry -eq 'output entry' -and -not $IsWindows) { $target = $source }
+        $null = New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $link -Target $target
+        try {
+            $output = & ([Environment]::ProcessPath) -NoProfile -File $benchmark -RepositoryRoot $fixture `
+                -Revision baseline -Repeat 1 -OutputPath $report 2>&1 | Out-String
+
+            $LASTEXITCODE | Should -Not -Be 0 -Because $output
+            $output | Should -Match 'reparse-point entry or ancestor'
+            [IO.File]::ReadAllText($source) | Should -BeExactly $before
+            @(git -C $fixture status --porcelain).Count | Should -Be 0
+            @(git -C $fixture worktree list --porcelain | Where-Object { $_ -like 'worktree *' }).Count | Should -Be 1
+        }
+        finally { Remove-Item -LiteralPath $link -Force }
+    }
 }

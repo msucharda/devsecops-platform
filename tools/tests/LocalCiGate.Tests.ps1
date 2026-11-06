@@ -656,6 +656,55 @@ if ($GitHubOutputPath) {
         }
         [Math]::Abs(($summary.Phases | Measure-Object Seconds -Sum).Sum - $summary.TotalSeconds) | Should -BeLessThan 0.001
     }
+
+    It 'never accepts a pass receipt when timing finalization ends at <Boundary> and recovers on retry' -Tag LocalCiFinalization -ForEach @(
+        @{ Boundary = 'staging write' }
+        @{ Boundary = 'rename' }
+        @{ Boundary = 'abrupt before timings' }
+    ) {
+        $log = Join-Path $fixture 'artifacts/finalization.log'
+        $timingPath = [IO.Path]::ChangeExtension($log, '.timings.json')
+        $blocked = if ($Boundary -eq 'staging write') { "$timingPath.new" } else { $timingPath }
+        $receipt = (git -C $fixture rev-parse --path-format=absolute --git-path local-ci-pass.json).Trim()
+        $runner = Join-Path $tools 'Invoke-LocalCi.ps1'
+        $stateRoot = Join-Path $TestDrive 'finalization-machine'
+        $savedActive = $env:INVOKE_LOCAL_CI_ACTIVE
+        Remove-Item Env:INVOKE_LOCAL_CI_ACTIVE -ErrorAction SilentlyContinue
+        try {
+            Remove-Item -LiteralPath $timingPath, "$timingPath.new" -Force -ErrorAction SilentlyContinue
+            if ($Boundary -eq 'abrupt before timings') {
+                $wrapper = Join-Path $fixture 'artifacts/interrupt-finalization.ps1'
+                $null = New-Item -ItemType Directory -Force -Path (Split-Path $wrapper -Parent)
+                @'
+param($Runner, $Log, $StateRoot)
+Set-PSBreakpoint -Command Save-LocalCiTiming -Action { [Environment]::Exit(9) } | Out-Null
+& $Runner -Base baseline -LogPath $Log -WorkerBudget 1 -StateRoot $StateRoot -WorkerProcess
+'@ | Set-Content -LiteralPath $wrapper
+                $output = & ([Environment]::ProcessPath) -NoProfile -File $wrapper -Runner $runner -Log $log -StateRoot $stateRoot 2>&1 | Out-String
+            }
+            else {
+                $null = New-Item -ItemType Directory -Force -Path $blocked
+                Set-Content -LiteralPath (Join-Path $blocked 'blocker') 'Prevent removal of the directory'
+                $output = & ([Environment]::ProcessPath) -NoProfile -File $runner `
+                    -Base baseline -LogPath $log -WorkerBudget 1 -StateRoot $stateRoot 2>&1 | Out-String
+            }
+            $LASTEXITCODE | Should -Not -Be 0 -Because $output
+            { Test-LocalCiGateResult -RepositoryRoot $fixture -Base baseline } | Should -Throw '*No successful*'
+            Test-Path -LiteralPath $receipt | Should -BeFalse
+            if (Test-Path -LiteralPath $blocked -PathType Container) { Remove-Item -LiteralPath $blocked -Recurse -Force }
+
+            $retry = & ([Environment]::ProcessPath) -NoProfile -File $runner `
+                -Base baseline -LogPath $log -WorkerBudget 1 -StateRoot $stateRoot 2>&1 | Out-String
+
+            $LASTEXITCODE | Should -Be 0 -Because $retry
+            Test-LocalCiGateResult -RepositoryRoot $fixture -Base baseline | Should -BeTrue
+            (Get-Content -LiteralPath $timingPath -Raw | ConvertFrom-Json).Status | Should -BeExactly 'passed'
+        }
+        finally {
+            $env:INVOKE_LOCAL_CI_ACTIVE = $savedActive
+            if (Test-Path -LiteralPath $blocked -PathType Container) { Remove-Item -LiteralPath $blocked -Recurse -Force }
+        }
+    }
 }
 
 Describe 'Local CI profiles' {

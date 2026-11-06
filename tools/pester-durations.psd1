@@ -2,6 +2,7 @@
 # LocalCiGate, LocalCiGate.Unit and LocalCiConcurrency measured in run 40606534079 (2026-10-28), rounded up.
 # Issue #128 suites updated from Source CI run 40778733166 (2026-10-28), rounded up.
 # EnterpriseBaselinePatchContract baseline measured in Source CI run 40776003849 (2026-10-28), rounded up.
+# Local CI speedup suites measured in Source CI run 42167049463 (2026-11-06), rounded up.
 # Missing files receive a one-second estimate and are still selected automatically.
 @{
     # Source CI run 40961020894: 539.4744 seconds, rounded up.
@@ -12,7 +13,7 @@
     'RulesetsTerraform.Tests.ps1' = 178
     'OrganizationRolePrograms.Tests.ps1' = 105
     'RemoveBootstrap.Tests.ps1' = 45
-    'LocalCiGate.Tests.ps1' = 40
+    'LocalCiGate.Tests.ps1' = 102
     'Bootstrap.Tests.ps1' = 25
     'VendoringPullRequest.Tests.ps1' = 24
     # Source CI run 42051425816: 55.9799 seconds, rounded up.
@@ -28,10 +29,13 @@
     # Issue #136 suites measured in Source CI run 40841284383, rounded up.
     'ActionsCatalog.Tests.ps1' = 11
     'Vendoring.Tests.ps1' = 2
-    'LocalCi.Tests.ps1' = 9
-    'LocalCiConcurrency.Tests.ps1' = 10
-    # Windows targeted run with stubbed process-boundary cases (2026-11-05): 6.51 seconds, rounded up.
-    'LocalCiPester.Tests.ps1' = 7
+    'LocalCi.Tests.ps1' = 11
+    'LocalCiConcurrency.Tests.ps1' = 23
+    'LocalCiPester.Tests.ps1' = 4
+    'LocalCiBenchmark.Tests.ps1' = 7
+    'LocalCiTiming.Tests.ps1' = 1
+    'LocalCiRuntimeProbe.Tests.ps1' = 1
+    'PowerShellAnalysisCache.Tests.ps1' = 3
     'InstanceConfiguration.Tests.ps1' = 8
     'GitHubAcceptanceProbe.Tests.ps1' = 7
     # Source CI run 40961020894: 3.7723 seconds, rounded up.
@@ -40,8 +44,7 @@
     'WorkflowGenerator.Tests.ps1' = 10
     'TeardownEnterpriseOwner.Tests.ps1' = 6
     'InstanceSetup.Tests.ps1' = 6
-    # Windows targeted run with three reserved nested slots (2026-11-05): 24.21 seconds, rounded up.
-    'InstanceSetupManualSteps.Tests.ps1' = 25
+    'InstanceSetupManualSteps.Tests.ps1' = 13
     # Token suites measured in Source CI run 40819725706, rounded up.
     # GitHubAppToken measured in Source CI run 40921301537: 7.6856 seconds, rounded up.
     'GitHubAppToken.Tests.ps1' = 8
@@ -70,6 +73,6 @@
     'CredentialContract.Tests.ps1' = 2
     'VendoringSource.Tests.ps1' = 2
     'ModuleSelection.Tests.ps1' = 2
-    'LocalCiGate.Unit.Tests.ps1' = 1
+    'LocalCiGate.Unit.Tests.ps1' = 5
     'RulesetCodeSecurity.Tests.ps1' = 1
 }

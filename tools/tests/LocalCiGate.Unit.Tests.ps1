@@ -2,6 +2,13 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot '../LocalCi.psm1') -Force
     $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+    $testWorkerBudget = 64
+    if ($null -ne $env:LOCAL_CI_WORKER_BUDGET) {
+        if (-not [int]::TryParse($env:LOCAL_CI_WORKER_BUDGET, [ref] $testWorkerBudget) -or $testWorkerBudget -le 0) {
+            throw 'LOCAL_CI_WORKER_BUDGET must be a positive integer.'
+        }
+    }
+    $schedulerSlots = [Math]::Min(2, $testWorkerBudget)
 }
 
 Describe 'Local CI step result acceptance' {
@@ -69,7 +76,7 @@ Describe 'Local CI step scheduling' {
             ) }
         )
 
-        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 2 -WorkingDirectory $TestDrive -TempPath $TestDrive)
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots $schedulerSlots -WorkingDirectory $TestDrive -TempPath $TestDrive)
 
         @($results.Name) | Should -BeExactly @('Manifests', 'Examples', 'Generated', 'Pester')
         @($results.ExitCode) | Should -Be @(1, 1, 0, 7)
@@ -79,13 +86,13 @@ Describe 'Local CI step scheduling' {
         ($results[3].Output -join "`n") | Should -BeExactly 'pester failed'
     }
 
-    It 'overlaps groups within the granted slots while keeping grouped steps in one process' {
+    It 'runs groups within the granted slots while keeping grouped steps in one process' {
         $directory = Join-Path $TestDrive 'overlap'
         $null = New-Item -ItemType Directory -Path $directory
         $barrier = @'
 [IO.File]::WriteAllText('ready-NUMBER', '')
 $watch = [Diagnostics.Stopwatch]::StartNew()
-while (-not (Test-Path 'ready-OTHER')) {
+while (TOTAL -gt 1 -and -not (Test-Path 'ready-OTHER')) {
     if ($watch.Elapsed.TotalSeconds -gt 10) { throw 'Groups did not overlap' }
     Start-Sleep -Milliseconds 20
 }
@@ -93,14 +100,14 @@ while (-not (Test-Path 'ready-OTHER')) {
 '@
         $groups = @(
             @{ Steps = @(
-                @{ Name = 'Static one'; Script = $barrier.Replace('NUMBER', '1').Replace('OTHER', '2') }
+                @{ Name = 'Static one'; Script = $barrier.Replace('NUMBER', '1').Replace('OTHER', '2').Replace('TOTAL', [string] $schedulerSlots) }
                 @{ Name = 'Static two'; Script = '"process=$PID; slots=$env:LOCAL_CI_WORKER_BUDGET"' }
                 @{ Name = 'Static three'; Script = '"process=$PID; slots=$env:LOCAL_CI_WORKER_BUDGET"' }
             ) }
-            @{ Steps = @(@{ Name = 'Pester'; Script = $barrier.Replace('NUMBER', '2').Replace('OTHER', '1') }) }
+            @{ Steps = @(@{ Name = 'Pester'; Script = $barrier.Replace('NUMBER', '2').Replace('OTHER', '1').Replace('TOTAL', [string] $schedulerSlots) }) }
         )
 
-        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 2 -WorkingDirectory $directory -TempPath $directory)
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots $schedulerSlots -WorkingDirectory $directory -TempPath $directory)
 
         @($results.ExitCode) | Should -Be @(0, 0, 0, 0)
         $results[0].Output | Should -BeExactly $results[1].Output
@@ -114,15 +121,15 @@ while (-not (Test-Path 'ready-OTHER')) {
         $directory = Join-Path $TestDrive 'weighted'
         $null = New-Item -ItemType Directory -Path $directory
         $groups = @(
-            @{ Slots = 2; Steps = @(@{ Name = 'Pester'; Script = @'
-if ($env:LOCAL_CI_WORKER_BUDGET -ne '2') { throw 'Wrong Pester share' }
+            @{ Slots = $schedulerSlots; Steps = @(@{ Name = 'Pester'; Script = @'
+if ($env:LOCAL_CI_WORKER_BUDGET -ne 'SLOTS') { throw 'Wrong Pester share' }
 Start-Sleep -Milliseconds 150
 [IO.File]::WriteAllText('pester-done', '')
-'@ }) }
+'@.Replace('SLOTS', [string] $schedulerSlots) }) }
             @{ Steps = @(@{ Name = 'Static'; Script = "if (-not (Test-Path 'pester-done')) { throw 'Exceeded slot budget' }" }) }
         )
 
-        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots 2 -WorkingDirectory $directory -TempPath $directory)
+        $results = @(Invoke-LocalCiStepSchedule -Group $groups -Slots $schedulerSlots -WorkingDirectory $directory -TempPath $directory)
 
         @($results.ExitCode) | Should -Be @(0, 0)
     }

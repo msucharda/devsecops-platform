@@ -30,6 +30,25 @@ if ($LASTEXITCODE -ne 1) { throw "Cannot validate benchmark report path '$Output
 $artifactRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot 'artifacts')) + [IO.Path]::DirectorySeparatorChar
 $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
 if (-not $OutputPath.StartsWith($artifactRoot, $comparison)) { throw 'Benchmark report path must be below artifacts in the source checkout.' }
+
+# security-check: local-ci-benchmark-output-entry
+function Assert-LocalCiBenchmarkOutputEntry {
+    param([string] $Path)
+    try { $attributes = [IO.File]::GetAttributes($Path) }
+    catch [IO.FileNotFoundException] { return }
+    catch [IO.DirectoryNotFoundException] { return }
+    if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'Benchmark report cannot use a reparse-point entry or ancestor.'
+    }
+}
+
+$entry = [IO.FileInfo]::new($OutputPath)
+Assert-LocalCiBenchmarkOutputEntry -Path $entry.FullName
+$ancestor = $entry.Directory
+while ($null -ne $ancestor) {
+    Assert-LocalCiBenchmarkOutputEntry -Path $ancestor.FullName
+    $ancestor = $ancestor.Parent
+}
 $runRoot = Join-Path $RepositoryRoot "artifacts/local-ci/b-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 $null = New-Item -ItemType Directory -Force -Path $runRoot, (Split-Path $OutputPath -Parent)
 
