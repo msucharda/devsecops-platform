@@ -34,7 +34,7 @@ Describe 'Local CI content-bound result' {
         [IO.File]::WriteAllText((Join-Path $repo 'source.ps1'), 'abc', [Text.UTF8Encoding]::new($false))
         $nested = Join-Path $repo 'nested'
         $null = New-Item -ItemType Directory -Path $nested
-        [IO.File]::WriteAllBytes((Join-Path $nested 'ž [literal]=.txt'), [byte[]] @())
+        [IO.File]::WriteAllBytes((Join-Path $nested "`u{17E} [literal]=.txt"), [byte[]] @())
         git -C $repo add -- 'nested'
         $LASTEXITCODE | Should -Be 0
         $binary = Join-Path $repo 'binary.bin'
@@ -44,7 +44,7 @@ Describe 'Local CI content-bound result' {
         $abcHash = 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD'
         $reference = Join-Path $TestDrive 'fingerprint-reference'
         [IO.File]::WriteAllText($reference,
-            "10:binary.bin=$binaryHash`n23:nested/ž [literal]=.txt=$emptyHash`n10:source.ps1=$abcHash`n",
+            "10:binary.bin=$binaryHash`n23:nested/`u{17E} [literal]=.txt=$emptyHash`n10:source.ps1=$abcHash`n",
             [Text.UTF8Encoding]::new($false))
 
         $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
