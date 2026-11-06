@@ -3,7 +3,7 @@
     $gitExecutable = (Get-Command git -CommandType Application | Select-Object -First 1).Source
     $publisher = Join-Path $PSScriptRoot '..\agents\Invoke-RetroDistillation.ps1'
     function gh { param([Parameter(ValueFromRemainingArguments)][string[]] $Arguments) $null = $Arguments }
-    function git { param([Parameter(ValueFromRemainingArguments)][string[]] $Arguments) & $gitExecutable @Arguments }
+    function git { param([Parameter(ValueFromRemainingArguments)][string[]] $Arguments) & $gitTransport -Arguments $Arguments }
     function Add-RetroBatch {
         Copy-Item (Join-Path $PSScriptRoot 'fixtures\retro-distillation\*.md') (Join-Path $target 'docs\agents\retros')
         & $gitExecutable -C $target add .
@@ -63,6 +63,13 @@ BeforeEach {
     & $gitExecutable -C $target push --quiet origin main
     & $gitExecutable -C $target fetch --quiet origin main
     $cloud = @{ pulls = [Collections.Generic.List[object]]::new(); writes = 0 }
+    $gitTransport = {
+        param([string[]] $Arguments)
+        if ($Arguments -contains 'remote' -and $Arguments -contains 'get-url') {
+            return 'https://github.com/msucharda/devsecops-platform.git'
+        }
+        & $gitExecutable @Arguments
+    }
     $ghTransport = {
         param([string[]] $Arguments)
         if ($Arguments -contains 'GET') {
@@ -314,13 +321,35 @@ BeforeEach {
         { & $publisher -Mode Inspect -RepositoryPath $target } | Should -Throw $Error
     }
 
-    It 'accepts the documented nullable head repository and body as foreign history' {
+    It 'rejects a null repository instead of losing potentially blocking PR history' -Tag RetroIdentity {
         $sha = & $gitExecutable -C $target rev-parse main
         $pull = Get-RetroPullFixture -Branch "retro-distillation/$sha" -Sha $sha -State closed
+        # Intentionally invalid API input: repository is nonnullable in the pinned schema.
         $pull.head.repo = $null
         $pull.body = $null
         $cloud.pulls.Add($pull)
-        (& $publisher -Mode Inspect -RepositoryPath $target).Reason | Should -BeExactly 'threshold'
+        { & $publisher -Mode Inspect -RepositoryPath $target } | Should -Throw '*identity: head.repo*'
+    }
+
+    It 'accepts a documented nullable body without losing an open source PR' {
+        $sha = & $gitExecutable -C $target rev-parse main
+        $pull = Get-RetroPullFixture -Branch "retro-distillation/$sha" -Sha $sha
+        $pull.body = $null
+        $cloud.pulls.Add($pull)
+        (& $publisher -Mode Inspect -RepositoryPath $target).Reason | Should -BeExactly 'open-pr'
+    }
+
+    It 'rejects a mismatched <Side> remote before reading or publishing a batch' -Tag RetroIdentity -ForEach @(
+        @{ Side = 'fetch'; Value = 'https://github.com/other/devsecops-platform.git' }
+        @{ Side = 'push'; Value = 'git@other.example:msucharda/devsecops-platform.git' }
+        @{ Side = 'fetch'; Value = @() }
+        @{ Side = 'push'; Value = @('https://github.com/msucharda/devsecops-platform.git', 'https://github.com/other/repository.git') }
+    ) {
+        Mock git {
+            if ($Arguments -contains 'get-url' -and (($Arguments -contains '--push') -eq ($Side -ceq 'push'))) { return $Value }
+            & $gitTransport -Arguments $Arguments
+        }
+        { & $publisher -Mode Inspect -RepositoryPath $target } | Should -Throw '*origin must target*'
     }
 
     It 'rejects creation response with changed <Field> instead of reporting success' -Tag 'RetroRegression' -ForEach @(
@@ -396,12 +425,12 @@ BeforeEach {
         & $gitExecutable -C $target switch --quiet --detach $source
         & $gitExecutable -C $target restore --source=$($commit.HeadSha) --staged --worktree .
         Mock git {
-            & $gitExecutable @Arguments
+            & $gitTransport -Arguments $Arguments
             if ($Arguments -contains $Step) { throw 'Injected local interruption after apply.' }
         }
         { & $publisher -Mode Commit -RepositoryPath $target -SourceSha $source -BodyPath (Join-Path $TestDrive 'pr-body.txt') } |
             Should -Throw '*local interruption*'
-        Mock git { & $gitExecutable @Arguments }
+        Mock git { & $gitTransport -Arguments $Arguments }
         $result = & $publisher -Mode Commit -RepositoryPath $target -SourceSha $source -BodyPath (Join-Path $TestDrive 'pr-body.txt')
         $result.SourceSha | Should -BeExactly $source
         (& $gitExecutable -C $target rev-list --count "$source..$($result.HeadSha)") | Should -BeExactly '1'

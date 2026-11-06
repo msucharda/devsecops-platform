@@ -7,8 +7,8 @@ Reads Git from pinned commits and persists the PR body in the commit before push
 GitHub REST uses API version 2026-03-10:
 https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests
 https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#create-a-pull-request
-The paginated list accepts nullable user/body/head.repo fields; closed merged history
-does not require a surviving head repository. No author-type policy is imposed.
+The paginated list accepts nullable user/body fields. Repository identities are
+nonnullable in the pinned schema. No author-type policy is imposed.
 #>
 [CmdletBinding()]
 param(
@@ -29,6 +29,20 @@ function Invoke-RetroGit {
     return $output
 }
 
+# security-check: retro-distillation-origin
+function Assert-RetroOrigin {
+    foreach ($side in @('fetch', 'push')) {
+        $arguments = @('remote', 'get-url', '--all')
+        if ($side -eq 'push') { $arguments += '--push' }
+        $arguments += 'origin'
+        $urls = @(Invoke-RetroGit -Arguments $arguments)
+        if ($urls.Count -ne 1) { throw 'Remote origin must target exactly one msucharda/devsecops-platform repository.' }
+        if ($urls[0] -inotmatch '\A(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)msucharda/devsecops-platform(?:\.git)?\z') {
+            throw 'Remote origin must target msucharda/devsecops-platform on github.com for fetch and push.'
+        }
+    }
+}
+
 # security-check: retro-distillation-inventory
 function Assert-RetroInventory {
     param([object] $Pages)
@@ -42,7 +56,6 @@ function Assert-RetroInventory {
                 if ($pull[$side].ref -isnot [string] -or [string]::IsNullOrEmpty($pull[$side].ref)) {
                     throw "Unreadable pull request identity: $side.ref"
                 }
-                if ($side -eq 'head' -and $null -eq $pull[$side].repo) { continue }
                 if ($pull[$side].repo -isnot [Collections.IDictionary]) { throw "Unreadable pull request identity: $side.repo" }
                 if ($pull[$side].repo.full_name -isnot [string] -or [string]::IsNullOrEmpty($pull[$side].repo.full_name)) {
                     throw "Unreadable pull request identity: $side.repo.full_name"
@@ -65,7 +78,6 @@ function Get-RetroPull {
     Assert-RetroInventory -Pages $pages
     foreach ($page in $pages) {
         foreach ($pull in $page) {
-            if ($null -eq $pull.head.repo) { continue }
             if ($pull.head.repo.full_name -ine 'msucharda/devsecops-platform') { continue }
             if ($pull.base.repo.full_name -ine 'msucharda/devsecops-platform' -or $pull.base.ref -cne 'main') { continue }
             if ($pull.head.ref -clike 'retro-distillation/*') {
@@ -151,6 +163,7 @@ function Assert-RetroOutput {
     if ($deleted -lt 3) { throw 'A distillation checkpoint must delete at least three retrospective inputs.' }
 }
 
+Assert-RetroOrigin
 if ($Mode -ceq 'Commit') {
     if ($SourceSha -cnotmatch '^[a-f0-9]{40}$') { throw 'Commit requires a full source SHA.' }
     $head = (Invoke-RetroGit -Arguments @('rev-parse', 'HEAD')) -join ''

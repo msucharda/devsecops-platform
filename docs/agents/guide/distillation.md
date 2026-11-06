@@ -48,6 +48,8 @@ Identita větve je `retro-distillation/<plné-zdrojové-SHA>`. Pushed commit je 
 
 Helper stránkuje GitHub REST přes `gh api --paginate --slurp`. Používá operace [list pull requests](https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#list-pull-requests) a [create a pull request](https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#create-a-pull-request), verzi API `2026-03-10`. Nullable autor seznamu není chyba ani důkaz typu session. Helper nevyžaduje autora typu Bot.
 
+Fetch i push URL `origin` musí mířit na `msucharda/devsecops-platform` na `github.com`, shodně s REST cílem. Helper podporuje HTTPS a SSH (`git@github.com:…`, `ssh://git@github.com/…`); jiné hosty, forky a více URL odmítne před výběrem dávky. Pole `head.repo` a `base.repo` musí odpovídat nenullovatelnému schématu. Nullable `body` ani nullable `user` seznamu samy o sobě identitu PR nemění.
+
 Automation musí používat `workspace_type: worktree`: každý běh začíná novou session s izolovaným checkoutem. Původní nedokončený worktree zůstává zachovaný. Při ručním pokračování ve stejném worktree lze zopakovat `Commit` se stejným `SourceSha` a souborem těla PR. Helper dokončí rozpracovaný index; pokud commit již existuje, ověří jeho identitu a vrátí jej bez druhého commitu. Nesouvisející změny ani index nemaže.
 
 ## Offline ukázka a stav ověření

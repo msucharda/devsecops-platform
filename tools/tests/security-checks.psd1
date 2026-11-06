@@ -4,10 +4,17 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'retro-distillation-origin'
+            Tests = @(@{
+                Path = 'tools/tests/RetroDistillation.Tests.ps1'
+                FullName = @('*rejects a mismatched*remote*', '*returns no change for fewer*')
+            })
+        }
+        @{
             Name = 'retro-distillation-source-pr'
             Tests = @(@{
                 Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*ignores a foreign*', '*ignores a PR targeting*', '*makes no changes when an open*', '*accepts the documented nullable head*', '*rejects a failed PR lookup*')
+                FullName = @('*ignores a foreign*', '*ignores a PR targeting*', '*makes no changes when an open*', '*accepts a documented nullable body*', '*rejects a failed PR lookup*')
             })
         }
         @{
@@ -21,7 +28,7 @@
             Name = 'retro-distillation-inventory'
             Tests = @(@{
                 Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*rejects unreadable*', '*accepts the documented nullable*', '*rejects an unknown PR*', '*makes no changes when an open*')
+                FullName = @('*rejects unreadable*', '*accepts the documented nullable*', '*accepts a documented nullable body*', '*rejects a null repository*', '*rejects an unknown PR*', '*makes no changes when an open*')
             })
         }
         @{

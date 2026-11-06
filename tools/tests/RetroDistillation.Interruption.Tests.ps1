@@ -26,7 +26,7 @@ Describe 'Distillation publication interruption harness' -Tag 'Interruption' {
                 Invoke-InterruptionStep -Plan $plan -Request 'git push distillation' -Identity 'distillation branch' -Apply {
                     & $gitExecutable @Arguments
                 } -Interrupt { throw 'Injected push interruption.' }
-            } else { & $gitExecutable @Arguments }
+            } else { & $gitTransport -Arguments $Arguments }
         }
         Mock gh {
             if ($Arguments -contains 'POST') {
