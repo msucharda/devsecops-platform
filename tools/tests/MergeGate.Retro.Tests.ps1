@@ -53,7 +53,7 @@ Describe 'Merge gate G12' {
             Should -Match "\\?ref=$($stub.PullRequest.headRefOid)$"
     }
 
-    It 'G12 rejects invalid frontmatter: <Case>' -ForEach @(
+    It 'G12 rejects invalid frontmatter: <Case>' -Tag G12Metadata -ForEach @(
         @{ Case = 'quoted PR'; From = 'pr: 78'; To = 'pr: "78"'; Error = "'pr'.*positive integer" }
         @{ Case = 'boolean PR'; From = 'pr: 78'; To = 'pr: true'; Error = "'pr'.*positive integer" }
         @{ Case = 'null PR'; From = 'pr: 78'; To = 'pr: null'; Error = "'pr'.*positive integer" }
@@ -83,6 +83,8 @@ Describe 'Merge gate G12' {
         @{ Case = 'sequence'; From = 'pr: 78'; To = 'pr: [78]'; Error = 'scalar' }
         @{ Case = 'mapping'; From = 'pr: 78'; To = 'pr: {number: 78}'; Error = 'scalar' }
         @{ Case = 'duplicate key'; From = 'pr: 78'; To = "pr: 78`npr: 78"; Error = 'duplicate|same key' }
+        @{ Case = 'case-colliding model'; From = 'model: test-model'; To = "model: null`nModel: test-model"; Error = 'case-colliding' }
+        @{ Case = 'case-colliding session'; From = 'session: test-session'; To = "session: true`nSession: test-session"; Error = 'case-colliding' }
         @{ Case = 'YAML tag'; From = 'pr: 78'; To = 'pr: !!int 78'; Error = 'tags, anchors or aliases' }
         @{ Case = 'YAML anchor'; From = 'pr: 78'; To = 'pr: &number 78'; Error = 'tags, anchors or aliases' }
         @{ Case = 'YAML alias'; From = 'pr: 78'; To = "other: &number 78`npr: *number"; Error = 'tags, anchors or aliases' }
@@ -96,6 +98,7 @@ Describe 'Merge gate G12' {
         $stub.Retro.Content = $stub.Retro.Content.Replace($From, $To)
         $result = Invoke-RetroGate
 
+        $result.verdict | Should -Be 'fail'
         $result.reasons.code | Should -Contain 'retro-invalid'
         $result.details.retro.errors[$stub.Retro.Path] | Should -Match $Error
     }

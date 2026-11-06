@@ -16,7 +16,7 @@ Soubor musí začínat YAML frontmatter ohraničeným samostatnými řádky `---
 | `date` | Řetězec v uvozovkách ve formátu `YYYY-MM-DD`; musí odpovídat datu v názvu souboru. |
 | `model` | Neprázdný řetězec: model, který retrospektivu vytvořil, nikoli model implementátora. |
 
-Agent nesmí použít duplicitní klíče, kolekce, YAML tags, anchors ani aliases. Následující hodnoty jsou syntetický příklad:
+Agent nesmí použít duplicitní klíče ani klíče lišící se pouze velikostí písmen, kolekce, YAML tags, anchors ani aliases. Následující hodnoty jsou syntetický příklad:
 
 ```yaml
 ---

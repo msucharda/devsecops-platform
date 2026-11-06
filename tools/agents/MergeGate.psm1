@@ -1191,10 +1191,12 @@ function Assert-MergeGateRetroMetadata {
     $root = $yaml.Documents[0].RootNode
     if ($root -isnot [YamlDotNet.RepresentationModel.YamlMappingNode]) { throw 'Retrospective YAML must have a mapping root.' }
     $fields = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    $keys = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $root.Children.GetEnumerator()) {
         if ($entry.Key -isnot [YamlDotNet.RepresentationModel.YamlScalarNode] -or $entry.Value -isnot [YamlDotNet.RepresentationModel.YamlScalarNode]) {
             throw 'Retrospective YAML keys and values must be scalars.'
         }
+        if (-not $keys.Add($entry.Key.Value)) { throw 'Retrospective YAML has duplicate or case-colliding keys.' }
         $fields.Add($entry.Key.Value, $entry.Value)
     }
     foreach ($key in @('session', 'issue', 'pr', 'date', 'model')) {
