@@ -284,7 +284,7 @@ Describe 'Instance setup manual steps through the public wizard' {
         Should -Invoke Start-Process -ModuleName InstanceSetup -Times 0
     }
 
-    It 'guides upstream teardown restoration before deleting the actions organization' {
+    It 'guides upstream teardown restoration before deleting the actions organization' -Tag 'TeardownRecovery' {
         $configuration = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $repoRoot 'templates/instance/instance.yaml') -Raw)
         $configuration['modules'] = @{
             organizations = @{ parameters = @{ admin_logins = @('platform-admin'); billing_email = 'platform@example.test' } }
@@ -301,6 +301,8 @@ Describe 'Instance setup manual steps through the public wizard' {
         $guidance | Should -Match '(?s)enterprise-baseline.*PR.*\.github/workflows/teardown\.yml.*merged into main.*delete the actions and workloads organizations.*workflow_dispatch.*main'
         $guidance | Should -Match 'Generate-TeardownWorkflow\.ps1'
         $guidance | Should -Match '(?s)exact upstream SHA.*organization.*selected.*Read back.*stop'
+        $guidance | Should -Match '(?s)enterprise-enforced.*HTTP 409.*explicit operator decision'
+        $guidance | Should -Not -Match 'stop before deletion if any reference is missing, broader access is enabled, or the enterprise policy blocks the change'
         $guidance | Should -Match '(?s)merged into main.*cancel.*deploy\.yml.*completed.*delete the actions'
         $guidance | Should -Match 'Re-run'
         $result.Completed | Should -BeFalse

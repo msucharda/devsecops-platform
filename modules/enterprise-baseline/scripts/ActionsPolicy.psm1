@@ -69,7 +69,7 @@ function Invoke-ActionsPolicyApi {
     $reply = Invoke-GitHubRetryRequest -Request $request
     $status = [int] $reply.StatusCode
     if ($status -eq 409) {
-        $conflict = [InvalidOperationException]::new("GitHub returned HTTP 409 for $Method ${Path}: the enterprise policy prevents the organization setting. Align the enterprise GitHub Actions policy with the module or remove the enterprise restriction.")
+        $conflict = [InvalidOperationException]::new("GitHub returned HTTP 409 for $Method ${Path}: the enterprise policy prevents the organization setting. Stop and inspect the organization policy before continuing; a previous write may already have changed it. Do not change the enterprise policy as a recovery step. See the Actions policy and Teardown sections in modules/enterprise-baseline/README.md (platform/modules/enterprise-baseline/README.md in an instance repository).")
         $conflict.Data['StatusCode'] = $status
         throw $conflict
     }

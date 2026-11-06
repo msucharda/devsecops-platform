@@ -11,11 +11,16 @@ manualSteps:
       the organization Actions restrictions. With promoted live workflows, open a reviewed PR changing
       only .github/workflows/teardown.yml: regenerate it with the installed
       platform/tools/Generate-TeardownWorkflow.ps1 and platform/modules, not the catalog-rewritten template.
-      Derive the exact upstream SHA action list from that generated workflow, not a handwritten list.
-      In the organization containing the instance repository, use selected actions to permit only these
-      external references, without wildcards or broad GitHub or verified-creator allowances.
-      Read back the saved policy and compare it with the generated list; stop before deletion if any
-      reference is missing, broader access is enabled, or the enterprise policy blocks the change.
+      Derive the exact upstream SHA action list from a clean checkout of the fixed recovery commit, not a handwritten list.
+      In the organization containing the instance repository, distinguish an editable selected actions list
+      from an enterprise-enforced list. An editable list must allow exactly these external references,
+      without wildcards or broad GitHub or verified-creator allowances. HTTP 409 when writing the list
+      can leave the organization in selected mode with the inherited list; do not assume a rollback.
+      Read back the current mode and complete effective policy and verify every exact reference, including exclusions
+      and stricter repository settings; stop before deletion on a denied reference or an unverified readback.
+      A broader inherited list additionally requires an explicit operator decision for this teardown, recorded
+      with the fixed commit, reference list and policy readback in the recovery PR. Recheck before deletion
+      and after interruption; a workflow or policy change requires new verification and a new decision.
       Do not change the enterprise policy or any other organization.
       After this PR is merged into main, cancel every unfinished deploy.yml run on every branch and
       wait until all are completed; do not approve their apply. Only then delete the actions and workloads organizations.
@@ -29,7 +34,7 @@ manualSteps:
     limitations:
       plan: The plan does not show the deletion; it reads only whether each organization exists and which Apps it has.
       drift: Drift detection reports a deleted organization as a failed plan, not as a planned deletion.
-      teardown: The first teardown stops at organizations; derive and verify the exact upstream SHA exceptions, merge the restoration PR, cancel and await every deploy run before deleting the actions organization, then start a new workflow_dispatch from the updated main.
+      teardown: The first teardown stops at organizations; verify the effective policy for every exact upstream SHA and obtain an explicit operator decision for a broader inherited list, merge the restoration PR, cancel and await every deploy run before deleting the actions organization, then start a new workflow_dispatch from the updated main.
 permissions:
   azure: []
   microsoftGraph: []
