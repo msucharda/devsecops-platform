@@ -272,15 +272,26 @@ BeforeEach {
             Should -Throw '*at least three retrospective inputs*'
     }
 
-    It 'rejects a nonregular guide output' {
+    It 'rejects a nonregular guide output with core.filemode=<FileMode>' -ForEach @(
+        @{ FileMode = 'false' }
+        if (-not $IsWindows) { @{ FileMode = 'true' } }
+    ) {
         Add-RetroBatch
         $source = & $gitExecutable -C $target rev-parse main
         $commit = Initialize-RetroOutput -Source $source
         & $gitExecutable -C $target switch --quiet --detach $source
         & $gitExecutable -C $target restore --source=$($commit.HeadSha) --staged --worktree .
+        & $gitExecutable -C $target config core.filemode $FileMode
+        if (-not $IsWindows) {
+            # The publisher restages the worktree, so an index-only executable bit would be lost with core.filemode=true.
+            $guidePath = Join-Path $target 'docs\agents\guide\source-reading.md'
+            [IO.File]::SetUnixFileMode($guidePath, [IO.File]::GetUnixFileMode($guidePath) -bor [IO.UnixFileMode]::UserExecute)
+        }
         & $gitExecutable -C $target update-index --chmod=+x docs/agents/guide/source-reading.md
+        (& $gitExecutable -C $target ls-files --stage docs/agents/guide/source-reading.md) | Should -Match '^100755 '
         { & $publisher -Mode Commit -RepositoryPath $target -SourceSha $source -BodyPath (Join-Path $TestDrive 'pr-body.txt') } |
             Should -Throw '*regular file*'
+        (& $gitExecutable -C $target ls-files --stage docs/agents/guide/source-reading.md) | Should -Match '^100755 '
     }
 
     It 'rejects an unknown PR state instead of treating it as an absent PR' {

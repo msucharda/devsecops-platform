@@ -349,6 +349,7 @@ Describe 'Distillation security at process boundaries' {
         @{ Case = 'uppercase raw suffix'; Change = 'raw-case'; Value = "D`tdocs/agents/retros/2026-11-06-fixture-a.MD"; Error = '*outside the distillation output*' }
         @{ Case = 'changed input'; Change = 'path'; Value = "M`tdocs/agents/retros/2026-11-06-fixture-a.md"; Error = '*outside the distillation output*' }
         @{ Case = 'symlink'; Change = 'mode'; Value = '120000'; Error = '*regular file*' }
+        @{ Case = 'executable file'; Change = 'mode'; Value = '100755'; Error = '*regular file*' }
         @{ Case = 'changed rules'; Change = 'agents'; Value = '# Other rules'; Error = '*outside its guide index*' }
         @{ Case = 'changed rule casing'; Change = 'agents'; Value = '# ORIGINAL'; Error = '*outside its guide index*' }
         @{ Case = 'only two deletions'; Change = 'count'; Value = ''; Error = '*at least three retrospective inputs*' }
