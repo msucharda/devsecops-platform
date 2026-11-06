@@ -133,7 +133,7 @@ Describe 'Instance module selection' {
         $workflow.jobs.authorize.needs | Should -Be 'validate_scope'
         $workflow.jobs.validate.needs | Should -Be 'authorize'
         @($workflow.jobs.select.needs) | Should -Be @('authorize', 'validate')
-        $workflow.jobs.validate.Contains('if') | Should -BeFalse
+        $workflow.jobs.validate.if | Should -BeExactly '${{ needs.authorize.outputs.allowed == ''true'' }}'
         $workflow.jobs.validate.steps[0].with.ref | Should -Be '${{ needs.authorize.outputs.revision }}'
         $preflight = @($workflow.jobs.authorize.steps | Where-Object { $_.Contains('id') -and $_.id -ceq 'preflight' })
         $preflight.Count | Should -Be 1
