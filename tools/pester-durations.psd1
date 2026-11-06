@@ -24,6 +24,8 @@
     'MergeGate.Tests.ps1' = 78
     # Local Windows Pester XML for issue #227 (2026-11-06): 49.1967 seconds, rounded up.
     'MergeGate.Retro.Tests.ps1' = 50
+    # Local Windows Pester XML for issue #228 (2026-11-06): 56.7004 seconds, rounded up.
+    'RetroDistillation.Unit.Tests.ps1' = 57
     # Source CI run 40661148420: 14.539 seconds.
     'WorkflowPreflight.Tests.ps1' = 15
     'ModuleRunner.Tests.ps1' = 20
