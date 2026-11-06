@@ -70,12 +70,12 @@ Describe 'Distillation publication interruption harness' -Tag 'Interruption' {
         $plan.Requests.Count | Should -Be 2
     }
 
-    It 'preserves every finding when restarted midway through deleting processed retrospectives' {
+    It 'preserves every finding when restarted midway through deleting processed retrospectives' -Tag SourceDeletion {
         Mock git { & $gitTransport -Arguments $Arguments }
         Mock gh { & $ghTransport -Arguments $Arguments }
         Mock Remove-Item {
             Invoke-InterruptionStep -Plan $plan -Request "delete $([IO.Path]::GetFileName($LiteralPath))" -Apply {
-                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath
+                [IO.File]::Delete($LiteralPath)
             } -Interrupt { throw 'Injected retrospective deletion interruption.' }
         } -ParameterFilter { $LiteralPath -like '*2026-11-06-fixture-*.md' }
         $capture = {
@@ -89,7 +89,7 @@ Describe 'Distillation publication interruption harness' -Tag 'Interruption' {
             param($State)
             foreach ($file in Get-ChildItem -LiteralPath $target -Recurse -File) {
                 if (-not $State.Files.ContainsKey([IO.Path]::GetRelativePath($target, $file.FullName))) {
-                    Microsoft.PowerShell.Management\Remove-Item -LiteralPath $file.FullName
+                    [IO.File]::Delete($file.FullName)
                 }
             }
             foreach ($path in $State.Files.Keys) {

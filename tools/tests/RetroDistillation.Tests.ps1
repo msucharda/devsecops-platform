@@ -68,12 +68,15 @@ BeforeEach {
     $gitTransport = {
         param([string[]] $Arguments)
         if ($Arguments -contains 'remote' -and $Arguments -contains 'get-url') {
+            $global:LASTEXITCODE = 0
             return 'https://github.com/msucharda/devsecops-platform.git'
         }
         & $gitExecutable @Arguments
+        $global:LASTEXITCODE = $LASTEXITCODE
     }
     $ghTransport = {
         param([string[]] $Arguments)
+        $global:LASTEXITCODE = 0
         if ($Arguments -contains 'GET') {
             $pages = [object[]] @(,$cloud.pulls.ToArray())
             return ConvertTo-Json -InputObject $pages -Depth 100 -Compress

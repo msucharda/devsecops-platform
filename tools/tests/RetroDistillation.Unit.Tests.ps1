@@ -303,6 +303,18 @@ Describe 'Distillation security at process boundaries' {
             Should -Throw '*deletions must match*batch identity*'
     }
 
+    It 'Batch <Mode> rejects a canonical subset marker with a retained source input' -Tag BatchSubset -ForEach @(
+        @{ Mode = 'Commit'; Writes = 1 }
+        @{ Mode = 'Publish'; Writes = 0 }
+    ) {
+        $state.Retrospectives += 'docs/agents/retros/2026-11-06-fixture-d.md'
+        if ($Mode -ceq 'Commit') { $state.Head = $state.Source }
+        { & $publisher -Mode $Mode -RepositoryPath $TestDrive -SourceSha $state.Source -BodyPath $bodyPath } |
+            Should -Throw '*complete source inventory*'
+        $state.Remote | Should -BeFalse
+        $state.Writes | Should -Be $Writes
+    }
+
     It 'History accepts a merged retained branch with a deserialized date' {
         $pull = Get-ListedPull
         $pull.state = 'closed'

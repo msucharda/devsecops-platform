@@ -95,7 +95,7 @@ function Get-RetroBatchId {
         [Text.Encoding]::UTF8.GetBytes(($sorted -join "`n")))).ToLowerInvariant()
 }
 
-function Get-RetroInputs {
+function Get-RetroInput {
     param([string] $Source)
     Invoke-RetroGit -Arguments @('ls-tree', '-r', '--name-only', $Source, '--', 'docs/agents/retros') |
         Where-Object { $_ -cmatch '^docs/agents/retros/\d{4}-\d{2}-\d{2}-[^/]+\.md$' }
@@ -186,8 +186,12 @@ function Assert-RetroOutput {
         }
     }
     if ($deleted.Count -lt 3) { throw 'A distillation checkpoint must delete at least three retrospective inputs.' }
-    if ((Get-RetroBatchIdentity -Body $Body) -cne (Get-RetroBatchId -Paths $deleted)) {
+    $batchId = Get-RetroBatchIdentity -Body $Body
+    if ($batchId -ne (Get-RetroBatchId -Paths $deleted)) {
         throw 'Checkpoint deletions must match the persisted batch identity.'
+    }
+    if ($batchId -ne (Get-RetroBatchId -Paths @(Get-RetroInput -Source $Source))) {
+        throw 'Checkpoint batch identity must match the complete source inventory.'
     }
 }
 
@@ -203,7 +207,7 @@ if ($Mode -ieq 'Commit') {
     $head = (Invoke-RetroGit -Arguments @('rev-parse', 'HEAD')) -join ''
     $body = Get-Content -LiteralPath $BodyPath -Raw
     if (-not [regex]::IsMatch($body, '(?i)<!--\s*distillation-batch\b')) {
-        $batchId = Get-RetroBatchId -Paths @(Get-RetroInputs -Source $SourceSha)
+        $batchId = Get-RetroBatchId -Paths @(Get-RetroInput -Source $SourceSha)
         $body += "`n<!-- distillation-batch: sha256:$batchId -->"
     }
     if ($head -cne $SourceSha) {
@@ -228,7 +232,7 @@ function Get-RetroPlan {
     }
     $null = Invoke-RetroGit -Arguments @('fetch', '--quiet', 'origin', 'main')
     $source = (Invoke-RetroGit -Arguments @('rev-parse', 'refs/remotes/origin/main')) -join ''
-    $retros = @(Get-RetroInputs -Source $source)
+    $retros = @(Get-RetroInput -Source $source)
     $batchId = Get-RetroBatchId -Paths $retros
     Assert-RetroHistory -ClosedPull @($pulls | Where-Object { $_.state -ceq 'closed' }) -BatchId $batchId
     $orphans = @()
@@ -262,7 +266,7 @@ function Assert-RetroHistory {
         # ConvertFrom-Json in the supported PowerShell runtime deserializes RFC 3339 timestamps as DateTime.
         if ($pull.merged_at -is [datetime]) { continue }
         if ($null -ne $pull.merged_at) { throw 'An unknown distillation merge state requires human review.' }
-        if ((Get-RetroBatchIdentity -Body $pull.body) -ceq $BatchId) {
+        if ((Get-RetroBatchIdentity -Body $pull.body) -eq $BatchId) {
             throw 'An unmerged distillation PR for the same batch requires human review.'
         }
     }
