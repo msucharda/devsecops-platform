@@ -1,5 +1,14 @@
 BeforeDiscovery {
     Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
+    $skipUnixReadPermissions = $IsWindows
+    if (-not $IsWindows) {
+        $id = Get-Command -Name id -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $effectiveUid = & $id.Source -u
+        if ($LASTEXITCODE -ne 0 -or $effectiveUid -isnot [string] -or $effectiveUid -cnotmatch '^(0|[1-9][0-9]*)$') {
+            throw 'Cannot determine the effective UID for the Unix read-permission regression.'
+        }
+        $skipUnixReadPermissions = $effectiveUid -ceq '0'
+    }
 }
 
 BeforeAll {
@@ -28,6 +37,130 @@ Describe 'Local CI content-bound result' {
         Test-LocalCiGateResult -RepositoryRoot $repo -ExpectedHead $state.Head | Should -BeTrue
         { Test-LocalCiGateResult -RepositoryRoot $repo -ExpectedHead ('a' * 40) } | Should -Throw '*stale*'
         { Test-LocalCiGateResult -RepositoryRoot $repo -ExpectedHead $state.Head.ToUpperInvariant() } | Should -Throw '*stale*'
+    }
+
+    It 'preserves the canonical fingerprint for literal Unicode paths, empty and binary files' {
+        [IO.File]::WriteAllText((Join-Path $repo 'source.ps1'), 'abc', [Text.UTF8Encoding]::new($false))
+        $nested = Join-Path $repo 'nested'
+        $null = New-Item -ItemType Directory -Path $nested
+        [IO.File]::WriteAllBytes((Join-Path $nested "`u{17E} [literal]=.txt"), [byte[]] @())
+        git -C $repo add -- 'nested'
+        $LASTEXITCODE | Should -Be 0
+        $binary = Join-Path $repo 'binary.bin'
+        [IO.File]::WriteAllBytes($binary, [byte[]] @(0, 1, 128, 255, 13, 10))
+        $binaryHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+        $emptyHash = 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855'
+        $abcHash = 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD'
+        $reference = Join-Path $TestDrive 'fingerprint-reference'
+        [IO.File]::WriteAllText($reference,
+            "10:binary.bin=$binaryHash`n23:nested/`u{17E} [literal]=.txt=$emptyHash`n10:source.ps1=$abcHash`n",
+            [Text.UTF8Encoding]::new($false))
+
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+
+        $state.Fingerprint | Should -BeExactly (Get-FileHash -LiteralPath $reference -Algorithm SHA256).Hash.ToLowerInvariant()
+        $state.Clean | Should -BeFalse
+    }
+
+    It 'invalidates the receipt for same-size <Kind> byte edits with the original timestamp' -ForEach @(
+        @{ Kind = 'tracked'; Name = 'source.ps1' }
+        @{ Kind = 'untracked'; Name = 'new [literal].bin' }
+    ) {
+        $file = Join-Path $repo $Name
+        if ($Kind -eq 'untracked') { [IO.File]::WriteAllBytes($file, [byte[]] @(0, 1, 128, 255)) }
+        $before = [IO.File]::ReadAllBytes($file)
+        $timestamp = [IO.File]::GetLastWriteTimeUtc($file)
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $before[0] = $before[0] -bxor 1
+        [IO.File]::WriteAllBytes($file, $before)
+        [IO.File]::SetLastWriteTimeUtc($file, $timestamp)
+
+        $current = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+
+        (Get-Item -LiteralPath $file).Length | Should -Be $before.Length
+        [IO.File]::GetLastWriteTimeUtc($file) | Should -Be $timestamp
+        $current.Head | Should -BeExactly $state.Head
+        $current.BaseSha | Should -BeExactly $state.BaseSha
+        $current.Fingerprint | Should -Not -BeExactly $state.Fingerprint
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*stale*Fingerprint*'
+    }
+
+    It 'preserves the deleted sentinel for <Case>' -ForEach @(
+        @{ Case = 'a missing file'; MissingParent = $false }
+        @{ Case = 'a missing parent directory'; MissingParent = $true }
+    ) {
+        $reference = Join-Path $TestDrive 'deleted-reference'
+        if ($MissingParent) {
+            $nested = Join-Path $repo 'nested'
+            $null = New-Item -ItemType Directory -Path $nested
+            [IO.File]::WriteAllText((Join-Path $nested 'source.ps1'), 'abc')
+            git -C $repo add -- 'nested'
+            $LASTEXITCODE | Should -Be 0
+            Remove-Item -LiteralPath $nested -Recurse -Force
+            $sourceHash = (Get-FileHash -LiteralPath (Join-Path $repo 'source.ps1') -Algorithm SHA256).Hash
+            $expected = "17:nested/source.ps1=deleted`n10:source.ps1=$sourceHash`n"
+        }
+        else {
+            Remove-Item -LiteralPath (Join-Path $repo 'source.ps1')
+            $expected = "10:source.ps1=deleted`n"
+        }
+        [IO.File]::WriteAllText($reference, $expected, [Text.UTF8Encoding]::new($false))
+
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+
+        $state.Fingerprint | Should -BeExactly (Get-FileHash -LiteralPath $reference -Algorithm SHA256).Hash.ToLowerInvariant()
+        $state.Clean | Should -BeFalse
+    }
+
+    It 'excludes Git-ignored untracked bytes but includes other untracked bytes' {
+        [IO.File]::WriteAllText((Join-Path $repo '.gitignore'), 'ignored.bin')
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        [IO.File]::WriteAllBytes((Join-Path $repo 'ignored.bin'), [byte[]] @(0, 255))
+
+        (Get-LocalCiContentState -RepositoryRoot $repo -Base baseline).Fingerprint | Should -BeExactly $state.Fingerprint
+        [IO.File]::WriteAllBytes((Join-Path $repo 'included.bin'), [byte[]] @(0, 255))
+        (Get-LocalCiContentState -RepositoryRoot $repo -Base baseline).Fingerprint | Should -Not -BeExactly $state.Fingerprint
+    }
+
+    It 'rejects a tracked file replaced by a directory' {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        Remove-Item -LiteralPath (Join-Path $repo 'source.ps1')
+        $null = New-Item -ItemType Directory -Path (Join-Path $repo 'source.ps1')
+
+        { Get-LocalCiContentState -RepositoryRoot $repo -Base baseline } | Should -Throw '*Cannot fingerprint non-file Git entry: source.ps1*'
+        { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*Cannot fingerprint non-file Git entry: source.ps1*'
+    }
+
+    It 'rejects unreadable bytes without treating them as empty or deleted' -Skip:(-not $IsWindows) {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $stream = [IO.File]::Open((Join-Path $repo 'source.ps1'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+        try {
+            { Get-LocalCiContentState -RepositoryRoot $repo -Base baseline } | Should -Throw '*source.ps1*'
+            { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*source.ps1*'
+        }
+        finally { $stream.Dispose() }
+
+        Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline | Should -BeTrue
+    }
+
+    It 'rejects Unix access-denied bytes without treating them as empty or deleted' -Skip:$skipUnixReadPermissions {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $file = Join-Path $repo 'source.ps1'
+        $originalMode = [IO.File]::GetUnixFileMode($file)
+        $readMask = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::GroupRead -bor [IO.UnixFileMode]::OtherRead
+        try {
+            [IO.File]::SetUnixFileMode($file, ($originalMode -band (-bnot $readMask)))
+            { Get-LocalCiContentState -RepositoryRoot $repo -Base baseline } | Should -Throw '*source.ps1*'
+            { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*source.ps1*'
+        }
+        finally { [IO.File]::SetUnixFileMode($file, $originalMode) }
+
+        [IO.File]::GetUnixFileMode($file) | Should -Be $originalMode
+        Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline | Should -BeTrue
     }
 
     It 'rejects a malformed receipt with <Field> changed independently' -ForEach @(

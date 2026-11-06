@@ -26,7 +26,7 @@ zůstávají povinné. Publikace má jeden PR; tento postup nezavádí stack.
 Merge vyžaduje samostatný mandát a předepsaný merge gate.
 
 Retrospektiva ani samostatný retrospektivní agent nejsou součástí dokončení.
-Zrušení dřívějšího rozhodnutí zaznamenává [ADR 0019](../adr/0019-session-retrospectives-enforced-by-merge-gate.md).
+Dřívější rozhodnutí zrušil [PR #248](https://github.com/msucharda/devsecops-platform/pull/248).
 Poznatky se ukládají průběžně do Copilot Memory podle `AGENTS.md`.
 Dreaming není součástí tohoto workflow.
 

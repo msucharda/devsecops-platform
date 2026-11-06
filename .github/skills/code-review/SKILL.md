@@ -50,7 +50,7 @@ Look for the originating spec, in this order:
 1. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.), fetched via the workflow in the tracker doc.
 2. A path the user passed as an argument.
 3. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
-4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent skips only comparison with spec requirements and reports "no spec available". Repository-mandated checks still run.
 
 ### 3. Identify the standards sources
 
@@ -95,10 +95,13 @@ their own reviewers or implementers.
 **Spec sub-agent prompt** should include:
 
 - The diff command and commit list.
-- The path or fetched contents of the spec.
+- The path or fetched contents of the spec, or an explicit statement that no spec is available.
+- The repository's mandatory Spec-axis checks from the `Code review` section of `AGENTS.md`, with its relevant references. Apply them whether or not a separate spec exists; mark a check not applicable only when the diff has no relevant surface.
 - The brief: "Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Under 400 words."
 
-If the spec is missing, skip the Spec sub-agent and note this in the final report.
+Without a spec, omit only (a)-(c) from the brief. Always run the Spec sub-agent for the
+repository-mandated checks and cite the applicable repository rule for each finding.
+Note the unavailable spec comparison separately from those checks in the final report.
 
 ### 5. Aggregate
 

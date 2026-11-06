@@ -117,7 +117,7 @@ CI workflow `Source CI` běží s oprávněním `contents: read`. Pester, harnes
 
 ### Lokální validace
 
-Před spuštěním lokálního gate nebo pushem a při změně či review runneru načti
+Před spuštěním testů (včetně cíleného TDD), lokálního gate nebo pushem a při změně či review runneru načti
 [pravidla lokálního CI](docs/agents/local-ci.md). Před každým pushem musí projít
 commit-bound gate; před merge úplné Linux Source CI na přesném head SHA.
 Podrobný postup, výsledky, cache, rozpočty a pravidla bezpečného TEMP mají jediný
@@ -152,7 +152,7 @@ Pravidla platí pro každého agenta v repozitáři.
 - Subagent dostane ohraničený výsledek, potřebné zdroje a podmínku ukončení. Zadavatel stejnou práci souběžně neopakuje. Krátké lookupy a jeden souvislý průchod kódem řeší přímo.
 - Paralelní implementace vyžaduje výslovný souhlas uživatele; počáteční limit jsou dva souběžní implementátoři. Delegovaný implementer nerozděluje implementaci dalším implementerům. Povinné nezávislé review a security checkpoint zůstávají.
 - Předání používá odkazy na zdroje a stručné nové informace, ne kopii celé spec nebo obecných pravidel. Vlastníkem závěrečného procesu zůstává jedna session; běžná integrace ani opravy nepotřebují dalšího agenta.
-- Retrospektiva ani retrospektivní subagent nejsou podmínkou dokončení. Zrušení dřívějšího rozhodnutí zaznamenává [ADR 0019](docs/adr/0019-session-retrospectives-enforced-by-merge-gate.md).
+- Retrospektiva ani retrospektivní subagent nejsou podmínkou dokončení. Dřívější rozhodnutí zrušil [PR #248](https://github.com/msucharda/devsecops-platform/pull/248).
 
 ### Čekání a blokace
 
