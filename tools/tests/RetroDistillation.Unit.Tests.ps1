@@ -154,6 +154,7 @@ Describe 'Distillation security at process boundaries' {
         @{ Field = 'head.repo.full_name'; Value = ''; Error = 'Unreadable pull request identity: head.repo.full_name' }
         @{ Field = 'base.repo.full_name'; Value = @('msucharda/devsecops-platform'); Error = 'Unreadable pull request identity: base.repo.full_name' }
         @{ Field = 'state'; Value = @(); Error = '*unknown distillation PR*' }
+        @{ Field = 'state'; Value = @('open'); Error = '*unknown distillation PR*' }
         @{ Field = 'state'; Value = 'OPEN'; Error = '*unknown distillation PR*' }
         @{ Field = 'body'; Value = @(); Error = '*request body*' }
     ) {
@@ -245,7 +246,10 @@ Describe 'Distillation security at process boundaries' {
             'body' { [IO.File]::WriteAllText($bodyPath, $Value) }
             'path' { $state.Diff += $Value }
             'mode' { $state.FileMode = $Value }
-            'agents' { $state.Agents = $Value }
+            'agents' {
+                $state.Agents = $Value
+                $state.Diff = @($state.Diff | Where-Object { $_ -clike "D`t*" -or $_ -ceq "M`tAGENTS.md" })
+            }
             'raw-case' { $state.Diff[0] = $Value }
             'count' { $state.Diff = @($state.Diff | Select-Object -Skip 1) }
         }
@@ -253,19 +257,19 @@ Describe 'Distillation security at process boundaries' {
     }
 
     It 'Creation rejects <Field> with an invalid scalar or identity' -ForEach @(
-        @{ Field = 'head'; Value = @() }
-        @{ Field = 'head.sha'; Value = 'wrong' }
-        @{ Field = 'state'; Value = @() }
-        @{ Field = 'state'; Value = @('open', 'open') }
-        @{ Field = 'base.ref'; Value = 'MAIN' }
-        @{ Field = 'number'; Value = '1' }
-        @{ Field = 'number'; Value = 0 }
-        @{ Field = 'html_url'; Value = 'https://github.com/other/repository/pull/1' }
-        @{ Field = 'html_url'; Value = 'https://github.com/MSUCHARDA/devsecops-platform/pull/1' }
-        @{ Field = 'html_url'; Value = @('https://github.com/msucharda/devsecops-platform/pull/1') }
+        @{ Field = 'head'; Value = @(); Error = '*PR creation response: head.*' }
+        @{ Field = 'head.sha'; Value = 'wrong'; Error = '*PR creation response: head.sha' }
+        @{ Field = 'state'; Value = @(); Error = '*PR creation response: state' }
+        @{ Field = 'state'; Value = @('open', 'open'); Error = '*PR creation response: state' }
+        @{ Field = 'base.ref'; Value = 'MAIN'; Error = '*PR creation response: base.ref' }
+        @{ Field = 'number'; Value = '1'; Error = '*PR creation response: number type' }
+        @{ Field = 'number'; Value = 0; Error = '*PR creation response: number' }
+        @{ Field = 'html_url'; Value = 'https://github.com/other/repository/pull/1'; Error = '*PR creation response: html_url' }
+        @{ Field = 'html_url'; Value = 'https://github.com/MSUCHARDA/devsecops-platform/pull/1'; Error = '*PR creation response: html_url' }
+        @{ Field = 'html_url'; Value = @('https://github.com/msucharda/devsecops-platform/pull/1'); Error = '*PR creation response: html_url' }
     ) {
         # Intentionally invalid API input: preserve the documented fixture except for the targeted field.
         $state.Creation[$Field] = $Value
-        { & $publisher -Mode Publish -RepositoryPath $TestDrive } | Should -Throw '*creation response*'
+        { & $publisher -Mode Publish -RepositoryPath $TestDrive } | Should -Throw $Error
     }
 }
