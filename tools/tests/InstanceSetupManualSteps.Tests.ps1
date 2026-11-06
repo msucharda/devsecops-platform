@@ -1,7 +1,7 @@
 BeforeAll {
     Import-Module powershell-yaml -RequiredVersion 0.4.12
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-    $platformTools = Import-Module (Join-Path $repoRoot 'tools/PlatformTools.psm1') -PassThru
+    $platformTools = Import-Module (Join-Path $repoRoot 'tools/PlatformTools.psm1') -Force -PassThru
     Import-Module (Join-Path $repoRoot 'tools/InstanceSetup.psm1') -Force
 }
 
