@@ -16,7 +16,8 @@ a reference is ambiguous; do not redesign an already approved scope.
   results and unmet criteria; the caller owns final review, publication and handoff.
 - **Standalone delivery:** the current session owns completion of its assigned outcome,
   including a lever lane. Run `code-review`, fix findings and complete its PR according
-  to `AGENTS.md`; the coordinator retains spec-wide integration and acceptance.
+  to `AGENTS.md`. In a lever delivery, the coordinator retains spec-wide integration
+  and acceptance.
 
 Standalone delivery is the default. Partial work must follow from the delivery owner's
 assignment; it does not waive tests, security checkpoints or the commit-bound gate

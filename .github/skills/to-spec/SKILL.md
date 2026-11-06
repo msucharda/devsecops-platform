@@ -25,7 +25,8 @@ through assumptions.
 
 The literal headings below remain Czech for the published spec, as required by `AGENTS.md`.
 
-- **Problém:** the user's original request verbatim, followed by the observable current limitation.
+- **Problém:** the user's original request after the handoff contract's publication-safe
+  redaction, followed by the observable current limitation.
 - **Řešení:** the required behavior from the user's perspective.
 - **User stories a akceptační kritéria:** a complete, non-repetitive list;
   a verifiable outcome for each behavior, including material failure modes.

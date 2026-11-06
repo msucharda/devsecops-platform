@@ -16,6 +16,14 @@ měnil verzovanou dokumentaci. Samotné zveřejnění issue neznamená schválen
 ### Kontrakt předání
 
 Spec obsahuje původní zadání, akceptační kritéria a odkazy na přijatá rozhodnutí.
+Před zveřejněním spec, ticketu nebo jiného podkladu odstraň přihlašovací údaje,
+osobní a důvěrné informace i skutečná data instance podle
+[ADR 0012](../adr/0012-public-source-repository.md). Každé odstranění označ
+zástupnou hodnotou `[REDACTED: kategorie]`; bezpečný zbytek původního zadání
+zachovej doslova. Pravidlo platí i pro přílohy a převzaté důkazy. Pokud po redakci
+nelze požadavek jednoznačně specifikovat, publikaci zablokuj a vyžádej si
+bezpečné upřesnění místo zveřejnění původních hodnot.
+
 Každý ticket odkazuje na konkrétní kritéria spec a uvádí skutečné blokující
 závislosti. Parent spec eviduje všechny tickets; souhrn pokrytí musí ukázat,
 že žádné kritérium nechybí. Otevřená rozhodnutí blokující implementaci musí
@@ -25,6 +33,18 @@ Koordinátor dostane odkaz na spec, její tickets a přijaté ADR. Použije tyto
 zdroje místo kopie celé konverzace, nového briefu nebo dalšího kickoff dokumentu.
 Při změně spec ověří dopad na rozpracované tickets a vrátí nové rozhodnutí
 uživateli; sám scope nerozšíří.
+
+## Společná pravidla implementace
+
+Mimo explicitní lever delivery pracuje aktuální session přímo a vlastní
+implementaci, integraci, review, validaci i předání svého výsledku.
+Samotný ticket ani vyvolání `implement` nezakládá koordinační session.
+
+Paralelní implementace vyžaduje výslovný souhlas uživatele; explicitní
+`/lever deliver` je tímto souhlasem pro schválenou dodávku. V obou režimech
+smějí běžet nejvýš dva implementátoři v celé dodávce. Delegovaný implementátor
+další implementátory nespouští. Nezávislé review a security checkpoint tento
+limit nespotřebovávají.
 
 ## Implementace přes lever
 
@@ -38,10 +58,8 @@ zmínka o leveru ani dokončení `/to-tickets` dodávku nespouští.
 
 - Aktuální session koordinuje dodávku a vlastní pokrytí celé spec, graf závislostí,
   integraci a závěrečný audit. Implementaci deleguje vlastníkům jednotlivých větví práce.
-- Explicitní `deliver` povoluje nejvýš dva souběžné implementátory, nevyžaduje další
-  potvrzení paralelismu. Menší počet stačí pro provázanou práci. Limit zahrnuje všechny
-  implementátory dodávky; delegovaný implementátor další implementátory nespouští.
-  Nezávislé review a security checkpoint tento limit nespotřebovávají.
+- Koordinátor volí počet implementátorů podle nezávislosti práce v mezích
+  společných pravidel implementace; paralelismus není povinný.
 - Ticket určuje výsledek, ne session ani PR. Koordinátor seskupí provázané tickets
   k jednomu implementátorovi. Nezávisle přijatelná větev práce má vlastní branch a PR;
   samostatný ticket je dostatečný důvod pro nový PR jen tehdy, když lze jeho výsledek
