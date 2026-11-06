@@ -1,26 +1,26 @@
 ---
 name: grilling
-description: "Prověř návrh otázkami na rozhodnutí, závislosti a konkrétní scénáře."
+description: "Stress-test a design through questions about decisions, dependencies and concrete scenarios."
 ---
 
 # Grilling
 
-Veď návrhový strom: rozhodnutí odblokuje otázky, které na něm závisí.
-Aktuální session vede rozhovor a průběžně rozlišuje ověřená fakta, návrhy,
-přijatá rozhodnutí a otevřené otázky.
+Follow a decision tree: each decision unlocks the questions that depend on it.
+The current session leads the interview and keeps verified facts, proposals,
+accepted decisions and open questions distinct.
 
-Vybírej otázku, jejíž předpoklady už jsou známé. Polož ji přes dostupný nástroj
-pro otázky, nabídni doporučení s důvodem a počkej na odpověď. Jedna otázka
-nesmí skrývat několik nezávislých rozhodnutí. Schválené rozhodnutí znovu
-neotevírej bez nového důkazu nebo změny požadavku.
+Choose a question whose prerequisites are already known. Ask it through the available
+question tool, give a recommendation with its reason and wait for the answer.
+One question must not hide several independent decisions. Do not reopen an accepted
+decision without new evidence or a changed requirement.
 
-Fakta z kódu a prostředí dohledávej přímo; nechtěj je od uživatele.
-Subagenta použij pouze pro ohraničenou nezávislou rešerši, která vyžaduje
-samostatný kontext. Nedeleguj jednotlivé lookupy ani jeden souvislý průchod
-kódem. Na nezjištěném faktu nestav další rozhodnutí.
+Look up facts from the code and environment directly rather than asking the user.
+Use a subagent only for bounded, independent research that needs separate context.
+Do not delegate individual lookups or a single continuous code trace.
+Do not base further decisions on an unverified fact.
 
-Zaměř se na rozsah, chybové stavy, měřitelné cíle a nákladné předpoklady.
-Používej konkrétní scénáře místo požadavku na vyčerpávající hypotetické větvení.
+Focus on scope, failure modes, measurable goals and costly assumptions.
+Use concrete scenarios instead of demanding exhaustive hypothetical branching.
 
-Hotovo: uživatel potvrdil společné porozumění, podstatné větve jsou vyřešené
-a zbývající nejistoty jsou výslovně označené. Implementaci nezačínej bez zadání.
+Done: the user has confirmed a shared understanding, material branches are resolved
+and remaining uncertainties are explicit. Do not start implementation without a request.

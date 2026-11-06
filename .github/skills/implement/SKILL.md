@@ -1,34 +1,34 @@
 ---
 name: implement
-description: "Implementuj dohodnutou změnu pomocí TDD a cílené validace; dokončení celé dodávky má jediného vlastníka."
+description: "Implement agreed work with TDD and targeted validation; one owner completes the whole delivery."
 ---
 
-# Implementace
+# Implementation
 
-Načti zadaný ticket nebo spec a relevantní pravidla repozitáře. Při nejasném
-odkazu se zeptej; již schválený rozsah znovu nenavrhuj.
+Read the supplied ticket or spec and the relevant repository rules. Ask when
+a reference is ambiguous; do not redesign an already approved scope.
 
-## Rozsah odpovědnosti
+## Ownership
 
-- **Dílčí práce:** volající vlastní celou dodávku, například `/implement-spec`.
-  Implementuj zadané chování a proveď cílené ověření. Vrať změny, výsledky
-  a nesplněná kritéria; závěrečné review, publikaci a handoff vlastní volající.
-- **Samostatná dodávka:** aktuální session vlastní i dokončení. Po implementaci
-  proveď `code-review` a dokonči dodávku podle `AGENTS.md`.
+- **Partial work:** the caller owns the whole delivery, for example `/implement-spec`.
+  Implement the assigned behavior and validate it with targeted checks. Return the changes,
+  results and unmet criteria; the caller owns final review, publication and handoff.
+- **Standalone delivery:** the current session also owns completion. After implementation,
+  run `code-review` and complete the delivery according to `AGENTS.md`.
 
-Výchozí režim je samostatná dodávka. Dílčí režim musí vyplývat ze zadání
-vlastníka celku; není to výjimka z testů, bezpečnostních checkpointů ani
-commit-bound gate před pushem.
+Standalone delivery is the default. Partial work must follow from the delivery owner's
+assignment; it does not waive tests, security checkpoints or the commit-bound gate
+before pushing.
 
-## Práce
+## Work
 
-Vyvolej `tdd` na předem dohodnutých seams, kde lze chování testovat.
-Pro čistou dokumentaci ověř konzistenci a odkazy; pokud existují kontraktní
-testy dokumentace, použij je. Nevytvářej tautologické testy slov v textu.
+Invoke `tdd` at pre-agreed seams where behavior can be tested.
+For documentation-only work, check consistency and links; use documentation contract
+tests when they exist. Do not create tautological tests of words in the text.
 
-Spouštěj nejmenší relevantní testy a typecheck podle změny. Povinnou závěrečnou
-validaci určuje repozitář; automaticky nepřidávej lokální plnou sadu vedle CI.
-Změny dělej přímo, bez dalšího implementačního agenta.
+Run the smallest relevant tests and typechecks for the change. The repository defines
+mandatory final validation; do not automatically add a full local suite alongside CI.
+Make changes directly, without another implementation agent.
 
-Hotovo v dílčím režimu: chování a cílené ověření jsou doložené, omezení výslovná.
-Hotovo u samostatné dodávky: navíc splněné podmínky dokončení z `AGENTS.md`.
+Done for partial work: behavior and targeted validation are evidenced, with explicit limitations.
+Done for a standalone delivery: the completion conditions in `AGENTS.md` are also satisfied.

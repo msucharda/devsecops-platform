@@ -1,22 +1,22 @@
 ---
 name: grill-with-docs
-description: "Vyjasni návrh s uživatelem a průběžně zaznamenej dohodnuté pojmy a rozhodnutí."
+description: "Clarify a design with the user and record agreed terminology and decisions as you go."
 disable-model-invocation: true
 ---
 
-# Návrh s dokumentací
+# Design with documentation
 
-Vyvolej skills `grilling` a `domain-modeling`. Návrh vlastní aktuální session.
-Respektuj doménovou dokumentaci z `AGENTS.md`; v tomto repozitáři je glosář
-součástí `CONTEXT.md`.
+Invoke the `grilling` and `domain-modeling` skills. The current session owns the design.
+Follow the domain documentation referenced by `AGENTS.md`; this repository keeps
+its glossary in `CONTEXT.md`.
 
-Fakta ověřuj přímo. Samostatnou rešerši deleguj jen tehdy, když má ohraničenou
-nezávislou otázku a vyžaduje samostatný kontext. Stejnou rešerši neopakuj
-souběžně. Uživatel rozhoduje; návrhy agenta drž oddělené od přijatých rozhodnutí.
+Verify facts directly. Delegate research only when it has a bounded, independent
+question and needs separate context. Do not duplicate the same research in parallel.
+The user decides; keep agent proposals separate from accepted decisions.
 
-Průběžně zapisuj přijatá rozhodnutí a důvody do vhodné doménové dokumentace.
-ADR vytvářej podle kritérií `domain-modeling`, ne pro každou odpověď.
+Record accepted decisions and their reasons in the appropriate domain documentation
+as you go. Create ADRs according to `domain-modeling` criteria, not for every answer.
 
-Hotovo: uživatel potvrdil rozsah, hranice, podstatná rozhodnutí a zbývající
-nejistoty. `/to-spec` a `/to-tickets` může potom zavolat ve stejné session.
-Tyto uživatelské příkazy nespouštěj automaticky.
+Done: the user has confirmed the scope, boundaries, material decisions and remaining
+uncertainties. They can then invoke `/to-spec` and `/to-tickets` in the same session.
+Do not invoke these user-only commands automatically.

@@ -1,38 +1,41 @@
 ---
 name: to-spec
-description: "Převeď dohodnutý návrh z konverzace na ověřitelnou spec a publikuj ji do issue trackeru."
+description: "Turn an agreed design from the conversation into a verifiable spec and publish it to the issue tracker."
 disable-model-invocation: true
 ---
 
-# Spec z dohodnutého návrhu
+# Spec from an agreed design
 
-Použij dosavadní konverzaci, doménovou dokumentaci a ověřené podklady.
-Neopakuj hotový průzkum ani interview. Dohledej pouze chybějící nebo změněná
-fakta. Rozpor se schváleným rozhodnutím předlož uživateli, nevyřeš ho domněnkou.
+Use the existing conversation, domain documentation and verified evidence.
+Do not repeat completed exploration or interviews. Look up only missing or changed
+facts. Raise conflicts with accepted decisions with the user rather than resolving them
+through assumptions.
 
-1. Načti pravidla issue trackeru a triage z `AGENTS.md`.
-2. Urči seams (místa ověření) a kritéria úspěchu. Využij už schválená seams;
-   nová nebo změněná nech potvrdit uživatelem.
-3. Sepiš spec podle šablony níže. Každé požadované chování popiš jednou.
-   Počet user stories určuje rozsah, nikoli délkový cíl.
-4. Publikuj spec do issue trackeru. `ready-for-agent` použij jen tehdy, když
-   nezůstává rozhodnutí blokující implementaci; jinak použij odpovídající
-   triage stav a otevřenou otázku výslovně uveď.
+1. Read the issue tracker and triage rules referenced by `AGENTS.md`.
+2. Identify seams and success criteria. Reuse approved seams; ask the user to confirm
+   new or changed ones.
+3. Write the spec using the template below. Describe each required behavior once.
+   Scope determines the number of user stories, not a length target.
+4. Publish the spec to the issue tracker. Use `ready-for-agent` only when no remaining
+   decision blocks implementation; otherwise use the appropriate triage status
+   and explicitly state the open question.
 
-## Šablona
+## Template
 
-- **Problém:** potřeba uživatele a pozorovatelné současné omezení.
-- **Řešení:** požadované chování z pohledu uživatele.
-- **User stories a akceptační kritéria:** úplný, neopakující se seznam;
-  pro každé chování ověřitelný výsledek, včetně podstatných chybových stavů.
-- **Přijatá rozhodnutí:** rozhraní, kontrakty, omezení a odkazy na ADR.
-  Návrhy a neověřená tvrzení označ odděleně.
-- **Ověření:** dohodnutá seams, existující vzory testů a měřitelné limity.
-- **Mimo rozsah:** výslovně vyloučené chování.
-- **Otevřené otázky:** zbývající rozhodnutí, nebo „Žádné“.
+The literal headings below remain Czech for the published spec, as required by `AGENTS.md`.
 
-Spec nezahlcuj seznamem souborů ani implementačními kroky. Přesný kontrakt nebo
-rozhodnutí z prototypu může mít krátký výřez kódu, pokud je přesnější než próza.
+- **Problém:** the user's need and the observable current limitation.
+- **Řešení:** the required behavior from the user's perspective.
+- **User stories a akceptační kritéria:** a complete, non-repetitive list;
+  a verifiable outcome for each behavior, including material failure modes.
+- **Přijatá rozhodnutí:** interfaces, contracts, constraints and ADR references.
+  Label proposals and unverified claims separately.
+- **Ověření:** agreed seams, existing test patterns and measurable limits.
+- **Mimo rozsah:** explicitly excluded behavior.
+- **Otevřené otázky:** remaining decisions, or the literal `Žádné`.
 
-Hotovo: publikovaná spec rozlišuje rozhodnutí od návrhů a její kritéria lze
-ověřit bez čtení celé konverzace. Implementaci ani `/to-tickets` nespouštěj.
+Do not overload the spec with file lists or implementation steps. An exact contract
+or a prototype decision may include a short code excerpt when it is more precise than prose.
+
+Done: the published spec distinguishes decisions from proposals, and its criteria can be
+verified without reading the whole conversation. Do not start implementation or `/to-tickets`.

@@ -1,26 +1,26 @@
 ---
 name: domain-modeling
-description: "Zpřesňuj doménové pojmy a zapisuj přijatá rozhodnutí do kontextu a ADR."
+description: "Sharpen domain terminology and record accepted decisions in context documentation and ADRs."
 ---
 
-# Doménový model
+# Domain model
 
-Řiď se [doménovou dokumentací](../../../docs/agents/domain.md).
-Glosář tohoto repozitáře je v `CONTEXT.md`; při více kontextech použij
-`CONTEXT-MAP.md`. Zachovej existující strukturu, nevytvářej druhý glosář.
+Follow the [domain documentation](../../../docs/agents/domain.md).
+This repository keeps its glossary in `CONTEXT.md`; use `CONTEXT-MAP.md` for multiple
+contexts. Preserve the existing structure rather than creating a second glossary.
 
-Při návrhu porovnávej používané termíny s glosářem. Rozpor ověř v kódu
-a předlož uživateli jako otázku; neschválený vlastní návrh nezapisuj
-jako přijaté rozhodnutí. Nejasný termín zpřesni na konkrétních scénářích.
+Compare terms used during design with the glossary. Verify discrepancies in the code
+and raise them as questions for the user; do not record an unapproved proposal as an
+accepted decision. Clarify ambiguous terms through concrete scenarios.
 
-Nově dohodnutý pojem zapiš průběžně. Pro nový kontext použij
-[formát kontextu](CONTEXT-FORMAT.md). Glosář popisuje doménu, ne implementační
-plán nebo průběžné poznámky.
+Record newly agreed terms as you go. Use the [context format](CONTEXT-FORMAT.md)
+for a new context. The glossary describes the domain, not an implementation plan
+or progress notes.
 
-ADR nabídni, pokud je rozhodnutí nákladné změnit, bez kontextu překvapivé
-a vzniklo skutečným porovnáním variant. Použij [formát ADR](ADR-FORMAT.md).
-Při změně přijatého rozhodnutí zachovej historii a výslovně uveď nový stav,
-zdroj rozhodnutí a náhradu. Pouhá preference agenta není souhlas ke změně ADR.
+Propose an ADR when a decision is costly to change, surprising without context
+and based on an actual comparison of alternatives. Use the [ADR format](ADR-FORMAT.md).
+When an accepted decision changes, preserve its history and explicitly state the new
+status, decision source and replacement. An agent preference does not authorize an ADR change.
 
-Hotovo: zapsané pojmy a rozhodnutí odpovídají potvrzení uživatele a jejich
-stav je jednoznačný. Rešerši ani implementaci automaticky nedeleguj.
+Done: recorded terms and decisions match what the user confirmed, and their status
+is unambiguous. Do not automatically delegate research or implementation.

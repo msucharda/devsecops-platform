@@ -206,6 +206,7 @@ Merge gate rozhoduje, zda PR splňuje podmínky pro merge. Nerozhoduje, zda agen
 
 ## Jazyk
 
+- Instrukce skills, jejich metadata a profily agentů jsou anglicky. Toto pravidlo nemění jazyk rozhovoru ani výsledných dokumentů; doslovné nadpisy a jiné prvky šablon zachovávají jazyk výstupu.
 - Dokumentace, ADR, specifikace modulů a issues jsou česky podle skillu `controlled-czech`.
 - Termíny jsou anglicky podle glosáře v `CONTEXT.md`. Český ekvivalent je v závorce u termínu.
 - Kód, komentáře v kódu, názvy workflow a commit messages jsou anglicky.
