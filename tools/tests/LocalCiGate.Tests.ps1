@@ -1,5 +1,14 @@
 BeforeDiscovery {
     Import-Module (Join-Path $PSScriptRoot '../LocalCiGate.psm1') -Force
+    $skipUnixReadPermissions = $IsWindows
+    if (-not $IsWindows) {
+        $id = Get-Command -Name id -CommandType Application -ErrorAction Stop
+        $effectiveUid = & $id.Source -u
+        if ($LASTEXITCODE -ne 0 -or $effectiveUid -isnot [string] -or $effectiveUid -cnotmatch '^(0|[1-9][0-9]*)$') {
+            throw 'Cannot determine the effective UID for the Unix read-permission regression.'
+        }
+        $skipUnixReadPermissions = $effectiveUid -ceq '0'
+    }
 }
 
 BeforeAll {
@@ -134,6 +143,23 @@ Describe 'Local CI content-bound result' {
         }
         finally { $stream.Dispose() }
 
+        Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline | Should -BeTrue
+    }
+
+    It 'rejects Unix access-denied bytes without treating them as empty or deleted' -Skip:$skipUnixReadPermissions {
+        $state = Get-LocalCiContentState -RepositoryRoot $repo -Base baseline
+        Save-LocalCiGateResult -RepositoryRoot $repo -State $state -GateProfile Local
+        $file = Join-Path $repo 'source.ps1'
+        $originalMode = [IO.File]::GetUnixFileMode($file)
+        $readMask = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::GroupRead -bor [IO.UnixFileMode]::OtherRead
+        try {
+            [IO.File]::SetUnixFileMode($file, ($originalMode -band (-bnot $readMask)))
+            { Get-LocalCiContentState -RepositoryRoot $repo -Base baseline } | Should -Throw '*source.ps1*'
+            { Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline } | Should -Throw '*source.ps1*'
+        }
+        finally { [IO.File]::SetUnixFileMode($file, $originalMode) }
+
+        [IO.File]::GetUnixFileMode($file) | Should -Be $originalMode
         Test-LocalCiGateResult -RepositoryRoot $repo -Base baseline | Should -BeTrue
     }
 
