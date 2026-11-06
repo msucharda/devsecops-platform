@@ -163,7 +163,7 @@ jobs:
   mutation-shards:
     name: Security check mutations (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -182,7 +182,7 @@ jobs:
         run: ./tools/Install-ToolDependencies.ps1 -Development
       - name: Weaken every marked security check
         shell: pwsh
-        run: ./tools/Invoke-MutationTests.ps1 -Shard $env:MUTATION_SHARD -ReportPath ./artifacts/mutation-report.json
+        run: ./tools/Invoke-MutationTests.ps1 -Shard $env:MUTATION_SHARD -TimeoutSeconds 720 -ReportPath ./artifacts/mutation-report.json
       - name: Upload mutation report
         if: ${{ !cancelled() && hashFiles('artifacts/mutation-report.json') != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

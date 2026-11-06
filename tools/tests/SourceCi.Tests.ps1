@@ -25,13 +25,13 @@ Describe 'Source CI job dependencies' {
 
     It 'requires all four mutation shards before the stable mutation check can pass' {
         $shards = $workflow.jobs['mutation-shards']
-        $shards['timeout-minutes'] | Should -Be 15
+        $shards['timeout-minutes'] | Should -Be 20
         @($shards.strategy.matrix.shard) | Should -BeExactly @(0, 1, 2, 3)
         $shards.strategy['fail-fast'] | Should -BeFalse
         $shards['continue-on-error'] | Should -Not -BeTrue
         $shards.env.MUTATION_SHARD | Should -BeExactly '${{ matrix.shard }}/4'
         $step = @($shards.steps | Where-Object { $_['name'] -eq 'Weaken every marked security check' })
-        $step[0].run | Should -BeExactly './tools/Invoke-MutationTests.ps1 -Shard $env:MUTATION_SHARD -ReportPath ./artifacts/mutation-report.json'
+        $step[0].run | Should -BeExactly './tools/Invoke-MutationTests.ps1 -Shard $env:MUTATION_SHARD -TimeoutSeconds 720 -ReportPath ./artifacts/mutation-report.json'
         $workflow.jobs.mutation.name | Should -BeExactly 'Security check mutation tests'
         @($workflow.jobs.mutation.needs) | Should -BeExactly @('mutation-shards')
         $workflow.jobs.mutation.if | Should -BeExactly '${{ always() }}'
