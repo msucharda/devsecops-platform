@@ -6,50 +6,50 @@
         @{
             Name = 'retro-distillation-origin'
             Tests = @(@{
-                Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*rejects a mismatched*remote*', '*returns no change for fewer*')
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*Origin*')
             })
         }
         @{
             Name = 'retro-distillation-source-pr'
             Tests = @(@{
-                Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*ignores a foreign*', '*ignores a PR targeting*', '*makes no changes when an open*', '*accepts a documented nullable body*', '*rejects a failed PR lookup*')
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*Source*', '*Inventory accepts*')
             })
         }
         @{
             Name = 'retro-distillation-closed-history'
             Tests = @(@{
-                Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*blocks closed unmerged*', '*accepts merged history*')
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*History*')
             })
         }
         @{
             Name = 'retro-distillation-inventory'
             Tests = @(@{
-                Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*rejects unreadable*', '*accepts the documented nullable*', '*accepts a documented nullable body*', '*rejects a null repository*', '*rejects an unknown PR*', '*makes no changes when an open*')
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*Inventory*', '*allows a complete publication*')
             })
         }
         @{
             Name = 'retro-distillation-checkpoint'
             Tests = @(@{
-                Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*rejects a remote checkpoint*', '*preserves the pushed output*')
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*Checkpoint*', '*allows a complete publication*')
             })
         }
         @{
             Name = 'retro-distillation-pr-response'
             Tests = @(@{
-                Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*rejects creation response*', '*publishes the three-input*')
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*Creation*', '*allows a complete publication*')
             })
         }
         @{
             Name = 'retro-distillation-output'
             Tests = @(@{
-                Path = 'tools/tests/RetroDistillation.Tests.ps1'
-                FullName = @('*rejects a checkpoint*', '*rejects PR body*', '*rejects a nonregular*', '*publishes the three-input*')
+                Path = 'tools/tests/RetroDistillation.Unit.Tests.ps1'
+                FullName = @('*Output*', '*allows a complete publication*')
             })
         }
         @{

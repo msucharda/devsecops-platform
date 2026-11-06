@@ -54,10 +54,13 @@ Automation musí používat `workspace_type: worktree`: každý běh začíná n
 
 ## Offline ukázka a stav ověření
 
-`tools/tests/fixtures/retro-distillation/` obsahuje tři výslovně syntetické retrospektivy. Unit scénář používá skutečný izolovaný Git a bare remote; GitHub nahrazuje sdílenými kontraktními fixtures `pulls/list` a `pulls/create`. Předem připravený výstup ukazuje pravidlo se dvěma session a kandidáta s jednou session. Fixture výstup nenahrazuje skutečnou destilaci modelem.
+`tools/tests/fixtures/retro-distillation/` obsahuje tři výslovně syntetické retrospektivy. Integrační scénář používá skutečný izolovaný Git a bare remote; GitHub nahrazuje sdílenými kontraktními fixtures `pulls/list` a `pulls/create`. Předem připravený výstup ukazuje pravidlo se dvěma session a kandidáta s jednou session. Fixture výstup nenahrazuje skutečnou destilaci modelem.
+
+Izolovaná unit sada ověřuje stejné veřejné příkazy se stuby procesových hranic Git, GitHub CLI a lokálního gate. Mutační runner používá tuto rychlou sadu. Skutečné chování Gitu a vzdálenou obnovu nadále ověřují integrační scénář a harness.
 
 ```powershell
 ./tools/Invoke-Tests.ps1 -Path ./tools/tests/RetroDistillation.Tests.ps1
+./tools/Invoke-Tests.ps1 -Path ./tools/tests/RetroDistillation.Unit.Tests.ps1
 ./tools/Invoke-Tests.ps1 -Path ./tools/tests/RetroDistillation.Contract.Tests.ps1
 ./tools/Invoke-Tests.ps1 -Path ./tools/tests/RetroDistillation.Interruption.Tests.ps1 -Tag Interruption
 ```
