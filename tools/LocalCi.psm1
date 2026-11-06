@@ -243,6 +243,7 @@ function Get-LocalCiSelection {
             $reasons.Add("$file changed: every security check is mutated.")
         }
         if ($file -clike 'tools/tests/*.Tests.ps1' -and $exists) { $mapped.Add($file) }
+        if ($file -ceq 'LICENSE') { $mapped.Add('tools/tests/ReleaseContent.Tests.ps1') }
         if ($gateFile) {
             $gateTests = @($tests | Where-Object { [IO.Path]::GetFileName($_.Path) -clike 'LocalCi*.Tests.ps1' })
             $references = @($tests | Where-Object { Test-TextContainsToken -Text $_.Text -Token $leaf -IgnoreCase })

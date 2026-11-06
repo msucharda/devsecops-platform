@@ -19,6 +19,7 @@ BeforeAll {
             'tools/tests/ApiOther.Tests.ps1' = 'Get-GitHubApiFixture -Name apps/get-app.owner-simple-user'
             'tools/tests/Contract.Tests.ps1' = "Join-Path `$PSScriptRoot 'fixtures/github-api'"
             'tools/tests/Fix.Tests.ps1' = "Join-Path `$PSScriptRoot 'fixtures/rulesets'"
+            'tools/tests/ReleaseContent.Tests.ps1' = "'LICENSE'"
         }
         foreach ($path in $files.Keys) {
             $full = Join-Path $root $path
@@ -106,6 +107,18 @@ Describe 'Local CI selection for -Changed' {
 
     It 'ignores a deleted test file' {
         (Get-Selection -Changed 'tools/tests/Gone.Tests.ps1').PesterPath | Should -BeNullOrEmpty
+    }
+
+    It 'maps a <State> root LICENSE to the release content contract' -ForEach @(
+        @{ State = 'modified'; Exists = $true }
+        @{ State = 'deleted'; Exists = $false }
+    ) {
+        $licenseRepo = Build-FakeRepository
+        if ($Exists) { Set-Content -LiteralPath (Join-Path $licenseRepo 'LICENSE') -Value 'MIT License' }
+        $selection = Get-LocalCiSelection -RepoPath $licenseRepo -ChangedFile @('LICENSE') -TerraformRoot @()
+        $selection.PesterPath | Should -BeExactly @('tools/tests/ReleaseContent.Tests.ps1')
+        $selection.AllPester | Should -BeFalse
+        $selection.Warning | Should -BeNullOrEmpty
     }
 
     It 'maps a changed script to the tests that name it, interruption tests separately' {
