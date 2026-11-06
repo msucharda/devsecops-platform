@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory)][string] $StatePath,
     [Parameter(Mandatory)][string] $TracePath,
     [switch] $Aba,
-    [string] $AcknowledgedSha = ''
+    [string] $AcknowledgedSha = '',
+    [string] $RetroAcknowledgedSha = '',
+    [switch] $Merge
 )
 
 Set-StrictMode -Version Latest
@@ -43,7 +45,13 @@ $parameters = @{
     ExpectedHeadSha = $stub.PullRequest.headRefOid; Now = $stub.Now
 }
 if ($AcknowledgedSha) { $parameters['AcknowledgeWorkflowChanges'] = $AcknowledgedSha }
-& (Join-Path $PSScriptRoot '../agents/Test-MergeGate.ps1') @parameters
+if ($RetroAcknowledgedSha) { $parameters['AcknowledgeRetroWaiver'] = $RetroAcknowledgedSha }
+if ($Merge) {
+    $null = $parameters.Remove('Now')
+    $parameters['Reason'] = 'stub CLI consent'
+    & (Join-Path $PSScriptRoot '../agents/Invoke-GatedMerge.ps1') @parameters
+}
+else { & (Join-Path $PSScriptRoot '../agents/Test-MergeGate.ps1') @parameters }
 $code = $LASTEXITCODE
 @{
     calls = $stub.Calls.ToArray()

@@ -74,7 +74,7 @@ Describe 'Merge gate replay of real pull requests' {
         $result = Invoke-ScenarioGate -Stub $stub
 
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
-        $reads = @($stub.Calls | Where-Object { $_[-1] -match '/contents/' } | ForEach-Object { $_[-1] })
+        $reads = @($stub.Calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' } | ForEach-Object { $_[-1] })
         $reads | Should -Be @(
             "repos/$repository/contents/.github/workflows/ci.yml?ref=$($stub.PullRequest.baseRefOid)"
             "repos/$repository/contents/.github/workflows/ci.yml?ref=$($stub.PullRequest.headRefOid)"
@@ -179,7 +179,7 @@ Describe 'Merge gate replay of real pull requests' {
         $parsed.repository | Should -Be $repository
         $parsed.host | Should -Be 'github.com'
         $parsed.expectedHeadSha | Should -Be '5a86d28aa232fff72af137c29c1abd9e75f398a3'
-        @($parsed.details.Keys) | Should -Be @('state', 'checks', 'threads', 'copilot', 'merge', 'base', 'body', 'github', 'rules')
+        @($parsed.details.Keys) | Should -Be @('state', 'checks', 'threads', 'copilot', 'merge', 'base', 'body', 'github', 'rules', 'retro')
     }
 
     It 'reports #75 as already-merged with exit code 3 and stops after the pull request read' {
@@ -883,7 +883,7 @@ Describe 'Merge gate pinned G10' {
         $result = Invoke-ScenarioGate -Stub $stub
         $result.verdict | Should -Be 'pass'
         $result.details.github.workflowFiles | Should -Be @($name)
-        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 2
     }
 
     It 'G10 pinned trees repair a supplemental <Status> status that omits one fixed side' -ForEach @(
@@ -915,7 +915,7 @@ Describe 'Merge gate pinned G10' {
         $raced.ExitCode | Should -Be 0
         $raced.Result.details.github.workflowFiles | Should -Be @($newName)
         $raced.Result.details.github.sensitiveLines | Should -Be @()
-        @($raced.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+        @($raced.Trace.calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 2
         $raced.Trace.moves | Should -Be @(('c' * 40), $head)
     }
 
@@ -928,7 +928,7 @@ Describe 'Merge gate pinned G10' {
         $result = Invoke-ScenarioGate -Stub $stub
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
         ($result.details.github.sensitiveLines -join "`n") | Should -Match 'comparison unavailable:.*HTTP 502'
-        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 2
     }
 
     It 'G10 pinned trees through CLI reject a rename with <Case>' -Tag G10AbaRegression -ForEach @(
@@ -983,7 +983,7 @@ Describe 'Merge gate pinned G10' {
         $run.ExitCode | Should -Be 0
         $run.Result.details.github.workflowFiles | Should -Be @()
         $run.Result.details.github.sensitiveLines | Should -Be @()
-        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 0
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 0
     }
 
     It 'G10 merge base reads before-content from the common ancestor through CLI' -Tag G10AbaRegression,G10MergeBaseRegression {
@@ -1001,7 +1001,7 @@ Describe 'Merge gate pinned G10' {
         $run.Result.details.base.mergeBaseSha | Should -Be $ancestor
         $run.Result.details.github.workflowFiles | Should -Be @($name)
         $run.Result.details.github.sensitiveLines | Should -Be @()
-        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' } | ForEach-Object { $_[-1] }) | Should -Be @(
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' } | ForEach-Object { $_[-1] }) | Should -Be @(
             "repos/$repository/contents/${name}?ref=$ancestor"
             "repos/$repository/contents/${name}?ref=$head"
         )
@@ -1073,7 +1073,7 @@ Describe 'Merge gate pinned G10' {
         ($run.Result.details.github.sensitiveLines -join "`n") | Should -Match 'unsupported workflow tree entry'
         (Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -AcknowledgedSha ('8' * 40)).ExitCode | Should -Be 1
         (Invoke-ScenarioCli -Stub $stub -Directory $TestDrive -AcknowledgedSha $head).ExitCode | Should -Be 0
-        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 0
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 0
     }
 
     It 'G10 pinned trees never pair an opaque rename <Side>' -Tag G10UnsupportedEntryRegression -ForEach @(
@@ -1092,7 +1092,7 @@ Describe 'Merge gate pinned G10' {
         $run.ExitCode | Should -Be 1
         Get-ReasonCode $run.Result | Should -Be @('fail:workflow-permissions-changed')
         $run.Result.details.github.workflowFiles | Should -Be @($newName, $oldName)
-        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 1
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 1
     }
 
     It 'G10 pinned trees through CLI retain a rename with a <Case> source on main' -Tag G10BaseTipRegression -ForEach @(
@@ -1240,7 +1240,7 @@ Describe 'Merge gate pinned G10' {
         $codes = @(Get-ReasonCode $run.Result)
         if ($Expected) { $codes | Should -Be @('fail:workflow-permissions-changed') }
         else { $codes | Should -Be @() }
-        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 1
+        @($run.Trace.calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 1
     }
 
     It 'G10 pinned trees do not pair different sensitive rename projections' {
@@ -1254,7 +1254,7 @@ Describe 'Merge gate pinned G10' {
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
         $result.details.github.workflowFiles | Should -Be @($newName, $oldName)
         $result.details.github.sensitiveLines.Count | Should -Be 2
-        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 2
     }
 
     It 'G10 pinned trees consume each matching rename source at most once' {
@@ -1270,7 +1270,7 @@ Describe 'Merge gate pinned G10' {
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
         $result.details.github.workflowFiles | Should -Be @($extraName, $newName)
         $result.details.github.sensitiveLines | Should -Be @("${newName}: sensitive YAML settings changed")
-        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 3
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 3
     }
 
     It 'G10 pinned trees validate rename topology: <Case>' -ForEach @(
@@ -1296,7 +1296,7 @@ Describe 'Merge gate pinned G10' {
         $result.verdict | Should -Be $Expected
         if ($Expected -eq 'pass') {
             $result.details.github.workflowFiles | Should -Be @($newName)
-            @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 2
+            @($stub.Calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 2
         }
         else {
             Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
@@ -1317,7 +1317,7 @@ Describe 'Merge gate pinned G10' {
         $result = Invoke-ScenarioGate -Stub $stub
         $result.verdict | Should -Be 'pass'
         $result.details.github.workflowFiles | Should -Be @()
-        @($stub.Calls | Where-Object { $_[-1] -match '/contents/' }).Count | Should -Be 0
+        @($stub.Calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' }).Count | Should -Be 0
     }
 
     It 'G10 pinned trees handle a changed directory through its children' {
@@ -1526,7 +1526,7 @@ Describe 'Merge gate structural G10' {
         @{ Variant = 'submodule' }
     ) {
         $response = Get-GitHubApiFixture -Name "repos/get-content.$Variant"
-        $stub.Responses['/contents/'] = ConvertTo-Json -InputObject $response -Depth 50
+        $stub.Responses['/contents/(?!docs/agents/retros/)'] = ConvertTo-Json -InputObject $response -Depth 50
 
         $result = Invoke-ScenarioGate -Stub $stub
 
@@ -1550,7 +1550,7 @@ Describe 'Merge gate structural G10' {
         $setValues = @{ path = $file.filename; content = 'e30=' }
         foreach ($key in $Set.Keys) { $setValues[$key] = $Set[$key] }
         $response = Get-GitHubApiFixture -Name 'repos/get-content.file' -Set $setValues
-        $stub.Responses['/contents/'] = ConvertTo-Json -InputObject $response -Depth 50
+        $stub.Responses['/contents/(?!docs/agents/retros/)'] = ConvertTo-Json -InputObject $response -Depth 50
 
         $result = Invoke-ScenarioGate -Stub $stub
 
@@ -1559,7 +1559,7 @@ Describe 'Merge gate structural G10' {
     }
 
     It 'G10 fails closed when the contents API is unreadable' {
-        $stub.Failures['/contents/'] = 'HTTP 403'
+        $stub.Failures['/contents/(?!docs/agents/retros/)'] = 'HTTP 403'
         $result = Invoke-ScenarioGate -Stub $stub
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
         ($result.details.github.sensitiveLines -join "`n") | Should -Match 'HTTP 403'
@@ -1572,7 +1572,7 @@ Describe 'Merge gate structural G10' {
         $response = Get-GitHubApiFixture -Name 'repos/get-content.file' -Set @{ path = $file.filename; content = 'e30=' }
         # content-file documents these optional fields as well as the separate symlink/submodule variants.
         $response[$Field] = (Get-GitHubApiFixture -Name $Fixture)[$Field]
-        $stub.Responses['/contents/'] = ConvertTo-Json -InputObject $response -Depth 50
+        $stub.Responses['/contents/(?!docs/agents/retros/)'] = ConvertTo-Json -InputObject $response -Depth 50
         $result = Invoke-ScenarioGate -Stub $stub
         Get-ReasonCode $result | Should -Be @('fail:workflow-permissions-changed')
         ($result.details.github.sensitiveLines -join "`n") | Should -Match 'submodule or symlink'
@@ -1601,7 +1601,7 @@ Describe 'Merge gate structural G10' {
             Get-MergeGateSensitiveChange -File $TestFile -Target (ConvertTo-MergeGateTarget -Repository $TestRepository) -BaseSha $Base -HeadSha $Head
         })
         $findings.Count | Should -Be $(if ($Expected) { 1 } else { 0 })
-        $requests = @($stub.Calls | Where-Object { $_[-1] -match '/contents/' } | ForEach-Object { $_[-1] })
+        $requests = @($stub.Calls | Where-Object { $_[-1] -match '/contents/(?!docs/agents/retros/)' } | ForEach-Object { $_[-1] })
         $requests.Count | Should -Be $Reads
         if ($Status -ne 'added') { $requests[0] | Should -Be "repos/$repository/contents/${Previous}?ref=$($stub.PullRequest.baseRefOid)" }
         if ($Status -ne 'removed') { $requests[-1] | Should -Be "repos/$repository/contents/${Name}?ref=$($stub.PullRequest.headRefOid)" }
@@ -1636,7 +1636,7 @@ Describe 'Merge gate structural G10' {
         }
         $result = Invoke-ScenarioGate -Stub $stub
         Get-ReasonCode $result | Should -Be @('fail:evaluation-error')
-        $result.reasons[0].message | Should -Match 'head or base changed'
+        $result.reasons[0].message | Should -Match 'head, base or body changed|author snapshot.*head'
     }
 
     It 'G10 detects changed settings in an action document' {

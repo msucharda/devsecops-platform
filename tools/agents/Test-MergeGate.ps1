@@ -4,7 +4,7 @@
 Evaluates whether an agent may merge a pull request. Read-only: the script never changes GitHub state.
 
 .DESCRIPTION
-Runs the checks G1-G11 of the merge gate (issue #85) and writes one JSON object to stdout. Diagnostics go to stderr.
+Runs the checks G1-G12 of the merge gate (issues #85 and #227) and writes one JSON object to stdout. Diagnostics go to stderr.
 Exit codes: 0 pass, 1 fail, 2 pending, 3 already-merged, 4 invalid input, 5 evaluation error (the JSON then has verdict fail).
 
 The coordinator extracts tools/ from origin/main into a trusted temporary directory, preserving the layout:
@@ -32,6 +32,8 @@ param(
     [string] $ExpectedHeadSha,
     # The head SHA for which a human approved sensitive .github workflow changes.
     [string] $AcknowledgeWorkflowChanges,
+    # Records the coordinator's acknowledgement of a retrospective waiver for this head; read-only evaluation still passes without it.
+    [string] $AcknowledgeRetroWaiver,
     # Verifies a reported merge: already-merged exits 3, anything else fails with not-merged.
     [switch] $ExpectMerged,
     [int] $CopilotRoundCap = 2,
