@@ -50,6 +50,8 @@ Importní PR podléhají stejnému review i skenování. Ruleset nevyžaduje vla
 
 Offline kontrakt v `tools/tests/fixtures/github-api/repos/create-org-ruleset.json` odděluje dokumentované typy, enumy a povinná pole od schváleného pozorovaného rozšíření `require_extra_approval_for_unattributed_changes`. Stub ověří vnořený požadavek před změnou svého stavu: pravidla `code_scanning`, `deletion`, `non_fast_forward` a `pull_request`, podmínky `repository_name`/`ref_name`, bypass aktéry a parametry CodeQL. Zvlášť kontroluje omezení uvedená v popisech OpenAPI: neprázdný seznam merge methods, povinné identity příslušných bypass aktérů a omezení DeployKey/pull-request bypassu. Nepodporované varianty odmítne; neoznačuje je za chybu skutečného API. Mezi ně patří `code_scanning` nebo `pull_request` bez parametrů, přestože OpenAPI dovoluje parametry vynechat. Response připraví před přidělením ID nebo nahrazením uloženého objektu. Reader test navíc načítá úplnou nezávislou response fixture `repos/get-org-ruleset.baseline` bez předchozího POST nebo PUT. Slabší, ale platný práh `critical` projde kontrolou tvaru požadavku; nesoulad s požadovaným `high_or_higher` musí nadále zachytit plan.
 
+Částečný PUT se posuzuje proti výslednému stavu: odeslaná pole nahradí stejnojmenná uložená pole. Kontrola proto odmítne pull-request bypass na ponechaném tag targetu i změnu targetu na tag při ponechaném pull-request bypassu. Stejně odmítne kombinaci `target: repository` a `enforcement: evaluate`, kterou popis OpenAPI nepovoluje. Odmítnutí ani jeho opakování nesmí změnit Items, Writes nebo další ID.
+
 ## Detekce driftu
 
 Modul drift neopravuje automaticky; provider `restapi` s `ignore_server_additions` ho neopraví.

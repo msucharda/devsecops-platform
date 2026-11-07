@@ -22,7 +22,8 @@
       "actorIdRequiredFor": ["Integration", "RepositoryRole", "Team", "User"],
       "nullActorIdFor": ["DeployKey"],
       "pullRequestBypassExcludedFor": ["DeployKey"],
-      "pullRequestBypassTarget": "branch"
+      "pullRequestBypassTarget": "branch",
+      "evaluateExcludedTargets": ["repository"]
     },
     "schema": {
       "type": "object",

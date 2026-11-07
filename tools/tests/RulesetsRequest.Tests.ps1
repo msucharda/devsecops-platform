@@ -81,6 +81,7 @@ Describe 'Organization ruleset request contract before a stub write' {
         @{ Case = 'non-object repository condition'; Change = { $request.conditions.repository_name = $null }; Error = 'repository_name' }
         @{ Case = 'non-object conditions'; Change = { $request.conditions = @() }; Error = 'conditions' }
         @{ Case = 'unknown nested tool property'; Change = { $request.rules[0].parameters.code_scanning_tools[0]['extra'] = $true }; Error = 'extra' }
+        @{ Case = 'differently cased required tool property'; Change = { $value = $request.rules[0].parameters.code_scanning_tools[0].tool; $request.rules[0].parameters.code_scanning_tools[0].Remove('tool'); $request.rules[0].parameters.code_scanning_tools[0]['Tool'] = $value }; Error = 'tool' }
         @{ Case = 'parameters on a parameterless rule'; Change = { $request.rules[1]['parameters'] = @{} }; Error = 'parameters' }
         @{ Case = 'unknown rule variant'; Change = { $request.rules[0].type = 'unknown' }; Error = 'type' }
         @{ Case = 'missing rule discriminator'; Change = { $request.rules[0].Remove('type') }; Error = 'type' }
@@ -96,6 +97,7 @@ Describe 'Organization ruleset request contract before a stub write' {
         @{ Case = 'non-string enforcement'; Change = { $request.enforcement = $null }; Error = 'enforcement' }
         @{ Case = 'non-array rules'; Change = { $request.rules = @{} }; Error = 'rules' }
         @{ Case = 'unknown root field'; Change = { $request['extra'] = $true }; Error = 'extra' }
+        @{ Case = 'differently cased optional target property'; Change = { $value = $request.target; $request.Remove('target'); $request['Target'] = $value }; Error = 'Target' }
         @{ Case = 'non-array bypass actors'; Change = { $request.bypass_actors = @{} }; Error = 'bypass_actors' }
         @{ Case = 'Team bypass actor without identity'; WithBypass = $true; Change = { $request.bypass_actors[0].Remove('actor_id') }; Error = 'actor_id' }
         @{ Case = 'Team bypass actor with null identity'; WithBypass = $true; Change = { $request.bypass_actors[0].actor_id = $null }; Error = 'actor_id' }
@@ -244,5 +246,47 @@ Describe 'Organization ruleset request contract before a stub write' {
         $reply.Status | Should -Be 200
         $state.Items[0].name | Should -BeExactly 'platform-default-branch'
         $state.Items[0].enforcement | Should -BeExactly 'evaluate'
+    }
+
+    It 'rejects an incompatible partial PUT against retained fields: <Case>' -ForEach @(
+        @{ Case = 'bypass on retained tag target'; Target = 'tag'; Enforcement = 'active'; Mode = 'always'; Body = '{"bypass_actors":[{"actor_type":"Team","actor_id":234,"bypass_mode":"pull_request"}]}'; Error = 'bypass_mode' }
+        @{ Case = 'tag target with retained pull-request bypass'; Target = 'branch'; Enforcement = 'active'; Mode = 'pull_request'; Body = '{"target":"tag"}'; Error = 'bypass_mode' }
+        @{ Case = 'evaluate on retained repository target'; Target = 'repository'; Enforcement = 'active'; Mode = 'always'; Body = '{"enforcement":"evaluate"}'; Error = 'enforcement' }
+        @{ Case = 'repository target with retained evaluate'; Target = 'branch'; Enforcement = 'evaluate'; Mode = 'always'; Body = '{"target":"repository"}'; Error = 'enforcement' }
+    ) {
+        $item = Get-GitHubApiFixture -Name repos/get-org-ruleset.baseline
+        $item.target = $Target
+        $item.enforcement = $Enforcement
+        $item.rules = @()
+        $item.conditions.Remove('ref_name')
+        $item.bypass_actors = (Get-GitHubApiFixture -Name repos/create-org-ruleset).bypass_actors
+        $item.bypass_actors[0].bypass_mode = $Mode
+        $state.Items.Add($item)
+        $before = ConvertTo-Json -InputObject $state.Items -Depth 50
+        foreach ($attempt in @(1, 2)) {
+            # Intentionally invalid: the one submitted field conflicts with valid retained state.
+            $reply = Invoke-RulesetsStubRequest -State $state -Method PUT -Path '/orgs/demo/rulesets/21' `
+                -Headers $headers -Body $Body
+            $reply.Status | Should -Be 422
+            $reply.Body | Should -Match $Error
+            (ConvertTo-Json -InputObject $state.Items -Depth 50) | Should -BeExactly $before
+            $state.Writes.Count | Should -Be 0
+            $state.NextId | Should -Be 100
+        }
+    }
+
+    It 'rejects evaluate for a repository target before a POST' {
+        $request.target = 'repository'
+        $request.rules = @()
+        $request.conditions.Remove('ref_name')
+        # Intentionally invalid: only enforcement differs from the valid repository target request.
+        $request.enforcement = 'evaluate'
+        $reply = Invoke-RulesetsStubRequest -State $state -Method POST -Path '/orgs/demo/rulesets' `
+            -Headers $headers -Body (ConvertTo-Json -InputObject $request -Depth 50)
+        $reply.Status | Should -Be 422
+        $reply.Body | Should -Match 'enforcement'
+        $state.Items.Count | Should -Be 0
+        $state.Writes.Count | Should -Be 0
+        $state.NextId | Should -Be 100
     }
 }

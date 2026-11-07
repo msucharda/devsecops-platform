@@ -30,11 +30,11 @@ function Assert-RulesetRequestValue {
     if ($Schema.type -ceq 'object') {
         if ($Schema.Contains('required')) {
             foreach ($field in $Schema.required) {
-                if (-not $Value.Contains($field)) { throw "Ruleset request $Path.$field is required." }
+                if (@($Value.Keys) -cnotcontains $field) { throw "Ruleset request $Path.$field is required." }
             }
         }
         foreach ($field in $Value.Keys) {
-            if (-not $Schema.properties.Contains($field)) { throw "Unsupported ruleset request field $Path.$field." }
+            if (@($Schema.properties.Keys) -cnotcontains $field) { throw "Unsupported ruleset request field $Path.$field." }
             Assert-RulesetRequestValue -Value $Value[$field] -Schema $Schema.properties[$field] -Path "$Path.$field"
         }
     }
@@ -46,7 +46,7 @@ function Assert-RulesetRequestValue {
 }
 
 function ConvertFrom-RulesetStubRequest {
-    param([string] $Body, [string] $Method)
+    param([string] $Body, [string] $Method, [hashtable] $ExistingItem)
 
     $contract = Get-GitHubApiFixtureContract -Name repos/create-org-ruleset
     $schema = $contract.requestContract.schema
@@ -58,7 +58,20 @@ function ConvertFrom-RulesetStubRequest {
     }
     $request = ConvertFrom-Json -InputObject $Body -AsHashtable -Depth 100
     Assert-RulesetRequestValue -Value $request -Schema $schema
+    $submitted = $request
+    if ($ExistingItem) {
+        $request = @{}
+        foreach ($field in $contract.requestProperties) {
+            if ($ExistingItem.Contains($field)) { $request[$field] = $ExistingItem[$field] }
+        }
+        foreach ($field in $submitted.Keys) { $request[$field] = $submitted[$field] }
+        Assert-RulesetRequestValue -Value $request -Schema $schema
+    }
     $constraints = $contract.requestContract.descriptionConstraints
+    if ($request.Contains('target') -and $request.target -cin $constraints.evaluateExcludedTargets -and
+        $request.enforcement -ceq 'evaluate') {
+        throw 'Ruleset request request.enforcement evaluate is not available for the repository target.'
+    }
     if ($request.Contains('rules')) {
         for ($index = 0; $index -lt $request.rules.Count; $index++) {
             $rule = $request.rules[$index]
@@ -88,7 +101,7 @@ function ConvertFrom-RulesetStubRequest {
             }
         }
     }
-    return $request
+    return $submitted
 }
 
 # The GET fixture supplies the response default; the create fixture records separate POST/PUT evidence.
@@ -178,7 +191,7 @@ function Invoke-RulesetsStubRequest {
                 $reply.Body = if ($State.EmptyDetail) { 'null' } else { ConvertTo-Json -InputObject $item -Depth 50 -Compress }
             }
             PUT {
-                try { $inputBody = ConvertFrom-RulesetStubRequest -Body $Body -Method $Method }
+                try { $inputBody = ConvertFrom-RulesetStubRequest -Body $Body -Method $Method -ExistingItem $item }
                 catch {
                     $reply.Status = 422
                     $reply.Body = ConvertTo-Json -InputObject @{ message = $_.Exception.Message } -Compress
