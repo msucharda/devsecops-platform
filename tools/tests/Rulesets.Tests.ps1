@@ -79,6 +79,20 @@ Describe 'Organization ruleset detail contract' {
         }
     }
 
+    It 'reads all four rule variants from an independent complete response without any preceding write' {
+        $detail = Get-GitHubApiFixture -Name repos/get-org-ruleset.baseline
+        $state = Get-OrganizationRulesetState -ApiUrl 'https://api.example.test' -Organization demo -Name platform-default-branch
+
+        $state.rules.type | Should -Be @('code_scanning', 'deletion', 'non_fast_forward', 'pull_request')
+        $state.conditions.ref_name.include | Should -Be @('~DEFAULT_BRANCH')
+        $state.conditions.repository_name.include | Should -Be @('~ALL')
+        $state.bypass_actors.Count | Should -Be 0
+        $expected = (Get-GitHubApiFixture -Name repos/get-org-ruleset.baseline).rules
+        (ConvertTo-Json -InputObject $state.rules -Depth 50 -Compress) |
+            Should -BeExactly (ConvertTo-Json -InputObject $expected -Depth 50 -Compress)
+        Should -Invoke -ModuleName Rulesets Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+    }
+
     It 'rejects a missing bypass list instead of treating it as empty' {
         # Deliberately invalid/incomplete detail returned without write access.
         $detail.Remove('bypass_actors')

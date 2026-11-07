@@ -187,7 +187,9 @@ Describe 'Actions policy' {
 
             $stub.Actions['allowed_actions'] | Should -BeExactly 'selected'
             $writes = Get-StubWrite
-            $writes[-1].Body.Contains('allowed_actions') | Should -BeFalse
+            $actionWrites = @($writes | Where-Object { $_.Operation -ceq 'setActions' })
+            $actionWrites.Count | Should -Be 2
+            $actionWrites[-1].Body.Contains('allowed_actions') | Should -BeFalse
             Set-ActionsPolicy @target -Policy $defaultPolicy -Reset
             $stub.Actions['allowed_actions'] | Should -BeExactly 'selected'
         }

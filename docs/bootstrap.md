@@ -307,7 +307,17 @@ Release writer lze zapojit při prvním dokončení GitHub bootstrapu. Action wr
 
 Pro privátní zdroj přidej `-VendoringSourceApp source-import -VendoringSourceRepository owner/repo`. `-VendoringSourceApiUrl` musí odpovídat API hostu instance; bootstrap jiný host odmítne. Ověří source App v témže enterprise jmenném prostoru a zapíše chráněné `SOURCE_REPOSITORY` a `SOURCE_API_URL`. Veřejný import z github.com source App nepotřebuje. Privátní zdroj na jiném hostu vyžaduje deklarovaný ruční import podle [vendoringu](vendoring.md), nikoli širší credential.
 
-Po zapojení spusť `import-action.yml` a poté `import-release.yml`. Workflow ani environmenty ručně neupravuj. První import release přepíše upstream akce ve vendorovaných šablonách podle katalogu; povýšení živých workflow zůstává samostatný schválený PR podle #16.
+Po zapojení spusť `import-action.yml` a poté `import-release.yml`. Před prvním importním merge ověř [CodeQL v prázdném katalogu](vendoring.md#codeql-při-prvním-importu-do-prázdného-katalogu). Workflow ani environmenty ručně neupravuj. První import release přepíše upstream akce ve vendorovaných šablonách podle katalogu; povýšení živých workflow zůstává samostatný schválený PR podle #16.
+
+### CodeQL v prázdném katalogu
+
+Časná Code Security fáze zapíná CodeQL default setup před vznikem katalogových repozitářů. Nová kopie akce může na `main` obsahovat pouze `.github/CODEOWNERS`. Odpověď `state: configured` s `languages: []` dokládá zapnutou konfiguraci, **nikoli analýzu konkrétního SHA**. Podle [primární dokumentace default setup](https://docs.github.com/en/enterprise-cloud@latest/code-security/concepts/code-scanning/setup-types#supported-languages) GitHub v repozitáři bez podporovaného jazyka žádné skeny nespouští; automatický start nastane po přidání podporovaného jazyka do výchozí větve.
+
+Ruční `PATCH /repos/{owner}/{repo}/code-scanning/default-setup` s `languages: ["javascript-typescript"]` před přítomností tohoto jazyka není doložená oprava. [REST API `2026-03-10`](https://docs.github.com/en/enterprise-cloud@latest/rest/code-scanning/code-scanning#update-a-code-scanning-default-setup-configuration) dokumentuje HTTP 422, pokud stav repozitáře změnu nedovoluje; tuto odpověď při prvním importu uvádí [#232](https://github.com/msucharda/devsecops-platform/issues/232). Zápis neopakuj naslepo a `configured` nevykazuj jako zelený CodeQL.
+
+**Rozhodnutí uživatele pro #232:** „Schvaluju tento postup bez bypassu a bez změny rulesetu“. První import použije běžný PR a předepsané review. Před merge uveď **CodeQL analysis: NOT PERFORMED**, pokud analýza nemohla běžet. Merge je možný pouze tehdy, když ho dovolí všechny platné gates cílové instance i nezměněný aktivní GitHub ruleset; jejich odmítnutí znamená blokaci. Schválení postupu není důkaz průchodnosti konkrétního PR ani souhlas s konkrétním živým zásahem.
+
+Po schváleném prvním merge ověř skutečnou dokončenou analýzu jeho přesného SHA podle [postupu vendoringu](vendoring.md#codeql-při-prvním-importu-do-prázdného-katalogu). Dokud chybí nebo selhává, nepřebírej akci do schváleného katalogu, nenavazuj import release ani nepovyšuj workflow. Neměň ruleset, jeho práh, bypass aktéry, oprávnění ani způsob analýzy; nedostupný CodeQL není `success`.
 
 ### Environmenty, noční plan a teardown
 

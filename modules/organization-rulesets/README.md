@@ -48,6 +48,8 @@ Root používá [organizační ruleset REST API](https://docs.github.com/en/ente
 
 Importní PR podléhají stejnému review i skenování. Ruleset nevyžaduje vlastní CI status check cloudového planu; jeho neprovedení u App-created PR proto není samo o sobě blokací merge. Import nesmí dostat bypass. Skutečný průchod importu akce a release, chování CodeQL pro jejich obsah a čtení `bypass_actors` installation tokenem musí potvrdit živá akceptace na GHE.com. Offline testy to nedokazují.
 
+Offline kontrakt v `tools/tests/fixtures/github-api/repos/create-org-ruleset.json` odděluje dokumentované typy, enumy a povinná pole od schváleného pozorovaného rozšíření `require_extra_approval_for_unattributed_changes`. Stub ověří vnořený požadavek před změnou svého stavu: pravidla `code_scanning`, `deletion`, `non_fast_forward` a `pull_request`, podmínky `repository_name`/`ref_name`, bypass aktéry a parametry CodeQL. Zvlášť kontroluje omezení uvedená v popisech OpenAPI: neprázdný seznam merge methods, povinné identity příslušných bypass aktérů a omezení DeployKey/pull-request bypassu. Nepodporované varianty odmítne; neoznačuje je za chybu skutečného API. Mezi ně patří `code_scanning` nebo `pull_request` bez parametrů, přestože OpenAPI dovoluje parametry vynechat. Response připraví před přidělením ID nebo nahrazením uloženého objektu. Reader test navíc načítá úplnou nezávislou response fixture `repos/get-org-ruleset.baseline` bez předchozího POST nebo PUT. Slabší, ale platný práh `critical` projde kontrolou tvaru požadavku; nesoulad s požadovaným `high_or_higher` musí nadále zachytit plan.
+
 ## Detekce driftu
 
 Modul drift neopravuje automaticky; provider `restapi` s `ignore_server_additions` ho neopraví.

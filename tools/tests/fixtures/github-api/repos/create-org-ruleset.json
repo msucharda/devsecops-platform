@@ -13,6 +13,113 @@
     "": ["id", "name", "source", "enforcement"]
   },
   "requestProperties": ["name", "target", "enforcement", "bypass_actors", "conditions", "rules"],
+  "requestContract": {
+    "note": "Types, enums, ranges and required fields below are projected from the pinned POST/PUT schemas. Unknown fields and unlisted variants are explicitly unsupported by this managed-baseline stub, not declared invalid by OpenAPI. POST requires name and enforcement; PUT permits partial updates. The observed approval extension is isolated in ruleParameters.observedRequestProperties, not in this documented projection.",
+    "requiredByMethod": {"POST": ["name", "enforcement"], "PUT": []},
+    "descriptionConstraints": {
+      "note": "These constraints are stated in the pinned property descriptions, not structural JSON schema keywords. Parameterless code_scanning/pull_request variants are separately unsupported by this stub, even though OpenAPI permits omitting parameters.",
+      "minimumAllowedMergeMethods": 1,
+      "actorIdRequiredFor": ["Integration", "RepositoryRole", "Team", "User"],
+      "nullActorIdFor": ["DeployKey"],
+      "pullRequestBypassExcludedFor": ["DeployKey"],
+      "pullRequestBypassTarget": "branch"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "target": {"type": "string", "enum": ["branch", "tag", "push", "repository"]},
+        "enforcement": {"type": "string", "enum": ["disabled", "active", "evaluate"]},
+        "bypass_actors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["actor_type"],
+            "properties": {
+              "actor_id": {"type": "integer", "nullable": true},
+              "actor_type": {"type": "string", "enum": ["Integration", "OrganizationAdmin", "RepositoryRole", "Team", "DeployKey", "EnterpriseOwner", "EnterpriseRole", "User"]},
+              "bypass_mode": {"type": "string", "enum": ["always", "pull_request", "exempt"]}
+            }
+          }
+        },
+        "conditions": {
+          "type": "object",
+          "required": ["repository_name"],
+          "properties": {
+            "ref_name": {
+              "type": "object",
+              "properties": {
+                "include": {"type": "array", "items": {"type": "string"}},
+                "exclude": {"type": "array", "items": {"type": "string"}}
+              }
+            },
+            "repository_name": {
+              "type": "object",
+              "properties": {
+                "include": {"type": "array", "items": {"type": "string"}},
+                "exclude": {"type": "array", "items": {"type": "string"}},
+                "protected": {"type": "boolean"}
+              }
+            }
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {"type": "string", "enum": ["code_scanning"]},
+                  "parameters": {
+                    "type": "object",
+                    "required": ["code_scanning_tools"],
+                    "properties": {
+                      "code_scanning_tools": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": ["tool", "alerts_threshold", "security_alerts_threshold"],
+                          "properties": {
+                            "tool": {"type": "string"},
+                            "alerts_threshold": {"type": "string", "enum": ["none", "errors", "errors_and_warnings", "all"]},
+                            "security_alerts_threshold": {"type": "string", "enum": ["none", "critical", "high_or_higher", "medium_or_higher", "all"]}
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {"type": "object", "required": ["type"], "properties": {"type": {"type": "string", "enum": ["deletion"]}}},
+              {"type": "object", "required": ["type"], "properties": {"type": {"type": "string", "enum": ["non_fast_forward"]}}},
+              {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {"type": "string", "enum": ["pull_request"]},
+                  "parameters": {
+                    "type": "object",
+                    "required": ["dismiss_stale_reviews_on_push", "require_code_owner_review", "require_last_push_approval", "required_approving_review_count", "required_review_thread_resolution"],
+                    "properties": {
+                      "allowed_merge_methods": {"type": "array", "items": {"type": "string", "enum": ["merge", "squash", "rebase"]}},
+                      "dismiss_stale_reviews_on_push": {"type": "boolean"},
+                      "require_code_owner_review": {"type": "boolean"},
+                      "require_last_push_approval": {"type": "boolean"},
+                      "required_approving_review_count": {"type": "integer", "minimum": 0, "maximum": 10},
+                      "required_review_thread_resolution": {"type": "boolean"},
+                      "required_reviewers": {"type": "array", "items": {"unsupported": true}}
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
   "ruleParameters": {
     "pull_request": {
       "required": ["dismiss_stale_reviews_on_push", "require_code_owner_review", "require_last_push_approval", "required_approving_review_count", "required_review_thread_resolution"],
