@@ -31,6 +31,7 @@
         'ModuleParameters.Tests.ps1'
         'ReleaseContent.Tests.ps1'
         'RulesetCodeSecurity.Tests.ps1'
+        'RulesetsRequest.Tests.ps1'
         'SourceCi.Tests.ps1'
     )
     # Full CI retains these setup, stateful scenario-matrix, and Terraform suites unchanged.
