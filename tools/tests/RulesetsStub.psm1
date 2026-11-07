@@ -30,11 +30,11 @@ function Assert-RulesetRequestValue {
     if ($Schema.type -ceq 'object') {
         if ($Schema.Contains('required')) {
             foreach ($field in $Schema.required) {
-                if (@($Value.Keys) -cnotcontains $field) { throw "Ruleset request $Path.$field is required." }
+                if (@($Value.get_Keys()) -cnotcontains $field) { throw "Ruleset request $Path.$field is required." }
             }
         }
-        foreach ($field in $Value.Keys) {
-            if (@($Schema.properties.Keys) -cnotcontains $field) { throw "Unsupported ruleset request field $Path.$field." }
+        foreach ($field in $Value.get_Keys()) {
+            if (@($Schema.properties.get_Keys()) -cnotcontains $field) { throw "Unsupported ruleset request field $Path.$field." }
             Assert-RulesetRequestValue -Value $Value[$field] -Schema $Schema.properties[$field] -Path "$Path.$field"
         }
     }
@@ -56,7 +56,7 @@ function ConvertFrom-RulesetStubRequest {
     foreach ($field in $contract.ruleParameters.pull_request.observedRequestProperties) {
         $pullRequest.properties.parameters.properties[$field] = @{ type = 'boolean' }
     }
-    $request = ConvertFrom-Json -InputObject $Body -AsHashtable -Depth 100
+    $request = ConvertFrom-Json -InputObject $Body -AsHashtable -Depth 100 -NoEnumerate
     Assert-RulesetRequestValue -Value $request -Schema $schema
     $submitted = $request
     if ($ExistingItem) {
@@ -64,7 +64,7 @@ function ConvertFrom-RulesetStubRequest {
         foreach ($field in $contract.requestProperties) {
             if ($ExistingItem.Contains($field)) { $request[$field] = $ExistingItem[$field] }
         }
-        foreach ($field in $submitted.Keys) { $request[$field] = $submitted[$field] }
+        foreach ($field in $submitted.get_Keys()) { $request[$field] = $submitted[$field] }
         Assert-RulesetRequestValue -Value $request -Schema $schema
     }
     $constraints = $contract.requestContract.descriptionConstraints
@@ -171,9 +171,14 @@ function Invoke-RulesetsStubRequest {
             $reply.Body = ConvertTo-Json -InputObject @{ message = $_.Exception.Message } -Compress
             return $reply
         }
-        $responseBody = ConvertFrom-Json -InputObject $Body -AsHashtable
+        $responseBody = ConvertFrom-Json -InputObject $Body -AsHashtable -Depth 100 -NoEnumerate
         $item = Get-GitHubApiFixture -Name repos/create-org-ruleset -Set @{ id = ($State.NextId + 1); source = $State.Organization }
-        foreach ($key in $responseBody.Keys) { $item[$key] = $responseBody[$key] }
+        $contract = Get-GitHubApiFixtureContract -Name repos/create-org-ruleset
+        $item['target'] = $contract.requestContract.schema.properties.target.default
+        foreach ($key in @('bypass_actors', 'conditions', 'rules')) {
+            if (-not $responseBody.Contains($key)) { $item.Remove($key) }
+        }
+        foreach ($key in $responseBody.get_Keys()) { $item[$key] = $responseBody[$key] }
         Complete-RulesetResponse -Item $item
         $State.NextId++
         $State.Items.Add($item)
@@ -197,9 +202,9 @@ function Invoke-RulesetsStubRequest {
                     $reply.Body = ConvertTo-Json -InputObject @{ message = $_.Exception.Message } -Compress
                     return $reply
                 }
-                $responseBody = ConvertFrom-Json -InputObject $Body -AsHashtable
+                $responseBody = ConvertFrom-Json -InputObject $Body -AsHashtable -Depth 100 -NoEnumerate
                 $updated = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $item -Depth 50) -AsHashtable
-                foreach ($key in $responseBody.Keys) { $updated[$key] = $responseBody[$key] }
+                foreach ($key in $responseBody.get_Keys()) { $updated[$key] = $responseBody[$key] }
                 Complete-RulesetResponse -Item $updated
                 $State.Items[$State.Items.IndexOf($item)] = $updated
                 $State.Writes.Add(@{ Method = $Method; Body = $inputBody })

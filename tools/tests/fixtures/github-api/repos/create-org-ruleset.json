@@ -29,7 +29,7 @@
       "type": "object",
       "properties": {
         "name": {"type": "string"},
-        "target": {"type": "string", "enum": ["branch", "tag", "push", "repository"]},
+        "target": {"type": "string", "enum": ["branch", "tag", "push", "repository"], "default": "branch"},
         "enforcement": {"type": "string", "enum": ["disabled", "active", "evaluate"]},
         "bypass_actors": {
           "type": "array",

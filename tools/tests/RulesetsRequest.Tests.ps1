@@ -97,6 +97,13 @@ Describe 'Organization ruleset request contract before a stub write' {
         @{ Case = 'non-string enforcement'; Change = { $request.enforcement = $null }; ExpectedError = 'enforcement' }
         @{ Case = 'non-array rules'; Change = { $request.rules = @{} }; ExpectedError = 'rules' }
         @{ Case = 'unknown root field'; Change = { $request['extra'] = $true }; ExpectedError = 'extra' }
+        @{ Case = 'root key collection shadow'; Change = { $request['Keys'] = @('name', 'enforcement') }; ExpectedError = 'Keys' }
+        @{ Case = 'condition key collection shadow'; Change = { $request.conditions['Keys'] = @('repository_name') }; ExpectedError = 'Keys' }
+        @{ Case = 'ref condition key collection shadow'; Change = { $request.conditions.ref_name['Keys'] = @() }; ExpectedError = 'Keys' }
+        @{ Case = 'rule key collection shadow'; Change = { $request.rules[0]['Keys'] = @('type', 'parameters') }; ExpectedError = 'Keys' }
+        @{ Case = 'parameter key collection shadow'; Change = { $request.rules[0].parameters['Keys'] = @('code_scanning_tools') }; ExpectedError = 'Keys' }
+        @{ Case = 'tool key collection shadow'; Change = { $request.rules[0].parameters.code_scanning_tools[0]['Keys'] = @('tool', 'alerts_threshold', 'security_alerts_threshold') }; ExpectedError = 'Keys' }
+        @{ Case = 'bypass actor key collection shadow'; WithBypass = $true; Change = { $request.bypass_actors[0]['Keys'] = @('actor_type', 'actor_id', 'bypass_mode') }; ExpectedError = 'Keys' }
         @{ Case = 'differently cased optional target property'; Change = { $value = $request.target; $request.Remove('target'); $request['Target'] = $value }; ExpectedError = 'Target' }
         @{ Case = 'non-array bypass actors'; Change = { $request.bypass_actors = @{} }; ExpectedError = 'bypass_actors' }
         @{ Case = 'Team bypass actor without identity'; WithBypass = $true; Change = { $request.bypass_actors[0].Remove('actor_id') }; ExpectedError = 'actor_id' }
@@ -137,6 +144,7 @@ Describe 'Organization ruleset request contract before a stub write' {
         @{ Field = 'name' }
         @{ Field = 'enforcement' }
     ) {
+        # Intentionally invalid: remove only the POST-required property.
         $request.Remove($Field)
         foreach ($attempt in @(1, 2)) {
             $reply = Invoke-RulesetsStubRequest -State $state -Method POST -Path '/orgs/demo/rulesets' `
@@ -246,6 +254,56 @@ Describe 'Organization ruleset request contract before a stub write' {
         $reply.Status | Should -Be 200
         $state.Items[0].name | Should -BeExactly 'platform-default-branch'
         $state.Items[0].enforcement | Should -BeExactly 'evaluate'
+    }
+
+    It 'rejects a <Count>-object root array before a <Method> changes state' -ForEach @(
+        @{ Method = 'POST'; Count = 0 }
+        @{ Method = 'POST'; Count = 1 }
+        @{ Method = 'POST'; Count = 2 }
+        @{ Method = 'PUT'; Count = 0 }
+        @{ Method = 'PUT'; Count = 1 }
+        @{ Method = 'PUT'; Count = 2 }
+    ) {
+        $state.Items.Add((Get-GitHubApiFixture -Name repos/get-org-ruleset.baseline))
+        $before = ConvertTo-Json -InputObject $state.Items -Depth 50
+        # Intentionally invalid: wrap valid objects in an array instead of sending an object.
+        $wrapped = @()
+        for ($index = 0; $index -lt $Count; $index++) { $wrapped += $request }
+        $body = ConvertTo-Json -InputObject $wrapped -Depth 50
+        $path = if ($Method -ceq 'POST') { '/orgs/demo/rulesets' } else { '/orgs/demo/rulesets/21' }
+        foreach ($attempt in @(1, 2)) {
+            $reply = Invoke-RulesetsStubRequest -State $state -Method $Method -Path $path -Headers $headers -Body $body
+            $reply.Status | Should -Be 422
+            $reply.Body | Should -Match 'request must be object'
+            (ConvertTo-Json -InputObject $state.Items -Depth 50) | Should -BeExactly $before
+            $state.Writes.Count | Should -Be 0
+            $state.NextId | Should -Be 100
+        }
+    }
+
+    It 'preserves supported state across POST then partial PUT when omitting <Case>' -ForEach @(
+        @{ Case = 'target'; Omitted = @('target') }
+        @{ Case = 'bypass actors'; Omitted = @('bypass_actors') }
+        @{ Case = 'conditions'; Omitted = @('conditions') }
+        @{ Case = 'rules'; Omitted = @('rules') }
+        @{ Case = 'all optional properties'; Omitted = @('target', 'bypass_actors', 'conditions', 'rules') }
+    ) {
+        foreach ($field in $Omitted) { $request.Remove($field) }
+        $created = Invoke-RulesetsStubRequest -State $state -Method POST -Path '/orgs/demo/rulesets' `
+            -Headers $headers -Body (ConvertTo-Json -InputObject $request -Depth 50)
+        $created.Status | Should -Be 201 -Because $created.Body
+        $id = (ConvertFrom-Json -InputObject $created.Body).id
+        $updated = Invoke-RulesetsStubRequest -State $state -Method PUT -Path "/orgs/demo/rulesets/$id" `
+            -Headers $headers -Body '{"name":"renamed"}'
+        $updated.Status | Should -Be 200 -Because $updated.Body
+        $state.Items[0].name | Should -BeExactly 'renamed'
+        $state.Items[0].target | Should -BeExactly 'branch'
+        foreach ($field in $Omitted) {
+            if ($field -cne 'target') { $state.Items[0].Contains($field) | Should -BeFalse }
+            $state.Writes[0].Body.Contains($field) | Should -BeFalse
+        }
+        $state.Writes.Count | Should -Be 2
+        $state.NextId | Should -Be 101
     }
 
     It 'rejects an incompatible partial PUT against retained fields: <Case>' -ForEach @(

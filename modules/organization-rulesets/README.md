@@ -52,6 +52,8 @@ Offline kontrakt v `tools/tests/fixtures/github-api/repos/create-org-ruleset.jso
 
 Částečný PUT se posuzuje proti výslednému stavu: odeslaná pole nahradí stejnojmenná uložená pole. Kontrola proto odmítne pull-request bypass na ponechaném tag targetu i změnu targetu na tag při ponechaném pull-request bypassu. Stejně odmítne kombinaci `target: repository` a `enforcement: evaluate`, kterou popis OpenAPI nepovoluje. Odmítnutí ani jeho opakování nesmí změnit Items, Writes nebo další ID.
 
+Stub zachová JSON root při parsování: POST i PUT vyžadují objekt, nikoli pole s jedním objektem. Klíče slovníku čte přes metodu `get_Keys()`, aby vlastnost požadavku `Keys` nemohla obejít kontrolu povinných ani nepodporovaných polí. POST s vynechaným targetem použije dokumentovaný default `branch`; vynechané `bypass_actors`, `conditions` a `rules` do response nekopíruje z příkladu fixture. Nejde o důkaz skutečných serverových defaultů těchto tří polí. Následný částečný PUT proto neposuzuje neodeslané příkladové pravidlo jako uložený stav.
+
 ## Detekce driftu
 
 Modul drift neopravuje automaticky; provider `restapi` s `ignore_server_additions` ho neopraví.
