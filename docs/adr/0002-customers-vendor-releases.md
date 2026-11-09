@@ -48,8 +48,19 @@ povinné podle stávajících pravidel. Nesouvisející otevřená kritéria se
 evidují odděleně; neblokují běžnou změnu jen proto, že dosud nejsou ověřená.
 Kritérium dotčené změnou se za nesouvisející považovat nesmí.
 
-Uživatel potvrdil společné porozumění návrhu; rozhodnutí a otevřené otázky
-eviduje návrhové [issue #256](https://github.com/msucharda/devsecops-platform/issues/256).
+Uživatel potvrdil společné porozumění návrhu a následně 9. 11. 2026 schválil
+aktualizovanou [spec #256](https://github.com/msucharda/devsecops-platform/issues/256)
+jako podklad pro tickets. Schválení spec nepovoluje konkrétní živý běh.
 Způsob evidence vývojových úprav a jejich úplného převzetí nebo vrácení
-musí určit následná spec. Zrychlení zatím není změřené a nemá schválený
-číselný cíl.
+upřesňuje [ADR 0019](0019-reference-development-candidates.md).
+
+## Měření délky cyklu
+
+Uživatel 9. 11. 2026 při řešení Q7 ve spec #256 schválil nejdřív měřit
+skutečný průběh práce, nikoli stanovit číselný limit bez výchozích dat.
+Sledují se dva úseky: od připravené změny po první živý výsledek a odtud
+po ověření standardního release. Čas práce, CI a čekání na člověka se
+rozlišují.
+
+Číselný cíl se určí následně podle měření. Jeho absence neblokuje migraci;
+do jeho stanovení a vyhodnocení se nesmí tvrdit prokázané zrychlení.
