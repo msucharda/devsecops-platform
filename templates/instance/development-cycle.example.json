@@ -21,6 +21,8 @@
   "readyAt": "2026-01-01T10:00:00.0000000+00:00",
   "firstLive": null,
   "standardRelease": null,
+  "dispositionEvidenceUrl": null,
+  "approvalRemovedAt": null,
   "observedUntil": "2026-01-01T10:01:00.0000000+00:00",
   "intervals": [
     {

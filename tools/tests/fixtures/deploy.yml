@@ -66,6 +66,13 @@ jobs:
           ref: ${{ steps.preflight.outputs.revision }}
           path: candidate
           persist-credentials: false
+      - name: Refuse standard deployment while development disposition is outstanding
+        if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
+        shell: pwsh
+        env:
+          PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
+          PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
+        run: ./trusted/platform/tools/Test-StandardDeploymentAvailability.ps1
       - name: Verify release marker and provenance before credentials for every deployment scope
         if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
         shell: pwsh
@@ -157,7 +164,7 @@ jobs:
     name: 'application'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && github.run_attempt == 1 && needs.module_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['application'] }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -236,7 +243,7 @@ jobs:
     name: 'enterprise-baseline'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_service]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_service.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.module_service.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -315,7 +322,7 @@ jobs:
     name: 'enterprise-baseline (rulesetPlan)'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_service, module_enterprise_baseline]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.rulesetEnvironments)['enterprise-baseline'] }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -394,7 +401,7 @@ jobs:
     name: 'foundation'
     runs-on: ubuntu-latest
     needs: [authorize, select]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && github.run_attempt == 1 }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['foundation'] }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -468,7 +475,7 @@ jobs:
     name: 'observer'
     runs-on: ubuntu-latest
     needs: [authorize, select]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') && github.run_attempt == 1 }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['observer'] }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -542,7 +549,7 @@ jobs:
     name: 'service'
     runs-on: ubuntu-latest
     needs: [authorize, select, module_application, module_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && github.run_attempt == 1 && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.environments)['service'] }}
     outputs:
       changes: ${{ steps.run.outputs.changes }}
@@ -656,7 +663,7 @@ jobs:
     name: 'application (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_application, apply_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.approve_apply.result == 'success' && needs.module_application.result == 'success' && needs.apply_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_application.result == 'success' && needs.apply_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['application'] }}
     permissions:
       contents: read
@@ -732,7 +739,7 @@ jobs:
     name: 'enterprise-baseline (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_enterprise_baseline, apply_service]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_service.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_service.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
     permissions:
       contents: read
@@ -813,7 +820,7 @@ jobs:
     name: 'foundation (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && needs.approve_apply.result == 'success' && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['foundation'] }}
     permissions:
       contents: read
@@ -884,7 +891,7 @@ jobs:
     name: 'observer (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_observer]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') && needs.approve_apply.result == 'success' && needs.module_observer.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_observer.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['observer'] }}
     permissions:
       contents: read
@@ -955,7 +962,7 @@ jobs:
     name: 'service (apply)'
     runs-on: ubuntu-latest
     needs: [authorize, select, approve_apply, module_service, apply_application, apply_foundation]
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.approve_apply.result == 'success' && needs.module_service.result == 'success' && needs.apply_application.result == 'success' && needs.apply_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_service.result == 'success' && needs.apply_application.result == 'success' && needs.apply_foundation.result == 'success' }}
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['service'] }}
     permissions:
       contents: read

@@ -61,6 +61,7 @@ if ($destructiveRequired) {
 $ready = Get-CycleTimestamp $record['readyAt'] 'readyAt'
 $firstLive = $null
 $releaseVerified = $null
+$approvalRemoved = $null
 $missing = [Collections.Generic.List[string]]::new()
 if ($null -ne $record['experiments']) {
     if ($record['experiments'] -isnot [Collections.IList]) { throw 'Cycle experiments must be a sequence.' }
@@ -101,6 +102,10 @@ if ($null -ne $record['standardRelease']) {
         if ($release[$key] -isnot [string] -or $release[$key] -cnotmatch '^[a-f0-9]{40}\z') {
             throw "Cycle standardRelease.$key requires a full SHA."
         }
+        if ($release['tag'] -ceq $candidate['baselineRelease'] -or
+            $release['instanceRevision'] -cin @($candidate['baseRevision'], $candidate['revision'])) {
+            throw 'Standard release adoption must be a new release and instance revision, not the baseline or development candidate.'
+        }
     }
     if ($null -eq $firstLive -or $releaseVerified -lt $firstLive) { throw 'Standard release verification must follow the first live result.' }
     foreach ($name in @('functional', 'forbidden', 'idempotence', 'drift')) {
@@ -120,9 +125,17 @@ if ($null -ne $record['standardRelease']) {
     }
 }
 else { $missing.Add('standardRelease') }
+if ($record['state'] -ceq 'completed') {
+    Assert-CycleText $record['dispositionEvidenceUrl'] 'dispositionEvidenceUrl'
+    $approvalRemoved = Get-CycleTimestamp $record['approvalRemovedAt'] 'approvalRemovedAt'
+    if ($null -eq $releaseVerified -or $approvalRemoved -lt $releaseVerified) {
+        throw 'Development approval may be removed only after standard release verification.'
+    }
+}
 
 $end = Get-CycleTimestamp $record['observedUntil'] 'observedUntil'
-if ($end -lt $ready -or ($null -ne $releaseVerified -and $end -lt $releaseVerified)) {
+if ($end -lt $ready -or ($null -ne $releaseVerified -and $end -lt $releaseVerified) -or
+    ($null -ne $approvalRemoved -and $end -lt $approvalRemoved)) {
     throw 'Cycle observedUntil precedes a recorded milestone.'
 }
 $breakdown = [ordered]@{

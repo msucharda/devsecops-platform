@@ -36,6 +36,8 @@ Describe 'Private development cycle evidence' {
                 }
             }
             observedUntil = '2026-01-01T10:30:00.0000000+00:00'
+            dispositionEvidenceUrl = 'https://example.test/approval/adopt'
+            approvalRemovedAt = '2026-01-01T10:30:00.0000000+00:00'
             intervals = @(
                 @{ kind = 'work'; start = '2026-01-01T10:00:00.0000000+00:00'; end = '2026-01-01T10:03:00.0000000+00:00' }
                 @{ kind = 'ci'; start = '2026-01-01T10:03:00.0000000+00:00'; end = '2026-01-01T10:07:00.0000000+00:00' }
@@ -84,6 +86,10 @@ Describe 'Private development cycle evidence' {
         @{ Case = 'reversed milestones'; Change = { $record.firstLive.at = '2025-01-01T10:00:00.0000000+00:00' }; Error = '*precedes*' }
         @{ Case = 'different live candidate'; Change = { $record.firstLive.revision = 'f' * 40 }; Error = '*exact candidate*' }
         @{ Case = 'different live digest'; Change = { $record.firstLive.digest = 'f' * 64 }; Error = '*exact candidate*' }
+        @{ Case = 'baseline release relabeled as adoption'; Change = { $record.standardRelease.tag = $record.candidate.baselineRelease }; Error = '*new release and instance revision*' }
+        @{ Case = 'candidate relabeled as adoption'; Change = { $record.standardRelease.instanceRevision = $record.candidate.revision }; Error = '*new release and instance revision*' }
+        @{ Case = 'baseline main relabeled as adoption'; Change = { $record.standardRelease.instanceRevision = $record.candidate.baseRevision }; Error = '*new release and instance revision*' }
+        @{ Case = 'premature approval removal'; Change = { $record.approvalRemovedAt = '2026-01-01T10:20:00.0000000+00:00' }; Error = '*only after standard release verification*' }
         @{ Case = 'unexpected drift'; Change = { $record.standardRelease.scenarios.drift.unexpectedDrift = $true }; Error = '*Unexpected drift*' }
         @{ Case = 'non-idempotent apply'; Change = { $record.standardRelease.scenarios.idempotence.changes = 1 }; Error = '*zero changes*' }
         @{ Case = 'unassessed teardown'; Change = { $record.verificationPlan.Remove('teardown') }; Error = '*impact decision*' }

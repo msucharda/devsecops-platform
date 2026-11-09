@@ -8,6 +8,7 @@ param(
     [string] $SourceRepository,
     [AllowEmptyString()][string] $ApprovalJson = $env:PLATFORM_DEVELOPMENT_APPROVAL,
     [AllowEmptyString()][string] $ReferenceRepository = $env:PLATFORM_REFERENCE_REPOSITORY,
+    [AllowEmptyString()][string] $Disposition = $env:PLATFORM_DEVELOPMENT_DISPOSITION,
     [string] $RepositoryUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY",
     [string] $Revision,
     [string] $PullRequest,
@@ -18,6 +19,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentCandidate.psm1')
+if (-not [string]::IsNullOrWhiteSpace($Disposition)) {
+    throw 'Development execution is locked by a standard adoption or rollback disposition.'
+}
 $approval = ConvertFrom-Json -InputObject $ApprovalJson -AsHashtable -NoEnumerate
 $document = [Text.Json.JsonDocument]::Parse($ApprovalJson)
 try {

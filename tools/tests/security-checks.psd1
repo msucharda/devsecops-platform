@@ -4,33 +4,37 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'development-approval-continuity'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development approval continuity*' })
+        }
+        @{
             Name = 'standard-deployment-development-lock'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development standard-deployment exclusion*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development standard-deployment exclusion*' })
         }
         @{
             Name = 'development-candidate-snapshot'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development immutable checkout*' }
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development immutable checkout*' }
                 @{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = '*does not hand off credentials for changed working bytes*' })
         }
         @{
             Name = 'development-candidate-approval'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development exact-content approval*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development exact-content approval*' })
         }
         @{
             Name = 'development-candidate-boundary'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development editable boundary*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development editable boundary*' })
         }
         @{
             Name = 'development-candidate-revision'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development immutable checkout*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development immutable checkout*' })
         }
         @{
             Name = 'development-dispatch-request'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development dispatch authorization*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development dispatch authorization*' })
         }
         @{
             Name = 'development-dispatch-context'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development dispatch authorization*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development dispatch authorization*' })
         }
         @{
             Name = 'local-ci-benchmark-output-entry'
@@ -1028,6 +1032,61 @@
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
+        @{
+            Mutant = 'Get-DevelopmentCandidateSnapshot: operator ''-cne'' -> -ine in ''(Invoke-DevelopmentGit $root @(''hash-object'', ''--no-filters'', ''--'', $relative)) -cne $blob''#1'
+            Reason = 'Equivalent mutant: both object IDs are produced by Git as lowercase hexadecimal; this comparison does not compare caller-supplied identity text.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentDispatchRequest: operator ''-cne'' -> -ine in ''$ApiUrl.TrimEnd(''/'') -cne "https://api.$($address.DnsSafeHost)"''#1'
+            Reason = 'Equivalent mutant: the only additional strings differ in HTTPS scheme or DNS hostname casing, which identifies the same authenticated origin; paths, ports, credentials, query and fragment remain rejected.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentDispatchRequest: operator ''-cne'' -> -ine in ''$address.Scheme -cne ''https''''#1'
+            Reason = 'Equivalent mutant: System.Uri normalizes the Scheme property to lowercase before this comparison.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentDispatchRequest: operator ''-cnotmatch'' -> -inotmatch in ''$PullRequest -cnotmatch ''^[1-9][0-9]*\z''''#1'
+            Reason = 'Equivalent mutant: this pattern contains only decimal digits and anchors, which have no letter case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentDispatchRequest: operator ''-cnotmatch'' -> -inotmatch in ''$Repository -cnotmatch ''^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+\z''''#1'
+            Reason = 'Equivalent mutant: both uppercase and lowercase ASCII letters are explicitly included in every letter class.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentDispatchContext: operator ''-cne'' -> -ine in ''[string] $Pull[''number''] -cne $PullRequest''#1'
+            Reason = 'Equivalent mutant: the approved pull request identifier is constrained to decimal digits, whose equality has no letter case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentCandidateBoundary: operand ''$Baseline.get_Keys() -ccontains $path'' -> $true#1'
+            Reason = 'Equivalent mutant: verified snapshots contain only nonempty mode:SHA256 strings. An absent baseline entry cannot equal the candidate entry, so the remaining equality still detects every added path.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentCandidateBoundary: operand ''$Candidate.get_Keys() -ccontains $path'' -> $true#1'
+            Reason = 'Equivalent mutant: verified snapshots contain only nonempty mode:SHA256 strings. An absent candidate entry cannot equal the baseline entry, so the remaining equality still detects every deleted path.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentCandidateBoundary: operator ''-ccontains'' -> -icontains in ''$Baseline.get_Keys() -ccontains $path''#1'
+            Reason = 'Equivalent mutant: the case-sensitive union visits both spellings of a case-only rename; the unchanged candidate membership guard rejects the old spelling, so no rename is hidden.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentCandidateBoundary: operator ''-ccontains'' -> -icontains in ''$Candidate.get_Keys() -ccontains $path''#1'
+            Reason = 'Equivalent mutant: the case-sensitive union visits both spellings of a case-only rename; the unchanged baseline membership guard rejects the new spelling, so no rename is hidden.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentCandidateBoundary: operator ''-ceq'' -> -ieq in ''$Baseline[$path] -ceq $Candidate[$path]''#1'
+            Reason = 'Equivalent mutant: verified snapshot values contain only a numeric Git mode and lowercase SHA256 text; case-insensitive equality admits no different valid hash or mode.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
         @{
             Mutant = 'Test-SecurityManagerAssignment: operator ''-ceq'' -> -ieq in ''$entry[''type''] -ceq ''enterprise''''#1'
             Reason = 'Equivalent mutant: the preceding scalar-string and case-sensitive enum guards permit only the exact values organization and enterprise.'

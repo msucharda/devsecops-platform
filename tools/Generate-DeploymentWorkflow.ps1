@@ -78,6 +78,7 @@ function Add-DeploymentJob {
     }
     if ($Phase -eq 'rulesetPlan') { $needs += "module_$suffix" }
     $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), '$key')"
+    if (-not $Drift) { $condition += " && github.run_attempt == 1" }
     if ($Phase -eq 'apply') { $condition += " && needs.approve_apply.result == 'success' && needs.module_$suffix.result == 'success'" }
     foreach ($prerequisite in $Node.Prerequisites) {
         $condition += " && needs.$prerequisitePrefix$($prerequisite.Replace('-', '_').Replace(':', '_')).result == 'success'"
@@ -309,6 +310,7 @@ Add-WorkflowBlock @'
         shell: pwsh
         env:
           PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
+          PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
         run: ./trusted/platform/tools/Test-StandardDeploymentAvailability.ps1
       - name: Verify release marker and provenance before credentials for every deployment scope
         if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
@@ -454,6 +456,8 @@ $authorization['name'] = 'Authorize exact reference development candidate outsid
 $authorization['outputs']['approval'] = '${{ steps.candidate.outputs.approval }}'
 $authorization['outputs']['reference'] = '${{ steps.candidate.outputs.reference }}'
 $authorization['outputs']['operation'] = '${{ steps.candidate.outputs.operation }}'
+$authorization['outputs']['attempt'] = '${{ github.run_attempt }}'
+$authorization['outputs']['source'] = '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
 $authorization['steps'] = @($authorization['steps'] | Where-Object {
     $_['name'] -cne 'Refuse standard deployment while development disposition is outstanding'
 })
@@ -473,6 +477,7 @@ foreach ($step in $authorization['steps']) {
             PLATFORM_SOURCE_REPOSITORY = '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
             PLATFORM_REFERENCE_REPOSITORY = '${{ vars.PLATFORM_REFERENCE_REPOSITORY }}'
             PLATFORM_DEVELOPMENT_APPROVAL = '${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}'
+            PLATFORM_DEVELOPMENT_DISPOSITION = '${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}'
             DEVELOPMENT_PR = '${{ inputs.pull-request }}'; DEVELOPMENT_REVISION = '${{ inputs.revision }}'
             DEVELOPMENT_OPERATION = '${{ inputs.operation }}'
         }
@@ -485,6 +490,37 @@ foreach ($jobId in @($development['jobs'].get_Keys())) {
         if ($step.Contains('with') -and $step['with']['path'] -ceq 'candidate') { $step['with']['fetch-depth'] = 0 }
     }
     if ($jobId -cmatch '^(module_|ruleset_plan_|apply_)') {
+        $gateId = "revalidate_$jobId"
+        $gate = @{
+            name = "Revalidate protected approval for $jobId"
+            'runs-on' = 'ubuntu-latest'
+            environment = 'pr-authorization'
+            needs = @($job['needs'])
+            if = $job['if']
+            outputs = @{ attempt = '${{ steps.current.outputs.attempt }}' }
+            steps = @(
+                @{
+                    name = 'Check out immutable trusted approval guard'
+                    uses = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
+                    with = @{ ref = '${{ github.sha }}'; path = 'trusted'; 'persist-credentials' = $false }
+                },
+                @{
+                    name = 'Read current protected approval, including revocation'
+                    id = 'current'
+                    shell = 'pwsh'
+                    env = @{
+                        PLATFORM_DEVELOPMENT_APPROVAL = '${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}'
+                        PLATFORM_DEVELOPMENT_DISPOSITION = '${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}'
+                        EXPECTED_APPROVAL = '${{ needs.authorize.outputs.approval }}'
+                        AUTHORIZED_ATTEMPT = '${{ needs.authorize.outputs.attempt }}'
+                    }
+                    run = './trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT'
+                }
+            )
+        }
+        $development['jobs'][$gateId] = $gate
+        $job['needs'] = @($job['needs']) + $gateId
+        $job['if'] = $job['if'].Replace(' }}', " && needs.$gateId.outputs.attempt == github.run_attempt }}")
         $steps = [Collections.Generic.List[object]]::new()
         foreach ($step in $job['steps']) {
             if ($step['name'] -ceq 'Sign in to Azure with the phase managed identity') {
@@ -493,7 +529,7 @@ foreach ($jobId in @($development['jobs'].get_Keys())) {
                     env = @{
                         PLATFORM_DEVELOPMENT_APPROVAL = '${{ needs.authorize.outputs.approval }}'
                         PLATFORM_REFERENCE_REPOSITORY = '${{ needs.authorize.outputs.reference }}'
-                        PLATFORM_SOURCE_REPOSITORY = '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+                        PLATFORM_SOURCE_REPOSITORY = '${{ needs.authorize.outputs.source }}'
                         DEVELOPMENT_PR = '${{ inputs.pull-request }}'
                         DEVELOPMENT_REVISION = '${{ needs.authorize.outputs.revision }}'
                         DEVELOPMENT_OPERATION = '${{ needs.authorize.outputs.operation }}'
@@ -512,6 +548,16 @@ $development['jobs']['approve_apply']['steps'][0]['run'] = '''Platform-team appr
 $development = ConvertTo-PlatformCanonicalJson $development | ConvertFrom-Json -AsHashtable -NoEnumerate
 $developmentContent = "# Generated by tools/Generate-DeploymentWorkflow.ps1. Do not edit.`n" +
     (ConvertTo-Yaml $development).Replace("`r", '').TrimEnd("`n") + "`n"
+$actionTags = @{}
+foreach ($line in $deployContent.Split("`n")) {
+    if ($line -match '^\s*(?:-\s+)?uses:\s+(\S+@[a-f0-9]{40})\s+(# v[0-9]+\.[0-9]+\.[0-9]+)\s*$') {
+        $actionTags[$Matches[1]] = $Matches[2]
+    }
+}
+foreach ($action in $actionTags.get_Keys()) {
+    $pattern = '(?m)^([ \t]*(?:- )?uses: ' + [regex]::Escape($action) + ')[ \t]*$'
+    $developmentContent = [regex]::Replace($developmentContent, $pattern, ('$1 ' + $actionTags[$action]))
+}
 
 $lines.Clear()
 Add-WorkflowBlock @'

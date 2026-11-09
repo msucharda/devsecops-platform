@@ -28,6 +28,89 @@ Describe 'Development candidate trust boundary' {
             { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') -DevelopmentApprovalJson $Value } |
                 Should -Throw '*locked*outstanding development approval*'
         }
+
+        It 'permits only the exact protected <Operation> transition while keeping the outstanding approval' -ForEach @(
+            @{ Operation = 'adopt' }
+            @{ Operation = 'rollback' }
+        ) {
+            $approval = @{ revision = 'b' * 40; digest = 'c' * 64 }
+            $decision = @{
+                version = 1L; operation = $Operation; repository = 'https://example.test/platform/instance'
+                mainRevision = 'd' * 40; candidateRevision = 'b' * 40; candidateDigest = 'c' * 64
+                approvedBy = 'reviewer'; approvalUrl = 'https://example.test/approval/1'
+                expiresAt = [DateTimeOffset]::UtcNow.AddHours(1).ToString('o')
+            }
+            $arguments = @{
+                DevelopmentApprovalJson = ConvertTo-Json $approval
+                DispositionJson = ConvertTo-Json $decision
+                RepositoryUrl = $decision.repository; Revision = $decision.mainRevision; EventName = 'workflow_dispatch'
+            }
+            { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Not -Throw
+            foreach ($field in @('version', 'operation', 'repository', 'mainRevision', 'candidateRevision',
+                'candidateDigest', 'approvedBy', 'approvalUrl', 'expiresAt')) {
+                $changed = $decision.Clone()
+                $changed.Remove($field)
+                $arguments.DispositionJson = ConvertTo-Json $changed
+                { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw
+            }
+            foreach ($field in @('repository', 'mainRevision', 'candidateRevision', 'candidateDigest')) {
+                $changed = $decision.Clone()
+                $changed[$field] = $changed[$field].ToUpperInvariant()
+                $arguments.DispositionJson = ConvertTo-Json $changed
+                { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw "*$field*"
+                $changed[$field] = @($decision[$field])
+                $arguments.DispositionJson = ConvertTo-Json $changed
+                { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw "*$field*"
+            }
+            foreach ($case in @(
+                @{ Field = 'version'; Value = '1' }, @{ Field = 'version'; Value = 2L },
+                @{ Field = 'version'; Value = @(1L) }, @{ Field = 'operation'; Value = 'ADOPT' },
+                @{ Field = 'approvedBy'; Value = 42L }, @{ Field = 'approvalUrl'; Value = 42L },
+                @{ Field = 'expiresAt'; Value = 'invalid' }
+            )) {
+                $changed = $decision.Clone()
+                $changed[$case.Field] = $case.Value
+                $arguments.DispositionJson = ConvertTo-Json $changed
+                { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw
+            }
+            $arguments.DispositionJson = ConvertTo-Json $decision
+            $arguments.EventName = 'pull_request_target'
+            { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*for main*'
+            $arguments.EventName = 'workflow_dispatch'
+            $arguments.DevelopmentApprovalJson = ''
+            { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*locked*'
+            $arguments.DevelopmentApprovalJson = ConvertTo-Json $approval
+            $decision.expiresAt = [DateTimeOffset]::UtcNow.AddHours(-1).ToString('o')
+            $arguments.DispositionJson = ConvertTo-Json $decision
+            { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*expired*'
+        }
+    }
+
+    Describe 'Development approval continuity' {
+        It 'checks current protected state rather than a stale job output after <Case>' -ForEach @(
+            @{ Case = 'revocation'; Current = ''; Attempt = '1'; AuthorizedAttempt = '1'; Error = '*revoked or replaced*' }
+            @{ Case = 'replacement'; Current = '{"revision":"changed"}'; Attempt = '1'; AuthorizedAttempt = '1'; Error = '*revoked or replaced*' }
+            @{ Case = 'failed-job rerun'; Current = '{"revision":"exact"}'; Attempt = '2'; AuthorizedAttempt = '1'; Error = '*fresh dispatch*' }
+            @{ Case = 'whole-workflow rerun'; Current = '{"revision":"exact"}'; Attempt = '2'; AuthorizedAttempt = '2'; Error = '*fresh dispatch*' }
+            @{ Case = 'attempt mismatch'; Current = '{"revision":"exact"}'; Attempt = '1'; AuthorizedAttempt = '2'; Error = '*fresh dispatch*' }
+        ) {
+            { & (Join-Path $tools 'Test-DevelopmentApprovalContinuity.ps1') -CurrentApproval $Current `
+                -ExpectedApproval '{"revision":"exact"}' -ExpectedAttempt $AuthorizedAttempt -RunAttempt $Attempt } |
+                Should -Throw $Error
+        }
+
+        It 'allows only the unchanged current approval in a fresh dispatch' {
+            $receipt = Join-Path $TestDrive 'attempt.txt'
+            & (Join-Path $tools 'Test-DevelopmentApprovalContinuity.ps1') -CurrentApproval '{"revision": "exact"}' `
+                -ExpectedApproval '{"revision":"exact"}' -ExpectedAttempt '1' -RunAttempt '1' -GitHubOutputPath $receipt
+            Get-Content $receipt | Should -Be 'attempt=1'
+        }
+
+        It 'does not resume development after an explicit standard transition' {
+            { & (Join-Path $tools 'Test-DevelopmentApprovalContinuity.ps1') -CurrentApproval '{"revision":"exact"}' `
+                -ExpectedApproval '{"revision":"exact"}' -ExpectedAttempt '1' -RunAttempt '1' -Disposition '{"operation":"adopt"}' } |
+                Should -Throw '*locked*disposition*'
+        }
     }
 
     Describe 'Development immutable checkout' {
@@ -98,6 +181,62 @@ Describe 'Development candidate trust boundary' {
             { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw '*no tracked files*'
         }
 
+        It 'rejects invalid full Git revision metadata before inspecting its tree: <Metadata>' -ForEach @(
+            @{ Metadata = 'not-a-revision' }
+            @{ Metadata = ('A' * 40) }
+        ) {
+            Mock Invoke-DevelopmentGit -ModuleName DevelopmentCandidate -ParameterFilter {
+                $Arguments[0] -eq 'rev-parse' -and $Arguments[1] -eq 'HEAD'
+            } -MockWith { $Metadata }
+            { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw '*full commit SHA*'
+        }
+
+        It 'rejects a noncanonical Git tree entry rather than accepting a new object type' {
+            $blob = (& git -C $repository hash-object --no-filters -- file.txt).Trim()
+            Mock Invoke-DevelopmentGit -ModuleName DevelopmentCandidate -ParameterFilter {
+                $Arguments[0] -eq 'ls-tree'
+            } -MockWith { "100644 BLOB $blob`tfile.txt" }
+            { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw '*only regular tracked files*'
+        }
+
+        It 'rejects a literal backslash in a Git tree path before resolving it on disk' {
+            Mock Invoke-DevelopmentGit -ModuleName DevelopmentCandidate -ParameterFilter {
+                $Arguments[0] -eq 'ls-tree'
+            } -MockWith { "100644 blob $('a' * 40)`tunsafe\file.txt" }
+            { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw '*unsafe path*'
+        }
+
+        It 'rejects a file that became a reparse point even if Git reports a regular entry' {
+            $file = Join-Path $repository 'file.txt'
+            Mock Get-Item -ModuleName DevelopmentCandidate -ParameterFilter { $LiteralPath -eq $file } -MockWith {
+                [pscustomobject]@{ Attributes = [IO.FileAttributes]::ReparsePoint }
+            }
+            { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw '*symbolic link*'
+        }
+
+        It 'rejects a tracked parent directory replaced by a junction' {
+            $directory = Join-Path $repository 'nested'
+            $null = New-Item -ItemType Directory -Path $directory
+            [IO.File]::WriteAllText((Join-Path $directory 'nested.txt'), 'abc')
+            & git -C $repository add --all
+            & git -C $repository -c user.name=Fixture -c user.email=fixture@example.test commit --quiet -m nested
+            $outside = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+            Move-Item -LiteralPath $directory -Destination $outside
+            $kind = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
+            $null = New-Item -ItemType $kind -Path $directory -Target $outside
+            { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw '*symbolic link*'
+        }
+
+        It 'rejects an uppercase claimed revision even if both caller values repeat it' {
+            { Assert-DevelopmentCandidateRevision -Path $repository -Revision ('A' * 40) `
+                -ExpectedRevision ('A' * 40) -BaseRevision ('a' * 40) } | Should -Throw '*authorized PR head*'
+        }
+
+        It 'rejects a noncanonical actual revision even when its letters otherwise match the approval' {
+            { Assert-DevelopmentCandidateRevision -Path $repository -Revision ('B' * 40) `
+                -ExpectedRevision ('b' * 40) -BaseRevision ('a' * 40) } | Should -Throw '*authorized PR head*'
+        }
+
         It 'rejects an unexpected head or a baseline outside its history: <Case>' -ForEach @(
             @{ Case = 'different head'; Expected = ('a' * 40); Baseline = $null; Error = '*authorized PR head*' }
             @{ Case = 'malformed head'; Expected = 'not-a-sha'; Baseline = $null; Error = '*authorized PR head*' }
@@ -137,13 +276,17 @@ Describe 'Development candidate trust boundary' {
             @{ Field = 'baseRevision'; Value = ('d' * 40) }
             @{ Field = 'digest'; Value = ('d' * 64) }
             @{ Field = 'pullRequest'; Value = '43' }
+            @{ Field = 'pullRequest'; Value = 42L }
+            @{ Field = 'revision'; Value = ('B' * 40) }
             @{ Field = 'operation'; Value = 'plan' }
             @{ Field = 'version'; Value = '1' }
             @{ Field = 'version'; Value = 2L }
             @{ Field = 'approvedBy'; Value = '' }
+            @{ Field = 'approvedBy'; Value = 42L }
             @{ Field = 'approvalUrl'; Value = '' }
             @{ Field = 'expiresAt'; Value = '2020-01-01T00:00:00.0000000+00:00' }
             @{ Field = 'expiresAt'; Value = 'invalid' }
+            @{ Field = 'expiresAt'; Value = @('2026-12-01T10:00:00.0000000+00:00') }
         ) {
             $approval[$Field] = $Value
             { Assert-DevelopmentCandidateApproval @approvalArguments } | Should -Throw "*$Field*"
@@ -166,8 +309,15 @@ Describe 'Development candidate trust boundary' {
         It 'rejects a different or unconfigured reference repository' -ForEach @(
             @{ Value = '' }
             @{ Value = 'https://example.ghe.com/customer/instance' }
+            @{ Value = 'https://EXAMPLE.ghe.com/platform/instance' }
         ) {
             $approvalArguments.ReferenceRepository = $Value
+            { Assert-DevelopmentCandidateApproval @approvalArguments } | Should -Throw '*restricted*reference repository*'
+        }
+
+        It 'rejects an empty reference even when both caller values are empty' {
+            $approvalArguments.ReferenceRepository = ''
+            $approvalArguments.RepositoryUrl = ''
             { Assert-DevelopmentCandidateApproval @approvalArguments } | Should -Throw '*restricted*reference repository*'
         }
 
@@ -197,6 +347,7 @@ Describe 'Development candidate trust boundary' {
             @{ Path = 'platform/tools/New-PlatformGitHubToken.ps1' }
             @{ Path = 'platform/tools/PlatformTools.psm1' }
             @{ Path = 'platform/tools/.dependencies/payload.ps1' }
+            @{ Path = 'Platform/modules/demo/main.tf' }
         ) {
             { Assert-DevelopmentCandidateBoundary -Baseline @{ $Path = 'old' } -Candidate @{ $Path = 'new' } } |
                 Should -Throw '*protected authorization or instance content*'
@@ -256,8 +407,11 @@ Describe 'Development candidate trust boundary' {
 
         It 'refuses a <Case> before authorizing a candidate' -ForEach @(
             @{ Case = 'changed head'; Change = { $pull.head.sha = 'c' * 40 }; Error = '*head or trusted base changed*' }
+            @{ Case = 'noncanonical head'; Change = { $pull.head.sha = 'B' * 40 }; Error = '*head or trusted base changed*' }
             @{ Case = 'changed base'; Change = { $pull.base.sha = 'c' * 40 }; Error = '*head or trusted base changed*' }
+            @{ Case = 'noncanonical base'; Change = { $pull.base.sha = 'A' * 40 }; Error = '*head or trusted base changed*' }
             @{ Case = 'closed PR'; Change = { $pull.state = 'closed' }; Error = '*open, unmerged, ready PR*' }
+            @{ Case = 'noncanonical PR state'; Change = { $pull.state = 'OPEN' }; Error = '*open, unmerged, ready PR*' }
             @{ Case = 'merged PR'; Change = { $pull.merged = $true }; Error = '*open, unmerged, ready PR*' }
             @{ Case = 'draft PR'; Change = { $pull.draft = $true }; Error = '*open, unmerged, ready PR*' }
             @{ Case = 'wrong PR'; Change = { $pull.number = 43 }; Error = '*specified open*' }
@@ -265,9 +419,13 @@ Describe 'Development candidate trust boundary' {
             @{ Case = 'App author'; Change = { $pull.user.type = 'Bot' }; Error = '*not authorized*App*' }
             @{ Case = 'vendoring branch'; Change = { $pull.head.ref = 'vendor/release/test' }; Error = '*not authorized*vendoring*' }
             @{ Case = 'non-main dispatch'; Change = { $arguments.Ref = 'refs/heads/feature' }; Error = '*protected main*' }
+            @{ Case = 'noncanonical main dispatch'; Change = { $arguments.Ref = 'refs/heads/MAIN' }; Error = '*protected main*' }
             @{ Case = 'automatic event'; Change = { $arguments.EventName = 'push' }; Error = '*manual dispatch*' }
+            @{ Case = 'noncanonical event'; Change = { $arguments.EventName = 'WORKFLOW_DISPATCH' }; Error = '*manual dispatch*' }
             @{ Case = 'malformed dispatch SHA'; Change = { $arguments.Sha = 'not-a-sha' }; Error = '*immutable protected main*' }
+            @{ Case = 'noncanonical dispatch SHA'; Change = { $arguments.Sha = 'A' * 40; $pull.base.sha = 'A' * 40 }; Error = '*immutable protected main*' }
             @{ Case = 'malformed revision'; Change = { $arguments.Revision = 'not-a-sha' }; Error = '*exact PR number and head SHA*' }
+            @{ Case = 'noncanonical revision'; Change = { $arguments.Revision = 'B' * 40; $pull.head.sha = 'B' * 40 }; Error = '*exact PR number and head SHA*' }
             @{ Case = 'malformed PR'; Change = { $arguments.PullRequest = '../42' }; Error = '*exact PR number and head SHA*' }
             @{ Case = 'malformed repository'; Change = { $arguments.Repository = '../platform/instance' }; Error = '*exact PR number and head SHA*' }
             @{ Case = 'missing workflow token'; Change = { $arguments.ReadToken = '' }; Error = '*read-only workflow token*' }

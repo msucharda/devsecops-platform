@@ -31,6 +31,7 @@ V chráněném environmentu `pr-authorization` spravuj mimo kandidáta:
 |---|---|
 | `PLATFORM_REFERENCE_REPOSITORY` | Přesná HTTPS identita povoleného repozitáře včetně hostu: `<server-url>/<owner>/<repo>`. |
 | `PLATFORM_DEVELOPMENT_APPROVAL` | Samostatně udělené schválení přesného obsahu a operace ve tvaru níže. Prázdná hodnota development nepovolí. |
+| `PLATFORM_DEVELOPMENT_DISPOSITION` | Výslovný přechod na přesný standardní main commit: `adopt` nebo `rollback`. Neprázdná hodnota další development zastaví. |
 
 Pouze správce této důvěryhodné konfigurace smí schválení zapsat. Kandidát,
 soubor v jeho PR ani jeho vlastní workflow nejsou zdrojem oprávnění.
@@ -98,6 +99,17 @@ ověří přesný kandidát, schválení, expiraci a standardní výchozí relea
 Nečitelný nebo neúplný stav běh zastaví. Kandidát nikdy nerozhoduje
 o vlastním povolení.
 
+Před každou credential skupinou samostatný trusted gate znovu načte aktuální
+schválení v `pr-authorization`; kopie z prvního jobu neprokazuje, že schválení
+nebylo odvolané. Nahrazení, odstranění nebo nastavená dispozice běh zastaví.
+Výsledek gate je vázaný na první `run_attempt`. „Re-run failed jobs“ ani
+opakování celého starého workflow nepovolí credentials; vytvoř nový dispatch.
+Zdrojový repozitář attestace se přebírá z téhož chráněného authorize jobu.
+
+Tato cesta není sandbox schváleného kódu. Review musí posoudit i zachování
+token lifecycle: schválený modul se stejnými oprávněními procesu může měnit
+prostředí jobu. Samotné ověření cest a hashe nedokazuje bezpečnost jeho chování.
+
 Původ PR se čte read-only workflow tokenem přes
 [`GET /repos/{owner}/{repo}/pulls/{pull_number}`](https://docs.github.com/en/enterprise-cloud@latest/rest/pulls/pulls#get-a-pull-request),
 REST API `2026-03-10`. Nullable nebo neúplné identity neautorizují běh.
@@ -106,8 +118,8 @@ Membership a vydání/revokace tokenů používají stávající trusted nástro
 ## Současné běhy a přerušení
 
 Development workflow sdílí concurrency `deploy-instance-main` se
-standardním main deploy. Dokud existuje externí development schválení,
-standardní deploy odmítne credentials. Expirace schválení neznamená
+standardním main deploy. Dokud existuje externí development schválení bez
+platné dispozice, standardní deploy odmítne credentials. Expirace schválení neznamená
 vrácení živého stavu a lock automaticky neuvolní. Plánovaný drift dál
 porovnává skutečnost se standardním release; jeho nález není úspěšné
 ověření development kandidáta.
@@ -146,10 +158,30 @@ bez dat instance, vydej konkrétně schválený standardní release
 a převezmi ho běžným importem. Použij dosavadní github.com cestu až
 do výslovně schváleného přepnutí; development nástroje hosty nepřepínají.
 Po review a přijetí přesného standardního importu obsahujícího zobecněnou
-změnu, nebo po doloženém návratu, správce výslovně odstraní externí
-schválení. Tím uvolní standardní plan/apply pro následné živé ověření
-release; samotné odstranění schválení cyklus nedokončuje. Standardní
-workflow nesmí běžet nad nerozhodnutým stavem.
+změnu, nebo po schválení návratu, správce nejdřív nastaví chráněnou dispozici.
+Ta zastaví další development a povolí standardní běh pouze z určeného main SHA:
+
+```json
+{
+  "version": 1,
+  "operation": "adopt",
+  "repository": "https://example.ghe.com/reference-platform/instance",
+  "mainRevision": "<full-standard-main-sha>",
+  "candidateRevision": "<full-approved-candidate-sha>",
+  "candidateDigest": "<approved-candidate-sha256>",
+  "approvedBy": "reviewer",
+  "approvalUrl": "https://example.ghe.com/reference-platform/instance/pull/43#approval",
+  "expiresAt": "2026-12-01T12:00:00.0000000+00:00"
+}
+```
+
+`rollback` má stejný kontrakt a určuje přesný známý standardní main commit.
+Dispozice nezruší review, attestaci, standardní main-only apply ani schvalovací
+environmenty. Nejprve dokonči tento standardní běh a zapiš soukromé důkazy.
+Teprve potom správce odstraní approval i disposition. Při chybě nebo přerušení
+je ponechá; standardní re-run credentials neobnoví, nový dispatch znovu ověří
+dispozici. Nevzniká tak kruh mezi lockem a potřebným standardním deploy.
+Samotné odstranění obou hodnot cyklus nedokončuje a nesmí zakrýt chybějící důkaz.
 
 `standardRelease` uvádí `verifiedAt`, `tag`, `platformRevision`,
 `instanceRevision`, source/import PR a `evidenceUrl`. Jeho `scenarios`
@@ -158,6 +190,10 @@ scénář uvádí `result: passed`, `scenario`, `expected`, `actual`
 a `evidenceUrl`; revize přebírá z tohoto release záznamu. Opakovaný apply
 musí mít `changes: 0`, drift `unexpectedDrift: false`. Nepoužitelný
 scénář kromě funkčního má `result: notApplicable` s konkrétním `reason`.
+Dokončený záznam dále vyžaduje `dispositionEvidenceUrl` a `approvalRemovedAt`
+nejdřív po `standardRelease.verifiedAt`. Tag musí být jiný než výchozí release
+a instance SHA se nesmí rovnat výchozímu main ani development headu. Návrat
+na původní baseline není standardní dokončení změny.
 Chybějící důkaz ani neočekávaný drift nejsou úspěch.
 
 Měř oba úseky pomocí `readyAt`, `firstLive.at` a
