@@ -10,6 +10,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
+Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $phaseGraph = Get-PlatformModulePhaseGraph -Modules $modules
@@ -458,6 +460,28 @@ Add-WorkflowBlock @'
         run: '"Platform-team approval granted for this immutable main deployment." >> $env:GITHUB_STEP_SUMMARY'
 '@
 foreach ($node in $phaseGraph.PSBase.Values) { Add-DeploymentJob -Node $node -Phase apply }
+$applyNeeds = @('authorize', 'select', 'plan_complete', 'approve_apply') +
+    @($phaseGraph.PSBase.Values | ForEach-Object { 'apply_' + $_.Name.Replace('-', '_').Replace(':', '_') })
+Add-WorkflowBlock @"
+  deployment_complete:
+    name: Report complete or explicitly unperformed apply
+    needs: [$($applyNeeds -join ', ')]
+"@
+Add-WorkflowBlock @'
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+'@
+Add-WorkflowCheckout
+Add-WorkflowBlock @'
+      - name: Report apply status without deployment credentials
+        shell: pwsh
+        env:
+          DEPLOYMENT_NEEDS: ${{ toJSON(needs) }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          APPLY_REQUESTED: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.operation != 'plan' }}
+        run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS -Apply -ApplyRequested $env:APPLY_REQUESTED -RunAttempt $env:RUN_ATTEMPT
+'@
 $deployContent = ($lines -join "`n") + "`n"
 
 # The separate manual workflow reuses the same graph, scopes, environment approvals and token lifecycle.

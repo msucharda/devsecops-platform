@@ -207,6 +207,17 @@ Describe 'Protected state credential boundary' {
         $cloud.Revoked | Should -Be 1
         Test-Path $arguments.IssuanceStatePath | Should -BeFalse
     }
+    It 'applies the development checks for every accepted Mode spelling: <Spelling>' -ForEach @(
+        @{ Spelling = 'development' }
+        @{ Spelling = 'Development' }
+        @{ Spelling = 'DEVELOPMENT' }
+    ) {
+        $arguments.Mode = $Spelling
+        $variables.PLATFORM_DEVELOPMENT_APPROVAL = ''
+        $variables.PLATFORM_SOURCE_REPOSITORY = ''
+        { & $guard @arguments 6>$null } | Should -Throw '*source changed*'
+        $cloud.Revoked | Should -Be 1
+    }
     It 'rejects <Case> after a phase environment wait' -ForEach @(
         @{ Case = 'revoked approval'; Name = 'PLATFORM_DEVELOPMENT_APPROVAL'; Value = '' }
         @{ Case = 'replaced approval'; Name = 'PLATFORM_DEVELOPMENT_APPROVAL'; Value = '{"revision":"changed"}' }

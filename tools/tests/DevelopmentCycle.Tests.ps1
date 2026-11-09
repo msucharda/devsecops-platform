@@ -140,6 +140,16 @@ Describe 'Private development cycle evidence' {
         { & $validate -RecordPath $path -RequireComplete } | Should -Throw $Error
     }
 
+    It 'requires a scalar JSON integer for the zero-change result: <Case>' -ForEach @(
+        foreach ($value in @($null, @(), @(0), $false, $true, '0', 0.0, @{ value = 0 })) {
+            @{ Case = (ConvertTo-Json -InputObject $value -Compress); InvalidChanges = $value }
+        }
+    ) {
+        $record.standardRelease.scenarios.idempotence.changes = $InvalidChanges
+        $record | ConvertTo-Json -Depth 20 | Set-Content $path
+        { & $validate -RecordPath $path -RequireComplete } | Should -Throw '*zero changes*'
+    }
+
     It 'requires a reason for a not-applicable scenario and preserves deferred destructive verification' {
         $record.standardRelease.scenarios.forbidden = @{ result = 'notApplicable'; reason = 'No authorization control changed.' }
         $record.verificationPlan.recovery = $true

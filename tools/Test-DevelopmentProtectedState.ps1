@@ -113,7 +113,7 @@ Assert-DevelopmentProtectedReaderResult -Result $result -Reads $state.Reads
 $state = $state.Value
 Assert-DevelopmentProtectedContext -Reference $state.Reference -Server $ServerUrl -Api $ApiUrl `
     -Name $Repository -Attempt $RunAttempt
-if ($Mode -ceq 'development') {
+if ($Mode -eq 'development') {
     if ($state.Source -cne $ExpectedSourceRepository) { throw 'Protected release source changed after authorization.' }
     & (Join-Path $PSScriptRoot 'Test-DevelopmentApprovalContinuity.ps1') -CurrentApproval $state.Approval `
         -ExpectedApproval $ExpectedApproval -ExpectedAttempt $ExpectedAttempt -RunAttempt $RunAttempt -Disposition $state.Disposition

@@ -534,6 +534,8 @@ function Invoke-StepAcceptanceRelease {
         $expectedFiles[$deploymentPath] = $files[$deploymentPath]
         $driftPath = Join-Path 'templates' 'instance/.github/workflows/drift.yml'
         $expectedFiles[$driftPath] = $files[$driftPath]
+        $developmentPath = Join-Path 'templates' 'instance/.github/workflows/development.yml'
+        $expectedFiles[$developmentPath] = $files[$developmentPath]
         if ((ConvertTo-PlatformCanonicalJson $files) -cne (ConvertTo-PlatformCanonicalJson $expectedFiles)) {
             throw 'Preparation contains files outside the approved source and probe contracts. Inspect release-preparing before retrying.'
         }

@@ -124,6 +124,23 @@ BeforeAll {
 }
 
 Describe 'Deployment workflow generation' {
+    It 'generates and checks every workflow without ambient user modules in a fresh process' {
+        $output = Join-Path $TestDrive 'isolated-modules/deploy.yml'
+        $command = @"
+`$ErrorActionPreference = 'Stop'
+`$env:PSModulePath = Join-Path `$PSHOME 'Modules'
+& '$($generator.Replace("'", "''"))' -ModulesPath '$($fixtures.Replace("'", "''"))' -OutputPath '$($output.Replace("'", "''"))'
+& '$($generator.Replace("'", "''"))' -ModulesPath '$($fixtures.Replace("'", "''"))' -OutputPath '$($output.Replace("'", "''"))' -Check
+"@
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $processPath = (Get-Process -Id $PID).Path
+        $result = & $processPath -NoProfile -EncodedCommand $encoded 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because ($result | Out-String)
+        foreach ($name in @('deploy.yml', 'development.yml', 'drift.yml')) {
+            Test-Path (Join-Path (Split-Path $output) $name) | Should -BeTrue
+        }
+    }
+
     It 'keeps development manual and reference-only and rechecks every credential boundary without weakening standard deploy' {
         $output = Join-Path $TestDrive 'development-contract/deploy.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output
@@ -194,6 +211,24 @@ Describe 'Deployment workflow generation' {
         $context.needs.authorize.outputs.reference = 'https://example.test/platform/instance'
         (Get-WorkflowConditionResult $standard module_foundation $context).Allowed | Should -BeFalse
         (Get-WorkflowConditionResult $development module_foundation $context).Allowed | Should -BeFalse
+    }
+
+    It 'reports every apply outcome on both paths without loading deployment credentials' {
+        $output = Join-Path $TestDrive 'apply-summary/deploy.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        foreach ($name in @('deploy.yml', 'development.yml')) {
+            $workflow = ConvertFrom-Yaml (Get-Content (Join-Path (Split-Path $output) $name) -Raw)
+            $workflow.jobs.Contains('deployment_complete') | Should -BeTrue
+            $job = $workflow.jobs.deployment_complete
+            $job.if | Should -Be '${{ !cancelled() }}'
+            foreach ($id in @($workflow.jobs.Keys | Where-Object { $_ -clike 'apply_*' })) {
+                $job.needs | Should -Contain $id
+            }
+            $step = $job.steps | Where-Object { $_['name'] -eq 'Report apply status without deployment credentials' }
+            $step.run | Should -Match '^\./trusted/platform/tools/Write-DeploymentSummary.ps1.*-Apply.*-RunAttempt'
+            $step.env.RUN_ATTEMPT | Should -Be '${{ github.run_attempt }}'
+            @($job.steps | Where-Object { $_['env'] -and $_.env.Contains('PLATFORM_APP_PRIVATE_KEY') }).Count | Should -Be 0
+        }
     }
 
     It 'rejects invalid dispatch scope in the first credential-free job without shell interpolation' -Tag 'CodeSecurityDispatch' {
@@ -770,7 +805,7 @@ Describe 'Deployment workflow generation' {
         & $generator -ModulesPath $modules -OutputPath $output
 
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
-        @($workflow.jobs.Keys | Sort-Object) | Should -Be @('approve_apply', 'authorize', 'plan_complete', 'select', 'validate', 'validate_scope')
+        @($workflow.jobs.Keys | Sort-Object) | Should -Be @('approve_apply', 'authorize', 'deployment_complete', 'plan_complete', 'select', 'validate', 'validate_scope')
     }
 
     It 'supports module names matching dictionary members or the selection job: <Name>' -ForEach @(

@@ -49,6 +49,10 @@ function Assert-DevelopmentDispatchContext {
     if ($Pull['head']['sha'] -cne $Revision -or $Pull['base']['sha'] -cne $Sha) {
         throw 'Development PR head or trusted base changed; obtain a new exact-content approval.'
     }
+    if ($Pull['user'] -isnot [Collections.IDictionary] -or $Pull['user']['login'] -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($Pull['user']['login'])) {
+        throw 'Development deployment requires a readable human PR author.'
+    }
 }
 
 Assert-DevelopmentDispatchRequest -DispatchEvent $EventName -Server $ServerUrl

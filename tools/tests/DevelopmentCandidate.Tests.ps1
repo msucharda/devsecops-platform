@@ -234,7 +234,10 @@ Describe 'Development candidate trust boundary' {
             { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw '*symbolic link*'
         }
 
-        It 'rejects a tracked parent directory replaced by a junction' {
+        It 'rejects a tracked parent directory link with <GitState>' -ForEach @(
+            @{ GitState = 'actual Git status'; GitReportsClean = $false }
+            @{ GitState = 'a clean Git report'; GitReportsClean = $true }
+        ) {
             $directory = Join-Path $repository 'nested'
             $null = New-Item -ItemType Directory -Path $directory
             [IO.File]::WriteAllText((Join-Path $directory 'nested.txt'), 'abc')
@@ -244,7 +247,13 @@ Describe 'Development candidate trust boundary' {
             Move-Item -LiteralPath $directory -Destination $outside
             $kind = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
             $null = New-Item -ItemType $kind -Path $directory -Target $outside
-            { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw '*symbolic link*'
+            if ($GitReportsClean) {
+                Mock Invoke-DevelopmentGit -ModuleName DevelopmentCandidate -ParameterFilter {
+                    $Arguments[0] -eq 'status'
+                } -MockWith { '' }
+            }
+            $errorPattern = if ($IsWindows -or $GitReportsClean) { '*symbolic link*' } else { '*clean checkout*' }
+            { Get-DevelopmentCandidateSnapshot -Path $repository } | Should -Throw $errorPattern
         }
 
         It 'rejects an uppercase claimed revision even if both caller values repeat it' {
@@ -449,7 +458,11 @@ Describe 'Development candidate trust boundary' {
             @{ Case = 'malformed PR'; Change = { $arguments.PullRequest = '../42' }; Error = '*exact PR number and head SHA*' }
             @{ Case = 'malformed repository'; Change = { $arguments.Repository = '../platform/instance' }; Error = '*exact PR number and head SHA*' }
             @{ Case = 'missing workflow token'; Change = { $arguments.ReadToken = '' }; Error = '*read-only workflow token*' }
-            @{ Case = 'nullable PR author'; Change = { $pull.user = $null }; Error = '*' }
+            @{ Case = 'nullable PR author'; Change = { $pull.user = $null }; Error = '*readable human PR author*' }
+            @{ Case = 'missing PR author'; Change = { $pull.Remove('user') }; Error = '*readable human PR author*' }
+            @{ Case = 'missing PR author login'; Change = { $pull.user.Remove('login') }; Error = '*readable human PR author*' }
+            @{ Case = 'empty PR author login'; Change = { $pull.user.login = '' }; Error = '*readable human PR author*' }
+            @{ Case = 'non-string PR author login'; Change = { $pull.user.login = @('contributor') }; Error = '*readable human PR author*' }
             @{ Case = 'nullable head repository'; Change = { $pull.head.repo = $null }; Error = '*not authorized*fork*' }
             # Intentionally invalid API response: the single PR operation must return an object, not an array.
             @{ Case = 'non-object PR'; Change = { $pull = @($pull) }; Error = '*specified open*' }

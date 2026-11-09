@@ -124,6 +124,10 @@
             })
         }
         @{
+            Name = 'deployment-apply-completion'
+            Tests = @(@{ Path = 'tools/tests/DeploymentSummary.Tests.ps1'; FullName = 'Deployment apply status*' })
+        }
+        @{
             Name = 'deployment-plan-change-output'
             Tests = @(@{ Path = 'tools/tests/DeploymentSummary.Tests.ps1'; FullName = @('*publishes a complete plan decision*', '*rejects plan change output*') })
         }

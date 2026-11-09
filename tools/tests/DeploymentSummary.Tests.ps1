@@ -19,6 +19,100 @@ BeforeAll {
     }
 }
 
+Describe 'Deployment apply status' {
+    BeforeEach {
+        $needs = Get-PlanContext
+        $needs.authorize.outputs.attempt = '1'
+        $needs.plan_complete = @{ result = 'success'; outputs = @{ changes = 'true' } }
+        $needs.approve_apply = @{ result = 'success' }
+        foreach ($node in @('enterprise-baseline:code-security', 'enterprise-baseline', 'observer')) {
+            $needs['apply_' + $node.Replace('-', '_').Replace(':', '_')] = @{ result = 'success' }
+        }
+    }
+
+    It 'reports successful completion only for the selected apply phases' {
+        $needs.apply_unselected = @{ result = 'skipped' }
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 1 -JobSummaryPath '' 6>$null } |
+            Should -Not -Throw
+    }
+
+    It 'rejects a failed-only rerun even when every formerly failed apply was skipped' {
+        $needs.apply_observer.result = 'skipped'
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 2 -JobSummaryPath '' 6>$null } |
+            Should -Throw '*Re-run all jobs*'
+    }
+
+    It 'rejects a selected apply with result <Result>' -ForEach @(
+        @{ Result = 'failure' }
+        @{ Result = 'skipped' }
+        @{ Result = 'cancelled' }
+        @{ Result = '' }
+        @{ Result = 'unknown' }
+        @{ Result = $null }
+    ) {
+        $needs.apply_observer.result = $Result
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 1 -JobSummaryPath '' 6>$null } |
+            Should -Throw '*Apply INCOMPLETE*apply_observer*'
+    }
+
+    It 'keeps no-change and explicitly plan-only execution distinct from a performed apply: <Case>' -ForEach @(
+        @{ Case = 'no change'; Requested = 'true'; Changes = 'false' }
+        @{ Case = 'plan-only'; Requested = 'false'; Changes = 'true' }
+    ) {
+        $needs.plan_complete.outputs.changes = $Changes
+        $needs.approve_apply.result = 'skipped'
+        $needs.apply_observer.result = 'skipped'
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested $Requested -RunAttempt 1 -JobSummaryPath '' 6>$null } |
+            Should -Not -Throw
+    }
+
+    It 'reports denied authorization without implying an apply' {
+        $needs.authorize.outputs.allowed = 'false'
+        $needs.select.result = 'skipped'
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 1 -JobSummaryPath '' 6>$null } |
+            Should -Not -Throw
+    }
+
+    It 'rejects incomplete apply context: <Case>' -ForEach @(
+        @{ Case = 'missing attempt'; Change = { $needs.authorize.outputs.Remove('attempt') }; Error = '*stale authorization*' }
+        @{ Case = 'non-string attempt'; Change = { $needs.authorize.outputs.attempt = @(1) }; Error = '*stale authorization*' }
+        @{ Case = 'failed authorization'; Change = { $needs.authorize.result = 'failure' }; Error = '*authorization failed*' }
+        @{ Case = 'uppercase authorization status'; Change = { $needs.authorize.result = 'SUCCESS' }; Error = '*authorization failed*' }
+        @{ Case = 'unknown authorization'; Change = { $needs.authorize.outputs.allowed = '' }; Error = '*unreadable authorization*' }
+        @{ Case = 'uppercase allowed decision'; Change = { $needs.authorize.outputs.allowed = 'TRUE' }; Error = '*unreadable authorization*' }
+        @{ Case = 'uppercase denied decision'; Change = { $needs.authorize.outputs.allowed = 'FALSE' }; Error = '*unreadable authorization*' }
+        @{ Case = 'failed selection'; Change = { $needs.select.result = 'failure' }; Error = '*selection or cloud plan*' }
+        @{ Case = 'uppercase selection status'; Change = { $needs.select.result = 'SUCCESS' }; Error = '*selection or cloud plan*' }
+        @{ Case = 'failed plan'; Change = { $needs.plan_complete.result = 'failure' }; Error = '*selection or cloud plan*' }
+        @{ Case = 'uppercase plan status'; Change = { $needs.plan_complete.result = 'SUCCESS' }; Error = '*selection or cloud plan*' }
+        @{ Case = 'scalar selection'; Change = { $needs.select.outputs.phaseNodes = '"observer"' }; Error = '*unreadable selected phases*' }
+        @{ Case = 'non-string phase'; Change = { $needs.select.outputs.phaseNodes = '[1]' }; Error = '*unreadable selected phases*' }
+        @{ Case = 'invalid phase'; Change = { $needs.select.outputs.phaseNodes = '["../observer"]' }; Error = '*unreadable selected phases*' }
+        @{ Case = 'unknown plan decision'; Change = { $needs.plan_complete.outputs.changes = 'unknown' }; Error = '*unreadable plan change*' }
+        @{ Case = 'uppercase plan decision'; Change = { $needs.plan_complete.outputs.changes = 'TRUE' }; Error = '*unreadable plan change*' }
+        @{ Case = 'empty changed selection'; Change = { $needs.select.outputs.phaseNodes = '[]' }; Error = '*empty phase selection*' }
+        @{ Case = 'missing shared approval'; Change = { $needs.approve_apply.result = 'skipped' }; Error = '*shared apply approval*' }
+        @{ Case = 'uppercase shared approval'; Change = { $needs.approve_apply.result = 'SUCCESS' }; Error = '*shared apply approval*' }
+        @{ Case = 'missing selected apply'; Change = { $needs.Remove('apply_observer') }; Error = '*apply_observer*' }
+        @{ Case = 'uppercase selected apply status'; Change = { $needs.apply_observer.result = 'SUCCESS' }; Error = '*apply_observer*' }
+    ) {
+        . $Change
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 1 -JobSummaryPath '' 6>$null } |
+            Should -Throw $Error
+    }
+
+    It 'rejects an unreadable current workflow attempt: <Attempt>' -ForEach @(
+        @{ Attempt = '' }
+        @{ Attempt = '0' }
+        @{ Attempt = '01' }
+        @{ Attempt = 'unknown' }
+    ) {
+        $needs.authorize.outputs.attempt = $Attempt
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt $Attempt -JobSummaryPath '' 6>$null } |
+            Should -Throw '*stale authorization*'
+    }
+}
+
 Describe 'Deployment plan status' {
     BeforeEach {
         $caseDirectory = Join-Path $TestDrive ([guid]::NewGuid().ToString())

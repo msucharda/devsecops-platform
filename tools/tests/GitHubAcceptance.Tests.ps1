@@ -109,6 +109,14 @@ Describe 'GitHub acceptance through the public setup wizard' {
         (Get-FileHash -LiteralPath $helper).Hash |
             Should -Be (Get-FileHash -LiteralPath (Join-Path $root $helperRelative)).Hash
         $marker = Get-Content (Join-Path $release 'bootstrap-acceptance.json') -Raw | ConvertFrom-Json -AsHashtable
+        $developmentRelative = Join-Path 'templates' 'instance/.github/workflows/development.yml'
+        $developmentPath = Join-Path $release $developmentRelative
+        Test-Path -LiteralPath $developmentPath | Should -BeTrue
+        $development = ConvertFrom-Yaml (Get-Content -LiteralPath $developmentPath -Raw)
+        $development.jobs.Contains('module_enterprise_baseline') | Should -BeTrue
+        $development.jobs.Contains('module_organization_rulesets') | Should -BeTrue
+        $development.jobs.Contains('module_actions_catalog') | Should -BeFalse
+        $marker.files[$developmentRelative] | Should -Be (Get-FileHash -LiteralPath $developmentPath).Hash
         $marker.files[$helperRelative] | Should -Be (Get-FileHash -LiteralPath $helper).Hash
         Test-Path (Join-Path $release 'modules/production-only.txt') | Should -BeFalse
         Mock Invoke-WebRequest { throw 'No cloud request is authorized.' }

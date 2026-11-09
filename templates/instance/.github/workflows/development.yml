@@ -943,6 +943,36 @@ jobs:
       name: Revoke the membership-reader token
       run: ./trusted/platform/tools/Remove-PlatformGitHubToken.ps1
       shell: pwsh
+  deployment_complete:
+    if: ${{ !cancelled() }}
+    name: Report complete or explicitly unperformed apply
+    needs:
+    - authorize
+    - select
+    - plan_complete
+    - approve_apply
+    - apply_actions_catalog
+    - apply_emu_identity
+    - apply_enterprise_baseline_code_security
+    - apply_enterprise_baseline
+    - apply_organization_roles
+    - apply_organization_rulesets
+    - apply_organizations
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out trusted authorization tools
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        path: trusted
+        persist-credentials: false
+        ref: ${{ github.event.pull_request.base.sha || github.sha }}
+    - env:
+        APPLY_REQUESTED: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.operation != 'plan' }}
+        DEPLOYMENT_NEEDS: ${{ toJSON(needs) }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+      name: Report apply status without deployment credentials
+      run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS -Apply -ApplyRequested $env:APPLY_REQUESTED -RunAttempt $env:RUN_ATTEMPT
+      shell: pwsh
   module_actions_catalog:
     env:
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}

@@ -1261,3 +1261,22 @@ jobs:
         if: ${{ always() && env.PLATFORM_GITHUB_TOKENS != '' }}
         shell: pwsh
         run: ./trusted/platform/tools/Remove-PlatformGitHubToken.ps1
+  deployment_complete:
+    name: Report complete or explicitly unperformed apply
+    needs: [authorize, select, plan_complete, approve_apply, apply_application, apply_enterprise_baseline, apply_foundation, apply_observer, apply_service]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted authorization tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Report apply status without deployment credentials
+        shell: pwsh
+        env:
+          DEPLOYMENT_NEEDS: ${{ toJSON(needs) }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          APPLY_REQUESTED: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.operation != 'plan' }}
+        run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS -Apply -ApplyRequested $env:APPLY_REQUESTED -RunAttempt $env:RUN_ATTEMPT

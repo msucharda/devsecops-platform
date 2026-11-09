@@ -135,7 +135,9 @@ if ($null -ne $record['standardRelease']) {
         foreach ($key in @('scenario', 'expected', 'actual', 'evidenceUrl')) {
             Assert-CycleText $scenario[$key] "standardRelease.scenarios.$name.$key"
         }
-        if ($name -ceq 'idempotence' -and $scenario['changes'] -ne 0) { throw 'Repeated apply must report zero changes.' }
+        if ($name -ceq 'idempotence' -and ($scenario['changes'] -isnot [long] -or $scenario['changes'] -ne 0)) {
+            throw 'Repeated apply must report a scalar JSON integer with zero changes.'
+        }
         if ($name -ceq 'drift' -and $scenario['unexpectedDrift'] -isnot [bool]) { throw 'Drift result must explicitly report unexpectedDrift.' }
         if ($name -ceq 'drift' -and $scenario['unexpectedDrift']) { throw 'Unexpected drift cannot complete a cycle.' }
     }

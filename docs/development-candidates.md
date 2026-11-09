@@ -155,6 +155,9 @@ Každá standardní fáze navíc vyžaduje `authorize` ze stejného run attempt.
 Starý běh s původně prázdnou referencí tak nesmí přeskočit nově nastavenou
 ochranu. Mimo referenci lze zopakovat všechny joby včetně nové autorizace;
 samotné opakování neúspěšných jobů nestačí ani tam.
+Závěrečný job `deployment_complete` odmítne starý authorize attempt i přeskočenou
+vybranou apply fázi. Přeskočení deploy jobů proto nesmí změnit neprovedený apply
+na úspěšný výsledek workflow.
 
 Tato cesta není sandbox schváleného kódu. Review musí posoudit i zachování
 token lifecycle: schválený modul se stejnými oprávněními procesu může měnit
