@@ -18,6 +18,8 @@ BeforeAll {
 
 Describe 'Wait-PullRequestChecks' {
     BeforeEach {
+        $originalApiUrl = $env:GITHUB_API_URL
+        $env:GITHUB_API_URL = $null
         $env:GH_TOKEN = 'ghs_pollingtoken'
         Mock gh {
             $args | Should -Be @('auth', 'token', '--hostname', 'contoso.ghe.com')
@@ -88,6 +90,7 @@ Describe 'Wait-PullRequestChecks' {
     }
 
     AfterEach {
+        $env:GITHUB_API_URL = $originalApiUrl
         Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
     }
 
@@ -122,6 +125,30 @@ Describe 'Wait-PullRequestChecks' {
 
         $LASTEXITCODE | Should -Be 0
         $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'uses the environment API origin when no explicit override is supplied' {
+        $env:GITHUB_API_URL = 'https://api.contoso.ghe.com'
+        $options = $arguments.Clone()
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'passed;*'
+
+        $LASTEXITCODE | Should -Be 0
+        $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'rejects a conflicting environment API origin before any credential or HTTP request' {
+        $env:GITHUB_API_URL = 'https://api.github.com'
+        $options = $arguments.Clone()
+        $options.Repository = 'contoso.ghe.com/demo-platform/devsecops'
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'error: *different GitHub hosts*'
+
+        $LASTEXITCODE | Should -Be 3
+        $api.Requests.Count | Should -Be 0
+        Should -Invoke -ModuleName GitHubHost gh -Times 0
     }
 
     It 'infers the GHE host from the origin remote: <Remote>' -ForEach @(
