@@ -53,6 +53,11 @@ if (Test-Path -LiteralPath $baselinePath) { throw 'Development preflight work pa
 [IO.Compression.ZipFile]::ExtractToDirectory($archive, $baselinePath)
 & (Join-Path $PSScriptRoot 'Test-DeploymentRelease.ps1') -CandidatePath $baselinePath `
     -WorkPath (Join-Path $WorkPath 'release') -PlatformOrganization $PlatformOrganization -SourceRepository $SourceRepository
+Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
+$modules = Get-PlatformModuleGraph -ModulesPath (Join-Path $baselinePath 'platform/modules')
+Assert-DevelopmentProtectedExecution -Baseline $baseline.Files -Candidate $candidate.Files -Modules $modules
+$instance = Get-PlatformInstance -Path (Join-Path $baselinePath 'instance.yaml') -Modules $modules
+Assert-DevelopmentPhaseAuthority -Instance $instance -Modules $modules -Repository ([uri] $RepositoryUrl).AbsolutePath.Trim('/')
 $candidate = Get-DevelopmentCandidateSnapshot -Path $CandidatePath
 Assert-DevelopmentCandidateApproval -Approval $approval -ReferenceRepository $ReferenceRepository `
     -RepositoryUrl $RepositoryUrl -Revision $candidate.Revision -BaseRevision $baseline.Revision `

@@ -223,6 +223,15 @@ Při prvním běhu vyber `deployment: code-security`. Běh vybere pouze `enterpr
 
 Job `deployment_complete` kontroluje aktuální authorize attempt a výsledek každé vybrané apply fáze. Samotné přeskočení apply jobů při nepodporovaném failed-only rerun proto nesmí vytvořit úspěšný výsledek workflow.
 
+Reference-only development navíc vyžaduje samostatný enterprise-protected
+control ref, audit izolace skutečných identit a povýšení nových workflow podle
+[development kontraktu](development-candidates.md#zavedení-důvěryhodné-cesty).
+Bootstrap tyto dodatečné podmínky sám nevytvoří ani neoznačí za ověřené.
+Verifier čte control ref stávajícím job tokenem; další reader App,
+installation, klíč ani Azure journal nejsou součástí tohoto kontraktu.
+Změny implementace ovládající vlastní autorizaci kandidát odmítne;
+musí projít standardním release.
+
 Po úspěšném apply musí být `platform-baseline` výchozí pro nové repozitáře ve všech organizacích a připojená ke všem existujícím repozitářům včetně `instance`. Pak na `main` vyber `deployment: catalog`. Tento běh vybere časnou fázi, její předpoklady, `organization-rulesets` včetně odděleného ruleset planu a `actions-catalog`. Nevybere pozdní root `enterprise-baseline`, takže před importem a povýšením workflow nevyžaduje `liveWorkflowsPromoted` ani katalogový workflow preflight. Ruleset plan bez existující vzdálené konfigurace musí selhat, i když existuje plan časné fáze; nejdřív musí projít `code-security` apply. Oba staged běhy zachovávají autorizaci, společnou validaci konfigurace, úplný plan vybraných rootů, společnou bránu schválení a stávající environmenty. Po úspěšném `catalog` apply proveď schválený import a povýšení živých workflow. Teprve potom na `main` spusť `deployment: full` a potvrď `liveWorkflowsPromoted`. Pozdní root dál vyžaduje tento marker i katalogový workflow preflight; `full` je nesmí obejít.
 
 Všechny tři volby mají stejnou autorizační a validační cestu; omezený výběr ji nesmí obejít. Před načtením klíče autorizační App deploy spustí `tools/Test-DeploymentRelease.ps1` z důvěryhodné revize: pro PR z base commitu, jinak z aktuálního commitu. Nástroj stáhne release podle `.platform-bootstrap.json` ze zdroje `vars.PLATFORM_SOURCE_REPOSITORY` (výchozí `msucharda/devsecops-platform`), ověří attestaci release workflow a vazbu tagu na commit na `main`. Potom porovná marker s původními soubory release a `platform/` s původní nebo reprodukovaně vendorovanou kopií. Chybějící marker, neověřený původ nebo nesoulad obsahu zastaví všechny volby před App credentials.

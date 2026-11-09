@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ToolDependencies.psm1')
 Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
+Import-Module (Join-Path $PSScriptRoot 'DevelopmentCandidate.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $phaseGraph = Get-PlatformModulePhaseGraph -Modules $modules
 $lines = [System.Collections.Generic.List[string]]::new()
@@ -57,15 +58,12 @@ function Add-WorkflowProtectedStateGuard {
     param([ValidateSet('Azure', 'App')][string] $Boundary)
     $lines.Add("      - name: Recheck protected development state before $Boundary credentials")
     Add-WorkflowBlock @'
-        if: ${{ needs.authorize.outputs.reference != '' }}
         shell: pwsh
         env:
           EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
-          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
-          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
-          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
-          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
-        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
+          EXPECTED_CONTROL_REVISION: ${{ needs.authorize.outputs.controlRevision }}
+          DEVELOPMENT_READ_TOKEN: ${{ github.token }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION
 '@
 }
 
@@ -311,7 +309,8 @@ jobs:
       allowed: ${{ steps.authorize.outputs.allowed }}
       revision: ${{ steps.preflight.outputs.revision }}
       attempt: ${{ github.run_attempt }}
-      reference: ${{ vars.PLATFORM_REFERENCE_REPOSITORY || ((vars.PLATFORM_DEVELOPMENT_APPROVAL != '' || vars.PLATFORM_DEVELOPMENT_DISPOSITION != '') && format('{0}/{1}', github.server_url, github.repository)) || '' }}
+      reference: ${{ steps.control.outputs.reference }}
+      controlRevision: ${{ steps.control.outputs.controlRevision }}
     steps:
 '@
 Add-WorkflowCheckout
@@ -331,18 +330,29 @@ Add-WorkflowBlock @'
           ref: ${{ steps.preflight.outputs.revision }}
           path: candidate
           persist-credentials: false
+      - name: Read current authorization from the protected control ref
+        id: control
+        if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
+        shell: pwsh
+        env:
+          DEVELOPMENT_READ_TOKEN: ${{ github.token }}
+          PLATFORM_REFERENCE_REPOSITORY: ${{ vars.PLATFORM_REFERENCE_REPOSITORY }}
+          PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
+          PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
+          PLATFORM_SOURCE_REPOSITORY: ${{ vars.PLATFORM_SOURCE_REPOSITORY }}
+        run: ./trusted/platform/tools/Read-DevelopmentControl.ps1 -Mode standard -AllowNonReference -GitHubOutputPath $env:GITHUB_OUTPUT
       - name: Refuse standard deployment while development disposition is outstanding
         if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
         shell: pwsh
         env:
-          PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-          PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
+          PLATFORM_DEVELOPMENT_APPROVAL: ${{ steps.control.outputs.approval }}
+          PLATFORM_DEVELOPMENT_DISPOSITION: ${{ steps.control.outputs.disposition }}
         run: ./trusted/platform/tools/Test-StandardDeploymentAvailability.ps1
       - name: Verify release marker and provenance before credentials for every deployment scope
         if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
         shell: pwsh
         env:
-          PLATFORM_SOURCE_REPOSITORY: ${{ vars.PLATFORM_SOURCE_REPOSITORY }}
+          PLATFORM_SOURCE_REPOSITORY: ${{ steps.control.outputs.source }}
         run: ./trusted/platform/tools/Test-DeploymentRelease.ps1 -CandidatePath ./candidate -WorkPath ./release-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY
       - name: Issue the isolated membership-reader token
         if: ${{ steps.preflight.outputs.eligible == 'true' }}
@@ -505,11 +515,14 @@ $authorization['outputs']['approval'] = '${{ steps.candidate.outputs.approval }}
 $authorization['outputs']['reference'] = '${{ steps.candidate.outputs.reference }}'
 $authorization['outputs']['operation'] = '${{ steps.candidate.outputs.operation }}'
 $authorization['outputs']['attempt'] = '${{ github.run_attempt }}'
-$authorization['outputs']['source'] = '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+$authorization['outputs']['source'] = '${{ steps.control.outputs.source }}'
 $authorization['steps'] = @($authorization['steps'] | Where-Object {
     $_['name'] -cne 'Refuse standard deployment while development disposition is outstanding'
 })
 foreach ($step in $authorization['steps']) {
+    if ($step['name'] -ceq 'Read current authorization from the protected control ref') {
+        $step['run'] = './trusted/platform/tools/Read-DevelopmentControl.ps1 -Mode development -GitHubOutputPath $env:GITHUB_OUTPUT'
+    }
     if ($step['name'] -cin @('Check PR origin before loading any App key', 'Verify active platform-team membership')) {
         $step['env'] = @{
             DEVELOPMENT_PR = '${{ inputs.pull-request }}'; DEVELOPMENT_REVISION = '${{ inputs.revision }}'
@@ -522,10 +535,10 @@ foreach ($step in $authorization['steps']) {
         $step['name'] = 'Verify approved development content and attested baseline before credentials'
         $step['id'] = 'candidate'
         $step['env'] = @{
-            PLATFORM_SOURCE_REPOSITORY = '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
-            PLATFORM_REFERENCE_REPOSITORY = '${{ vars.PLATFORM_REFERENCE_REPOSITORY }}'
-            PLATFORM_DEVELOPMENT_APPROVAL = '${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}'
-            PLATFORM_DEVELOPMENT_DISPOSITION = '${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}'
+            PLATFORM_SOURCE_REPOSITORY = '${{ steps.control.outputs.source }}'
+            PLATFORM_REFERENCE_REPOSITORY = '${{ steps.control.outputs.reference }}'
+            PLATFORM_DEVELOPMENT_APPROVAL = '${{ steps.control.outputs.approval }}'
+            PLATFORM_DEVELOPMENT_DISPOSITION = '${{ steps.control.outputs.disposition }}'
             DEVELOPMENT_PR = '${{ inputs.pull-request }}'; DEVELOPMENT_REVISION = '${{ inputs.revision }}'
             DEVELOPMENT_OPERATION = '${{ inputs.operation }}'
         }
@@ -536,6 +549,11 @@ foreach ($jobId in @($development['jobs'].get_Keys())) {
     $job = $development['jobs'][$jobId]
     foreach ($step in $job['steps']) {
         if ($step.Contains('with') -and $step['with']['path'] -ceq 'candidate') { $step['with']['fetch-depth'] = 0 }
+        if ($step['name'] -ceq 'Upload public module outputs') {
+            $step['id'] = 'public_outputs'
+            if (-not $job.Contains('outputs')) { $job['outputs'] = @{} }
+            $job['outputs']['publicOutputs'] = '${{ steps.public_outputs.outputs.artifact-id }}'
+        }
     }
     if ($jobId -cmatch '^(module_|ruleset_plan_|apply_)') {
         $job['if'] = $job['if'].Replace("(needs.authorize.outputs.reference == '' || github.run_attempt == 1)", 'github.run_attempt == 1')
@@ -564,12 +582,44 @@ foreach ($jobId in @($development['jobs'].get_Keys())) {
                 $step['env']['EXPECTED_APPROVAL'] = '${{ needs.authorize.outputs.approval }}'
                 $step['env']['EXPECTED_SOURCE'] = '${{ needs.authorize.outputs.source }}'
                 $step['env']['EXPECTED_ATTEMPT'] = '${{ needs.authorize.outputs.attempt }}'
-                $step['run'] = './trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT'
+                $step['run'] = './trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT'
             }
             $steps.Add($step)
         }
         $job['steps'] = $steps.ToArray()
         $job['permissions']['pull-requests'] = 'read'
+    }
+}
+$protectedModules = @(Get-DevelopmentProtectedModule -Modules $modules)
+foreach ($node in $phaseGraph.PSBase.Values) {
+    if ($protectedModules -cnotcontains $node.Module) { continue }
+    $suffix = $node.Name.Replace('-', '_').Replace(':', '_')
+    foreach ($prefix in @('module_', 'apply_', 'ruleset_plan_')) {
+        $jobId = "$prefix$suffix"
+        if (-not $development['jobs'].Contains($jobId)) { continue }
+        $steps = [Collections.Generic.List[object]]::new()
+        foreach ($step in $development['jobs'][$jobId]['steps']) {
+            if ($step.Contains('run') -and ($step['run'].Contains('Invoke-Module.ps1') -or $step['run'].Contains('New-PlatformGitHubToken.ps1'))) {
+                $step['run'] = $step['run'].Replace('./candidate/', './trusted/')
+            }
+            if ($step.Contains('uses') -and $step['uses'].StartsWith('actions/download-artifact@', [StringComparison]::Ordinal)) {
+                $artifact = $step['with']['name']
+                if ($artifact -cnotmatch '^(plan|apply)-outputs-(.+)\z') { throw 'Unsupported protected prerequisite artifact.' }
+                $prerequisiteJob = $(if ($Matches[1] -ceq 'apply') { 'apply_' } else { 'module_' }) + $Matches[2].Replace('-', '_')
+                $step['with'].Remove('name')
+                $step['with']['artifact-ids'] = '${{ needs.' + $prerequisiteJob + '.outputs.publicOutputs }}'
+                $steps.Add(@{
+                    name = 'Verify immutable prerequisite artifact identity'; shell = 'pwsh'
+                    env = @{ PREREQUISITE_ARTIFACT_ID = $step['with']['artifact-ids'] }
+                    run = @'
+Import-Module ./trusted/platform/tools/DevelopmentCandidate.psm1
+Assert-DevelopmentPrerequisiteArtifact -ArtifactId $env:PREREQUISITE_ARTIFACT_ID
+'@
+                })
+            }
+            $steps.Add($step)
+        }
+        $development['jobs'][$jobId]['steps'] = $steps.ToArray()
     }
 }
 $development['jobs']['approve_apply']['if'] = $development['jobs']['approve_apply']['if'].Replace(

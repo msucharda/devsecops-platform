@@ -373,7 +373,10 @@ Describe 'Development candidate trust boundary' {
             @{ Path = 'platform/modules/demo/module.yaml' }
             @{ Path = 'platform/tools/Test-DeploymentCandidate.ps1' }
             @{ Path = 'platform/tools/DevelopmentCandidate.psm1' }
+            @{ Path = 'platform/tools/DevelopmentControl.psm1' }
+            @{ Path = 'platform/tools/Read-DevelopmentControl.ps1' }
             @{ Path = 'platform/tools/New-PlatformGitHubToken.ps1' }
+            @{ Path = 'platform/tools/New-DevelopmentStateSnapshot.ps1' }
             @{ Path = 'platform/tools/PlatformTools.psm1' }
             @{ Path = 'platform/tools/.dependencies/payload.ps1' }
             @{ Path = 'Platform/modules/demo/main.tf' }
@@ -385,6 +388,180 @@ Describe 'Development candidate trust boundary' {
         It 'rejects an empty development change' {
             { Assert-DevelopmentCandidateBoundary -Baseline @{ 'platform/modules/demo/main.tf' = 'same' } `
                 -Candidate @{ 'platform/modules/demo/main.tf' = 'same' } } | Should -Throw '*exact development change*'
+        }
+    }
+
+    Describe 'Development protected execution closure' {
+        BeforeEach {
+            $graph = @{
+                controller = @{
+                    prerequisites = @()
+                    permissions = @{ azure = @(); microsoftGraph = @('Group.Create'); githubApp = @{} }
+                }
+                rules = @{
+                    prerequisites = @()
+                    permissions = @{ azure = @(); microsoftGraph = @(); githubApp = @{} }
+                }
+            }
+            $baselineFiles = @{
+                'platform/tools/Invoke-Module.ps1' = 'runner'
+                'platform/tools/PlatformTools.psm1' = 'platform-tools'
+                'platform/tools/ToolDependencies.psm1' = 'dependency-verifier'
+                'platform/tools/requirements.psd1' = 'pins'
+                'platform/tools/WorkflowPreflight.psm1' = 'workflow-preflight'
+                'platform/tools/vendor/powershell-yaml/runtime.psm1' = 'verified-package'
+                'platform/modules/shared/scripts/GitHubRetry.ps1' = 'shared-transport'
+                'platform/modules/controller/main.tf' = 'identity'
+                'platform/modules/controller/.terraform.lock.hcl' = 'provider-pins'
+                'platform/modules/rules/main.tf' = 'rules-before'
+            }
+            $candidateFiles = $baselineFiles.Clone()
+            $candidateFiles['platform/modules/rules/main.tf'] = 'rules-after'
+        }
+
+        It 'derives protected execution from identity authority instead of a module-name deny list' {
+            @(Get-DevelopmentProtectedModule -Modules $graph) | Should -Be @('controller')
+            Import-Module (Join-Path $tools 'PlatformTools.psm1')
+            $released = Get-PlatformModuleGraph -ModulesPath (Join-Path $tools '../modules')
+            @(Get-DevelopmentProtectedModule -Modules $released | Sort-Object) | Should -Be @('emu-identity', 'organization-roles', 'organizations')
+        }
+
+        It 'protects declared <Capability> independently of module name' -ForEach @(
+            @{ Capability = 'Azure grants' }
+            @{ Capability = 'directory roles' }
+            @{ Capability = 'enterprise App authority' }
+            @{ Capability = 'organization membership authority' }
+        ) {
+            $graph.controller.permissions.microsoftGraph = @()
+            switch ($Capability) {
+                'Azure grants' { $graph.controller.permissions.azure = @('Contributor') }
+                'directory roles' { $graph.controller.permissions.entraDirectoryRoles = @(@{ phase = 'apply'; scope = 'enterpriseApplication' }) }
+                'enterprise App authority' {
+                    $graph.controller.permissions.githubApp = @{ apply = @{ permissions = @{ enterprise_organizations = 'write' } } }
+                }
+                'organization membership authority' {
+                    $graph.controller.permissions.githubApp = @{ apply = @{ permissions = @{ members = 'write' } } }
+                }
+            }
+            @(Get-DevelopmentProtectedModule -Modules $graph) | Should -Be @('controller')
+        }
+
+        It 'does not freeze ordinary organization-only authority needed by the Rulesets scenario' {
+            $graph.rules.permissions.githubApp = @{ apply = @{ permissions = @{ organization_administration = 'write' } } }
+            @(Get-DevelopmentProtectedModule -Modules $graph) | Should -Be @('controller')
+        }
+
+        It 'allows the representative rules change without executing identity candidates' {
+            { Assert-DevelopmentProtectedExecution -Baseline $baselineFiles -Candidate $candidateFiles -Modules $graph } |
+                Should -Not -Throw
+        }
+
+        It 'rejects changed protected executable input <Path>' -ForEach @(
+            @{ Path = 'platform/tools/Invoke-Module.ps1' }
+            @{ Path = 'platform/tools/PlatformTools.psm1' }
+            @{ Path = 'platform/tools/ToolDependencies.psm1' }
+            @{ Path = 'platform/tools/requirements.psd1' }
+            @{ Path = 'platform/tools/WorkflowPreflight.psm1' }
+            @{ Path = 'platform/tools/vendor/powershell-yaml/runtime.psm1' }
+            @{ Path = 'platform/modules/shared/scripts/GitHubRetry.ps1' }
+            @{ Path = 'platform/modules/controller/main.tf' }
+            @{ Path = 'platform/modules/controller/.terraform.lock.hcl' }
+            @{ Path = 'platform/modules/controller/external-hook.ps1' }
+        ) {
+            $candidateFiles[$Path] = 'candidate-controlled'
+            { Assert-DevelopmentProtectedExecution -Baseline $baselineFiles -Candidate $candidateFiles -Modules $graph } |
+                Should -Throw '*protected executable closure*'
+        }
+
+        It 'rejects deletion from the protected executable closure' {
+            $candidateFiles.Remove('platform/modules/controller/main.tf')
+            { Assert-DevelopmentProtectedExecution -Baseline $baselineFiles -Candidate $candidateFiles -Modules $graph } |
+                Should -Throw '*protected executable closure*'
+        }
+
+        It 'does not accept candidate artifacts as protected identity dependencies' {
+            $graph.controller.prerequisites = @('rules')
+            { Assert-DevelopmentProtectedExecution -Baseline $baselineFiles -Candidate $candidateFiles -Modules $graph } |
+                Should -Throw '*protected executable closure*'
+        }
+
+        It 'includes transitive prerequisites in the protected execution closure' {
+            $graph.controller.prerequisites = @('rules')
+            @(Get-DevelopmentProtectedModule -Modules $graph | Sort-Object) | Should -Be @('controller', 'rules')
+            $candidateFiles['platform/modules/rules/main.tf'] = $baselineFiles['platform/modules/rules/main.tf']
+            { Assert-DevelopmentProtectedExecution -Baseline $baselineFiles -Candidate $candidateFiles -Modules $graph } |
+                Should -Not -Throw
+        }
+
+        It 'refuses a candidate App with <Permission> write authority over the reference repository' -ForEach @(
+            @{ Permission = 'administration' }; @{ Permission = 'contents' }; @{ Permission = 'actions' }; @{ Permission = 'workflows' }
+            @{ Permission = 'organization_administration' }; @{ Permission = 'environments' }
+            @{ Permission = 'secrets' }; @{ Permission = 'actions_variables' }; @{ Permission = 'organization_secrets' }
+            @{ Permission = 'organization_actions_variables' }; @{ Permission = 'custom_properties' }
+            @{ Permission = 'unknown_future_permission' }
+        ) {
+            $instance = @{
+                credentials = @{ rules = @{ apply = @{ githubApp = 'rules-app' } } }
+                githubApps = @{ 'rules-app' = @{
+                    permissions = @{ $Permission = 'write' }; resources = @{ organizations = @('platform') }
+                } }
+            }
+            { Assert-DevelopmentPhaseAuthority -Instance $instance -Modules $graph -Repository platform/instance } |
+                Should -Throw '*reference repository authority*'
+        }
+
+        It 'refuses organization authority even when repository selection excludes the reference' {
+            $instance = @{
+                credentials = @{ rules = @{ apply = @{ githubApp = 'rules-app' } } }
+                githubApps = @{ 'rules-app' = @{
+                    permissions = @{ organization_administration = 'write' }
+                    resources = @{ organizations = @('platform'); repositories = @{ platform = @() } }
+                } }
+            }
+            { Assert-DevelopmentPhaseAuthority -Instance $instance -Modules $graph -Repository platform/instance } |
+                Should -Throw '*reference repository authority*'
+        }
+
+        It 'refuses an enterprise installation in a candidate-executing context' {
+            $instance = @{
+                credentials = @{ rules = @{ apply = @{ githubApp = 'rules-app' } } }
+                githubApps = @{ 'rules-app' = @{ permissions = @{ contents = 'write' }; resources = @{ enterprise = $true } } }
+            }
+            { Assert-DevelopmentPhaseAuthority -Instance $instance -Modules $graph -Repository platform/instance } |
+                Should -Throw '*enterprise installation authority*'
+        }
+
+        It 'requires the exact repository for the phase authority inspection' {
+            { Assert-DevelopmentPhaseAuthority -Instance @{} -Modules $graph -Repository platform/instance/extra } |
+                Should -Throw '*exact reference repository*'
+        }
+
+        It 'accepts only a nonempty immutable prerequisite artifact ID: <Value>' -ForEach @(
+            @{ Value = '' }; @{ Value = '0' }; @{ Value = '1,2' }; @{ Value = 'name' }; @{ Value = '-1' }; @{ Value = ' 123' }
+        ) {
+            { Assert-DevelopmentPrerequisiteArtifact -ArtifactId $Value } | Should -Throw '*immutable prerequisite artifact ID*'
+        }
+
+        It 'accepts the exact immutable prerequisite artifact ID returned by the upload action' {
+            { Assert-DevelopmentPrerequisiteArtifact -ArtifactId '1234567890' } | Should -Not -Throw
+        }
+
+        It 'permits repository writes only outside the reference repository' {
+            $instance = @{
+                credentials = @{ rules = @{ apply = @{ githubApp = 'rules-app' } } }
+                githubApps = @{ 'rules-app' = @{
+                    permissions = @{ administration = 'write'; contents = 'write' }
+                    resources = @{ organizations = @('actions') }
+                } }
+            }
+            { Assert-DevelopmentPhaseAuthority -Instance $instance -Modules $graph -Repository platform/instance } |
+                Should -Not -Throw
+            $instance.githubApps['rules-app'].resources = @{ organizations = @('platform'); repositories = @{ platform = @('other') } }
+            { Assert-DevelopmentPhaseAuthority -Instance $instance -Modules $graph -Repository platform/instance } |
+                Should -Not -Throw
+            $instance.githubApps['rules-app'].resources.repositories.platform = @('instance')
+            { Assert-DevelopmentPhaseAuthority -Instance $instance -Modules $graph -Repository platform/instance } |
+                Should -Throw '*reference repository authority*'
         }
     }
 

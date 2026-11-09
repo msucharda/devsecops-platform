@@ -94,15 +94,26 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
             foreach ($root in @($sourceRoot, "$candidate/platform")) {
                 $null = New-Item -ItemType Directory -Path "$root/modules/demo" -Force
                 [IO.File]::WriteAllText("$root/modules/demo/main.tf", 'baseline')
+                $manifest = (Get-Content (Join-Path $PSScriptRoot 'fixtures/modules/foundation/module.yaml') -Raw).
+                    Replace('name: foundation', 'name: demo')
+                if (Get-Variable ProtectDevelopmentAuthority -ValueOnly -ErrorAction SilentlyContinue) {
+                    $manifest = $manifest.Replace('microsoftGraph: []', 'microsoftGraph: [Group.Read.All]')
+                }
+                [IO.File]::WriteAllText("$root/modules/demo/module.yaml", $manifest)
             }
-            $marker.files['modules/demo/main.tf'] = (Get-FileHash "$sourceRoot/modules/demo/main.tf").Hash.ToLowerInvariant()
+            $configuration = (Get-Content (Join-Path $tools '../templates/instance/instance.yaml') -Raw).
+                Replace('modules: {}', "modules:`n  demo: {}")
+            [IO.File]::WriteAllText("$candidate/instance.yaml", $configuration)
+            foreach ($path in @('modules/demo/main.tf', 'modules/demo/module.yaml')) {
+                $marker.files[$path] = (Get-FileHash (Join-Path $sourceRoot $path)).Hash.ToLowerInvariant()
+            }
             $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
             & git -C $candidate init --quiet
             & git -C $candidate config core.autocrlf false
             & git -C $candidate -c user.name=Fixture -c user.email=fixture@example.test add --all
             & git -C $candidate -c user.name=Fixture -c user.email=fixture@example.test commit --quiet -m baseline
             $trusted = Join-Path $TestDrive ([guid]::NewGuid().ToString())
-            & git clone --quiet -- $candidate $trusted
+            & git clone --config core.autocrlf=false --quiet -- $candidate $trusted
             $baseRevision = (& git -C $candidate rev-parse HEAD).Trim()
             [IO.File]::WriteAllText("$candidate/platform/modules/demo/main.tf", 'development')
             & git -C $candidate add --all
@@ -144,6 +155,15 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
 
         It 'continues to reject development content on the standard release path' {
             { & $preflight @arguments } | Should -Throw '*Candidate hash differs*'
+        }
+
+        It 'rejects an approved identity-capable module change at the public pre-credential boundary' -ForEach @(
+            @{ ProtectDevelopmentAuthority = $true }
+        ) {
+            $developmentArguments.GitHubOutputPath = Join-Path $TestDrive 'forbidden-approval.txt'
+            { & $candidateVerifier @developmentArguments } | Should -Throw '*protected executable closure*'
+            Test-Path $developmentArguments.GitHubOutputPath | Should -BeFalse
+            Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
         }
 
         It 'does not hand off credentials for changed working bytes even if Git flags hide them' {

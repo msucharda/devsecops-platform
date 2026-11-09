@@ -4,16 +4,119 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
-            Name = 'development-protected-context'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentProtectedState.Tests.ps1'; FullName = 'Protected state context*' })
+            Name = 'development-state-source'
+            Tests = @(
+                @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
+                    '*publishes an exact root snapshot*', '*digest*', '*requires a source file*',
+                    '*root publication directory*', '*source file itself*', '*overlapping*', '*symbolic-link*'
+                ) }
+            )
         }
         @{
-            Name = 'development-protected-variable'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentProtectedState.Tests.ps1'; FullName = 'Protected variable snapshot*' })
+            Name = 'development-state-publication'
+            Tests = @(
+                @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
+                    '*publishes an exact root snapshot*', '*recovers publication*',
+                    '*preserves an unexpected staging*', '*altered published*'
+                ) }
+            )
         }
         @{
-            Name = 'development-protected-reader-result'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentProtectedState.Tests.ps1'; FullName = 'Protected reader result*' })
+            Name = 'development-state-attributes'
+            Tests = @(
+                @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
+                    '*publishes an exact root snapshot*', '*rejects <Case> resource attributes before publication'
+                ) }
+            )
+        }
+        @{
+            Name = 'development-state-path'
+            Tests = @(
+                @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
+                    '*publishes an exact root snapshot*', '*symbolic-link*'
+                ) }
+            )
+        }
+        @{
+            Name = 'development-state-published'
+            Tests = @(
+                @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
+                    '*recovers publication*', '*altered published*'
+                ) }
+            )
+        }
+        @{
+            Name = 'development-state-closure'
+            Tests = @(
+                @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
+                    '*publishes an exact root snapshot*', '*also supports the resource-free*',
+                    '*rejects <Case> state before publication'
+                ) }
+            )
+        }
+        @{
+            Name = 'development-control-snapshot'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-control-ruleset'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-prerequisite-artifact'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development protected execution closure*' })
+        }
+        @{
+            Name = 'development-phase-authority'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development protected execution closure*' })
+        }
+        @{
+            Name = 'development-protected-module'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development protected execution closure*' })
+        }
+        @{
+            Name = 'development-protected-execution'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development protected execution closure*' })
+        }
+        @{
+            Name = 'development-control-protection'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-control-http'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-control-reference'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-control-tree'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-control-file'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-control-document'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-control-stability'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-control-context'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = '*Control command*' })
+        }
+        @{
+            Name = 'development-control-designation'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = '*Control command*' })
+        }
+        @{
+            Name = 'development-protected-continuity'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = '*Protected credential boundary*' })
         }
         @{
             Name = 'development-approval-continuity'
@@ -1048,6 +1151,76 @@
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
+        @{
+            Mutant = 'Assert-DevelopmentStateAttributes: operator ''-cnotmatch'' -> -inotmatch in ''$Attributes[''id''] -cnotmatch ''^[1-9][0-9]{0,17}\z''''#1'
+            Reason = 'Equivalent mutant: the numeric ID pattern contains only decimal digits and anchors, which have no letter case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentStateAttributes: operator ''-cne'' -> -ine in ''[string] $response[''id''] -cne $Attributes[''id'']''#1'
+            Reason = 'Equivalent mutant: the response ID is a validated integer and the state ID is a validated decimal string; neither representation contains letters.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentPublishedSnapshot: operator ''-cne'' -> -ine in ''(Get-FileHash -LiteralPath (Join-Path $Directory $StateName)).Hash.ToLowerInvariant() -cne $Digest''#1'
+            Reason = 'Equivalent mutant: this internal comparison receives only the lowercase digest computed by Read-DevelopmentSnapshotSource and a lowercase computed file digest.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Test-DevelopmentControlRuleset: operator ''-cne'' -> -ine in ''$Ruleset[''source_type''] -cne ''Enterprise''''#1'
+            Reason = 'Equivalent mutant: the preceding exact documented-enum guard already excludes every case variant of Enterprise.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Test-DevelopmentControlRuleset: operand ''$Ruleset[''rules''] -isnot [Collections.IList]'' -> $false#1'
+            Reason = 'Equivalent mutant for JSON responses: a non-list rules value cannot contain both scalar update and deletion rules; the final two-rule requirement still rejects it.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Get-DevelopmentControlProtectionId: condition ''-not $updates.Overlaps($deletions)'' -> $false#1'
+            Reason = 'Equivalent mutant: without overlap this function returns no IDs; the marked snapshot guard then rejects the absence of a verified enterprise ruleset before returning state.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentProtectedExecution: operand ''$Baseline.get_Keys() -cnotcontains $path'' -> $false#1'
+            Reason = 'Equivalent mutant: verified snapshots contain only nonempty mode:SHA256 strings. An absent baseline entry cannot equal the candidate entry, so the hash comparison still rejects every added protected path.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentProtectedExecution: operand ''$Candidate.get_Keys() -cnotcontains $path'' -> $false#1'
+            Reason = 'Equivalent mutant: verified snapshots contain only nonempty mode:SHA256 strings. An absent candidate entry cannot equal the baseline entry, so the hash comparison still rejects every deleted protected path.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentProtectedExecution: operator ''-cnotcontains'' -> -inotcontains in ''$Baseline.get_Keys() -cnotcontains $path''#1'
+            Reason = 'Equivalent mutant: the ordinal path union visits both spellings of a case-only rename and the remaining exact candidate membership guard rejects the old spelling.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentProtectedExecution: operator ''-cnotcontains'' -> -inotcontains in ''$Candidate.get_Keys() -cnotcontains $path''#1'
+            Reason = 'Equivalent mutant: the ordinal path union visits both spellings of a case-only rename and the remaining exact baseline membership guard rejects the new spelling.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentProtectedExecution: operator ''-cne'' -> -ine in ''$Baseline[$path] -cne $Candidate[$path]''#1'
+            Reason = 'Equivalent mutant: snapshot values consist only of numeric Git modes and lowercase SHA256 text, so case-insensitive comparison accepts no different valid value.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentControlStability: operator ''-cne'' -> -ine in ''$Before -cne $After''#1'
+            Reason = 'Equivalent mutant: both revisions pass the lowercase full-SHA discriminator before this comparison.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Get-DevelopmentControlProtectionId: condition ''$Rules -isnot [Collections.IList]'' -> $false#1'
+            Reason = 'Equivalent mutant: every qualifying rule has a scalar string type and can be either update or deletion, never both. A non-list singleton cannot satisfy the final overlap requirement.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentPhaseAuthority: operator ''-ccontains'' -> -icontains in ''$protected -ccontains $name''#1'
+            Reason = 'Equivalent mutant: the instance and module schemas constrain every credential module name to lowercase before this check.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
+        }
         @{
             Mutant = 'Get-DevelopmentCandidateSnapshot: operator ''-cne'' -> -ine in ''(Invoke-DevelopmentGit $root @(''hash-object'', ''--no-filters'', ''--'', $relative)) -cne $blob''#1'
             Reason = 'Equivalent mutant: both object IDs are produced by Git as lowercase hexadecimal; this comparison does not compare caller-supplied identity text.'

@@ -153,8 +153,8 @@ Describe 'Deployment workflow generation' {
         $authorization.environment | Should -Be 'pr-authorization'
         $guard = @($authorization.steps | Where-Object { $_['run'] -like '*Test-DeploymentCandidate.ps1*' })
         $guard.Count | Should -Be 1
-        $guard[0].env.PLATFORM_DEVELOPMENT_APPROVAL | Should -Be '${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}'
-        $guard[0].env.PLATFORM_REFERENCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_REFERENCE_REPOSITORY }}'
+        $guard[0].env.PLATFORM_DEVELOPMENT_APPROVAL | Should -Be '${{ steps.control.outputs.approval }}'
+        $guard[0].env.PLATFORM_REFERENCE_REPOSITORY | Should -Be '${{ steps.control.outputs.reference }}'
         $guard[0].run | Should -Match '^\./trusted/platform/tools/'
         $keys = @($authorization.steps | Where-Object { $_['env'] -and $_['env'].Contains('PLATFORM_APP_PRIVATE_KEY') })
         foreach ($step in $keys) {
@@ -178,7 +178,9 @@ Describe 'Deployment workflow generation' {
             foreach ($fresh in $current) {
                 $fresh.run | Should -Match '-Mode development'
                 $fresh.env.EXPECTED_APPROVAL | Should -Be '${{ needs.authorize.outputs.approval }}'
-                $fresh.env.PLATFORM_APPROVAL_READER_PRIVATE_KEY | Should -Be '${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}'
+                $fresh.env.DEVELOPMENT_READ_TOKEN | Should -Be '${{ github.token }}'
+                $fresh.env.EXPECTED_CONTROL_REVISION | Should -Be '${{ needs.authorize.outputs.controlRevision }}'
+                $fresh.env.Contains('PLATFORM_APPROVAL_READER_PRIVATE_KEY') | Should -BeFalse
                 $fresh.Contains('if') | Should -BeFalse
             }
             $check[0].run | Should -Match 'Test-DevelopmentDeploymentAuthorization.ps1.*-Preflight'
@@ -196,7 +198,7 @@ Describe 'Deployment workflow generation' {
             $job = $standard.jobs[$id]
             $current = @($job.steps | Where-Object { $_['run'] -like '*Test-DevelopmentProtectedState.ps1*' })
             $current.Count | Should -Be 2
-            $current[0].if | Should -Be '${{ needs.authorize.outputs.reference != '''' }}'
+            $current[0].Contains('if') | Should -BeFalse
             $current[0].run | Should -Match '-Mode standard'
             $job.if | Should -Match ([regex]::Escape("needs.authorize.outputs.attempt == format('{0}', github.run_attempt)"))
         }
@@ -211,6 +213,46 @@ Describe 'Deployment workflow generation' {
         $context.needs.authorize.outputs.reference = 'https://example.test/platform/instance'
         (Get-WorkflowConditionResult $standard module_foundation $context).Allowed | Should -BeFalse
         (Get-WorkflowConditionResult $development module_foundation $context).Allowed | Should -BeFalse
+    }
+
+    It 'keeps candidate code out of every identity or enterprise-authority job on the released graph' {
+        $output = Join-Path $TestDrive 'protected-authority/deploy.yml'
+        & $generator -OutputPath $output
+        $development = ConvertFrom-Yaml (Get-Content (Join-Path (Split-Path $output) 'development.yml') -Raw)
+        foreach ($id in @('module_emu_identity', 'apply_emu_identity', 'module_organizations', 'apply_organizations', 'module_organization_roles', 'apply_organization_roles')) {
+            $job = $development.jobs[$id]
+            foreach ($step in $job.steps) {
+                if ($step.Contains('run')) {
+                    $step.run | Should -Not -Match '^\./candidate/'
+                    if ($step.run -like '*Invoke-Module.ps1*' -or $step.run -like '*New-PlatformGitHubToken.ps1*') {
+                        $step.run | Should -Not -Match '-InstancePath \./candidate/|-ModulesPath \./candidate/'
+                    }
+                }
+                if ($step.Contains('uses') -and $step.uses -match 'download-artifact') {
+                    $step.with.Contains('name') | Should -BeFalse
+                    $step.with['artifact-ids'] | Should -Match '^\$\{\{ needs\.(module|apply)_organizations\.outputs\.publicOutputs \}\}$'
+                    $checks = @($job.steps | Where-Object { $_['name'] -eq 'Verify immutable prerequisite artifact identity' })
+                    $checks.Count | Should -Be 1
+                    $checks[0].env.PREREQUISITE_ARTIFACT_ID | Should -BeExactly $step.with['artifact-ids']
+                    $checks[0].run | Should -Match 'trusted/platform/tools/DevelopmentCandidate.psm1'
+                    $checks[0].run | Should -Match 'Assert-DevelopmentPrerequisiteArtifact'
+                    [array]::IndexOf($job.steps, $checks[0]) | Should -BeLessThan ([array]::IndexOf($job.steps, $step))
+                }
+            }
+        }
+        foreach ($id in @('module_organizations', 'apply_organizations')) {
+            $development.jobs[$id].outputs.publicOutputs | Should -Be '${{ steps.public_outputs.outputs.artifact-id }}'
+        }
+        $rules = $development.jobs.apply_organization_rulesets
+        @($rules.steps | Where-Object { $_['run'] -like './candidate/platform/tools/Invoke-Module.ps1*' }).Count |
+            Should -BeGreaterThan 0
+        $authorization = $development.jobs.authorize
+        $control = @($authorization.steps | Where-Object { $_['id'] -eq 'control' })
+        $control.Count | Should -Be 1
+        $control[0].run | Should -Match 'Read-DevelopmentControl.ps1 -Mode development'
+        $control[0].run | Should -Not -Match 'AllowNonReference'
+        $control[0].env.DEVELOPMENT_READ_TOKEN | Should -Be '${{ github.token }}'
+        $authorization.outputs.controlRevision | Should -Be '${{ steps.control.outputs.controlRevision }}'
     }
 
     It 'reports every apply outcome on both paths without loading deployment credentials' {
@@ -763,7 +805,7 @@ Describe 'Deployment workflow generation' {
         $guard = @($steps | Where-Object { $_['run'] -like '*Test-DeploymentRelease.ps1*' })
         $guard.Count | Should -Be 1
         $guard[0].run | Should -Match '^\./trusted/platform/tools/'
-        $guard[0].env.PLATFORM_SOURCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+        $guard[0].env.PLATFORM_SOURCE_REPOSITORY | Should -Be '${{ steps.control.outputs.source }}'
         $guard[0].if | Should -Be '${{ steps.preflight.outputs.allowed == ''true'' || steps.preflight.outputs.eligible == ''true'' }}'
         $guard[0].if | Should -Not -Match 'deployment'
         $candidate = $steps | Where-Object { $_['name'] -eq 'Check out release candidate as data before credentials' }

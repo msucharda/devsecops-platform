@@ -114,6 +114,145 @@ data "external" "ruleset_plan_state" {
         $init.Code | Should -Be 0 -Because $init.Text
     }
 
+    It 'snapshots only the exact organization root without changing standard state' -Tag DevelopmentStateSnapshot -ForEach @(
+        @{ Organization = 'demo-workloads' }
+    ) {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $source = Join-Path $root 'terraform.tfstate'
+        $original = [IO.File]::ReadAllBytes($source)
+        $digest = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant()
+        $destination = Join-Path $parent 'development-snapshot'
+        $snapshot = & (Join-Path $PSScriptRoot '../New-DevelopmentStateSnapshot.ps1') `
+            -SourcePath $source -OutputPath $destination -Module organization-rulesets -StateRoot rulesets `
+            -Organization $Organization -ExpectedSha256 $digest -SourceETag '"0x1234"' `
+            -BaselineRevision ('a' * 40) -CandidateRevision ('b' * 40) -ControlRevision ('c' * 40)
+
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($snapshot.StatePath)) | Should -BeExactly ([Convert]::ToBase64String($original))
+        (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() | Should -BeExactly $digest
+        $manifest = Get-Content -LiteralPath $snapshot.ManifestPath -Raw | ConvertFrom-Json -AsHashtable
+        $state = [Text.Encoding]::UTF8.GetString($original) | ConvertFrom-Json -AsHashtable
+        $manifest.source.key | Should -BeExactly 'organizations/demo-workloads/terraform.rulesets.tfstate'
+        $manifest.source.etag | Should -BeExactly '"0x1234"'
+        $manifest.source.sha256 | Should -BeExactly $digest
+        $manifest.source.serial | Should -Be $state.serial
+        $manifest.source.lineage | Should -BeExactly $state.lineage
+        $manifest.candidateRevision | Should -BeExactly ('b' * 40)
+        $manifest.baselineRevision | Should -BeExactly ('a' * 40)
+        $manifest.controlRevision | Should -BeExactly ('c' * 40)
+        $evidenceDirectory = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'artifacts/development-state'
+        [IO.Directory]::CreateDirectory($evidenceDirectory) | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $evidenceDirectory 'stub-workloads-standard.tfstate'), $original)
+    }
+
+    It 'reconciles the original standard state after two isolated review-thread changes and exact rollback' -Tag DevelopmentStateRecovery -ForEach @(
+        @{ Organization = 'demo-workloads' }
+    ) {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $source = Join-Path $root 'terraform.tfstate'
+        $initialState = Get-Content -LiteralPath $source -Raw | ConvertFrom-Json -AsHashtable
+        $id = [string] $server.State.Items[0]['id']
+        $uri = "http://127.0.0.1:$port/orgs/$Organization/rulesets/$id"
+        $headers = @{ Authorization = "Bearer $testToken"; 'X-GitHub-Api-Version' = '2026-03-10' }
+        $original = Invoke-RestMethod -Uri $uri -Headers $headers -MaximumRetryCount 0
+        $baseline = [ordered]@{}
+        foreach ($field in @('name', 'target', 'enforcement', 'bypass_actors', 'conditions', 'rules')) {
+            $baseline[$field] = $original.$field
+        }
+        $baselineBody = ConvertTo-Json -InputObject $baseline -Depth 30 -Compress
+
+        foreach ($cycle in 1..2) {
+            $digest = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant()
+            $snapshot = & (Join-Path $PSScriptRoot '../New-DevelopmentStateSnapshot.ps1') `
+                -SourcePath $source -OutputPath (Join-Path $parent "candidate-$cycle") `
+                -Module organization-rulesets -StateRoot rulesets -Organization $Organization `
+                -ExpectedSha256 $digest -SourceETag ('"0x{0}"' -f $cycle) `
+                -BaselineRevision ('a' * 40) -CandidateRevision ('b' * 40) -ControlRevision ('c' * 40)
+            $changed = $baselineBody | ConvertFrom-Json -AsHashtable
+            $pullRequest = @($changed.rules | Where-Object { $_.type -ceq 'pull_request' })[0]
+            $pullRequest.parameters.required_review_thread_resolution = $true
+            $updated = Invoke-RestMethod -Method Put -Uri $uri -Headers $headers -ContentType application/json `
+                -Body (ConvertTo-Json $changed -Depth 30 -Compress) -MaximumRetryCount 0
+            $updated.id | Should -Be $id
+            $writeCount = $server.State.Writes.Count
+
+            $unaccepted = Invoke-RulesetTerraform apply -input=false -auto-approve
+            $unaccepted.Code | Should -Be 1 -Because $unaccepted.Text
+            $unaccepted.Text | Should -Match 'Restore the managed settings before apply'
+            $server.State.Writes.Count | Should -Be $writeCount
+            (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() | Should -BeExactly $digest
+
+            # The trusted rollback restores only this recorded remote object; candidate state is never imported.
+            $restored = Invoke-RestMethod -Method Put -Uri $uri -Headers $headers -ContentType application/json `
+                -Body $baselineBody -MaximumRetryCount 0
+            $restored.id | Should -Be $id
+            $writeCount = $server.State.Writes.Count
+            $plan = Invoke-RulesetTerraform plan -input=false -detailed-exitcode
+            $plan.Code | Should -Be 0 -Because $plan.Text
+            $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+            $apply.Code | Should -Be 0 -Because $apply.Text
+            $server.State.Writes.Count | Should -Be $writeCount
+            $standardState = Get-Content -LiteralPath $source -Raw | ConvertFrom-Json -AsHashtable
+            $standardState.lineage | Should -BeExactly $initialState.lineage
+            $standardState.serial | Should -BeGreaterOrEqual $initialState.serial
+            (Get-FileHash -LiteralPath $snapshot.StatePath).Hash.ToLowerInvariant() | Should -BeExactly $digest
+        }
+        $server.State.Items.Count | Should -Be 1
+        @($server.State.Writes | Where-Object Method -CEQ POST).Count | Should -Be 1
+    }
+
+    It 'adopts the accepted review-thread setting with the original standard lineage and a second empty plan' -Tag DevelopmentStateRecovery -ForEach @(
+        @{ Organization = 'demo-workloads' }
+    ) {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $source = Join-Path $root 'terraform.tfstate'
+        $initialState = Get-Content -LiteralPath $source -Raw | ConvertFrom-Json -AsHashtable
+        $digest = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant()
+        $snapshot = & (Join-Path $PSScriptRoot '../New-DevelopmentStateSnapshot.ps1') `
+            -SourcePath $source -OutputPath (Join-Path $parent 'candidate') `
+            -Module organization-rulesets -StateRoot rulesets -Organization $Organization `
+            -ExpectedSha256 $digest -SourceETag '"0x1234"' `
+            -BaselineRevision ('a' * 40) -CandidateRevision ('b' * 40) -ControlRevision ('c' * 40)
+        $id = [string] $server.State.Items[0]['id']
+        $uri = "http://127.0.0.1:$port/orgs/$Organization/rulesets/$id"
+        $headers = @{ Authorization = "Bearer $testToken"; 'X-GitHub-Api-Version' = '2026-03-10' }
+        $original = Invoke-RestMethod -Uri $uri -Headers $headers -MaximumRetryCount 0
+        $accepted = [ordered]@{}
+        foreach ($field in @('name', 'target', 'enforcement', 'bypass_actors', 'conditions', 'rules')) {
+            $accepted[$field] = $original.$field
+        }
+        $pullRequest = @($accepted.rules | Where-Object { $_.type -ceq 'pull_request' })[0]
+        $pullRequest.parameters.required_review_thread_resolution = $true
+        $acceptedBody = ConvertTo-Json -InputObject $accepted -Depth 30 -Compress
+        $updated = Invoke-RestMethod -Method Put -Uri $uri -Headers $headers -ContentType application/json `
+            -Body $acceptedBody -MaximumRetryCount 0
+        $updated.id | Should -Be $id
+        (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() | Should -BeExactly $digest
+
+        # This fixture represents the accepted standard declaration, not candidate execution in the standard root.
+        Set-Content -LiteralPath (Join-Path $root 'accepted-ruleset.json') -Value $acceptedBody
+        Set-Content -LiteralPath (Join-Path $root 'accepted_override.tf') -Value @'
+locals {
+  ruleset = jsondecode(file("${path.module}/accepted-ruleset.json"))
+}
+'@
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $writeCount = $server.State.Writes.Count
+        $plan = Invoke-RulesetTerraform plan -input=false -detailed-exitcode
+        $plan.Code | Should -Be 0 -Because $plan.Text
+        $server.State.Writes.Count | Should -Be $writeCount
+        $standardState = Get-Content -LiteralPath $source -Raw | ConvertFrom-Json -AsHashtable
+        $standardState.lineage | Should -BeExactly $initialState.lineage
+        $standardState.serial | Should -BeGreaterOrEqual $initialState.serial
+        (Get-FileHash -LiteralPath $snapshot.StatePath).Hash.ToLowerInvariant() | Should -BeExactly $digest
+        $server.State.Items.Count | Should -Be 1
+        $server.State.Items[0]['id'] | Should -Be $id
+        @($server.State.Writes | Where-Object Method -CEQ POST).Count | Should -Be 1
+    }
+
     It 'creates a ruleset, returns a second plan without changes and removes it on destroy in <Organization>' -ForEach @(
         @{ Organization = 'demo' }
         @{ Organization = 'demo-platform' }

@@ -11,6 +11,11 @@ povýšení workflow, konkrétní plan nebo apply, vydání release a destruktiv
 ověření vyžadují odpovídající konkrétní souhlas. Zdroj neobsahuje skutečný
 cíl reference ani její provozní důkazy.
 
+Pozitivní Rulesets cyklus zatím blokuje neprokázaná izolace credentials
+a opakovatelnost jejich ukončení. Níže uvedené autorizační kontroly ani
+lokální snapshot samy tuto podmínku nesplňují. Běžná all-org konfigurace
+zůstává určená pro standardní deployment; development ji nesmí obejít.
+
 ## Zavedení důvěryhodné cesty
 
 Nejdřív převezmi standardní release obsahující nové nástroje běžným
@@ -22,42 +27,64 @@ starší workflow nový kontrakt nemají. Tento krok nemění importní oprávn�
 a nesmí nasadit nepřepsané upstream akce. Zachovej stávající environmenty,
 schvalovatele, OIDC vazby, omezení deployment App, tokeny i jejich revokaci.
 
-Zavedení navíc vyžaduje samostatně schválenou verifier App (ověřovací App).
-Její jediná volitelná pravomoc je repository `Environments: read`; implicitní
-`Metadata: read` se nezvyšuje. App má právě jednu organization installation
-se `repository_selection: selected` a právě jedním repozitářem instance.
-Nesmí sdílet klíč s membership ani deployment App a nesmí mít write oprávnění.
-GitHub tuto pravomoc neumí omezit jen na `pr-authorization`: dosáhne na
-environment metadata a proměnné celého vybraného repozitáře, nikoli na hodnoty
-jeho secrets. Toto omezení scope patří do žádosti o souhlas.
+Správce připraví samostatný control ref (řídicí větev)
+`refs/heads/platform-control` ve stejném neveřejném repozitáři instance.
+Jeho kořenový soubor `development-control.json` obsahuje autoritativní
+referenci, source, approval a disposition. Nový reader token ani verifier App
+nevznikají. Důvěryhodný nástroj čte záznam existujícím job `GITHUB_TOKEN`
+s `contents: read`. Jeho vydání a konec platnosti spravuje
+[GitHub pro každý job](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication).
+Částečně skončený job proto nezanechá nový samostatně vydaný reader token
+k obnově v dalším runneru.
 
-Správce uloží následující vazby mimo kandidáta do každého použitého plan,
-ruleset-plan a apply environmentu:
+Před aktivací musí enterprise ruleset omezit update i deletion této přesné
+větve. Žádná candidate-reachable identita ani App nesmí mít bypass ani
+pravomoc měnit ruleset nebo jeho vlastníka. Ochrana pouze na úrovni repo
+nebo org nestačí, pokud kandidát může získat odpovídající správní pravomoc.
+Runtime kontroluje aktivní enterprise update a deletion ze stejného rulesetu;
+odpověď branch-rules API sama neprokazuje bezpečnost bypass aktérů.
+Tu musí správce doložit samostatným auditem před aktivací.
 
-| Vazba | Typ a obsah |
-|---|---|
-| `PLATFORM_APPROVAL_READER_APP_ID` | Chráněná proměnná s přesným App ID. |
-| `PLATFORM_APPROVAL_READER_INSTALLATION_ID` | Chráněná proměnná s přesným installation ID. |
-| `PLATFORM_APPROVAL_READER_ENTERPRISE` | Chráněná proměnná s očekávaným vlastníkem App. |
-| `PLATFORM_APPROVAL_READER_PRIVATE_KEY` | Chráněný secret se samostatným klíčem verifier App. |
-
-Vznik App, installation, grant i zápis klíče vyžadují konkrétní živý souhlas.
-Source změna nic z toho neprovádí. `GITHUB_TOKEN` nemá workflow permission
-`environments`; obecné `actions: read` tuto pravomoc nenahrazuje.
+Audit musí zahrnout skutečné App instalace a effective permissions,
+Azure/Graph oprávnění, Entra skupiny a federated credentials všech identit
+dosažitelných z kandidáta. OIDC subject každé privilegované fáze musí být
+odlišný od subjectů candidate-executing jobs; zkontroluj také další FIC,
+flexible expressions a environment branch policies. Immutable subject
+obsahuje skutečná owner/repository IDs, nikoli jen jejich názvy.
+Neprokázaná izolace aktivaci blokuje. Tato source změna ochrany, refu,
+grants ani credentials neprovádí.
 
 Důvěryhodná cesta běží pouze ručním `workflow_dispatch` z chráněné `main`
 na pevném `github.sha`. Autorizační nástroje načítá z tohoto commitu
 do `trusted/`; kandidáta načítá zvlášť do `candidate/` jako data.
 Kandidát se nesmí před živým ověřením sloučit do `main`.
 
-V chráněném environmentu `pr-authorization` spravuj mimo kandidáta:
+Ve chráněném control refu spravuj mimo kandidáta:
 
-| Proměnná | Obsah |
+| Pole | Obsah |
 |---|---|
-| `PLATFORM_REFERENCE_REPOSITORY` | Přesná HTTPS identita povoleného repozitáře včetně hostu: `<server-url>/<owner>/<repo>`. |
-| `PLATFORM_SOURCE_REPOSITORY` | Environment-level kopie stejného source override jako ve standardní release cestě, pokud je override nastavený. Samotná repository-level nebo organization-level hodnota pro development nestačí; reader ji nemůže ověřit bez dalších oprávnění. Bez override obě cesty používají výchozí source důvěryhodného nástroje. |
-| `PLATFORM_DEVELOPMENT_APPROVAL` | Samostatně udělené schválení přesného obsahu a operace ve tvaru níže. Prázdná hodnota development nepovolí. |
-| `PLATFORM_DEVELOPMENT_DISPOSITION` | Výslovný přechod na přesný standardní main commit: `adopt` nebo `rollback`. Neprázdná hodnota další development zastaví. |
+| `version` | JSON integer `1`. |
+| `reference` | Přesná HTTPS identita povoleného repozitáře včetně hostu: `<server-url>/<owner>/<repo>`. |
+| `source` | Výslovná HTTPS identita source repozitáře pro standardní attestaci. |
+| `approval` | JSON string obsahující schválení přesného obsahu a operace ve tvaru níže; prázdný string development nepovolí. |
+| `disposition` | JSON string s výslovným přechodem na přesný standardní main commit: `adopt` nebo `rollback`; neprázdný string další development zastaví. |
+
+Prázdný záznam před prvním cyklem má například tento tvar:
+
+```json
+{
+  "version": 1,
+  "reference": "https://example.ghe.com/reference-platform/instance",
+  "source": "https://github.com/example/platform",
+  "approval": "",
+  "disposition": ""
+}
+```
+
+Approval a disposition vlož jako serializované JSON strings; následující
+příklady zobrazují jejich dekódovaný obsah. Každá změna control commitu
+zneplatní rozpracované běhy a vyžaduje nový dispatch. Původní environment
+proměnné nejsou náhradním zdrojem autorizace.
 
 Pouze správce této důvěryhodné konfigurace smí schválení zapsat. Kandidát,
 soubor v jeho PR ani jeho vlastní workflow nejsou zdrojem oprávnění.
@@ -100,6 +127,35 @@ a credential nástroje. Taková změna vyžaduje standardní source PR
 a release, nikoli samoautorizaci kandidáta. Review změny nadále posoudí
 její skutečné chování; povolená cesta souboru není bezpečnostní schválení.
 
+Nástroj navíc odvodí chráněnou executable closure (vykonávané závislosti)
+z deklarovaných Azure/Graph/directory oprávnění, enterprise App pravomocí
+a organization membership write. Zahrne všechny prerequisites, runtime,
+ověřování závislostí, vendored parser a celé příslušné moduly včetně provider
+lockfiles a hooků. Jejich přidání, změnu ani odstranění kandidát nesmí provést.
+Tyto fáze běží pouze z ověřené baseline a jejich prerequisites stahují
+neměnné artifacts podle ID z trusted `needs` outputs, nikoli podle názvu.
+Přepsání artifactu vytváří jiné ID; odstranění původního download zastaví.
+Kontrakt popisují připnuté akce
+[`upload-artifact`](https://github.com/actions/upload-artifact/tree/v7.0.2#not-uploading-to-the-same-artifact)
+a [`download-artifact`](https://github.com/actions/download-artifact/tree/v8.0.2#download-artifacts-by-id).
+
+V současném grafu jde o `emu-identity`, `organizations` a
+`organization-roles`. Změny jejich autorizační implementace patří do
+standardního release. Ostatní candidate-executing fáze nesmějí získat
+enterprise App ani write autoritu nad referenčním repo. Kontrola odmítne
+také organization a neznámé write permissions ve vlastnické organizaci
+reference, i když instalace nevybírá žádné repozitáře. Pouze známá
+repository-only oprávnění `contents`, `administration`, `actions`
+a `workflows` může přijmout nad výslovně jinými repozitáři.
+
+Samotné spuštění baseline v jiném kroku nestačí. Candidate job nesmí
+získat její identitu přes OIDC, minting endpoint ani zachovaný klíč.
+Private key vložený do stejného runneru jako kandidát se nepovažuje
+za nedostupný po ukončení kroku. Pozitivní Rulesets cesta musí navíc
+prokázat serverový scope vydaného tokenu, jeho ukončení a bezpečný další
+cyklus. Současný all-org App kontrakt tyto podmínky neplní a kontrola jej
+pro kandidáta odmítne před vydáním credentials.
+
 Na čistém checkoutu přesného PR headu získej digest důvěryhodným nástrojem
 mimo kandidáta:
 
@@ -127,25 +183,33 @@ o vlastním povolení.
 
 Po review konkrétního phase environmentu trusted nástroj znovu ověří kandidáta
 a aktuální PR head, base i stav. Bezprostředně před Azure login a znovu před
-vydáním deployment App tokenu použije oddělenou verifier App pro aktuální
-read-only načtení proměnných `pr-authorization`. Kontroluje aktuální referenci,
+vydáním deployment App tokenu použije job token pro aktuální read-only
+načtení control refu. Kontroluje aktuální referenci,
 source, approval a disposition, nikoli jejich kopii z prvního jobu.
 Nahrazení nebo odstranění approval, změna reference/source i nastavená
 disposition development zastaví. Časové freshness okno není náhradní
 autorizační cesta.
 
-Verifier používá
-[`GET /repos/{owner}/{repo}/environments/{environment_name}/variables`](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/variables#list-environment-variables),
-API `2026-03-10`, s repository
-[`Environments: read`](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-environments).
-Všechny proměnné musí být v jedné úplné odpovědi, nejvýš 30 záznamů
-podle připnutého kontraktu API;
-neúplná stránka, chybějící reference, duplicitní jména včetně rozdílu jen
-ve velikosti písmen, chyba API i neznámý
-stav běh zastaví. Nástroj nevypisuje hodnoty. Před uvolněním deployment
-credentials prokáže revokaci reader tokenu pomocí HTTP 204 a následného
-HTTP 401. Po těchto síťových krocích znovu posoudí expiraci schválení.
-Čtení konfigurace a vydání jiného tokenu nejsou jedna atomická GitHub
+Reader používá GitHub REST API `2026-03-10`:
+[`GET /repos/{owner}/{repo}/git/ref/{ref}`](https://docs.github.com/en/enterprise-cloud@latest/rest/git/refs#get-a-reference),
+[`GET /repos/{owner}/{repo}/git/trees/{tree_sha}`](https://docs.github.com/en/enterprise-cloud@latest/rest/git/trees#get-a-tree),
+[`GET /repos/{owner}/{repo}/contents/{path}`](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/contents#get-repository-content)
+[`GET /repos/{owner}/{repo}/rules/branches/{branch}`](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-rules-for-a-branch)
+a [`GET /repos/{owner}/{repo}/rulesets/{ruleset_id}`](https://docs.github.com/en/enterprise-cloud@latest/rest/repos/rules#get-a-repository-ruleset)
+s `includes_parents=true`. Teprve úplný ruleset má dokumentovanou variantu
+`source_type: Enterprise`; typ zdroje z branch-rules ji nenahrazuje.
+Reader vyžaduje aktivní branch ruleset s update i deletion ochranou
+a výslovným `update_allows_fetch_and_merge: false`.
+Nejdřív ověří čtení známé `main`; teprve poté může standardní non-reference
+repo přijmout chybějící control ref. Nečitelný soukromý repozitář není
+non-reference fallback. Tree i file se čtou z pevného control SHA, tree
+musí být úplný a soubor musí být regular blob `100644`, nejvýš 64 KiB.
+Contents API může dereferencovat symlink, proto samotné `type: file` nestačí.
+Reader odmítne neúplný či neznámý tvar, duplicitní pole včetně case-only
+variant, nesprávnou velikost, neplatné UTF-8 i změnu refu během čtení.
+Kontrolní commit musí zůstat stejný také proti authorize jobu.
+Po síťových krocích nástroj znovu posoudí expiraci schválení.
+Čtení konfigurace a vydání deployment tokenu nejsou jedna atomická GitHub
 transakce; kontrakt neumožňuje cache ani opětovné použití starého výsledku.
 
 „Re-run failed jobs“ ani opakování celého starého workflow nepovolí
@@ -168,6 +232,29 @@ Původ PR se čte read-only workflow tokenem přes
 REST API `2026-03-10`. Nullable nebo neúplné identity neautorizují běh.
 Membership a vydání/revokace tokenů používají stávající trusted nástroje.
 
+## Lokální snapshot state
+
+`New-DevelopmentStateSnapshot.ps1` ověří a lokálně zkopíruje přesné bajty
+jednoho standardního organization rootu. Podporuje pouze
+`organization-rulesets`: resource-free `main` a úplný `rulesets` root
+jediné organizace. Kontroluje resource addresses, instances i organization
+attributes; nevybírá organizaci z all-org state a nepřepisuje state JSON.
+Manifest váže snapshot na lineage, serial, SHA256, source key a ETag
+i přesné baseline, candidate a control revize.
+
+Nástroj nečte Azure, neověřuje vzdálený ETag a nevydává credentials.
+Vstupní bajty, očekávaný digest a ETag musí dodat trusted čtení přesného
+standardního backendu pod společnou concurrency ochranou. Publikace
+lokálního state a manifestu používá staging adresář a atomické přejmenování;
+opakování odmítne změněný výsledek nebo cizí soubory.
+
+Tento helper zatím není zapojený do candidate workflow. Neprokazuje
+cloud state scope, retirement identity ani standardní adopt/rollback.
+Candidate-written state se nesmí vracet do standardního backendu.
+Standardní root musí použít vlastní state a ověřený reconcile živého
+objektu. Při rollback nejdřív ověř, zda starý release změněný objekt přijme;
+samotná dispozice jeho drift guard nemění.
+
 ## Současné běhy a přerušení
 
 Development workflow sdílí concurrency `deploy-instance-main` se
@@ -177,11 +264,11 @@ vrácení živého stavu a lock automaticky neuvolní. Plánovaný drift dál
 porovnává skutečnost se standardním release; jeho nález není úspěšné
 ověření development kandidáta.
 
-Standardní plan i apply na povolené referenci používají stejný čerstvý reader
+Standardní plan i apply na povolené referenci používají stejné čerstvé čtení
 uvnitř phase po jejím review. Aktuální approval/disposition ověří před Azure
 login i před App tokenem; změna, odvolání nebo expirace dispozice během čekání
-tak neprojde jen kvůli dřívějšímu authorize jobu. Neprázdná approval/disposition
-vyžaduje toto ověření i po odstranění konfigurační hodnoty reference.
+tak neprojde jen kvůli dřívějšímu authorize jobu. Zmizelý nebo nově vytvořený
+control ref proti authorize snapshotu také zastaví credentials.
 
 Změna živého stavu může přežít selhání workflow. Po přerušení zapiš stav
 `interrupted`, zjisti skutečný stav a použij obnovu příslušného modulu.

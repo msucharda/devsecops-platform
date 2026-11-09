@@ -111,11 +111,107 @@ function Assert-DevelopmentCandidateBoundary {
         # Authorization and credential contracts are deliberately outside the candidate's editable boundary.
         if ($path -cnotmatch '^platform/(modules/|tools/)' -or $path -imatch '(^|/)module\.yaml\z' -or
             $path -imatch '(^|/)\.dependencies(/|$)' -or
-            $path -imatch '^platform/tools/(DevelopmentCandidate|Test-StandardDeployment|Test-Deployment|Test-Development|New-PlatformGitHubToken|Remove-PlatformGitHubToken|GitHubToken|PlatformTools|ToolDependencies|Select-InstanceModules|ReleaseIntegrity|Get-VendoringSource|ConvertTo-VendoredSource|Resolve-PlatformReleaseImport|VendoringCatalog|Install-ToolDependencies)') {
+            $path -imatch '^platform/tools/(DevelopmentCandidate|DevelopmentControl|Read-DevelopmentControl|New-DevelopmentStateSnapshot|Test-StandardDeployment|Test-Deployment|Test-Development|New-PlatformGitHubToken|Remove-PlatformGitHubToken|GitHubToken|PlatformTools|ToolDependencies|Select-InstanceModules|ReleaseIntegrity|Get-VendoringSource|ConvertTo-VendoredSource|Resolve-PlatformReleaseImport|VendoringCatalog|Install-ToolDependencies)') {
             throw "Development candidate changes protected authorization or instance content: '$path'."
         }
     }
     if ($changed -eq 0) { throw 'Development candidate must contain an exact development change.' }
+}
+
+# security-check: development-protected-module
+function Get-DevelopmentProtectedModule {
+    [CmdletBinding()]
+    param([Collections.IDictionary] $Modules)
+    $protected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $pending = [Collections.Generic.Queue[string]]::new()
+    foreach ($name in $Modules.get_Keys()) {
+        $manifest = $Modules[$name]
+        $permissions = $manifest['permissions']
+        $enterprisePermissions = @($permissions['githubApp'].PSBase.Values | ForEach-Object {
+            $declaration = $_
+            $_['permissions'].get_Keys() | Where-Object {
+                $_.StartsWith('enterprise_', [StringComparison]::Ordinal) -or
+                ($_ -ceq 'members' -and $declaration['permissions'][$_] -ceq 'write')
+            }
+        })
+        if (@($permissions['azure']).Count -eq 0 -and @($permissions['microsoftGraph']).Count -eq 0 -and
+            (-not $permissions.Contains('entraDirectoryRoles') -or @($permissions['entraDirectoryRoles']).Count -eq 0) -and
+            $enterprisePermissions.Count -eq 0) { continue }
+        $null = $protected.Add($name)
+        $pending.Enqueue($name)
+    }
+    while ($pending.Count -gt 0) {
+        $name = $pending.Dequeue()
+        foreach ($prerequisite in $Modules[$name]['prerequisites']) {
+            $dependency = $prerequisite.Split(':')[0]
+            if ($protected.Add($dependency)) { $pending.Enqueue($dependency) }
+        }
+    }
+    return @($protected | Sort-Object -CaseSensitive)
+}
+
+# security-check: development-protected-execution
+function Assert-DevelopmentProtectedExecution {
+    [CmdletBinding()]
+    param(
+        [Collections.IDictionary] $Baseline, [Collections.IDictionary] $Candidate, [Collections.IDictionary] $Modules
+    )
+    $protectedModules = @(Get-DevelopmentProtectedModule -Modules $Modules)
+    if ($ProtectedModules.Count -eq 0) { return }
+    $runtime = @(
+        'platform/tools/Invoke-Module.ps1', 'platform/tools/PlatformTools.psm1',
+        'platform/tools/ToolDependencies.psm1', 'platform/tools/requirements.psd1',
+        'platform/tools/WorkflowPreflight.psm1',
+        'platform/modules/shared/scripts/GitHubRetry.ps1'
+    )
+    $prefixes = @('platform/tools/vendor/') + @($ProtectedModules | ForEach-Object { "platform/modules/$_/" })
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($path in $Baseline.get_Keys()) { $null = $paths.Add($path) }
+    foreach ($path in $Candidate.get_Keys()) { $null = $paths.Add($path) }
+    foreach ($path in $paths) {
+        $protected = $runtime -ccontains $path -or @($prefixes | Where-Object { $path.StartsWith($_, [StringComparison]::Ordinal) }).Count -gt 0
+        if (-not $protected) { continue }
+        if ($Baseline.get_Keys() -cnotcontains $path -or $Candidate.get_Keys() -cnotcontains $path -or $Baseline[$path] -cne $Candidate[$path]) {
+            throw "Development candidate changes protected executable closure: '$path'; use a standard release."
+        }
+    }
+}
+
+# security-check: development-phase-authority
+function Assert-DevelopmentPhaseAuthority {
+    [CmdletBinding()]
+    param([Collections.IDictionary] $Instance, [Collections.IDictionary] $Modules, [string] $Repository)
+    $parts = $Repository.Split('/')
+    if ($parts.Count -ne 2) { throw 'Development authority inspection requires the exact reference repository.' }
+    $protected = @(Get-DevelopmentProtectedModule -Modules $Modules)
+    foreach ($name in $Instance['credentials'].get_Keys()) {
+        if ($protected -ccontains $name) { continue }
+        foreach ($binding in $Instance['credentials'][$name].PSBase.Values) {
+            if (-not $binding.Contains('githubApp')) { continue }
+            $app = $Instance['githubApps'][$binding['githubApp']]
+            $resources = $app['resources']
+            if ($resources.Contains('enterprise')) { throw 'Candidate execution must not receive enterprise installation authority.' }
+            if ($resources['organizations'] -inotcontains $parts[0]) { continue }
+            $reachesReference = -not $resources.Contains('repositories')
+            if ($resources.Contains('repositories')) {
+                foreach ($owner in $resources['repositories'].get_Keys()) {
+                    if ($owner -ieq $parts[0] -and $resources['repositories'][$owner] -icontains $parts[1]) { $reachesReference = $true }
+                }
+            }
+            $writes = @($app['permissions'].get_Keys() | Where-Object { $app['permissions'][$_] -ceq 'write' })
+            $organizationWrites = @($writes | Where-Object { $_ -cnotin @('administration', 'contents', 'actions', 'workflows') })
+            if ($writes.Count -gt 0 -and ($reachesReference -or $organizationWrites.Count -gt 0)) {
+                throw "Candidate module '$name' has reference repository authority; use a standard release or remove that candidate-reachable authority."
+            }
+        }
+    }
+}
+
+# security-check: development-prerequisite-artifact
+function Assert-DevelopmentPrerequisiteArtifact {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string] $ArtifactId)
+    if ($ArtifactId -notmatch '^[1-9][0-9]*\z') { throw 'A nonempty immutable prerequisite artifact ID is required; downloading all artifacts is forbidden.' }
 }
 
 # security-check: development-candidate-revision
@@ -129,4 +225,4 @@ function Assert-DevelopmentCandidateRevision {
     if ($LASTEXITCODE -ne 0) { throw 'Development candidate must descend from the verified baseline.' }
 }
 
-Export-ModuleMember -Function Get-DevelopmentCandidateSnapshot, Assert-DevelopmentCandidateApproval, Assert-DevelopmentCandidateBoundary, Assert-DevelopmentCandidateRevision
+Export-ModuleMember -Function Get-DevelopmentCandidateSnapshot, Assert-DevelopmentCandidateApproval, Assert-DevelopmentCandidateBoundary, Assert-DevelopmentCandidateRevision, Get-DevelopmentProtectedModule, Assert-DevelopmentProtectedExecution, Assert-DevelopmentPhaseAuthority, Assert-DevelopmentPrerequisiteArtifact
