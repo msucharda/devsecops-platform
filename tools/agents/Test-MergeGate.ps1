@@ -27,6 +27,8 @@ Truncated or unreadable trees fail evaluation, including the recursive API limit
 param(
     # 'owner/repo' or 'host/owner/repo' (GHE.com).
     [Parameter(Mandatory)][string] $Repository,
+    # Optional existing gh account on the target host; no global auth switch.
+    [string] $GitHubUser,
     [Parameter(Mandatory)][int] $Pr,
     # The head SHA the caller expects; another head fails with head-moved.
     [string] $ExpectedHeadSha,

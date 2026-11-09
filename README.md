@@ -32,6 +32,12 @@ Nástroje vyžadují PowerShell 7.4 nebo novější. Verze modulů PowerShellu u
 
 Parser YAML patří do releasu a nástroje ho načítají z `tools/vendor/` bez PSGallery. Bez `-Development` skript pouze ověří přibalené runtime závislosti. S `-Development` stáhne vývojové moduly do `tools/.dependencies/`, ověří SHA256 balíčků podle pinu a porovná obsah `Save-Module` s ověřeným archivem. Podrobnosti a postup aktualizace uvádí [provenience závislostí](tools/vendor/PROVENANCE.md).
 
+### Pilot vývoje na GHE.com
+
+Přípravu vývoje na GHE.com, inventář host-dependent integrací a nedestruktivní
+ověření hranice správy popisuje [pilot vývoje na GHE.com](docs/runbooks/ghe-development-pilot.md).
+Pilot není přepnutím běžné práce ani dokladem splněné živé akceptace.
+
 ### Retry volání GitHub REST API
 
 External programy modulů `actions-catalog`, `enterprise-baseline`, `organization-rulesets` a `organizations` opakují GET nejvýše dvakrát: celkem provedou 3 pokusy s prodlevami 5 a 10 s. Stejná politika platí pro DELETE revokace job tokenu v `tools/Remove-PlatformGitHubToken.ps1`. Retry zpracuje jen HTTP 502, 503, 504 a chybu spojení, TLS nebo timeout. HTTP 4xx včetně 429, ostatní chyby a POST, PATCH, PUT ani jiné DELETE neopakuje. Každá stránka výpisu má vlastní limit pokusů.

@@ -1757,25 +1757,32 @@ Describe 'Merge gate repository and gh call' {
         }
     }
 
-    It 'calls gh with the GHE host and without GH_TOKEN for a GHE.com repository' {
+    It 'calls gh with the GHE host and without either cloud token override for a GHE.com repository' -Tag HostRouting {
         InModuleScope MergeGate {
             $env:GH_TOKEN = 'github-com-token'
+            $savedGitHub = $env:GITHUB_TOKEN
+            $env:GITHUB_TOKEN = 'github-com-fallback-token'
             try {
-                Mock gh { $script:seenToken = $env:GH_TOKEN; $script:seenArguments = $args; $global:LASTEXITCODE = 0; '{"total_count":0,"check_runs":[]}' }
+                Mock -ModuleName GitHubHost gh {
+                    $env:GH_TOKEN | Should -BeNullOrEmpty
+                    $env:GITHUB_TOKEN | Should -BeNullOrEmpty
+                    $args | Should -Contain 'example.ghe.com'
+                    $args | Should -Contain 'X-GitHub-Api-Version: 2026-03-10'
+                    $global:LASTEXITCODE = 0
+                    '{"total_count":0,"check_runs":[]}'
+                }
                 $target = ConvertTo-MergeGateTarget -Repository 'example.ghe.com/example-platform/instance'
                 $null = Invoke-MergeGateRest -Target $target -Path 'repos/example-platform/instance/commits/x/check-runs'
-                $script:seenToken | Should -BeNullOrEmpty
-                $script:seenArguments | Should -Contain 'example.ghe.com'
-                $script:seenArguments | Should -Contain 'X-GitHub-Api-Version: 2026-03-10'
                 $env:GH_TOKEN | Should -Be 'github-com-token'
+                $env:GITHUB_TOKEN | Should -Be 'github-com-fallback-token'
             }
-            finally { Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue }
+            finally { Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue; $env:GITHUB_TOKEN = $savedGitHub }
         }
     }
 
     It 'throws when gh exits with an error' {
         InModuleScope MergeGate {
-            Mock gh { $global:LASTEXITCODE = 1; [System.Management.Automation.ErrorRecord]::new([Exception]::new('HTTP 404'), 'gh', 'NotSpecified', $null) }
+            Mock -ModuleName GitHubHost gh { $global:LASTEXITCODE = 1; [System.Management.Automation.ErrorRecord]::new([Exception]::new('HTTP 404'), 'gh', 'NotSpecified', $null) }
             $target = ConvertTo-MergeGateTarget -Repository 'msucharda/devsecops-platform'
             { Invoke-MergeGateGh -Target $target -Arguments @('api', '--method', 'GET', 'repos/x') } | Should -Throw '*exit code 1*HTTP 404*'
         }
