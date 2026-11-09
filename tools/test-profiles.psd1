@@ -1,6 +1,7 @@
 @{
     # Local suites use isolated inputs without Terraform, live services, or production setup flows.
     Unit = @(
+        'GitHubHost.Tests.ps1'
         'GitHubTokenIssuance.Tests.ps1'
         'CanonicalConfiguration.Tests.ps1'
         'DeploymentIdentifier.Tests.ps1'

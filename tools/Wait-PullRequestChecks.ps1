@@ -6,7 +6,7 @@ Waits at most -MaxSeconds for the checks of a pull request head commit and repor
 .DESCRIPTION
 The script reads the pull request head SHA, the workflow runs and check runs for that SHA, and the Copilot review state.
 It polls until the checks pass or fail, or until -MaxSeconds elapse. Sleeps end before the deadline, and one cancellation
-deadline bounds every request including its whole response body. Repository and token come from local sources without a network call.
+deadline bounds credential acquisition and every request including its whole response body. The repository comes from local Git configuration.
 
 Output: one line, for example 'pending 3/7; copilot: requested', 'failed: Platform tools; copilot: reviewed (rounds 1)'
 or 'passed; copilot: none'.
@@ -26,14 +26,20 @@ param(
     [ValidateRange(1, 3600)][int] $MaxSeconds = 230,
     [ValidateRange(1, 600)][int] $IntervalSeconds = 20,
     [string] $Repository,
-    [string] $ApiUrl = $(if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' })
+    [string] $GitHubUser,
+    [string] $ApiUrl
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $deadline = (Get-Date).ToUniversalTime().AddSeconds($MaxSeconds)
 Import-Module (Join-Path $PSScriptRoot 'DeadlineHttp.psm1')
+Import-Module (Join-Path $PSScriptRoot 'GitHubHost.psm1')
 trap {
+    if ($_.Exception -is [TimeoutException]) {
+        Write-Output 'pending; copilot: unknown (credential deadline reached)'
+        exit 2
+    }
     Write-Output "error: $($_.Exception.Message)"
     exit 3
 }
@@ -41,13 +47,35 @@ trap {
 if (-not $Repository) {
     # Read from the local remote; a network call here would not be bounded by the deadline.
     $remote = (& git -C $PSScriptRoot remote get-url origin 2>$null | Out-String).Trim()
-    if ($remote -match '[:/](?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') { $Repository = $Matches['name'] }
+    $remoteUri = $null
+    if ([uri]::TryCreate($remote, [UriKind]::Absolute, [ref] $remoteUri) -and
+        $remoteUri.Scheme -in @('https', 'ssh') -and -not $remoteUri.Query -and -not $remoteUri.Fragment -and
+        $remoteUri.AbsolutePath -match '^/(?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
+        $remoteHost = $remoteUri.Host
+        if ($remoteUri.Scheme -eq 'ssh' -and $remoteHost -eq 'ssh.github.com' -and $remoteUri.Port -eq 443) {
+            $remoteHost = 'github.com'
+        }
+        $Repository = "$remoteHost/$($Matches['name'])"
+    }
+    elseif ($remote -match '^[A-Za-z0-9._-]+@(?<host>[A-Za-z0-9.-]+):(?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
+        $Repository = "$($Matches['host'])/$($Matches['name'])"
+    }
 }
-if ($Repository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Pass -Repository <owner>/<repo>; it could not be read from the origin remote.' }
-$token = if ($env:GH_TOKEN) { $env:GH_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { (& gh auth token 2>$null | Out-String).Trim() }
+if (-not $Repository) { throw 'Pass -Repository [host/]<owner>/<repo>; it could not be read from the origin remote.' }
+if (-not $ApiUrl -and $env:GITHUB_API_URL -and $Repository.Split('/').Count -eq 2) { $ApiUrl = $env:GITHUB_API_URL }
+$target = Resolve-GitHubCloudTarget -Repository $Repository -ApiUrl $ApiUrl
+$Repository = $target.Slug
+$token = $null
+if ($target.Host -eq 'github.com' -and -not $GitHubUser) {
+    $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
+}
+if (-not $token) {
+    $token = Invoke-GitHubHostGh -Hostname $target.Host -User $GitHubUser -Arguments @('auth', 'token', '--hostname', $target.Host) -Deadline $deadline
+}
+$token = $token.Trim()
 if ([string]::IsNullOrWhiteSpace($token)) { throw 'No GitHub token: set GH_TOKEN or sign in with gh auth login.' }
 $headers = @{ Authorization = 'Bearer ' + $token; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
-$apiBase = "$($ApiUrl.TrimEnd('/'))/repos/$Repository"
+$apiBase = "$($target.ApiUrl)/repos/$Repository"
 # The Copilot code review bot submits reviews as this user; requests list it as Copilot.
 $copilotLogins = @('copilot-pull-request-reviewer[bot]', 'Copilot')
 
@@ -70,6 +98,7 @@ function Invoke-GitHubGet {
     catch { throw "GET $Path returned a body that is not JSON." }
 }
 
+# security-check: pull-request-check-pagination
 function Get-PagedItem {
     <#
     .SYNOPSIS
@@ -77,15 +106,30 @@ function Get-PagedItem {
     #>
     param([Parameter(Mandatory)][string] $Path, [Parameter(Mandatory)][string] $Property)
     $items = [System.Collections.Generic.List[object]]::new()
+    $seen = [System.Collections.Generic.HashSet[long]]::new()
+    $expectedTotal = $null
     for ($page = 1; ; $page++) {
         $separator = if ($Path.Contains('?')) { '&' } else { '?' }
         $body = Invoke-GitHubGet -Path "$Path$($separator)per_page=100&page=$page"
         if ($null -eq $body) { return $null }
-        if ($body -isnot [System.Collections.IDictionary] -or $body[$Property] -isnot [System.Collections.IList] -or $body['total_count'] -isnot [long] -and $body['total_count'] -isnot [int]) {
+        if ($body -isnot [System.Collections.IDictionary] -or $body[$Property] -isnot [System.Collections.IList] -or
+            ($body['total_count'] -isnot [long] -and $body['total_count'] -isnot [int])) {
             throw "GET $Path returned an unexpected shape without '$Property' and 'total_count'."
         }
-        foreach ($item in $body[$Property]) { $items.Add($item) }
-        if ($body[$Property].Count -eq 0 -or $items.Count -ge $body['total_count']) { return , $items.ToArray() }
+        if ($body['total_count'] -lt 0) { throw "GET $Path returned an invalid total_count." }
+        if ($null -ne $expectedTotal -and $body['total_count'] -ne $expectedTotal) { throw "GET $Path total_count changed during pagination." }
+        $expectedTotal = $body['total_count']
+        if ($items.Count + $body[$Property].Count -gt $expectedTotal) { throw "GET $Path returned more items than total_count." }
+        foreach ($item in $body[$Property]) {
+            if ($item -isnot [System.Collections.IDictionary] -or
+                ($item['id'] -isnot [long] -and $item['id'] -isnot [int]) -or $item['id'] -le 0) {
+                throw "GET $Path returned a record with an invalid ID."
+            }
+            if (-not $seen.Add($item['id'])) { throw "GET $Path returned a duplicate record ID." }
+            $items.Add($item)
+        }
+        if ($body[$Property].Count -eq 0 -and $items.Count -lt $body['total_count']) { throw "GET $Path returned an incomplete list." }
+        if ($items.Count -eq $body['total_count']) { return , $items.ToArray() }
     }
 }
 
@@ -147,6 +191,18 @@ function Get-ChecksState {
     return [pscustomobject]@{ State = 'pending'; Line = "pending $done/$($checks.Count)" }
 }
 
+# security-check: pull-request-check-head
+function Assert-PullRequestCheckHead {
+    [CmdletBinding()]
+    param([AllowEmptyCollection()][object[]] $Run, [Parameter(Mandatory)][string] $HeadSha)
+
+    foreach ($item in $Run) {
+        if ($item['head_sha'] -isnot [string] -or $item['head_sha'] -cne $HeadSha) {
+            throw 'A workflow run or check run does not belong to the evaluated head.'
+        }
+    }
+}
+
 function Get-CopilotState {
     param([object[]] $Review, [System.Collections.IDictionary] $Requested, [string] $HeadSha)
     $copilotReviews = @($Review | Where-Object { $_ -is [System.Collections.IDictionary] -and $_['user'] -is [System.Collections.IDictionary] -and $_['user']['login'] -cin $copilotLogins })
@@ -171,6 +227,7 @@ while ($true) {
     if ($null -eq $runs) { break }
     $checkRuns = Get-PagedItem -Path "commits/$sha/check-runs" -Property check_runs
     if ($null -eq $checkRuns) { break }
+    Assert-PullRequestCheckHead -Run (@($runs) + @($checkRuns)) -HeadSha $sha
     $reviews = Get-ReviewList -Path "pulls/$Pr/reviews"
     if ($null -eq $reviews) { break }
     $requested = Invoke-GitHubGet -Path "pulls/$Pr/requested_reviewers"

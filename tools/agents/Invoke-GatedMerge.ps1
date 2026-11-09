@@ -20,6 +20,7 @@ Authorization stays with the caller: Reason records the user consent or mandate 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string] $Repository,
+    [string] $GitHubUser,
     [Parameter(Mandatory)][int] $Pr,
     [Parameter(Mandatory)][string] $ExpectedHeadSha,
     [Parameter(Mandatory)][string] $Reason,
