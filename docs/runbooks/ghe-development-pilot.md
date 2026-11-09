@@ -59,6 +59,13 @@ výchozí tokeny pro GHE.com. Proto samotný `--hostname` neodstraní chybně
 zděděný cloudový token. Adaptér všechny původní tokenové proměnné po volání
 obnoví i při chybě; nevypisuje jejich hodnoty a nemění aktivní účet ani scopes.
 
+Waiter použije zděděné `GITHUB_API_URL` jen pro repozitář bez hostu.
+Explicitní host nebo host z originu má přednost před tímto výchozím nastavením;
+explicitní `-ApiUrl` se s hostem nadále musí shodovat. SSH origin pro GHE.com
+používá jako uživatelské jméno subdoménu enterprise, nikoli vždy `git`.
+Výchozí github.com cesta s `GH_TOKEN` nebo `GITHUB_TOKEN` nevyžaduje `gh`;
+konkrétní uložený účet a jiné hosty jej vyžadují.
+
 Příklady používají pouze zástupné cíle a existující přihlášení:
 
 ```powershell

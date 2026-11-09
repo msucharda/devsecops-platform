@@ -117,6 +117,7 @@ Describe 'Wait-PullRequestChecks' {
     }
 
     It 'routes a host-qualified repository without an API override' {
+        $env:GITHUB_API_URL = 'https://api.github.com'
         $options = $arguments.Clone()
         $options.Repository = 'contoso.ghe.com/demo-platform/devsecops'
         $options.Remove('ApiUrl')
@@ -138,24 +139,24 @@ Describe 'Wait-PullRequestChecks' {
         $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
     }
 
-    It 'rejects a conflicting environment API origin before any credential or HTTP request' {
+    It 'uses the explicit API origin instead of an ambient origin' {
         $env:GITHUB_API_URL = 'https://api.github.com'
-        $options = $arguments.Clone()
-        $options.Repository = 'contoso.ghe.com/demo-platform/devsecops'
-        $options.Remove('ApiUrl')
 
-        & $script @options | Should -BeLike 'error: *different GitHub hosts*'
+        & $script @arguments | Should -BeLike 'passed;*'
 
-        $LASTEXITCODE | Should -Be 3
-        $api.Requests.Count | Should -Be 0
-        Should -Invoke -ModuleName GitHubHost gh -Times 0
+        $LASTEXITCODE | Should -Be 0
+        $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
     }
 
     It 'infers the GHE host from the origin remote: <Remote>' -ForEach @(
         @{ Remote = 'https://contoso.ghe.com/demo-platform/devsecops.git' }
         @{ Remote = 'git@contoso.ghe.com:demo-platform/devsecops.git' }
         @{ Remote = 'ssh://git@contoso.ghe.com/demo-platform/devsecops.git' }
+        @{ Remote = 'contoso@contoso.ghe.com:demo-platform/devsecops.git' }
+        @{ Remote = 'ssh://contoso@contoso.ghe.com:2222/demo-platform/devsecops.git' }
+        @{ Remote = 'https://pilot-owner@contoso.ghe.com/demo-platform/devsecops.git' }
     ) {
+        $env:GITHUB_API_URL = 'https://api.github.com'
         Mock git { $Remote }
         $options = $arguments.Clone()
         $options.Remove('Repository')
@@ -165,6 +166,27 @@ Describe 'Wait-PullRequestChecks' {
 
         $LASTEXITCODE | Should -Be 0
         $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'uses <Variable> for github.com without requiring gh' -ForEach @(
+        @{ Variable = 'GH_TOKEN' }
+        @{ Variable = 'GITHUB_TOKEN' }
+    ) {
+        $savedFallback = $env:GITHUB_TOKEN
+        try {
+            $env:GH_TOKEN = $null
+            [Environment]::SetEnvironmentVariable($Variable, 'public-environment-token')
+            Mock -ModuleName GitHubHost gh { throw 'gh is not installed' }
+            $options = $arguments.Clone()
+            $options.ApiUrl = 'https://api.github.com'
+
+            & $script @options | Should -BeLike 'passed;*'
+
+            $LASTEXITCODE | Should -Be 0
+            $api.Requests[0].Headers.Authorization | Should -BeExactly 'Bearer public-environment-token'
+            Should -Invoke -ModuleName GitHubHost gh -Times 0
+        }
+        finally { $env:GITHUB_TOKEN = $savedFallback }
     }
 
     It 'rejects a conflicting API origin before any HTTP request' {
@@ -243,15 +265,24 @@ Describe 'Wait-PullRequestChecks' {
         $LASTEXITCODE | Should -Be 3
     }
 
+    # Array head SHAs are intentionally invalid API records.
     It 'rejects a successful <Case> from another head' -ForEach @(
         @{ Case = 'workflow' }
         @{ Case = 'check' }
         @{ Case = 'missing SHA' }
         @{ Case = 'SHA in another case' }
+        @{ Case = 'workflow empty SHA array' }
+        @{ Case = 'workflow matching SHA array' }
+        @{ Case = 'check empty SHA array' }
+        @{ Case = 'check matching SHA array' }
     ) {
         if ($Case -eq 'workflow') { $api.Runs['workflow_runs'][0]['head_sha'] = 'a' * 40 }
         elseif ($Case -eq 'check') { $api.Checks['check_runs'][0]['head_sha'] = 'a' * 40 }
         elseif ($Case -eq 'missing SHA') { $api.Checks['check_runs'][0].Remove('head_sha') }
+        elseif ($Case -like '*SHA array') {
+            $record = if ($Case -like 'workflow*') { $api.Runs['workflow_runs'][0] } else { $api.Checks['check_runs'][0] }
+            $record['head_sha'] = if ($Case -like '*empty*') { , @() } else { , @($sha) }
+        }
         else { $api.Checks['check_runs'][0]['head_sha'] = $sha.ToUpperInvariant() }
 
         & $script @arguments | Should -BeLike 'error: *evaluated head*'

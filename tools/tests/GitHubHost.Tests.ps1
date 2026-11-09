@@ -136,6 +136,23 @@ Describe 'Host-scoped GitHub CLI credentials' {
         }
     }
 
+    It 'uses only stdout when a named credential lookup succeeds with a stderr warning' {
+        InModuleScope GitHubHost {
+            Mock gh {
+                $global:LASTEXITCODE = 0
+                if ($args[0] -eq 'auth') {
+                    [System.Management.Automation.ErrorRecord]::new([Exception]::new('Credential expires soon'), 'warning', 'NotSpecified', $null)
+                    return 'named-account-token'
+                }
+                $env:GH_TOKEN | Should -BeExactly 'named-account-token'
+                'api-result'
+            }
+
+            Invoke-GitHubHostGh -Hostname example.ghe.com -User pilot-owner -Arguments @('api', '--hostname', 'example.ghe.com', 'user') |
+                Should -BeExactly 'api-result'
+        }
+    }
+
     It 'restores all overrides after <Case> without running the requested API call' -ForEach @(
         @{ Case = 'a missing named account'; Code = 1; Value = 'authentication failed'; ExpectedError = '*No stored GitHub credential*' }
         @{ Case = 'an empty named credential'; Code = 0; Value = ' '; ExpectedError = '*credential*is empty*' }

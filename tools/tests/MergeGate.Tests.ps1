@@ -1789,6 +1789,51 @@ Describe 'Merge gate repository and gh call' {
     }
 }
 
+Describe 'Named-account merge gate integration' {
+    BeforeEach {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $stub.AuthLookups = 0
+        Mock -ModuleName GitHubHost gh {
+            $global:LASTEXITCODE = 0
+            if ($args[0] -eq 'auth') {
+                $args | Should -Be @('auth', 'token', '--hostname', 'github.com', '--user', 'pilot-owner')
+                $stub.AuthLookups++
+                return 'selected-account-token'
+            }
+            $env:GH_TOKEN | Should -BeExactly 'selected-account-token'
+            Invoke-MergeGateStub -Stub $stub -Arguments $args
+        }
+    }
+
+    It 'uses the selected account for evaluation, merge and post-merge verification' {
+        $result = Invoke-GatedMerge -Repository $repository -Pr 78 -ExpectedHeadSha $stub.PullRequest.headRefOid `
+            -GitHubUser pilot-owner -Reason 'user: merge #78' -Now $stub.Now
+
+        $result.exitCode | Should -Be 0
+        $result.action | Should -BeExactly 'merged'
+        $result.postVerify.verified | Should -BeTrue
+        $stub.Merges | Should -Be 1
+        $stub.AuthLookups | Should -Be $stub.Calls.Count
+        $stub.Calls.Count | Should -BeGreaterThan 1
+    }
+
+    It 'rejects a missing selected account before any API or merge call' {
+        Mock -ModuleName GitHubHost gh {
+            $args | Should -Be @('auth', 'token', '--hostname', 'github.com', '--user', 'pilot-owner')
+            $global:LASTEXITCODE = 1
+        }
+
+        $result = Invoke-GatedMerge -Repository $repository -Pr 78 -ExpectedHeadSha $stub.PullRequest.headRefOid `
+            -GitHubUser pilot-owner -Reason 'user: merge #78' -Now $stub.Now
+
+        $result.exitCode | Should -Not -Be 0
+        $result.action | Should -BeExactly 'none'
+        $stub.Calls.Count | Should -Be 0
+        $stub.Merges | Should -Be 0
+        ($result.gate.reasons.message -join ' ') | Should -BeLike '*No stored GitHub credential*'
+    }
+}
+
 Describe 'Merge gate read-only guard' {
     It 'allows <Case>' -ForEach @(
         @{ Case = 'a REST GET'; Arguments = @('api', '--method', 'GET', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', 'repos/o/r/pulls/1/files') }

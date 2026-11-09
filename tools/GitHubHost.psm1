@@ -66,7 +66,7 @@ function Invoke-GitHubHostGh {
             foreach ($name in $tokenVariables) { [Environment]::SetEnvironmentVariable($name, $null) }
             $credential = @(& gh auth token --hostname $Hostname --user $User 2>&1)
             if ($LASTEXITCODE -ne 0) { throw "No stored GitHub credential for account '$User' on '$Hostname'." }
-            $token = ($credential -join "`n").Trim()
+            $token = (@($credential | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n").Trim()
             if ([string]::IsNullOrWhiteSpace($token)) { throw "The stored GitHub credential for '$User' on '$Hostname' is empty." }
             $variable = if ($Hostname -eq 'github.com' -or $Hostname.EndsWith('.ghe.com', [StringComparison]::OrdinalIgnoreCase)) { 'GH_TOKEN' } else { 'GH_ENTERPRISE_TOKEN' }
             [Environment]::SetEnvironmentVariable($variable, $token)

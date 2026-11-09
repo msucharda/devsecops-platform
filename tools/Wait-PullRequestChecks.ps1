@@ -43,15 +43,28 @@ trap {
 if (-not $Repository) {
     # Read from the local remote; a network call here would not be bounded by the deadline.
     $remote = (& git -C $PSScriptRoot remote get-url origin 2>$null | Out-String).Trim()
-    if ($remote -match '^(?:https://|ssh://git@|git@)(?<host>[A-Za-z0-9.-]+)[:/](?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
+    $remoteUri = $null
+    if ([uri]::TryCreate($remote, [UriKind]::Absolute, [ref] $remoteUri) -and
+        $remoteUri.Scheme -in @('https', 'ssh') -and -not $remoteUri.Query -and -not $remoteUri.Fragment -and
+        $remoteUri.AbsolutePath -match '^/(?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
+        $Repository = "$($remoteUri.Host)/$($Matches['name'])"
+    }
+    elseif ($remote -match '^[A-Za-z0-9._-]+@(?<host>[A-Za-z0-9.-]+):(?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
         $Repository = "$($Matches['host'])/$($Matches['name'])"
     }
 }
 if (-not $Repository) { throw 'Pass -Repository [host/]<owner>/<repo>; it could not be read from the origin remote.' }
-if (-not $ApiUrl -and $env:GITHUB_API_URL) { $ApiUrl = $env:GITHUB_API_URL }
+if (-not $ApiUrl -and $env:GITHUB_API_URL -and $Repository.Split('/').Count -eq 2) { $ApiUrl = $env:GITHUB_API_URL }
 $target = Resolve-GitHubCloudTarget -Repository $Repository -ApiUrl $ApiUrl
 $Repository = $target.Slug
-$token = (Invoke-GitHubHostGh -Hostname $target.Host -User $GitHubUser -Arguments @('auth', 'token', '--hostname', $target.Host)).Trim()
+$token = $null
+if ($target.Host -eq 'github.com' -and -not $GitHubUser) {
+    $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
+}
+if (-not $token) {
+    $token = Invoke-GitHubHostGh -Hostname $target.Host -User $GitHubUser -Arguments @('auth', 'token', '--hostname', $target.Host)
+}
+$token = $token.Trim()
 if ([string]::IsNullOrWhiteSpace($token)) { throw 'No GitHub token: set GH_TOKEN or sign in with gh auth login.' }
 $headers = @{ Authorization = 'Bearer ' + $token; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
 $apiBase = "$($target.ApiUrl)/repos/$Repository"
@@ -176,7 +189,7 @@ function Assert-PullRequestCheckHead {
     param([AllowEmptyCollection()][object[]] $Run, [Parameter(Mandatory)][string] $HeadSha)
 
     foreach ($item in $Run) {
-        if ($item['head_sha'] -cne $HeadSha) {
+        if ($item['head_sha'] -isnot [string] -or $item['head_sha'] -cne $HeadSha) {
             throw 'A workflow run or check run does not belong to the evaluated head.'
         }
     }
