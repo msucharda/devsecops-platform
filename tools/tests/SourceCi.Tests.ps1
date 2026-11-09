@@ -46,47 +46,6 @@ Describe 'Source CI job dependencies' {
         $merge[0].run | Should -BeExactly './tools/Invoke-MutationTests.ps1 -MergeReport @(Get-ChildItem ./artifacts/mutation-shards -Recurse -Filter mutation-report.json | Select-Object -ExpandProperty FullName) -ShardCount 24 -ReportPath ./artifacts/mutation-report.json'
     }
 
-    It 'covers every real security check and mutant exactly once with the configured partition' {
-        $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-        Import-Module (Join-Path $repository 'tools/MutationTesting.psm1') -Force
-        $configuration = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'security-checks.psd1')
-        $allMarkers = @(Get-SecurityCheckMarker -RepoPath $repository -Configuration $configuration)
-        $allMutants = @(Get-SecurityCheckMutant -RepoPath $repository -Marker $allMarkers)
-        $ast = [Management.Automation.Language.Parser]::ParseFile(
-            (Join-Path $repository 'tools/Invoke-MutationTests.ps1'), [ref] $null, [ref] $null)
-        $guards = @($ast.FindAll({
-            param($node)
-            $node -is [Management.Automation.Language.IfStatementAst] -and
-                $node.Clauses[0].Item1.Extent.Text -ceq '$Shard'
-        }, $false))
-        $guards.Count | Should -Be 1
-        $body = $guards[0].Clauses[0].Item2.Extent.Text
-        $selector = [scriptblock]::Create($body.Substring(1, $body.Length - 2))
-        $count = @($workflow.jobs['mutation-shards'].strategy.matrix.shard).Count
-        $seenChecks = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        $seenMutants = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach ($index in 0..($count - 1)) {
-            $selection = & {
-                $Shard = "$index/$count"
-                $markers = @($allMarkers)
-                $mutants = @($allMutants)
-                . $selector
-                @{ Markers = $markers; Mutants = $mutants }
-            } 6>$null
-            @($selection.Markers).Count | Should -BeGreaterThan 0
-            @($selection.Mutants).Count | Should -BeGreaterThan 0
-            foreach ($marker in $selection.Markers) {
-                $seenChecks.Add($marker.Name) | Should -BeTrue -Because "check $($marker.Name) must occur exactly once"
-            }
-            foreach ($mutant in $selection.Mutants) {
-                $seenMutants.Add($mutant.Id) | Should -BeTrue -Because "mutant $($mutant.Id) must occur exactly once"
-                $mutant.Check | Should -BeIn @($selection.Markers.Name)
-            }
-        }
-        @($seenChecks | Sort-Object -CaseSensitive) | Should -BeExactly @($allMarkers.Name | Sort-Object -CaseSensitive)
-        @($seenMutants | Sort-Object -CaseSensitive) | Should -BeExactly @($allMutants.Id | Sort-Object -CaseSensitive)
-    }
-
     It 'fails the mutation aggregate when its shards are <Result>' -ForEach @(
         @{ Result = 'failure' }, @{ Result = 'cancelled' }, @{ Result = 'skipped' },
         @{ Result = '' }, @{ Result = 'unknown' }

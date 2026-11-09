@@ -19,7 +19,8 @@
     # Source CI run 42051425816: 55.9799 seconds, rounded up.
     'TeardownMutation.Tests.ps1' = 56
     # Source CI run 42051425816: 56.8091 seconds, rounded up.
-    'MutationRunner.Tests.ps1' = 57
+    # Local Linux file-suite XML, 2026-11-10: 372.0792 seconds after adding complete partition coverage.
+    'MutationRunner.Tests.ps1' = 373
     'Organizations.Tests.ps1' = 18
     # Source CI run 40785638540: 77.2658 seconds, rounded up.
     'MergeGate.Tests.ps1' = 78
@@ -56,8 +57,8 @@
     'CodeSecurity.Tests.ps1' = 5
     'DriftIssue.Tests.ps1' = 4
     'GitHubApiFixture.Tests.ps1' = 3
-    # Local Linux file-suite XML, 2026-11-09: 74.724 seconds, rounded up.
-    'SourceCi.Tests.ps1' = 75
+    # Local Linux file-suite XML, 2026-11-10: 1.5658 seconds after moving full-inventory coverage to Integration.
+    'SourceCi.Tests.ps1' = 2
     'DeadlineHttp.Tests.ps1' = 3
     'RulesetBypassVisibility.Tests.ps1' = 3
     'AppInstallationContract.Tests.ps1' = 2

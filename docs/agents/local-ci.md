@@ -23,8 +23,10 @@ CI rozděluje celý inventář mutací do 24 shardů původním deterministický
 algoritmem po celých kontrolách. Rozdělení nemění testové selektory ani
 ekvivalentní výjimky. Agregátor vyžaduje všech 24 reportů, stejné inventory hash,
 přesné disjunktní pokrytí všech mutantů a nezměněnou klasifikaci výsledků.
-Kontraktní test provádí skutečný výběrový blok runneru nad celým aktuálním
-inventářem a ověřuje každou kontrolu i mutanta právě jednou.
+Integrační test v `MutationRunner.Tests.ps1` provádí skutečný výběrový blok
+runneru nad celým aktuálním inventářem a ověřuje každou kontrolu i mutanta
+právě jednou. Běží v úplném Linux Source CI; lokální `SourceCi.Tests.ps1`
+zachovává lehké kontroly kontraktu workflow.
 
 Počet vychází z pomalejšího měření se dvěma workers: za 720,66 s se dokončilo
 137 z 441 mutantů. Inventář 1 829 mutantů a 171 kontrol se při 24 shardech
