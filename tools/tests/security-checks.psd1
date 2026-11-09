@@ -4,6 +4,14 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'development-state-field-names'
+            Tests = @(
+                @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
+                    '*publishes an exact root snapshot*', '*noncanonical <Field> JSON field*'
+                ) }
+            )
+        }
+        @{
             Name = 'development-state-source'
             Tests = @(
                 @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
@@ -17,7 +25,7 @@
             Tests = @(
                 @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
                     '*publishes an exact root snapshot*', '*recovers publication*',
-                    '*preserves an unexpected staging*', '*altered published*'
+                    '*preserves an unexpected staging*', '*altered published*', '*second publisher*'
                 ) }
             )
         }

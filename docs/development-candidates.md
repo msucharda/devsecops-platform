@@ -241,12 +241,28 @@ jediné organizace. Kontroluje resource addresses, instances i organization
 attributes; nevybírá organizaci z all-org state a nepřepisuje state JSON.
 Manifest váže snapshot na lineage, serial, SHA256, source key a ETag
 i přesné baseline, candidate a control revize.
+Strukturální pole Terraform state musí mít kanonické názvy z malých ASCII
+písmen, číslic a podtržítek. Go JSON decoder přijímá i case-only varianty,
+které PowerShell dictionary rozlišuje; stejný soubor by jinak mohl projít
+kontrolou jako root resource a v Terraformu znamenat nested module.
 
 Nástroj nečte Azure, neověřuje vzdálený ETag a nevydává credentials.
 Vstupní bajty, očekávaný digest a ETag musí dodat trusted čtení přesného
 standardního backendu pod společnou concurrency ochranou. Publikace
 lokálního state a manifestu používá staging adresář a atomické přejmenování;
-opakování odmítne změněný výsledek nebo cizí soubory.
+opakování odmítne změněný výsledek nebo cizí soubory. Celou publikaci včetně
+obnovy staging chrání exclusive file lease. Souběžný publisher nesmí
+rozpracované soubory přepsat. Lock soubor zůstává na disku; ukončení procesu
+uvolní jeho OS handle. Nástroj před úspěchem znovu ověří publikované bajty
+i manifest.
+
+Lokální kontraktní test přes skutečný `Invoke-Module -Backend local`
+ověřuje přesný snapshot v cestě
+`<StatePath>/organization-rulesets/organizations/<org>/terraform.rulesets.tfstate`,
+jediný org token, candidate apply a následný prázdný plan. Kandidátní fixture
+připouští pouze přesný předchozí ruleset při zpřísnění review vláken.
+Standardní backend guard ani all-org deklaraci tento test neobchází.
+Tento test není důkaz živého běhu, VM izolace ani ukončení tokenu.
 
 Tento helper zatím není zapojený do candidate workflow. Neprokazuje
 cloud state scope, retirement identity ani standardní adopt/rollback.

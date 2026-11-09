@@ -114,10 +114,11 @@ Describe 'Development state isolation' {
     It 'rejects using the source file itself as <Location>' -ForEach @(
         @{ Location = 'output' }
         @{ Location = 'staging' }
+        @{ Location = 'lock' }
     ) {
         if ($Location -ceq 'output') { $arguments.OutputPath = $source }
         else {
-            $arguments.SourcePath = "$output.new"
+            $arguments.SourcePath = if ($Location -ceq 'lock') { "$output.lock" } else { "$output.new" }
             Copy-Item -LiteralPath $source -Destination $arguments.SourcePath
         }
         { & $snapshotCommand @arguments } | Should -Throw '*must be disjoint*'
@@ -146,12 +147,18 @@ Describe 'Development state isolation' {
     It 'rejects a symbolic-link <Location> path without publishing' -ForEach @(
         @{ Location = 'source' }
         @{ Location = 'output' }
+        @{ Location = 'lock' }
     ) {
-        $link = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        $link = if ($Location -ceq 'lock') { "$output.lock" } else { Join-Path $TestDrive ([guid]::NewGuid().ToString()) }
         $kind = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
-        $null = New-Item -ItemType $kind -Path $link -Target $directory
+        $target = $directory
+        if ($Location -ceq 'lock') {
+            $target = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+            $null = New-Item -ItemType Directory -Path $target
+        }
+        $null = New-Item -ItemType $kind -Path $link -Target $target
         if ($Location -ceq 'source') { $arguments.SourcePath = Join-Path $link 'standard.tfstate' }
-        else { $arguments.OutputPath = Join-Path $link 'snapshot' }
+        elseif ($Location -ceq 'output') { $arguments.OutputPath = Join-Path $link 'snapshot' }
         { & $snapshotCommand @arguments } | Should -Throw '*symbolic links*'
         Test-Path -LiteralPath $output | Should -BeFalse
     }
@@ -200,6 +207,22 @@ Describe 'Development state isolation' {
     }
 
     # Deliberately malformed or cross-organization state; only the named field differs.
+    It 'rejects a noncanonical <Field> JSON field before publication' -ForEach @(
+        @{ Field = 'root'; Match = '"version":'; Replacement = '"VERSION":4,"version":' }
+        @{ Field = 'resource'; Match = '"mode":'; Replacement = '"Module":"module.foreign","mode":' }
+        @{ Field = 'instance'; Match = '"index_key":'; Replacement = '"INDEX_KEY":"demo-platform","index_key":' }
+        @{ Field = 'output'; Match = '"value": ['; Replacement = '"Value":[],"value": [' }
+        @{ Field = 'Unicode'; Match = '"version":'; Replacement = '"ver\u017fion":4,"version":' }
+    ) {
+        $json = [IO.File]::ReadAllText($source)
+        $noncanonical = $json.Replace($Match, $Replacement)
+        $noncanonical | Should -Not -BeExactly $json
+        [IO.File]::WriteAllText($source, $noncanonical, [Text.UTF8Encoding]::new($false))
+        $arguments.ExpectedSha256 = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant()
+        { & $snapshotCommand @arguments } | Should -Throw '*noncanonical state JSON*'
+        Test-Path -LiteralPath $output | Should -BeFalse
+    }
+
     It 'rejects <Case> state before publication' -ForEach @(
         @{ Case = 'foreign output'; Change = { $state.outputs.organizations.value[0] = 'demo-platform' }; ExpectedError = '*exactly the selected organization*' }
         @{ Case = 'additional output org'; Change = { $state.outputs.organizations.value += 'demo-platform' }; ExpectedError = '*exactly the selected organization*' }
@@ -281,6 +304,25 @@ Describe 'Development state isolation' {
         Write-TestState
         { & $snapshotCommand @arguments } | Should -Throw $ExpectedError
         Test-Path -LiteralPath $output | Should -BeFalse
+    }
+
+    It 'refuses a second publisher before touching its staging files and recovers after lease release' {
+        $staging = "$output.new"
+        $null = [IO.Directory]::CreateDirectory($staging)
+        $stagedState = Join-Path $staging 'terraform.rulesets.tfstate'
+        [IO.File]::WriteAllText($stagedState, 'owned by the first publisher')
+        $lease = [IO.File]::Open("$output.lock", [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        try {
+            { & $snapshotCommand @arguments } | Should -Throw '*snapshot.lock*'
+            [IO.File]::ReadAllText($stagedState) | Should -BeExactly 'owned by the first publisher'
+            Test-Path -LiteralPath $output | Should -BeFalse
+        }
+        finally { $lease.Dispose() }
+
+        $result = & $snapshotCommand @arguments
+        (Get-FileHash -LiteralPath $result.StatePath).Hash.ToLowerInvariant() | Should -BeExactly $arguments.ExpectedSha256
+        (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() | Should -BeExactly $arguments.ExpectedSha256
+        Test-Path -LiteralPath $staging | Should -BeFalse
     }
 
     It 'recovers publication interrupted <Boundary> without changing the source' -ForEach @(

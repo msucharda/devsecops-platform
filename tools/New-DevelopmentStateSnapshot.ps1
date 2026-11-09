@@ -58,6 +58,15 @@ function Assert-DevelopmentStateAttributes {
     }
 }
 
+# security-check: development-state-field-names
+function Assert-DevelopmentStateFieldNames {
+    param([Collections.IDictionary] $Value)
+    foreach ($name in $Value.get_Keys()) {
+        # Terraform's Go decoder folds struct-field names; PowerShell dictionaries do not.
+        if ($name -cnotmatch '^[a-z][a-z0-9_]*\z') { throw 'Development snapshot contains a noncanonical state JSON field.' }
+    }
+}
+
 # security-check: development-state-closure
 function Assert-DevelopmentStateClosure {
     param([AllowNull()][object] $State, [string] $Name, [string] $Root, [string] $Org)
@@ -69,10 +78,12 @@ function Assert-DevelopmentStateClosure {
         $State['resources'] -isnot [Collections.IList]) {
         throw 'Development state requires a complete version-4 snapshot with lineage and serial.'
     }
+    Assert-DevelopmentStateFieldNames -Value $State
     if ($State['outputs'] -isnot [Collections.IDictionary] -or
         $State['outputs']['organizations'] -isnot [Collections.IDictionary]) {
         throw 'Development state outputs must identify exactly the selected organization.'
     }
+    Assert-DevelopmentStateFieldNames -Value $State['outputs']['organizations']
     $organizations = $State['outputs']['organizations']['value']
     if ($organizations -isnot [Collections.IList] -or $organizations.Count -ne 1 -or
         $organizations[0] -isnot [string] -or $organizations[0] -cne $Org) {
@@ -87,6 +98,7 @@ function Assert-DevelopmentStateClosure {
         if ($resource -isnot [Collections.IDictionary] -or $resource.Contains('module') -or
             $resource['mode'] -isnot [string] -or $resource['type'] -isnot [string] -or
             $resource['name'] -isnot [string]) { throw 'Development state contains an unsupported resource address.' }
+        Assert-DevelopmentStateFieldNames -Value $resource
         $address = "$($resource['mode']):$($resource['type']):$($resource['name'])"
         if ($expected -cnotcontains $address -or -not $seen.Add($address)) {
             throw 'Development state contains a foreign or duplicate resource address.'
@@ -98,6 +110,7 @@ function Assert-DevelopmentStateClosure {
             $instances[0]['status'] -or $instances[0]['deposed']) {
             throw 'Development state contains a foreign, incomplete, tainted or deposed organization instance.'
         }
+        Assert-DevelopmentStateFieldNames -Value $instances[0]
         Assert-DevelopmentStateAttributes -Attributes $instances[0]['attributes'] -Type $resource['type'] -Org $Org
     }
     if ($seen.Count -ne $expected.Count) { throw 'Development state is missing part of the selected organization resource closure.' }
@@ -137,7 +150,7 @@ function Read-DevelopmentSnapshotSource {
     $destination = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($OutputPath))
     if (-not [IO.Path]::GetDirectoryName($destination)) { throw 'Development snapshot publication requires a named subdirectory.' }
     $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
-    foreach ($directory in @($destination, "$destination.new")) {
+    foreach ($directory in @($destination, "$destination.new", "$destination.lock")) {
         if ($source.Equals($directory, $comparison) -or
             $source.StartsWith($directory + [IO.Path]::DirectorySeparatorChar, $comparison)) {
             throw 'Development snapshot source and publication paths must be disjoint.'
@@ -156,28 +169,32 @@ function Read-DevelopmentSnapshotSource {
 function Publish-DevelopmentSnapshot {
     param([string] $Destination, [string] $StateName, [byte[]] $Bytes, [string] $Digest, [string] $Manifest)
     $staging = "$Destination.new"
-    if (Test-Path -LiteralPath $Destination) {
-        Assert-DevelopmentPublishedSnapshot -Directory $Destination -StateName $StateName -Digest $Digest -Manifest $Manifest
-    }
-    else {
-        if (Test-Path -LiteralPath $staging) {
-            foreach ($entry in @(Get-ChildItem -LiteralPath $staging -Force)) {
-                if ($entry.Name -cnotin @($StateName, 'snapshot.json') -or $entry -isnot [IO.FileInfo]) {
-                    throw 'Interrupted development snapshot contains an unexpected staging entry.'
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Destination)) | Out-Null
+    # Keep the lock file: deleting it can let two publishers lock different file objects.
+    $lease = [IO.File]::Open("$Destination.lock", [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        if (-not (Test-Path -LiteralPath $Destination)) {
+            if (Test-Path -LiteralPath $staging) {
+                foreach ($entry in @(Get-ChildItem -LiteralPath $staging -Force)) {
+                    if ($entry.Name -cnotin @($StateName, 'snapshot.json') -or $entry -isnot [IO.FileInfo]) {
+                        throw 'Interrupted development snapshot contains an unexpected staging entry.'
+                    }
+                    Assert-DevelopmentStatePath -Path $entry.FullName
                 }
-                Assert-DevelopmentStatePath -Path $entry.FullName
+                foreach ($name in @($StateName, 'snapshot.json')) { [IO.File]::Delete((Join-Path $staging $name)) }
             }
-            foreach ($name in @($StateName, 'snapshot.json')) { [IO.File]::Delete((Join-Path $staging $name)) }
+            [IO.Directory]::CreateDirectory($staging) | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $staging $StateName), $Bytes)
+            [IO.File]::WriteAllText((Join-Path $staging 'snapshot.json'), $Manifest, [Text.UTF8Encoding]::new($false))
+            [IO.Directory]::Move($staging, $Destination)
         }
-        [IO.Directory]::CreateDirectory($staging) | Out-Null
-        [IO.File]::WriteAllBytes((Join-Path $staging $StateName), $Bytes)
-        [IO.File]::WriteAllText((Join-Path $staging 'snapshot.json'), $Manifest, [Text.UTF8Encoding]::new($false))
-        [IO.Directory]::Move($staging, $Destination)
+        Assert-DevelopmentPublishedSnapshot -Directory $Destination -StateName $StateName -Digest $Digest -Manifest $Manifest
+        return [pscustomobject]@{
+            StatePath = Join-Path $Destination $StateName
+            ManifestPath = Join-Path $Destination 'snapshot.json'
+        }
     }
-    return [pscustomobject]@{
-        StatePath = Join-Path $Destination $StateName
-        ManifestPath = Join-Path $Destination 'snapshot.json'
-    }
+    finally { $lease.Dispose() }
 }
 
 $snapshot = Read-DevelopmentSnapshotSource -SourcePath $SourcePath -OutputPath $OutputPath -ExpectedDigest $ExpectedSha256

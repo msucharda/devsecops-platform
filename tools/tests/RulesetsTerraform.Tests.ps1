@@ -145,6 +145,136 @@ data "external" "ruleset_plan_state" {
         [IO.File]::WriteAllBytes((Join-Path $evidenceDirectory 'stub-workloads-standard.tfstate'), $original)
     }
 
+    It 'rejects a case-aliased module that real Terraform treats as a nested resource address' -Tag DevelopmentStateSnapshot -ForEach @(
+        @{ Organization = 'demo-workloads' }
+    ) {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $source = Join-Path $parent 'aliased.tfstate'
+        $original = [IO.File]::ReadAllText((Join-Path $root 'terraform.tfstate'))
+        $aliased = $original.Replace('"mode":', '"Module":"module.foreign","mode":')
+        $aliased | Should -Not -BeExactly $original
+        [IO.File]::WriteAllText($source, $aliased, [Text.UTF8Encoding]::new($false))
+        $shown = Invoke-RulesetTerraform show -json $source
+        $shown.Code | Should -Be 0 -Because $shown.Text
+        $parsed = $shown.Text | ConvertFrom-Json -AsHashtable
+        $parsed['values']['root_module']['child_modules'][0]['address'] | Should -BeExactly 'module.foreign'
+        $digest = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant()
+        $destination = Join-Path $parent 'aliased-snapshot'
+
+        {
+            & (Join-Path $PSScriptRoot '../New-DevelopmentStateSnapshot.ps1') `
+                -SourcePath $source -OutputPath $destination -Module organization-rulesets -StateRoot rulesets `
+                -Organization $Organization -ExpectedSha256 $digest -SourceETag '"0x1234"' `
+                -BaselineRevision ('a' * 40) -CandidateRevision ('b' * 40) -ControlRevision ('c' * 40)
+        } | Should -Throw '*noncanonical state JSON*'
+        Test-Path -LiteralPath $destination | Should -BeFalse
+    }
+
+    It 'applies a changed ruleset through the public runner with an exact local snapshot and one organization token' -Tag DevelopmentStateRunner -ForEach @(
+        @{ Organization = 'demo-workloads' }
+    ) {
+        $apply = Invoke-RulesetTerraform apply -input=false -auto-approve
+        $apply.Code | Should -Be 0 -Because $apply.Text
+        $source = Join-Path $root 'terraform.tfstate'
+        $digest = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant()
+        $initialState = Get-Content -LiteralPath $source -Raw | ConvertFrom-Json -AsHashtable
+        $candidateModules = Join-Path $parent 'candidate-modules'
+        Copy-Item -LiteralPath (Split-Path $moduleRoot -Parent) -Destination $candidateModules -Recurse
+        $candidateRoot = Join-Path $candidateModules 'organization-rulesets/rulesets'
+        Copy-Item -LiteralPath (Join-Path $root 'stub_override.tf') -Destination $candidateRoot
+        $tools = Split-Path $PSScriptRoot -Parent
+        Import-Module (Join-Path $tools 'PlatformTools.psm1')
+        $graph = Get-PlatformModuleGraph -ModulesPath $candidateModules
+        $configuration = ConvertFrom-Yaml (Get-Content -LiteralPath (Join-Path $tools '../templates/instance/instance.yaml') -Raw)
+        $targets = @('demo-platform', 'demo-actions', 'demo-workloads')
+        $configuration.modules = @{
+            organizations = @{ parameters = @{ admin_logins = @('admin_example'); billing_email = 'platform@example.test' } }
+            'organization-rulesets' = @{ parameters = @{ target_organizations = $targets } }
+            'enterprise-baseline' = @{ parameters = @{
+                target_organizations = $targets
+                secret_scanning_bypass_reviewers = @{ 'demo-platform' = @(); 'demo-actions' = @(); 'demo-workloads' = @() }
+            } }
+            'actions-catalog' = @{ parameters = @{ target_organizations = @('demo-actions'); security_team = 'security' } }
+        }
+        Add-PlatformCredentialDefault -Credentials $configuration.credentials -Modules $graph
+        $id = 100
+        foreach ($name in (Get-PlatformModuleSelection -Instance $configuration -Modules $graph)) {
+            foreach ($phase in @('plan', 'apply', 'rulesetPlan')) {
+                if (-not $graph[$name].permissions.githubApp.Contains($phase)) { continue }
+                $declaration = $graph[$name].permissions.githubApp[$phase]
+                $resources = if ($declaration.resources.Contains('enterprise')) { @{ enterprise = $true } }
+                else {
+                    $scope = @{ organizations = $configuration.modules[$name].parameters.target_organizations }
+                    if ($declaration.resources['installationSelection'] -ceq 'none') { $scope['repositories'] = @{} }
+                    $scope
+                }
+                $alias = "$name-$phase".ToLowerInvariant()
+                $id++
+                $configuration.githubApps[$alias] = @{
+                    appId = [string] $id; installationId = [string] ($id + 100); enterprise = 'example'
+                    permissions = $declaration.permissions; resources = $resources
+                }
+                $configuration.credentials[$name][$phase]['githubApp'] = $alias
+            }
+        }
+        $configurationPath = Join-Path $parent 'runner-instance.yaml'
+        ConvertTo-Yaml $configuration | Set-Content -LiteralPath $configurationPath
+        $prerequisites = Join-Path $parent 'prerequisites'
+        $null = [IO.Directory]::CreateDirectory($prerequisites)
+        Set-Content -LiteralPath (Join-Path $prerequisites 'organizations.json') -Value (ConvertTo-Json @{ organizations = $targets })
+        Set-Content -LiteralPath (Join-Path $prerequisites 'enterprise-baseline.code-security.json') -Value (ConvertTo-Json @{ organizations = $targets })
+        $stateDirectory = Join-Path $parent 'candidate-state'
+        $snapshot = & (Join-Path $tools 'New-DevelopmentStateSnapshot.ps1') `
+            -SourcePath $source -OutputPath (Join-Path $stateDirectory "organization-rulesets/organizations/$Organization") `
+            -Module organization-rulesets -StateRoot rulesets -Organization $Organization `
+            -ExpectedSha256 $digest -SourceETag '"0x1234"' `
+            -BaselineRevision ('a' * 40) -CandidateRevision ('b' * 40) -ControlRevision ('c' * 40)
+        $arguments = @{
+            Module = 'organization-rulesets'; Action = 'plan'; Rulesets = $true; Organization = $Organization
+            ModulesPath = $candidateModules; InstancePath = $configurationPath; PlatformOrganization = 'demo-platform'
+            Backend = 'local'; StatePath = $stateDirectory; PrerequisiteOutputsPath = $prerequisites
+            ArtifactsPath = (Join-Path $parent 'runner-outputs'); JobSummaryPath = (Join-Path $parent 'runner-summary.md')
+        }
+        $runner = Join-Path $tools 'Invoke-Module.ps1'
+        $plan = & $runner @arguments 6>$null
+        $plan.HasChanges | Should -BeFalse
+        $output = Get-Content -LiteralPath $plan.OutputsPath -Raw | ConvertFrom-Json -AsHashtable
+        $output.organizations | Should -Be @('demo-workloads')
+
+        $changed = [ordered]@{}
+        foreach ($field in @('name', 'target', 'enforcement', 'bypass_actors', 'conditions', 'rules')) {
+            $changed[$field] = $server.State.Items[0][$field]
+        }
+        $changed = $changed | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable
+        Set-Content -LiteralPath (Join-Path $candidateRoot 'previous-ruleset.json') -Value (ConvertTo-Json $changed -Depth 30)
+        @($changed.rules | Where-Object type -CEQ pull_request)[0].parameters.required_review_thread_resolution = $true
+        Set-Content -LiteralPath (Join-Path $candidateRoot 'candidate-ruleset.json') -Value (ConvertTo-Json $changed -Depth 30)
+        Set-Content -LiteralPath (Join-Path $candidateRoot 'candidate_override.tf') -Value @'
+locals {
+  ruleset = jsondecode(file("${path.module}/candidate-ruleset.json"))
+}
+'@
+        # Model the candidate's exact-predecessor upgrade; the standard declaration and post-apply check stay unchanged.
+        $mainPath = Join-Path $candidateRoot 'main.tf'
+        $main = [IO.File]::ReadAllText($mainPath)
+        $oldGuard = 'jsondecode(self.result.state) == null || jsonencode(jsondecode(self.result.state)) == jsonencode(local.ruleset), false)'
+        $newGuard = 'jsondecode(self.result.state) == null || jsonencode(jsondecode(self.result.state)) == jsonencode(local.ruleset) || (each.key == var.instance.organizations.workloads && jsonencode(jsondecode(self.result.state)) == jsonencode(jsondecode(file("${path.module}/previous-ruleset.json")))), false)'
+        $candidate = $main.Replace($oldGuard, $newGuard)
+        $candidate | Should -Not -BeExactly $main
+        [IO.File]::WriteAllText($mainPath, $candidate, [Text.UTF8Encoding]::new($false))
+        $arguments.Action = 'apply'
+        $applied = & $runner @arguments 6>$null
+        $applied.HasChanges | Should -BeTrue
+        @($server.State.Items[0].rules | Where-Object type -CEQ pull_request)[0].parameters.required_review_thread_resolution | Should -BeTrue
+        (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() | Should -BeExactly $digest
+        $candidateState = Get-Content -LiteralPath $snapshot.StatePath -Raw | ConvertFrom-Json -AsHashtable
+        $candidateState.lineage | Should -BeExactly $initialState.lineage
+        $candidateState.serial | Should -BeGreaterThan $initialState.serial
+        $arguments.Action = 'plan'
+        (& $runner @arguments 6>$null).HasChanges | Should -BeFalse
+    }
+
     It 'reconciles the original standard state after two isolated review-thread changes and exact rollback' -Tag DevelopmentStateRecovery -ForEach @(
         @{ Organization = 'demo-workloads' }
     ) {
