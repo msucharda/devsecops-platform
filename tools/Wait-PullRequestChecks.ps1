@@ -6,7 +6,7 @@ Waits at most -MaxSeconds for the checks of a pull request head commit and repor
 .DESCRIPTION
 The script reads the pull request head SHA, the workflow runs and check runs for that SHA, and the Copilot review state.
 It polls until the checks pass or fail, or until -MaxSeconds elapse. Sleeps end before the deadline, and one cancellation
-deadline bounds every request including its whole response body. Repository and token come from local sources without a network call.
+deadline bounds credential acquisition and every request including its whole response body. The repository comes from local Git configuration.
 
 Output: one line, for example 'pending 3/7; copilot: requested', 'failed: Platform tools; copilot: reviewed (rounds 1)'
 or 'passed; copilot: none'.
@@ -36,6 +36,10 @@ $deadline = (Get-Date).ToUniversalTime().AddSeconds($MaxSeconds)
 Import-Module (Join-Path $PSScriptRoot 'DeadlineHttp.psm1')
 Import-Module (Join-Path $PSScriptRoot 'GitHubHost.psm1')
 trap {
+    if ($_.Exception -is [TimeoutException]) {
+        Write-Output 'pending; copilot: unknown (credential deadline reached)'
+        exit 2
+    }
     Write-Output "error: $($_.Exception.Message)"
     exit 3
 }
@@ -47,7 +51,11 @@ if (-not $Repository) {
     if ([uri]::TryCreate($remote, [UriKind]::Absolute, [ref] $remoteUri) -and
         $remoteUri.Scheme -in @('https', 'ssh') -and -not $remoteUri.Query -and -not $remoteUri.Fragment -and
         $remoteUri.AbsolutePath -match '^/(?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
-        $Repository = "$($remoteUri.Host)/$($Matches['name'])"
+        $remoteHost = $remoteUri.Host
+        if ($remoteUri.Scheme -eq 'ssh' -and $remoteHost -eq 'ssh.github.com' -and $remoteUri.Port -eq 443) {
+            $remoteHost = 'github.com'
+        }
+        $Repository = "$remoteHost/$($Matches['name'])"
     }
     elseif ($remote -match '^[A-Za-z0-9._-]+@(?<host>[A-Za-z0-9.-]+):(?<name>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
         $Repository = "$($Matches['host'])/$($Matches['name'])"
@@ -62,7 +70,7 @@ if ($target.Host -eq 'github.com' -and -not $GitHubUser) {
     $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
 }
 if (-not $token) {
-    $token = Invoke-GitHubHostGh -Hostname $target.Host -User $GitHubUser -Arguments @('auth', 'token', '--hostname', $target.Host)
+    $token = Invoke-GitHubHostGh -Hostname $target.Host -User $GitHubUser -Arguments @('auth', 'token', '--hostname', $target.Host) -Deadline $deadline
 }
 $token = $token.Trim()
 if ([string]::IsNullOrWhiteSpace($token)) { throw 'No GitHub token: set GH_TOKEN or sign in with gh auth login.' }

@@ -21,12 +21,11 @@ Describe 'Wait-PullRequestChecks' {
         $originalApiUrl = $env:GITHUB_API_URL
         $env:GITHUB_API_URL = $null
         $env:GH_TOKEN = 'ghs_pollingtoken'
-        Mock gh {
-            $args | Should -Be @('auth', 'token', '--hostname', 'contoso.ghe.com')
+        Mock Invoke-GitHubHostProcess {
+            $Arguments | Should -Be @('auth', 'token', '--hostname', 'contoso.ghe.com')
             $env:GH_TOKEN | Should -BeNullOrEmpty
             $env:GITHUB_TOKEN | Should -BeNullOrEmpty
-            $global:LASTEXITCODE = 0
-            'ghs_hosttoken'
+            @{ ExitCode = 0; Stdout = 'ghs_hosttoken'; Stderr = '' }
         } -ModuleName GitHubHost
         $api = @{
             Now = [datetime]::new(2026, 10, 22, 12, 0, 0, [DateTimeKind]::Utc)
@@ -168,6 +167,34 @@ Describe 'Wait-PullRequestChecks' {
         $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
     }
 
+    It 'resolves the documented GitHub SSH-over-443 origin to github.com' {
+        $env:GITHUB_API_URL = 'https://api.contoso.ghe.com'
+        Mock git { 'ssh://git@ssh.github.com:443/demo-platform/devsecops.git' }
+        $options = $arguments.Clone()
+        $options.Remove('Repository')
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'passed;*'
+
+        $LASTEXITCODE | Should -Be 0
+        $api.Requests[0].Uri | Should -BeExactly 'https://api.github.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'does not normalize the SSH transport hostname for an unsupported transport: <Remote>' -ForEach @(
+        @{ Remote = 'https://ssh.github.com/demo-platform/devsecops.git' }
+        @{ Remote = 'ssh://git@ssh.github.com:22/demo-platform/devsecops.git' }
+    ) {
+        Mock git { $Remote }
+        $options = $arguments.Clone()
+        $options.Remove('Repository')
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'error: *only github.com and GHE.com*'
+
+        $LASTEXITCODE | Should -Be 3
+        $api.Requests.Count | Should -Be 0
+    }
+
     It 'uses <Variable> for github.com without requiring gh' -ForEach @(
         @{ Variable = 'GH_TOKEN' }
         @{ Variable = 'GITHUB_TOKEN' }
@@ -176,7 +203,7 @@ Describe 'Wait-PullRequestChecks' {
         try {
             $env:GH_TOKEN = $null
             [Environment]::SetEnvironmentVariable($Variable, 'public-environment-token')
-            Mock -ModuleName GitHubHost gh { throw 'gh is not installed' }
+            Mock -ModuleName GitHubHost Invoke-GitHubHostProcess { throw 'gh is not installed' }
             $options = $arguments.Clone()
             $options.ApiUrl = 'https://api.github.com'
 
@@ -184,7 +211,7 @@ Describe 'Wait-PullRequestChecks' {
 
             $LASTEXITCODE | Should -Be 0
             $api.Requests[0].Headers.Authorization | Should -BeExactly 'Bearer public-environment-token'
-            Should -Invoke -ModuleName GitHubHost gh -Times 0
+            Should -Invoke -ModuleName GitHubHost Invoke-GitHubHostProcess -Times 0
         }
         finally { $env:GITHUB_TOKEN = $savedFallback }
     }
@@ -195,14 +222,13 @@ Describe 'Wait-PullRequestChecks' {
 
         $LASTEXITCODE | Should -Be 3
         $api.Requests.Count | Should -Be 0
-        Should -Invoke -ModuleName GitHubHost gh -Times 0
+        Should -Invoke -ModuleName GitHubHost Invoke-GitHubHostProcess -Times 0
     }
 
     It 'does not fall back to another account when the selected account is unavailable' {
-        Mock -ModuleName GitHubHost gh {
-            $args | Should -Be @('auth', 'token', '--hostname', 'contoso.ghe.com', '--user', 'pilot-owner')
-            $global:LASTEXITCODE = 1
-            'no stored credential'
+        Mock -ModuleName GitHubHost Invoke-GitHubHostProcess {
+            $Arguments | Should -Be @('auth', 'token', '--hostname', 'contoso.ghe.com', '--user', 'pilot-owner')
+            @{ ExitCode = 1; Stdout = ''; Stderr = 'no stored credential' }
         }
 
         & $script @arguments -GitHubUser pilot-owner | Should -BeLike 'error: *No stored GitHub credential*'

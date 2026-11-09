@@ -3,6 +3,274 @@ BeforeAll {
     Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'GitHubHost.psm1') -Force
 }
 
+Describe 'Deadline-bounded GitHub CLI credentials' {
+    It 'cancels a slow credential tree when <Case> and returns pending within the waiter deadline' -ForEach @(
+        @{ Case = 'the parent remains alive'; ParentExits = 'false' }
+        @{ Case = 'the parent exits before its child'; ParentExits = 'true' }
+    ) {
+        $worker = Join-Path $TestDrive 'gh-deadline.ps1'
+        $pidFile = Join-Path $TestDrive 'credential.pid'
+        @'
+param([Parameter(ValueFromRemainingArguments)][string[]] $Remaining)
+$start = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
+$start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+foreach ($argument in @('-NoLogo', '-NoProfile', '-Command', 'Start-Sleep -Seconds 30')) { $start.ArgumentList.Add($argument) }
+$child = [Diagnostics.Process]::Start($start)
+[IO.File]::WriteAllLines($env:GH_TEST_PID_FILE, [string[]] @($PID, $child.Id))
+if ($env:GH_TEST_PARENT_EXITS -eq 'true') { exit 0 }
+Start-Sleep -Seconds 30
+'@ | Set-Content -LiteralPath $worker
+        $savedPidFile = $env:GH_TEST_PID_FILE
+        $savedParentExits = $env:GH_TEST_PARENT_EXITS
+        $env:GH_TEST_PID_FILE = $pidFile
+        $env:GH_TEST_PARENT_EXITS = $ParentExits
+        $names = @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
+        $saved = @{}
+        foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, "original-$name") }
+        Mock Get-Command -ModuleName GitHubHost {
+            [pscustomobject]@{ Source = $worker; CommandType = 'ExternalScript' }
+        } -ParameterFilter { $Name -eq 'gh' }
+        Mock gh -ModuleName GitHubHost {
+            [Threading.Thread]::Sleep(6500)
+            $global:LASTEXITCODE = 0
+            'slow-credential'
+        }
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $waiter = Join-Path (Split-Path $PSScriptRoot -Parent) 'Wait-PullRequestChecks.ps1'
+
+            $output = & $waiter -Pr 1 -Repository example.ghe.com/demo/source -GitHubUser pilot-owner -MaxSeconds 15
+
+            $cleanupGraceSeconds = 3
+            $watch.Elapsed.TotalSeconds | Should -BeLessThan (15 + $cleanupGraceSeconds)
+            $output | Should -BeExactly 'pending; copilot: unknown (credential deadline reached)'
+            $LASTEXITCODE | Should -Be 2
+            $childIds = @(Get-Content -LiteralPath $pidFile)
+            do {
+                $remaining = @($childIds | ForEach-Object { Get-Process -Id ([int] $_) -ErrorAction SilentlyContinue })
+                if ($remaining.Count -gt 0) { Start-Sleep -Milliseconds 25 }
+            } while ($remaining.Count -gt 0 -and $watch.Elapsed.TotalSeconds -lt (15 + $cleanupGraceSeconds))
+            $remaining | Should -BeNullOrEmpty
+            $watch.Elapsed.TotalSeconds | Should -BeLessThan (15 + $cleanupGraceSeconds)
+            foreach ($name in $names) { [Environment]::GetEnvironmentVariable($name) | Should -BeExactly "original-$name" }
+        }
+        finally {
+            if (Test-Path -LiteralPath $pidFile) {
+                foreach ($childId in (Get-Content -LiteralPath $pidFile)) {
+                    $child = Get-Process -Id ([int] $childId) -ErrorAction SilentlyContinue
+                    if ($null -ne $child) { $child.Kill($true); $child.WaitForExit() }
+                }
+            }
+            $env:GH_TEST_PID_FILE = $savedPidFile
+            $env:GH_TEST_PARENT_EXITS = $savedParentExits
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+        }
+    }
+
+    It 'stops the credential tree when the adapter process is killed without running its finally' {
+        $pidFile = Join-Path $TestDrive 'abandoned-credential-pids.txt'
+        $native = Join-Path $PSHOME 'pwsh'
+        $command = Join-Path $TestDrive 'abandoned-gh.ps1'
+        @'
+$child = [Diagnostics.Process]::Start((Join-Path $PSHOME 'pwsh'), '-NoProfile -Command "Start-Sleep -Seconds 30"')
+@($PID, $child.Id) | Set-Content -LiteralPath $env:GH_TEST_PID_FILE
+Start-Sleep -Seconds 30
+'@ | Set-Content -LiteralPath $command
+        $adapter = Join-Path $TestDrive 'abandoned-adapter.ps1'
+        @'
+param($Module, $Command)
+Import-Module $Module
+Set-Alias gh $Command
+Invoke-GitHubHostGh -Hostname example.ghe.com -User pilot-owner -Arguments @('auth', 'token') -Deadline ([datetime]::UtcNow.AddSeconds(120))
+'@ | Set-Content -LiteralPath $adapter
+        $savedPidFile = $env:GH_TEST_PID_FILE
+        $env:GH_TEST_PID_FILE = $pidFile
+        $parent = [Diagnostics.Process]::new()
+        try {
+            $parent.StartInfo.FileName = $native
+            $parent.StartInfo.UseShellExecute = $false
+            $parent.StartInfo.CreateNoWindow = $true
+            foreach ($argument in @('-NoLogo', '-NoProfile', '-File', $adapter, '-Module', (Join-Path (Split-Path $PSScriptRoot -Parent) 'GitHubHost.psm1'), '-Command', $command)) {
+                $parent.StartInfo.ArgumentList.Add($argument)
+            }
+            $parent.Start() | Should -BeTrue
+            $ready = [Diagnostics.Stopwatch]::StartNew()
+            while (-not (Test-Path -LiteralPath $pidFile) -and $ready.Elapsed.TotalSeconds -lt 60) { Start-Sleep -Milliseconds 25 }
+            Test-Path -LiteralPath $pidFile | Should -BeTrue
+            $children = @(Get-Content -LiteralPath $pidFile)
+            $children.Count | Should -Be 2
+            $parent.Kill()
+            $parent.WaitForExit()
+            $cleanup = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $remaining = @($children | ForEach-Object { Get-Process -Id ([int] $_) -ErrorAction SilentlyContinue })
+                if ($remaining.Count -gt 0) { Start-Sleep -Milliseconds 25 }
+            } while ($remaining.Count -gt 0 -and $cleanup.Elapsed.TotalSeconds -lt 3)
+            $remaining | Should -BeNullOrEmpty
+        }
+        finally {
+            if (-not $parent.HasExited) { $parent.Kill($true); $parent.WaitForExit() }
+            if (Test-Path -LiteralPath $pidFile) {
+                foreach ($id in (Get-Content -LiteralPath $pidFile)) {
+                    $child = Get-Process -Id ([int] $id) -ErrorAction SilentlyContinue
+                    if ($null -ne $child) { $child.Kill($true); $child.WaitForExit() }
+                }
+            }
+            $parent.Dispose()
+            $env:GH_TEST_PID_FILE = $savedPidFile
+        }
+    }
+
+    It 'keeps native stdout separate from stderr and uses the named credential before the deadline' {
+        $worker = Join-Path $TestDrive 'gh-output.ps1'
+        @'
+param([Parameter(ValueFromRemainingArguments)][string[]] $Remaining)
+if ($Remaining -contains '--user') {
+    foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
+        if ([Environment]::GetEnvironmentVariable($name)) { [Console]::Error.WriteLine('inherited override'); exit 1 }
+    }
+    [Console]::Error.WriteLine('Credential expires soon')
+    'named-account-token'
+}
+elseif ($env:GH_TOKEN -eq 'named-account-token') { 'selected-account-result' }
+else { [Console]::Error.WriteLine('wrong identity'); exit 1 }
+'@ | Set-Content -LiteralPath $worker
+        Mock Get-Command -ModuleName GitHubHost {
+            [pscustomobject]@{ Source = $worker; CommandType = 'ExternalScript' }
+        } -ParameterFilter { $Name -eq 'gh' }
+
+        $output = Invoke-GitHubHostGh -Hostname example.ghe.com -User pilot-owner -Arguments @('auth', 'token', '--hostname', 'example.ghe.com') -Deadline ([datetime]::UtcNow.AddSeconds(60))
+
+        $output.Trim() | Should -BeExactly 'selected-account-result'
+    }
+
+    It 'does not launch gh after the absolute deadline' {
+        Mock Get-Command -ModuleName GitHubHost { throw 'must not resolve or launch gh' } -ParameterFilter { $Name -eq 'gh' }
+
+        { Invoke-GitHubHostGh -Hostname example.ghe.com -User pilot-owner -Arguments @('auth', 'token') -Deadline ([datetime]::UtcNow.AddSeconds(-1)) } |
+            Should -Throw '*deadline reached*'
+
+        Should -Invoke -ModuleName GitHubHost Get-Command -Times 0
+    }
+
+    It 'reports native stderr and the exact nonzero exit code instead of success' {
+        $worker = Join-Path $TestDrive 'gh-failure.ps1'
+        "[Console]::Error.WriteLine('native-request-rejected'); exit 23" | Set-Content -LiteralPath $worker
+        Mock Get-Command -ModuleName GitHubHost {
+            [pscustomobject]@{ Source = $worker; CommandType = 'ExternalScript' }
+        } -ParameterFilter { $Name -eq 'gh' }
+
+        { Invoke-GitHubHostGh -Hostname example.ghe.com -Arguments @('api', 'user') -Deadline ([datetime]::UtcNow.AddSeconds(30)) } |
+            Should -Throw '*failed with exit code 23: native-request-rejected*'
+    }
+
+    It 'cleans descendants with independent output streams before the command worker exits' -Tag ProcessLifetime {
+        $pidFile = Join-Path $TestDrive 'completed-command-child.pid'
+        $command = Join-Path $TestDrive 'completed-gh.ps1'
+        @'
+if ($IsWindows) {
+    Add-Type 'using System; using System.Runtime.InteropServices; public static class CompletionHandles { [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetStdHandle(int which); [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags); }'
+    foreach ($stream in @(-11, -12)) {
+        if (-not [CompletionHandles]::SetHandleInformation([CompletionHandles]::GetStdHandle($stream), 1, 0)) {
+            throw [ComponentModel.Win32Exception]::new()
+        }
+    }
+}
+$start = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
+$start.UseShellExecute = $false
+$start.RedirectStandardOutput = $true
+$start.RedirectStandardError = $true
+foreach ($arg in @('-NoLogo', '-NoProfile', '-Command', 'Start-Sleep -Seconds 30')) { $start.ArgumentList.Add($arg) }
+$child = [Diagnostics.Process]::Start($start)
+[IO.File]::WriteAllText($env:GH_TEST_PID_FILE, [string] $child.Id)
+'completed-command'
+'@ | Set-Content -LiteralPath $command
+        $savedPidFile = $env:GH_TEST_PID_FILE
+        $env:GH_TEST_PID_FILE = $pidFile
+        $worker = [Diagnostics.Process]::new()
+        try {
+            $native = (Get-Command (Join-Path $PSHOME 'pwsh') -CommandType Application).Source
+            $argumentsJson = ConvertTo-Json -InputObject @('-NoLogo', '-NoProfile', '-File', $command) -Compress
+            $worker.StartInfo.FileName = $native
+            $worker.StartInfo.UseShellExecute = $false
+            $worker.StartInfo.RedirectStandardOutput = $true
+            $worker.StartInfo.RedirectStandardError = $true
+            foreach ($arg in @('-NoLogo', '-NoProfile', '-File', (Join-Path $PSScriptRoot '..\GitHubHost.Worker.ps1'),
+                    '-FilePath', $native, '-ArgumentsJson', $argumentsJson,
+                    '-DeadlineUtcTicks', ([datetime]::UtcNow.AddSeconds(30).Ticks), '-ParentProcessId', $PID)) {
+                $worker.StartInfo.ArgumentList.Add($arg)
+            }
+            $worker.Start() | Should -BeTrue
+            $stdout = $worker.StandardOutput.ReadToEndAsync()
+            $stderr = $worker.StandardError.ReadToEndAsync()
+            $worker.WaitForExit(60000) | Should -BeTrue
+            $errorOutput = $stderr.GetAwaiter().GetResult()
+            $worker.ExitCode | Should -Be 0 -Because $errorOutput
+            $stdout.GetAwaiter().GetResult().Trim() | Should -BeExactly 'completed-command'
+            $childId = [int] (Get-Content -LiteralPath $pidFile)
+            $cleanup = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $remaining = @(Get-Process -Id $childId -ErrorAction SilentlyContinue)
+                if ($remaining.Count -gt 0) { Start-Sleep -Milliseconds 25 }
+            } while ($remaining.Count -gt 0 -and $cleanup.Elapsed.TotalSeconds -lt 3)
+            $remaining | Should -BeNullOrEmpty
+        }
+        finally {
+            if (-not $worker.HasExited) { $worker.Kill($true); $worker.WaitForExit() }
+            if (Test-Path -LiteralPath $pidFile) {
+                $child = Get-Process -Id ([int] (Get-Content -LiteralPath $pidFile)) -ErrorAction SilentlyContinue
+                if ($null -ne $child) { $child.Kill($true); $child.WaitForExit(); $child.Dispose() }
+            }
+            $worker.Dispose()
+            $env:GH_TEST_PID_FILE = $savedPidFile
+        }
+    }
+
+    It 'rejects a shell function instead of bypassing it for a different configured gh' {
+        Mock Get-Command -ModuleName GitHubHost {
+            [pscustomobject]@{ CommandType = 'Function' }
+        } -ParameterFilter { $Name -eq 'gh' }
+
+        { Invoke-GitHubHostGh -Hostname example.ghe.com -User pilot-owner -Arguments @('auth', 'token') -Deadline ([datetime]::UtcNow.AddSeconds(15)) } |
+            Should -Throw '*requires an executable or PowerShell script*'
+    }
+
+    It 'runs a native executable alias with the same bounded process adapter' {
+        $native = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+        Mock Get-Command -ModuleName GitHubHost {
+            [pscustomobject]@{ CommandType = 'Alias'; ResolvedCommand = [pscustomobject]@{ CommandType = 'Application'; Source = $native } }
+        } -ParameterFilter { $Name -eq 'gh' }
+
+        $output = Invoke-GitHubHostGh -Hostname example.ghe.com -Arguments @('-NoLogo', '-NoProfile', '-Command', "'native-result'") -Deadline ([datetime]::UtcNow.AddSeconds(15))
+
+        $output.Trim() | Should -BeExactly 'native-result'
+    }
+
+    It 'preserves quoted, multiline, trailing-slash and timestamp native arguments' {
+        $echo = Join-Path $TestDrive 'echo-arguments.ps1'
+        @'
+param([Parameter(ValueFromRemainingArguments)][AllowEmptyString()][string[]] $Remaining)
+ConvertTo-Json -InputObject @($Remaining) -Compress
+'@ | Set-Content -LiteralPath $echo
+        $native = (Get-Command (Join-Path $PSHOME 'pwsh') -CommandType Application).Source
+        Mock Get-Command -ModuleName GitHubHost {
+            [pscustomobject]@{ CommandType = 'Application'; Source = $native }
+        } -ParameterFilter { $Name -eq 'gh' }
+        $expected = @('space value', 'quote"value', 'trailing\', '2026-03-10T11:12:13Z', "line`nbreak")
+
+        $output = Invoke-GitHubHostGh -Hostname example.ghe.com -Arguments (@('-NoLogo', '-NoProfile', '-File', $echo) + $expected) -Deadline ([datetime]::UtcNow.AddSeconds(15))
+
+        $document = [System.Text.Json.JsonDocument]::Parse($output)
+        try {
+            $actual = @($document.RootElement.EnumerateArray() | ForEach-Object { $_.GetString() })
+            $actual.Count | Should -Be $expected.Count
+            for ($index = 0; $index -lt $expected.Count; $index++) { $actual[$index] | Should -BeExactly $expected[$index] }
+        }
+        finally { $document.Dispose() }
+    }
+}
+
 Describe 'GitHub cloud repository targets' {
     It 'resolves <Repository> to its exact API origin' -ForEach @(
         @{ Repository = 'demo/source'; ApiUrl = ''; Hostname = 'github.com'; ExpectedApi = 'https://api.github.com' }
@@ -51,6 +319,65 @@ Describe 'GitHub cloud repository targets' {
         @{ Repository = 'example.ghe.com/demo/source/extra' }
     ) {
         { ConvertTo-GitHubRepositoryTarget -Repository $Repository } | Should -Throw "*must be 'owner/repo'*"
+    }
+}
+
+Describe 'GitHub worker process lifetime' {
+    BeforeAll {
+        Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'GitHubProcessLifetime.psm1')
+    }
+
+    BeforeEach {
+        Mock Invoke-GitHubWindowsWorkerLifetime {} -ModuleName GitHubProcessLifetime
+        Mock Invoke-GitHubUnixProcessGroupCreate { $true } -ModuleName GitHubProcessLifetime
+        Mock Invoke-GitHubUnixProcessGroupKill {} -ModuleName GitHubProcessLifetime
+    }
+
+    It 'initializes the Windows lifetime adapter before starting a command' {
+        Mock Invoke-GitHubWindowsWorkerLifetime {} -ModuleName GitHubProcessLifetime
+
+        Initialize-GitHubHostWorkerLifetime -Windows $true
+
+        Should -Invoke -ModuleName GitHubProcessLifetime Invoke-GitHubWindowsWorkerLifetime -Times 1 -Exactly
+    }
+
+    It 'does not swallow a failed Windows lifetime initialization' {
+        Mock Invoke-GitHubWindowsWorkerLifetime { throw 'lifetime initialization failed' } -ModuleName GitHubProcessLifetime
+
+        { Initialize-GitHubHostWorkerLifetime -Windows $true } | Should -Throw '*lifetime initialization failed*'
+    }
+
+    It 'creates an owned Unix process group before starting a command' {
+        Mock Invoke-GitHubUnixProcessGroupCreate { $true } -ModuleName GitHubProcessLifetime
+
+        Initialize-GitHubHostWorkerLifetime -Windows $false
+
+        Should -Invoke -ModuleName GitHubProcessLifetime Invoke-GitHubUnixProcessGroupCreate -Times 1 -Exactly
+    }
+
+    It 'refuses a command when its Unix process group cannot be created' {
+        Mock Invoke-GitHubUnixProcessGroupCreate { $false } -ModuleName GitHubProcessLifetime
+
+        { Initialize-GitHubHostWorkerLifetime -Windows $false } | Should -Throw '*Cannot create*worker process group*'
+    }
+
+    It 'signals the exact owned Unix process group' {
+        Mock Invoke-GitHubUnixProcessGroupKill { $ProcessId | Should -Be 12345 } -ModuleName GitHubProcessLifetime
+
+        Stop-GitHubHostProcessGroup -ProcessId 12345 -Windows $false
+
+        Should -Invoke -ModuleName GitHubProcessLifetime Invoke-GitHubUnixProcessGroupKill -Times 1 -Exactly
+    }
+
+    It 'rejects a nonpositive group ID before signaling processes: <Id>' -ForEach @(
+        @{ Id = 0 }
+        @{ Id = -1 }
+    ) {
+        Mock Invoke-GitHubUnixProcessGroupKill { throw 'must not signal processes' } -ModuleName GitHubProcessLifetime
+
+        { Stop-GitHubHostProcessGroup -ProcessId $Id -Windows $false } | Should -Throw '*Cannot validate argument*'
+
+        Should -Invoke -ModuleName GitHubProcessLifetime Invoke-GitHubUnixProcessGroupKill -Times 0
     }
 }
 

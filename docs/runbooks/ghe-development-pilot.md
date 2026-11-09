@@ -65,6 +65,22 @@ explicitní `-ApiUrl` se s hostem nadále musí shodovat. SSH origin pro GHE.com
 používá jako uživatelské jméno subdoménu enterprise, nikoli vždy `git`.
 Výchozí github.com cesta s `GH_TOKEN` nebo `GITHUB_TOKEN` nevyžaduje `gh`;
 konkrétní uložený účet a jiné hosty jej vyžadují.
+Dokumentovaný origin `ssh://git@ssh.github.com:443/owner/repo.git` mapuje
+na github.com; jiný protokol ani port takto nepřepisuje.
+Stejný absolutní deadline omezuje i získání credentialu. Po jeho překročení
+adaptér ukončí běžící CLI proces i jeho potomky, obnoví tokenové proměnné
+a waiter vrátí `pending` s exit code `2`; nejde o ověřený stav CI nebo review.
+Samostatný worker převezme životnost příkazu před jeho spuštěním: na Windows
+pomocí Job Object, na Unix pomocí vlastní process group. Ukončení původního
+CLI procesu proto nezruší vlastnictví jeho dosud běžících potomků.
+Worker samostatně hlídá tentýž absolutní deadline i ukončení volajícího procesu;
+tvrdé ukončení waiteru proto nesmí ponechat získávání credentialu běžet.
+Na Windows přiřadí příkaz k Job Object atomicky při vytvoření pomocí
+[`PROC_THREAD_ATTRIBUTE_JOB_LIST`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute);
+příkaz zdědí pouze handles pro standardní vstup, výstup a chybový výstup.
+Na Unix worker před úspěšným ukončením opustí vlastní process group
+a ukončí její zbývající procesy. Vlastnictví potomků tedy nesmí záviset
+na tom, zda volající ještě stihne svůj `finally`.
 
 Příklady používají pouze zástupné cíle a existující přihlášení:
 

@@ -41,6 +41,99 @@ function Resolve-GitHubCloudTarget {
     return $target
 }
 
+# security-check: github-command-deadline
+function Get-GitHubHostDeadlineRemaining {
+    param([datetime] $Deadline)
+
+    $remaining = $Deadline.ToUniversalTime() - [datetime]::UtcNow
+    if ($remaining -le [TimeSpan]::Zero) { throw [TimeoutException]::new('GitHub CLI deadline reached.') }
+    return $remaining
+}
+
+# security-check: github-command-process
+function Invoke-GitHubHostProcess {
+    [CmdletBinding()]
+    param([string[]] $Arguments, [Nullable[datetime]] $Deadline)
+
+    if ($null -eq $Deadline) {
+        $output = @(& gh @Arguments 2>&1)
+        return @{
+            ExitCode = $LASTEXITCODE
+            Stdout = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
+            Stderr = @($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join ' '
+        }
+    }
+
+    $remaining = Get-GitHubHostDeadlineRemaining -Deadline $Deadline
+    $cancellation = [Threading.CancellationTokenSource]::new($remaining)
+    $process = [Diagnostics.Process]::new()
+    $started = $false
+    try {
+        Import-Module (Join-Path $PSScriptRoot 'GitHubProcessLifetime.psm1')
+        $command = Get-Command gh -ErrorAction Stop | Select-Object -First 1
+        if ($command.CommandType -eq 'Alias') { $command = $command.ResolvedCommand }
+        if ($command.CommandType -notin @('Application', 'ExternalScript')) {
+            throw 'Deadline-bounded gh requires an executable or PowerShell script.'
+        }
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.FileName = Join-Path $PSHOME 'pwsh'
+        $worker = Join-Path $PSScriptRoot 'GitHubHost.Worker.ps1'
+        $nativePath = $command.Source
+        $nativeArguments = @($Arguments)
+        if ($command.CommandType -eq 'ExternalScript') {
+            $nativePath = (Get-Command $start.FileName -CommandType Application -ErrorAction Stop).Source
+            $nativeArguments = @('-NoLogo', '-NoProfile', '-File', $command.Source) + $nativeArguments
+        }
+        $argumentsJson = ConvertTo-Json -InputObject $nativeArguments -Compress
+        foreach ($argument in @('-NoLogo', '-NoProfile', '-File', $worker, '-FilePath', $nativePath, '-ArgumentsJson', $argumentsJson,
+                '-DeadlineUtcTicks', $Deadline.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture), '-ParentProcessId', $PID)) {
+            $start.ArgumentList.Add($argument)
+        }
+        $process.StartInfo = $start
+        $started = $process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync($cancellation.Token)
+        $stderr = $process.StandardError.ReadToEndAsync($cancellation.Token)
+        $null = $process.WaitForExitAsync($cancellation.Token).GetAwaiter().GetResult()
+        $standardOutput = $stdout.GetAwaiter().GetResult()
+        $standardError = $stderr.GetAwaiter().GetResult()
+        $null = Get-GitHubHostDeadlineRemaining -Deadline $Deadline
+        return @{ ExitCode = $process.ExitCode; Stdout = $standardOutput; Stderr = $standardError }
+    }
+    catch {
+        for ($exception = $_.Exception; $null -ne $exception; $exception = $exception.InnerException) {
+            if ($exception -is [OperationCanceledException] -and $cancellation.IsCancellationRequested) {
+                throw [TimeoutException]::new('GitHub CLI deadline reached.')
+            }
+        }
+        throw
+    }
+    finally {
+        try {
+            if ($started) {
+                try { Stop-GitHubHostProcessGroup -ProcessId $process.Id }
+                finally {
+                    try {
+                        if (-not $process.HasExited) {
+                            try { $process.Kill($true) }
+                            catch [InvalidOperationException] { $process.WaitForExit() }
+                            $process.WaitForExit()
+                        }
+                    }
+                    finally { Stop-GitHubHostProcessGroup -ProcessId $process.Id }
+                }
+            }
+        }
+        finally {
+            $process.Dispose()
+            $cancellation.Dispose()
+        }
+    }
+}
+
 # security-check: github-host-credentials
 function Invoke-GitHubHostGh {
     <#
@@ -52,7 +145,8 @@ function Invoke-GitHubHostGh {
     param(
         [Parameter(Mandatory)][string] $Hostname,
         [string] $User,
-        [Parameter(Mandatory)][string[]] $Arguments
+        [Parameter(Mandatory)][string[]] $Arguments,
+        [Nullable[datetime]] $Deadline
     )
 
     $tokenVariables = @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
@@ -64,23 +158,20 @@ function Invoke-GitHubHostGh {
         }
         if ($User) {
             foreach ($name in $tokenVariables) { [Environment]::SetEnvironmentVariable($name, $null) }
-            $credential = @(& gh auth token --hostname $Hostname --user $User 2>&1)
-            if ($LASTEXITCODE -ne 0) { throw "No stored GitHub credential for account '$User' on '$Hostname'." }
-            $token = (@($credential | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n").Trim()
+            $credential = Invoke-GitHubHostProcess -Arguments @('auth', 'token', '--hostname', $Hostname, '--user', $User) -Deadline $Deadline
+            if ($credential.ExitCode -ne 0) { throw "No stored GitHub credential for account '$User' on '$Hostname'." }
+            $token = $credential.Stdout.Trim()
             if ([string]::IsNullOrWhiteSpace($token)) { throw "The stored GitHub credential for '$User' on '$Hostname' is empty." }
             $variable = if ($Hostname -eq 'github.com' -or $Hostname.EndsWith('.ghe.com', [StringComparison]::OrdinalIgnoreCase)) { 'GH_TOKEN' } else { 'GH_ENTERPRISE_TOKEN' }
             [Environment]::SetEnvironmentVariable($variable, $token)
         }
-        $output = @(& gh @Arguments 2>&1)
-        $exitCode = $LASTEXITCODE
+        $output = Invoke-GitHubHostProcess -Arguments $Arguments -Deadline $Deadline
     }
     finally {
         foreach ($name in $tokenVariables) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
     }
-    $stdout = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
-    $stderr = @($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join ' '
-    if ($exitCode -ne 0) { throw "gh $($Arguments[0]) failed with exit code ${exitCode}: $stderr" }
-    return $stdout
+    if ($output.ExitCode -ne 0) { throw "gh $($Arguments[0]) failed with exit code $($output.ExitCode): $($output.Stderr)" }
+    return $output.Stdout
 }
 
 Export-ModuleMember -Function ConvertTo-GitHubRepositoryTarget, Resolve-GitHubCloudTarget, Invoke-GitHubHostGh

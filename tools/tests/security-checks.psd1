@@ -12,6 +12,18 @@
             Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = 'GitHub cloud repository targets*' })
         }
         @{
+            Name = 'github-worker-lifetime'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = @('GitHub worker process lifetime*', 'Deadline-bounded GitHub CLI credentials*') })
+        }
+        @{
+            Name = 'github-command-deadline'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = @('Deadline-bounded GitHub CLI credentials*', 'Host-scoped GitHub CLI credentials*') })
+        }
+        @{
+            Name = 'github-command-process'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = @('Deadline-bounded GitHub CLI credentials*', 'Host-scoped GitHub CLI credentials*') })
+        }
+        @{
             Name = 'github-host-credentials'
             Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = 'Host-scoped GitHub CLI credentials*' })
         }
