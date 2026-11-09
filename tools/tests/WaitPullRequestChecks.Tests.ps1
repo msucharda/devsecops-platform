@@ -104,6 +104,15 @@ Describe 'Wait-PullRequestChecks' {
         @($api.Requests.Uri) | Should -Contain "https://api.contoso.ghe.com/repos/demo-platform/devsecops/commits/$sha/check-runs?per_page=100&page=1"
     }
 
+    It 'accepts a check whose App is owned by an Enterprise' {
+        $app = Get-GitHubApiFixture -Name apps/get-app.owner-enterprise
+        $api.Checks['check_runs'][0]['app']['owner'] = $app['owner']
+
+        & $script @arguments | Should -BeExactly 'passed; copilot: reviewed (rounds 1)'
+
+        $LASTEXITCODE | Should -Be 0
+    }
+
     It 'routes a host-qualified repository without an API override' {
         $options = $arguments.Clone()
         $options.Repository = 'contoso.ghe.com/demo-platform/devsecops'

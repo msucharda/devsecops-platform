@@ -1,4 +1,5 @@
 BeforeAll {
+    Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1')
     Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'GitHubHost.psm1') -Force
 }
 
@@ -82,12 +83,17 @@ Describe 'Host-scoped GitHub CLI credentials' {
         }
     }
 
-    It 'selects a named stored account on <Hostname> without changing the globally active account' -ForEach @(
-        @{ Hostname = 'github.com'; TokenVariable = 'GH_TOKEN' }
-        @{ Hostname = 'example.ghe.com'; TokenVariable = 'GH_TOKEN' }
-        @{ Hostname = 'github.example.net'; TokenVariable = 'GH_ENTERPRISE_TOKEN' }
+    It 'selects a named stored account on <Hostname> with the <Variant> response without changing the globally active account' -ForEach @(
+        @{ Hostname = 'github.com'; TokenVariable = 'GH_TOKEN'; Variant = 'private-user' }
+        @{ Hostname = 'github.com'; TokenVariable = 'GH_TOKEN'; Variant = 'public-user' }
+        @{ Hostname = 'example.ghe.com'; TokenVariable = 'GH_TOKEN'; Variant = 'private-user' }
+        @{ Hostname = 'example.ghe.com'; TokenVariable = 'GH_TOKEN'; Variant = 'public-user' }
+        @{ Hostname = 'github.example.net'; TokenVariable = 'GH_ENTERPRISE_TOKEN'; Variant = 'private-user' }
+        @{ Hostname = 'github.example.net'; TokenVariable = 'GH_ENTERPRISE_TOKEN'; Variant = 'public-user' }
     ) {
-        InModuleScope GitHubHost -Parameters $_ {
+        $response = Get-GitHubApiFixture -Name "users/get-authenticated-user.$Variant" -Set @{ login = 'pilot-owner' } |
+            ConvertTo-Json -Depth 100 -Compress
+        InModuleScope GitHubHost -Parameters @{ Hostname = $Hostname; TokenVariable = $TokenVariable; Response = $response } {
             $saved = $env:GH_TOKEN
             try {
                 $env:GH_TOKEN = 'public-gh-token'
@@ -101,11 +107,11 @@ Describe 'Host-scoped GitHub CLI credentials' {
                     $args | Should -Be @('api', '--hostname', $Hostname, 'user')
                     [Environment]::GetEnvironmentVariable($TokenVariable) | Should -BeExactly 'named-account-token'
                     $global:LASTEXITCODE = 0
-                    '{"login":"pilot-owner"}'
+                    $Response
                 }
 
                 Invoke-GitHubHostGh -Hostname $Hostname -User pilot-owner -Arguments @('api', '--hostname', $Hostname, 'user') |
-                    Should -BeExactly '{"login":"pilot-owner"}'
+                    Should -BeExactly $Response
 
                 $env:GH_TOKEN | Should -BeExactly 'public-gh-token'
             }
