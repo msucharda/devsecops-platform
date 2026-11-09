@@ -56,7 +56,7 @@ Describe 'Protected variable snapshot' {
         $responseBody.variables[0].value = 'https://example.test/platform/instance'
         $responseBody.variables[1].name = 'PLATFORM_DEVELOPMENT_APPROVAL'
         $responseBody.variables[1].value = '{"approved":true}'
-        $result = Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token
+        $result = Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token
         $result.Reference | Should -BeExactly 'https://example.test/platform/instance'
         $result.Approval | Should -BeExactly '{"approved":true}'
         $result.Disposition | Should -BeExactly ''
@@ -69,30 +69,30 @@ Describe 'Protected variable snapshot' {
         @{ StatusCode = 301 }, @{ StatusCode = 401 }, @{ StatusCode = 403 }, @{ StatusCode = 404 }, @{ StatusCode = 500 }
     ) {
         $status = $StatusCode
-        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*HTTP*'
+        { Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*HTTP*'
     }
     It 'rejects an incomplete paginated snapshot' {
         $responseBody.total_count = 3
-        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*one response*'
+        { Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*one response*'
     }
     It 'rejects more than the maximum one-response variable count' {
         $responseBody.variables = @((1..31) | ForEach-Object { $responseBody.variables[0].Clone() })
         $responseBody.total_count = 31
-        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*one response*'
+        { Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*one response*'
     }
     It 'rejects duplicate variable names' {
         $responseBody.variables[1].name = $responseBody.variables[0].name
-        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*duplicate*'
+        { Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*duplicate*'
     }
     It 'recognizes noncanonical case without ignoring an active disposition' {
         $responseBody.variables[0].name = 'platform_development_disposition'
         $responseBody.variables[0].value = '{"operation":"adopt"}'
-        (Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token).Disposition |
+        (Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token).Disposition |
             Should -BeExactly '{"operation":"adopt"}'
     }
     It 'rejects case-folded duplicate variable names' {
         $responseBody.variables[1].name = $responseBody.variables[0].name.ToLowerInvariant()
-        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*duplicate*'
+        { Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*duplicate*'
     }
     It 'rejects invalid <Field> field <Case>' -ForEach @(
         @{ Field = 'name'; Case = 'missing'; Value = $null; Remove = $true }
@@ -105,15 +105,15 @@ Describe 'Protected variable snapshot' {
         @{ Field = 'updated_at'; Case = 'null'; Value = $null; Remove = $false }
     ) {
         if ($Remove) { $responseBody.variables[0].Remove($Field) } else { $responseBody.variables[0][$Field] = $Value }
-        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*requires string*'
+        { Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*requires string*'
     }
     It 'rejects a non-object root' {
         $responseBody = @($responseBody)
-        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*must be an object*'
+        { Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*must be an object*'
     }
     It 'rejects an object in place of the variables array' {
         $responseBody.variables = @{}
-        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*one response*'
+        { Read-DevelopmentProtectedVariableSnapshot -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*one response*'
     }
 }
 

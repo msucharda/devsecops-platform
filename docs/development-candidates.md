@@ -151,6 +151,10 @@ transakce; kontrakt neumožňuje cache ani opětovné použití starého výsled
 „Re-run failed jobs“ ani opakování celého starého workflow nepovolí
 credentials; vytvoř nový dispatch. Zdrojový repozitář attestace musí
 odpovídat čerstvému chráněnému stavu i původnímu authorize jobu.
+Každá standardní fáze navíc vyžaduje `authorize` ze stejného run attempt.
+Starý běh s původně prázdnou referencí tak nesmí přeskočit nově nastavenou
+ochranu. Mimo referenci lze zopakovat všechny joby včetně nové autorizace;
+samotné opakování neúspěšných jobů nestačí ani tam.
 
 Tato cesta není sandbox schváleného kódu. Review musí posoudit i zachování
 token lifecycle: schválený modul se stejnými oprávněními procesu může měnit

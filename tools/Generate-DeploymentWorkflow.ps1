@@ -94,7 +94,7 @@ function Add-DeploymentJob {
     }
     if ($Phase -eq 'rulesetPlan') { $needs += "module_$suffix" }
     $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), '$key')"
-    if (-not $Drift) { $condition += " && (needs.authorize.outputs.reference == '' || github.run_attempt == 1)" }
+    if (-not $Drift) { $condition += " && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && (needs.authorize.outputs.reference == '' || github.run_attempt == 1)" }
     if ($Phase -eq 'apply') { $condition += " && needs.approve_apply.result == 'success' && needs.module_$suffix.result == 'success'" }
     foreach ($prerequisite in $Node.Prerequisites) {
         $condition += " && needs.$prerequisitePrefix$($prerequisite.Replace('-', '_').Replace(':', '_')).result == 'success'"
@@ -308,6 +308,7 @@ jobs:
     outputs:
       allowed: ${{ steps.authorize.outputs.allowed }}
       revision: ${{ steps.preflight.outputs.revision }}
+      attempt: ${{ github.run_attempt }}
       reference: ${{ vars.PLATFORM_REFERENCE_REPOSITORY || ((vars.PLATFORM_DEVELOPMENT_APPROVAL != '' || vars.PLATFORM_DEVELOPMENT_DISPOSITION != '') && format('{0}/{1}', github.server_url, github.repository)) || '' }}
     steps:
 '@

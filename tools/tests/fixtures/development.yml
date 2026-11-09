@@ -14,7 +14,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['application'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_application.result == 'success' && needs.apply_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_application.result == 'success' && needs.apply_foundation.result == 'success' }}
     name: application (apply)
     needs:
     - authorize
@@ -134,7 +134,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_service.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_service.result == 'success' }}
     name: enterprise-baseline (apply)
     needs:
     - authorize
@@ -259,7 +259,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['foundation'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_foundation.result == 'success' }}
     name: foundation (apply)
     needs:
     - authorize
@@ -373,7 +373,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['observer'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_observer.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_observer.result == 'success' }}
     name: observer (apply)
     needs:
     - authorize
@@ -487,7 +487,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['service'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_service.result == 'success' && needs.apply_application.result == 'success' && needs.apply_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_service.result == 'success' && needs.apply_application.result == 'success' && needs.apply_foundation.result == 'success' }}
     name: service (apply)
     needs:
     - authorize
@@ -702,7 +702,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['application'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && github.run_attempt == 1 && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'application') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_foundation.result == 'success' }}
     name: application
     needs:
     - authorize
@@ -823,7 +823,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.module_service.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_service.result == 'success' }}
     name: enterprise-baseline
     needs:
     - authorize
@@ -944,7 +944,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['foundation'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && github.run_attempt == 1 }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'foundation') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 }}
     name: foundation
     needs:
     - authorize
@@ -1059,7 +1059,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['observer'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') && github.run_attempt == 1 }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'observer') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 }}
     name: observer
     needs:
     - authorize
@@ -1174,7 +1174,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['service'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && github.run_attempt == 1 && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'service') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_application.result == 'success' && needs.module_foundation.result == 'success' }}
     name: service
     needs:
     - authorize
@@ -1331,7 +1331,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.rulesetEnvironments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_service.result == 'success' && needs.module_enterprise_baseline.result == 'success' }}
     name: enterprise-baseline (rulesetPlan)
     needs:
     - authorize

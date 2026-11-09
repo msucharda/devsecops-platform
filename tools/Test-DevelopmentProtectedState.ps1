@@ -36,7 +36,7 @@ function Assert-DevelopmentProtectedContext {
 }
 
 # security-check: development-protected-variable
-function Read-DevelopmentProtectedVariables {
+function Read-DevelopmentProtectedVariableSnapshot {
     param([string] $Api, [string] $RepositoryName, [string] $Token)
     $response = Invoke-WebRequest -Uri "$($Api.TrimEnd('/'))/repos/$RepositoryName/environments/pr-authorization/variables?per_page=30&page=1" `
         -Headers @{ Authorization = "Bearer $Token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' } `
@@ -95,7 +95,7 @@ $reader = @{
     resources = @{ organizations = @($parts[0]); repositories = @{ $parts[0] = @($parts[1]) } }
 }
 $state = @{ Reads = 0; Value = $null }
-$readVariables = ${function:Read-DevelopmentProtectedVariables}
+$readVariables = ${function:Read-DevelopmentProtectedVariableSnapshot}
 $readApi = $ApiUrl
 $readRepository = $Repository
 $lifecycle = {

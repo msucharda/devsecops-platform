@@ -58,6 +58,11 @@ BeforeAll {
             $allowed = switch -Regex ($clause) {
                 '^!cancelled\(\)$' { -not $Context.cancelled; break }
                 '^github\.run_attempt == 1$' { (Get-WorkflowConditionValue $Context 'github.run_attempt') -eq 1; break }
+                '^needs\.authorize\.outputs\.attempt == format\(''\{0\}'', github\.run_attempt\)$' {
+                    (Get-WorkflowConditionValue $Context 'needs.authorize.outputs.attempt') -ceq
+                        [string] (Get-WorkflowConditionValue $Context 'github.run_attempt')
+                    break
+                }
                 '^\(needs\.authorize\.outputs\.reference == '''' \|\| github\.run_attempt == 1\)$' {
                     (Get-WorkflowConditionValue $Context 'needs.authorize.outputs.reference') -eq '' -or
                         (Get-WorkflowConditionValue $Context 'github.run_attempt') -eq 1
@@ -93,6 +98,7 @@ BeforeAll {
             $needs[$id] = @{ result = $result; outputs = @{} }
         }
         $needs.authorize.outputs.allowed = 'true'
+        $needs.authorize.outputs.attempt = '1'
         $needs.plan_complete.outputs.changes = 'true'
         $needs.select.outputs.modules = '["emu-identity","organizations"]'
         $needs.select.outputs.phaseNodes = '["emu-identity","organizations"]'
@@ -165,6 +171,7 @@ Describe 'Deployment workflow generation' {
         $development.jobs.approve_apply.if | Should -Match "needs.authorize.outputs.operation == 'apply'"
         $development.jobs.approve_apply.if | Should -Match "github.ref == 'refs/heads/main'"
         $standard = ConvertFrom-Yaml (Get-Content $output -Raw)
+        $standard.jobs.authorize.outputs.attempt | Should -Be '${{ github.run_attempt }}'
         $standard.concurrency.group | Should -Be 'deploy-instance-${{ github.event.pull_request.number || ''main'' }}'
         $standard.concurrency.'cancel-in-progress' | Should -BeFalse
         @($standard.jobs.authorize.steps | Where-Object { $_['run'] -like '*Test-DeploymentRelease.ps1*' }).Count | Should -Be 1
@@ -174,11 +181,15 @@ Describe 'Deployment workflow generation' {
             $current.Count | Should -Be 2
             $current[0].if | Should -Be '${{ needs.authorize.outputs.reference != '''' }}'
             $current[0].run | Should -Match '-Mode standard'
+            $job.if | Should -Match ([regex]::Escape("needs.authorize.outputs.attempt == format('{0}', github.run_attempt)"))
         }
         $standard.jobs.approve_apply.if | Should -Not -Match 'operation'
         $context = Get-SubsetWorkflowContext $standard
         $context.github.run_attempt = 2
         $context.needs.select.outputs.phaseNodes = '["foundation"]'
+        # A failed-job rerun retains the old empty reference output, even after reference setup.
+        (Get-WorkflowConditionResult $standard module_foundation $context).Allowed | Should -BeFalse
+        $context.needs.authorize.outputs.attempt = '2'
         (Get-WorkflowConditionResult $standard module_foundation $context).Allowed | Should -BeTrue
         $context.needs.authorize.outputs.reference = 'https://example.test/platform/instance'
         (Get-WorkflowConditionResult $standard module_foundation $context).Allowed | Should -BeFalse
@@ -606,8 +617,8 @@ Describe 'Deployment workflow generation' {
         $workflow.jobs.select.outputs.phaseNodes | Should -Be '${{ steps.modules.outputs.phaseNodes }}'
         $workflow.jobs.module_application.needs | Should -Be @('authorize', 'select', 'module_foundation')
         $workflow.jobs.module_observer.needs | Should -Be @('authorize', 'select')
-        $workflow.jobs.module_application.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''application'') && (needs.authorize.outputs.reference == '''' || github.run_attempt == 1) && needs.module_foundation.result == ''success'' }}'
-        $workflow.jobs.module_observer.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''observer'') && (needs.authorize.outputs.reference == '''' || github.run_attempt == 1) }}'
+        $workflow.jobs.module_application.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''application'') && needs.authorize.outputs.attempt == format(''{0}'', github.run_attempt) && (needs.authorize.outputs.reference == '''' || github.run_attempt == 1) && needs.module_foundation.result == ''success'' }}'
+        $workflow.jobs.module_observer.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''observer'') && needs.authorize.outputs.attempt == format(''{0}'', github.run_attempt) && (needs.authorize.outputs.reference == '''' || github.run_attempt == 1) }}'
         $workflow.jobs.select.steps[-1].run | Should -Match 'trusted/platform/tools/Select-InstanceModules\.ps1 @arguments'
         $workflow.jobs.select.steps[-1].run | Should -Match 'TrustedInstancePath'
         $workflow.jobs.select.steps[-1].run | Should -Not -Match '\$\{\{'

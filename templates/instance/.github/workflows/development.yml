@@ -14,7 +14,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['actions-catalog'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_actions_catalog.result == 'success' && needs.apply_organization_rulesets.result == 'success' && needs.apply_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_actions_catalog.result == 'success' && needs.apply_organization_rulesets.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: actions-catalog (apply)
     needs:
     - authorize
@@ -140,7 +140,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['emu-identity'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_emu_identity.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_emu_identity.result == 'success' }}
     name: emu-identity (apply)
     needs:
     - authorize
@@ -254,7 +254,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_actions_catalog.result == 'success' && needs.apply_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_actions_catalog.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: enterprise-baseline (apply)
     needs:
     - authorize
@@ -380,7 +380,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: enterprise-baseline / code-security (apply)
     needs:
     - authorize
@@ -500,7 +500,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organization-roles'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_roles.result == 'success' && needs.apply_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_roles.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: organization-roles (apply)
     needs:
     - authorize
@@ -620,7 +620,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organization-rulesets'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_rulesets.result == 'success' && needs.apply_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_rulesets.result == 'success' && needs.apply_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: organization-rulesets (apply)
     needs:
     - authorize
@@ -751,7 +751,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organizations'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organizations.result == 'success' }}
     name: organizations (apply)
     needs:
     - authorize
@@ -954,7 +954,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['actions-catalog'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && github.run_attempt == 1 && needs.module_organization_rulesets.result == 'success' && needs.module_organizations.result == 'success' && needs.ruleset_plan_organization_rulesets.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_organization_rulesets.result == 'success' && needs.module_organizations.result == 'success' && needs.ruleset_plan_organization_rulesets.result == 'success' }}
     name: actions-catalog
     needs:
     - authorize
@@ -1082,7 +1082,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['emu-identity'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && github.run_attempt == 1 }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 }}
     name: emu-identity
     needs:
     - authorize
@@ -1197,7 +1197,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.module_actions_catalog.result == 'success' && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_actions_catalog.result == 'success' && needs.module_organizations.result == 'success' }}
     name: enterprise-baseline
     needs:
     - authorize
@@ -1324,7 +1324,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && github.run_attempt == 1 && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_organizations.result == 'success' }}
     name: enterprise-baseline / code-security
     needs:
     - authorize
@@ -1445,7 +1445,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['organization-roles'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && github.run_attempt == 1 && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_organizations.result == 'success' }}
     name: organization-roles
     needs:
     - authorize
@@ -1566,7 +1566,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['organization-rulesets'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' }}
     name: organization-rulesets
     needs:
     - authorize
@@ -1693,7 +1693,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['organizations'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && github.run_attempt == 1 }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 }}
     name: organizations
     needs:
     - authorize
@@ -1840,7 +1840,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.rulesetEnvironments)['organization-rulesets'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' && needs.module_organization_rulesets.result == 'success' }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && needs.authorize.outputs.attempt == format('{0}', github.run_attempt) && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' && needs.module_organization_rulesets.result == 'success' }}
     name: organization-rulesets (rulesetPlan)
     needs:
     - authorize
