@@ -56,6 +56,8 @@
     'CodeSecurity.Tests.ps1' = 5
     'DriftIssue.Tests.ps1' = 4
     'GitHubApiFixture.Tests.ps1' = 3
+    # Local Linux file-suite XML, 2026-11-09: 74.724 seconds, rounded up.
+    'SourceCi.Tests.ps1' = 75
     'DeadlineHttp.Tests.ps1' = 3
     'RulesetBypassVisibility.Tests.ps1' = 3
     'AppInstallationContract.Tests.ps1' = 2
