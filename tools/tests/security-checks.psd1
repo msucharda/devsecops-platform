@@ -4,6 +4,41 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'github-repository-target'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = 'GitHub cloud repository targets*' })
+        }
+        @{
+            Name = 'github-cloud-target'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = 'GitHub cloud repository targets*' })
+        }
+        @{
+            Name = 'github-worker-lifetime'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = @('GitHub worker process lifetime*', 'Deadline-bounded GitHub CLI credentials*') })
+        }
+        @{
+            Name = 'github-command-deadline'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = @('Deadline-bounded GitHub CLI credentials*', 'Host-scoped GitHub CLI credentials*') })
+        }
+        @{
+            Name = 'github-command-process'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = @('Deadline-bounded GitHub CLI credentials*', 'Host-scoped GitHub CLI credentials*') })
+        }
+        @{
+            Name = 'github-host-credentials'
+            Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = 'Host-scoped GitHub CLI credentials*' })
+        }
+        @{
+            Name = 'pull-request-check-head'
+            Tests = @(@{ Path = 'tools/tests/WaitPullRequestChecks.Tests.ps1'; FullName = @('*reports passed and*', '*rejects a successful*') })
+        }
+        @{
+            Name = 'pull-request-check-pagination'
+            Tests = @(@{
+                Path = 'tools/tests/WaitPullRequestChecks.Tests.ps1'
+                FullName = @('*reports passed and*', '*rejects an incomplete*', '*rejects unreadable or inconsistent*', '*reads every page*', '*exits with 3*')
+            })
+        }
+        @{
             Name = 'local-ci-benchmark-output-entry'
             Tests = @(@{
                 Path = 'tools/tests/LocalCiBenchmark.Tests.ps1'

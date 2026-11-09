@@ -1757,28 +1757,80 @@ Describe 'Merge gate repository and gh call' {
         }
     }
 
-    It 'calls gh with the GHE host and without GH_TOKEN for a GHE.com repository' {
+    It 'calls gh with the GHE host and without either cloud token override for a GHE.com repository' -Tag HostRouting {
         InModuleScope MergeGate {
             $env:GH_TOKEN = 'github-com-token'
+            $savedGitHub = $env:GITHUB_TOKEN
+            $env:GITHUB_TOKEN = 'github-com-fallback-token'
             try {
-                Mock gh { $script:seenToken = $env:GH_TOKEN; $script:seenArguments = $args; $global:LASTEXITCODE = 0; '{"total_count":0,"check_runs":[]}' }
+                Mock -ModuleName GitHubHost gh {
+                    $env:GH_TOKEN | Should -BeNullOrEmpty
+                    $env:GITHUB_TOKEN | Should -BeNullOrEmpty
+                    $args | Should -Contain 'example.ghe.com'
+                    $args | Should -Contain 'X-GitHub-Api-Version: 2026-03-10'
+                    $global:LASTEXITCODE = 0
+                    '{"total_count":0,"check_runs":[]}'
+                }
                 $target = ConvertTo-MergeGateTarget -Repository 'example.ghe.com/example-platform/instance'
                 $null = Invoke-MergeGateRest -Target $target -Path 'repos/example-platform/instance/commits/x/check-runs'
-                $script:seenToken | Should -BeNullOrEmpty
-                $script:seenArguments | Should -Contain 'example.ghe.com'
-                $script:seenArguments | Should -Contain 'X-GitHub-Api-Version: 2026-03-10'
                 $env:GH_TOKEN | Should -Be 'github-com-token'
+                $env:GITHUB_TOKEN | Should -Be 'github-com-fallback-token'
             }
-            finally { Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue }
+            finally { Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue; $env:GITHUB_TOKEN = $savedGitHub }
         }
     }
 
     It 'throws when gh exits with an error' {
         InModuleScope MergeGate {
-            Mock gh { $global:LASTEXITCODE = 1; [System.Management.Automation.ErrorRecord]::new([Exception]::new('HTTP 404'), 'gh', 'NotSpecified', $null) }
+            Mock -ModuleName GitHubHost gh { $global:LASTEXITCODE = 1; [System.Management.Automation.ErrorRecord]::new([Exception]::new('HTTP 404'), 'gh', 'NotSpecified', $null) }
             $target = ConvertTo-MergeGateTarget -Repository 'msucharda/devsecops-platform'
             { Invoke-MergeGateGh -Target $target -Arguments @('api', '--method', 'GET', 'repos/x') } | Should -Throw '*exit code 1*HTTP 404*'
         }
+    }
+}
+
+Describe 'Named-account merge gate integration' {
+    BeforeEach {
+        $stub = Initialize-MergeGateStub -Scenario pr-78
+        $stub.AuthLookups = 0
+        Mock -ModuleName GitHubHost gh {
+            $global:LASTEXITCODE = 0
+            if ($args[0] -eq 'auth') {
+                $args | Should -Be @('auth', 'token', '--hostname', 'github.com', '--user', 'pilot-owner')
+                $stub.AuthLookups++
+                return 'selected-account-token'
+            }
+            $env:GH_TOKEN | Should -BeExactly 'selected-account-token'
+            Invoke-MergeGateStub -Stub $stub -Arguments $args
+        }
+    }
+
+    It 'uses the selected account for evaluation, merge and post-merge verification' {
+        $result = Invoke-GatedMerge -Repository $repository -Pr 78 -ExpectedHeadSha $stub.PullRequest.headRefOid `
+            -GitHubUser pilot-owner -Reason 'user: merge #78' -Now $stub.Now
+
+        $result.exitCode | Should -Be 0
+        $result.action | Should -BeExactly 'merged'
+        $result.postVerify.verified | Should -BeTrue
+        $stub.Merges | Should -Be 1
+        $stub.AuthLookups | Should -Be $stub.Calls.Count
+        $stub.Calls.Count | Should -BeGreaterThan 1
+    }
+
+    It 'rejects a missing selected account before any API or merge call' {
+        Mock -ModuleName GitHubHost gh {
+            $args | Should -Be @('auth', 'token', '--hostname', 'github.com', '--user', 'pilot-owner')
+            $global:LASTEXITCODE = 1
+        }
+
+        $result = Invoke-GatedMerge -Repository $repository -Pr 78 -ExpectedHeadSha $stub.PullRequest.headRefOid `
+            -GitHubUser pilot-owner -Reason 'user: merge #78' -Now $stub.Now
+
+        $result.exitCode | Should -Not -Be 0
+        $result.action | Should -BeExactly 'none'
+        $stub.Calls.Count | Should -Be 0
+        $stub.Merges | Should -Be 0
+        ($result.gate.reasons.message -join ' ') | Should -BeLike '*No stored GitHub credential*'
     }
 }
 

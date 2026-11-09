@@ -1,5 +1,6 @@
 #Requires -Version 7.4
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot '../GitHubHost.psm1')
 
 <#
 Merge gate for agent-driven pull request merges (issue #85).
@@ -98,22 +99,15 @@ function ConvertTo-MergeGateTarget {
     #>
     [CmdletBinding()]
     [OutputType([hashtable])]
-    param([Parameter(Mandatory)][AllowEmptyString()][string] $Repository)
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string] $Repository,
+        [string] $GitHubUser
+    )
 
-    $match = [regex]::Match($Repository, '^(?:(?<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/)?(?<owner>[A-Za-z0-9][A-Za-z0-9-]{0,38})/(?<name>[A-Za-z0-9._-]{1,100})$')
-    if (-not $match.Success -or $match.Groups['name'].Value -in @('.', '..')) {
-        throw [MergeGateInputError]::new("Repository '$Repository' must be 'owner/repo' or 'host/owner/repo'.")
-    }
-    $hostName = if ($match.Groups['host'].Success) { $match.Groups['host'].Value.ToLowerInvariant() } else { 'github.com' }
-    $owner = $match.Groups['owner'].Value
-    $name = $match.Groups['name'].Value
-    return @{
-        Host = $hostName
-        Owner = $owner
-        Name = $name
-        Slug = "$owner/$name"
-        Repository = "$hostName/$owner/$name"
-    }
+    try { $target = ConvertTo-GitHubRepositoryTarget -Repository $Repository }
+    catch { throw [MergeGateInputError]::new($_.Exception.Message) }
+    $target.GitHubUser = $GitHubUser
+    return $target
 }
 
 function ConvertTo-MergeGateSha {
@@ -182,7 +176,7 @@ function Invoke-MergeGateGh {
     .SYNOPSIS
     Runs gh and returns its standard output. A non-zero exit code throws.
     .NOTES
-    For hosts other than github.com, GH_TOKEN is removed for the call so that gh uses the stored login of that host.
+    Public-cloud token overrides are isolated by the shared host adapter. A named account never changes gh's active login.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -191,19 +185,7 @@ function Invoke-MergeGateGh {
         [Parameter(Mandatory)][string[]] $Arguments
     )
 
-    $savedToken = $env:GH_TOKEN
-    try {
-        if ($Target.Host -ne 'github.com') { Remove-Item Env:\GH_TOKEN -ErrorAction SilentlyContinue }
-        $output = @(& gh @Arguments 2>&1)
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        if ($null -ne $savedToken) { $env:GH_TOKEN = $savedToken }
-    }
-    $stdout = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
-    $stderr = @($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join ' '
-    if ($exitCode -ne 0) { throw "gh $($Arguments[0]) $($Arguments[1]) failed with exit code ${exitCode}: $stderr" }
-    return $stdout
+    return Invoke-GitHubHostGh -Hostname $Target.Host -User $Target['GitHubUser'] -Arguments $Arguments
 }
 
 # security-check: merge-gate-read-only
@@ -1307,6 +1289,7 @@ function Invoke-MergeGate {
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string] $Repository,
+        [string] $GitHubUser,
         [Parameter(Mandatory)][int] $Pr,
         [AllowEmptyString()][string] $ExpectedHeadSha,
         [AllowEmptyString()][string] $AcknowledgeWorkflowChanges,
@@ -1324,7 +1307,7 @@ function Invoke-MergeGate {
     $clock = if ($null -ne $Now) { ConvertTo-MergeGateTime -Value $Now } else { [DateTimeOffset]::UtcNow }
     $target = $null
     try {
-        $target = ConvertTo-MergeGateTarget -Repository $Repository
+        $target = ConvertTo-MergeGateTarget -Repository $Repository -GitHubUser $GitHubUser
         if ($Pr -lt 1) { throw [MergeGateInputError]::new("Pr $Pr must be a positive pull request number.") }
         $expected = ConvertTo-MergeGateSha -Value $ExpectedHeadSha -Parameter 'ExpectedHeadSha'
         $acknowledged = ConvertTo-MergeGateSha -Value $AcknowledgeWorkflowChanges -Parameter 'AcknowledgeWorkflowChanges'
@@ -1718,6 +1701,7 @@ function Invoke-GatedMerge {
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string] $Repository,
+        [string] $GitHubUser,
         [Parameter(Mandatory)][int] $Pr,
         [Parameter(Mandatory)][AllowEmptyString()][string] $ExpectedHeadSha,
         # The user consent or mandate behind the merge; it goes only into the output.
@@ -1734,7 +1718,7 @@ function Invoke-GatedMerge {
         $output['exitCode'] = 4
         return $output
     }
-    $gateParameters = @{ Repository = $Repository; Pr = $Pr; ExpectedHeadSha = $ExpectedHeadSha; AcknowledgeWorkflowChanges = $AcknowledgeWorkflowChanges; Now = $Now }
+    $gateParameters = @{ Repository = $Repository; GitHubUser = $GitHubUser; Pr = $Pr; ExpectedHeadSha = $ExpectedHeadSha; AcknowledgeWorkflowChanges = $AcknowledgeWorkflowChanges; Now = $Now }
 
     # Always a fresh evaluation: an earlier result is never reused.
     $gate = Invoke-MergeGate @gateParameters
@@ -1749,7 +1733,7 @@ function Invoke-GatedMerge {
         $output['exitCode'] = 4
         return $output
     }
-    $target = ConvertTo-MergeGateTarget -Repository $Repository
+    $target = ConvertTo-MergeGateTarget -Repository $Repository -GitHubUser $GitHubUser
 
     if ($gate['verdict'] -ceq 'already-merged') { return Complete-MergeGateAlreadyMerged -Output $output -Target $target -Number $Pr }
     if (-not (Test-MergeGateMergeAllowed -Gate $gate -ExpectedHeadSha ([string] $gate['expectedHeadSha']))) {

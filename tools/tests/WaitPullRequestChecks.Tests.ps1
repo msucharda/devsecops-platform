@@ -1,6 +1,7 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1')
     Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'DeadlineHttp.psm1')
+    Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'GitHubHost.psm1')
     $script = Join-Path (Split-Path $PSScriptRoot -Parent) 'Wait-PullRequestChecks.ps1'
     $sha = '6dcb09b5b57875f334f61aebed695e2e4193db5e'
     $arguments = @{ Pr = 1347; Repository = 'demo-platform/devsecops'; ApiUrl = 'https://api.contoso.ghe.com'; MaxSeconds = 60; IntervalSeconds = 20 }
@@ -17,7 +18,15 @@ BeforeAll {
 
 Describe 'Wait-PullRequestChecks' {
     BeforeEach {
+        $originalApiUrl = $env:GITHUB_API_URL
+        $env:GITHUB_API_URL = $null
         $env:GH_TOKEN = 'ghs_pollingtoken'
+        Mock Invoke-GitHubHostProcess {
+            $Arguments | Should -Be @('auth', 'token', '--hostname', 'contoso.ghe.com')
+            $env:GH_TOKEN | Should -BeNullOrEmpty
+            $env:GITHUB_TOKEN | Should -BeNullOrEmpty
+            @{ ExitCode = 0; Stdout = 'ghs_hosttoken'; Stderr = '' }
+        } -ModuleName GitHubHost
         $api = @{
             Now = [datetime]::new(2026, 10, 22, 12, 0, 0, [DateTimeKind]::Utc)
             Pull = Get-GitHubApiFixture -Name pulls/get -Set @{ 'head.sha' = $sha; number = 1347 }
@@ -26,6 +35,7 @@ Describe 'Wait-PullRequestChecks' {
                 'workflow_runs.0.head_sha' = $sha
             }
             Checks = Get-GitHubApiFixture -Name checks/list-for-ref
+            CheckPages = @{}
             Reviews = Get-GitHubApiFixture -Name pulls/list-reviews -Set @{
                 '0.user.login' = 'copilot-pull-request-reviewer[bot]'; '0.user.type' = 'Bot'; '0.commit_id' = $sha; '0.state' = 'COMMENTED'
             }
@@ -36,6 +46,7 @@ Describe 'Wait-PullRequestChecks' {
             Hang = $false
             PullReads = 0
             HeadSequence = [System.Collections.Generic.Queue[string]]::new()
+            FollowHead = $false
             HangOnPullRead = $null
         }
         $api.Checks['check_runs'] = @(Get-CheckRunFixture -Name 'Platform tools' -Id 10)
@@ -60,8 +71,15 @@ Describe 'Wait-PullRequestChecks' {
                     if ($null -ne $api.HangOnPullRead -and $api.PullReads -ge $api.HangOnPullRead) { $api.Now = $Deadline; return $null }
                     $api.Pull
                 }
-                '/actions/runs$' { $api.Runs }
-                '/check-runs$' { $api.Checks }
+                '/actions/runs$' {
+                    if ($api.FollowHead) { foreach ($run in $api.Runs.workflow_runs) { $run.head_sha = $api.Pull.head.sha } }
+                    $api.Runs
+                }
+                '/check-runs$' {
+                    if ($api.FollowHead) { foreach ($run in $api.Checks.check_runs) { $run.head_sha = $api.Pull.head.sha } }
+                    $page = [regex]::Match([string] $Uri, '[?&]page=(\d+)').Groups[1].Value
+                    if ($api.CheckPages.Contains($page)) { $api.CheckPages[$page] } else { $api.Checks }
+                }
                 '/reviews$' { , @($api.Reviews) }
                 '/requested_reviewers$' { $api.Requested }
                 default { throw "Unexpected request $Uri" }
@@ -71,6 +89,7 @@ Describe 'Wait-PullRequestChecks' {
     }
 
     AfterEach {
+        $env:GITHUB_API_URL = $originalApiUrl
         Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
     }
 
@@ -82,9 +101,219 @@ Describe 'Wait-PullRequestChecks' {
         $LASTEXITCODE | Should -Be 0
         $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
         $api.Requests[0].Headers['X-GitHub-Api-Version'] | Should -BeExactly '2026-03-10'
-        $api.Requests[0].Headers['Authorization'] | Should -BeExactly ('Bearer ' + 'ghs_pollingtoken')
+        $api.Requests[0].Headers['Authorization'] | Should -BeExactly ('Bearer ' + 'ghs_hosttoken')
         @($api.Requests.Uri) | Should -Contain "https://api.contoso.ghe.com/repos/demo-platform/devsecops/actions/runs?head_sha=$sha&per_page=100&page=1"
         @($api.Requests.Uri) | Should -Contain "https://api.contoso.ghe.com/repos/demo-platform/devsecops/commits/$sha/check-runs?per_page=100&page=1"
+    }
+
+    It 'accepts a check whose App is owned by an Enterprise' {
+        $app = Get-GitHubApiFixture -Name apps/get-app.owner-enterprise
+        $api.Checks['check_runs'][0]['app']['owner'] = $app['owner']
+
+        & $script @arguments | Should -BeExactly 'passed; copilot: reviewed (rounds 1)'
+
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It 'routes a host-qualified repository without an API override' {
+        $env:GITHUB_API_URL = 'https://api.github.com'
+        $options = $arguments.Clone()
+        $options.Repository = 'contoso.ghe.com/demo-platform/devsecops'
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'passed;*'
+
+        $LASTEXITCODE | Should -Be 0
+        $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'uses the environment API origin when no explicit override is supplied' {
+        $env:GITHUB_API_URL = 'https://api.contoso.ghe.com'
+        $options = $arguments.Clone()
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'passed;*'
+
+        $LASTEXITCODE | Should -Be 0
+        $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'uses the explicit API origin instead of an ambient origin' {
+        $env:GITHUB_API_URL = 'https://api.github.com'
+
+        & $script @arguments | Should -BeLike 'passed;*'
+
+        $LASTEXITCODE | Should -Be 0
+        $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'infers the GHE host from the origin remote: <Remote>' -ForEach @(
+        @{ Remote = 'https://contoso.ghe.com/demo-platform/devsecops.git' }
+        @{ Remote = 'git@contoso.ghe.com:demo-platform/devsecops.git' }
+        @{ Remote = 'ssh://git@contoso.ghe.com/demo-platform/devsecops.git' }
+        @{ Remote = 'contoso@contoso.ghe.com:demo-platform/devsecops.git' }
+        @{ Remote = 'ssh://contoso@contoso.ghe.com:2222/demo-platform/devsecops.git' }
+        @{ Remote = 'https://pilot-owner@contoso.ghe.com/demo-platform/devsecops.git' }
+    ) {
+        $env:GITHUB_API_URL = 'https://api.github.com'
+        Mock git { $Remote }
+        $options = $arguments.Clone()
+        $options.Remove('Repository')
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'passed;*'
+
+        $LASTEXITCODE | Should -Be 0
+        $api.Requests[0].Uri | Should -BeExactly 'https://api.contoso.ghe.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'resolves the documented GitHub SSH-over-443 origin to github.com' {
+        $env:GITHUB_API_URL = 'https://api.contoso.ghe.com'
+        Mock git { 'ssh://git@ssh.github.com:443/demo-platform/devsecops.git' }
+        $options = $arguments.Clone()
+        $options.Remove('Repository')
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'passed;*'
+
+        $LASTEXITCODE | Should -Be 0
+        $api.Requests[0].Uri | Should -BeExactly 'https://api.github.com/repos/demo-platform/devsecops/pulls/1347'
+    }
+
+    It 'does not normalize the SSH transport hostname for an unsupported transport: <Remote>' -ForEach @(
+        @{ Remote = 'https://ssh.github.com/demo-platform/devsecops.git' }
+        @{ Remote = 'ssh://git@ssh.github.com:22/demo-platform/devsecops.git' }
+    ) {
+        Mock git { $Remote }
+        $options = $arguments.Clone()
+        $options.Remove('Repository')
+        $options.Remove('ApiUrl')
+
+        & $script @options | Should -BeLike 'error: *only github.com and GHE.com*'
+
+        $LASTEXITCODE | Should -Be 3
+        $api.Requests.Count | Should -Be 0
+    }
+
+    It 'uses <Variable> for github.com without requiring gh' -ForEach @(
+        @{ Variable = 'GH_TOKEN' }
+        @{ Variable = 'GITHUB_TOKEN' }
+    ) {
+        $savedFallback = $env:GITHUB_TOKEN
+        try {
+            $env:GH_TOKEN = $null
+            [Environment]::SetEnvironmentVariable($Variable, 'public-environment-token')
+            Mock -ModuleName GitHubHost Invoke-GitHubHostProcess { throw 'gh is not installed' }
+            $options = $arguments.Clone()
+            $options.ApiUrl = 'https://api.github.com'
+
+            & $script @options | Should -BeLike 'passed;*'
+
+            $LASTEXITCODE | Should -Be 0
+            $api.Requests[0].Headers.Authorization | Should -BeExactly 'Bearer public-environment-token'
+            Should -Invoke -ModuleName GitHubHost Invoke-GitHubHostProcess -Times 0
+        }
+        finally { $env:GITHUB_TOKEN = $savedFallback }
+    }
+
+    It 'rejects a conflicting API origin before any HTTP request' {
+        & $script @arguments -Repository github.com/demo-platform/devsecops |
+            Should -BeLike 'error: *different GitHub hosts*'
+
+        $LASTEXITCODE | Should -Be 3
+        $api.Requests.Count | Should -Be 0
+        Should -Invoke -ModuleName GitHubHost Invoke-GitHubHostProcess -Times 0
+    }
+
+    It 'does not fall back to another account when the selected account is unavailable' {
+        Mock -ModuleName GitHubHost Invoke-GitHubHostProcess {
+            $Arguments | Should -Be @('auth', 'token', '--hostname', 'contoso.ghe.com', '--user', 'pilot-owner')
+            @{ ExitCode = 1; Stdout = ''; Stderr = 'no stored credential' }
+        }
+
+        & $script @arguments -GitHubUser pilot-owner | Should -BeLike 'error: *No stored GitHub credential*'
+
+        $LASTEXITCODE | Should -Be 3
+        $api.Requests.Count | Should -Be 0
+    }
+
+    It 'rejects an incomplete check list instead of reporting a partial success' {
+        $api.Checks['total_count'] = 2
+        $api.CheckPages['2'] = Get-GitHubApiFixture -Name checks/list-for-ref -Set @{ total_count = 2; check_runs = @() }
+
+        & $script @arguments | Should -BeLike 'error: *incomplete*'
+
+        $LASTEXITCODE | Should -Be 3
+    }
+
+    # Intentionally invalid list metadata and records must never produce a partial success.
+    It 'rejects unreadable or inconsistent pagination: <Case>' -ForEach @(
+        @{ Case = 'negative total'; ExpectedError = '*invalid total_count*' }
+        @{ Case = 'string total'; ExpectedError = '*unexpected shape*' }
+        @{ Case = 'scalar page'; ExpectedError = '*unexpected shape*' }
+        @{ Case = 'scalar list'; ExpectedError = '*unexpected shape*' }
+        @{ Case = 'missing total'; ExpectedError = '*unexpected shape*' }
+        @{ Case = 'changed total'; ExpectedError = '*total_count changed*' }
+        @{ Case = 'excess items'; ExpectedError = '*more items*' }
+        @{ Case = 'duplicate ID'; ExpectedError = '*duplicate*' }
+        @{ Case = 'invalid ID'; ExpectedError = '*invalid ID*' }
+        @{ Case = 'string ID'; ExpectedError = '*invalid ID*' }
+        @{ Case = 'missing ID'; ExpectedError = '*invalid ID*' }
+        @{ Case = 'scalar record'; ExpectedError = '*invalid ID*' }
+    ) {
+        switch ($Case) {
+            'negative total' { $api.Checks.total_count = -1 }
+            'string total' { $api.Checks.total_count = '1' }
+            'scalar page' { $api.Checks = 'not a page' }
+            'scalar list' { $api.Checks.check_runs = 'not a list' }
+            'missing total' { $api.Checks.Remove('total_count') }
+            'changed total' {
+                $api.Checks.total_count = 2
+                $api.CheckPages['2'] = Get-GitHubApiFixture -Name checks/list-for-ref -Set @{
+                    total_count = 3; check_runs = @(Get-CheckRunFixture -Name 'other' -Id 11)
+                }
+            }
+            'excess items' { $api.Checks.total_count = 0 }
+            'duplicate ID' {
+                $api.Checks.total_count = 2
+                $api.CheckPages['2'] = Get-GitHubApiFixture -Name checks/list-for-ref -Set @{
+                    total_count = 2; check_runs = @(Get-CheckRunFixture -Name 'other' -Id 10)
+                }
+            }
+            'invalid ID' { $api.Checks.check_runs[0].id = 0 }
+            'string ID' { $api.Checks.check_runs[0].id = '10' }
+            'missing ID' { $api.Checks.check_runs[0].Remove('id') }
+            'scalar record' { $api.Checks.check_runs = @('not a check') }
+        }
+
+        & $script @arguments | Should -BeLike "error: $ExpectedError"
+
+        $LASTEXITCODE | Should -Be 3
+    }
+
+    # Array head SHAs are intentionally invalid API records.
+    It 'rejects a successful <Case> from another head' -ForEach @(
+        @{ Case = 'workflow' }
+        @{ Case = 'check' }
+        @{ Case = 'missing SHA' }
+        @{ Case = 'SHA in another case' }
+        @{ Case = 'workflow empty SHA array' }
+        @{ Case = 'workflow matching SHA array' }
+        @{ Case = 'check empty SHA array' }
+        @{ Case = 'check matching SHA array' }
+    ) {
+        if ($Case -eq 'workflow') { $api.Runs['workflow_runs'][0]['head_sha'] = 'a' * 40 }
+        elseif ($Case -eq 'check') { $api.Checks['check_runs'][0]['head_sha'] = 'a' * 40 }
+        elseif ($Case -eq 'missing SHA') { $api.Checks['check_runs'][0].Remove('head_sha') }
+        elseif ($Case -like '*SHA array') {
+            $record = if ($Case -like 'workflow*') { $api.Runs['workflow_runs'][0] } else { $api.Checks['check_runs'][0] }
+            $record['head_sha'] = if ($Case -like '*empty*') { , @() } else { , @($sha) }
+        }
+        else { $api.Checks['check_runs'][0]['head_sha'] = $sha.ToUpperInvariant() }
+
+        & $script @arguments | Should -BeLike 'error: *evaluated head*'
+
+        $LASTEXITCODE | Should -Be 3
     }
 
     It 'treats the <Conclusion> conclusion as passed' -ForEach @(
@@ -262,6 +491,7 @@ Describe 'Wait-PullRequestChecks' {
     }
 
     It 'polls again when the head changed while the checks were read' {
+        $api.FollowHead = $true
         $newSha = 'a0dcb09b5b57875f334f61aebed695e2e4193db5'
         $api.HeadSequence.Enqueue($sha)
         $api.HeadSequence.Enqueue($newSha)
@@ -299,6 +529,9 @@ Describe 'Wait-PullRequestChecks' {
     It 'reads every page of check runs' {
         $api.Checks['check_runs'] = @(1..100 | ForEach-Object { Get-CheckRunFixture -Name "job $_" -Id $_ })
         $api.Checks['total_count'] = 101
+        $api.CheckPages['2'] = Get-GitHubApiFixture -Name checks/list-for-ref -Set @{
+            total_count = 101; check_runs = @(Get-CheckRunFixture -Name 'job 101' -Id 101)
+        }
 
         & $script @arguments | Out-Null
 
