@@ -119,25 +119,35 @@ Describe 'Host-scoped GitHub CLI credentials' {
         }
     }
 
-    It 'preserves public-cloud environment credentials for the existing default behavior' {
-        InModuleScope GitHubHost {
+    It 'preserves public-cloud environment credentials with the <Variant> response' -ForEach @(
+        @{ Variant = 'private-user' }
+        @{ Variant = 'public-user' }
+    ) {
+        $response = Get-GitHubApiFixture -Name "users/get-authenticated-user.$Variant" -Set @{ login = 'pilot-owner' } |
+            ConvertTo-Json -Depth 100 -Compress
+        InModuleScope GitHubHost -Parameters @{ Response = $response } {
             $saved = $env:GH_TOKEN
             try {
                 $env:GH_TOKEN = 'public-gh-token'
                 Mock gh {
                     $env:GH_TOKEN | Should -BeExactly 'public-gh-token'
                     $global:LASTEXITCODE = 0
-                    'public-result'
+                    $Response
                 }
                 Invoke-GitHubHostGh -Hostname github.com -Arguments @('api', '--hostname', 'github.com', 'user') |
-                    Should -BeExactly 'public-result'
+                    Should -BeExactly $Response
             }
             finally { $env:GH_TOKEN = $saved }
         }
     }
 
-    It 'uses only stdout when a named credential lookup succeeds with a stderr warning' {
-        InModuleScope GitHubHost {
+    It 'uses only stdout with a stderr warning and the <Variant> response' -ForEach @(
+        @{ Variant = 'private-user' }
+        @{ Variant = 'public-user' }
+    ) {
+        $response = Get-GitHubApiFixture -Name "users/get-authenticated-user.$Variant" -Set @{ login = 'pilot-owner' } |
+            ConvertTo-Json -Depth 100 -Compress
+        InModuleScope GitHubHost -Parameters @{ Response = $response } {
             Mock gh {
                 $global:LASTEXITCODE = 0
                 if ($args[0] -eq 'auth') {
@@ -145,11 +155,11 @@ Describe 'Host-scoped GitHub CLI credentials' {
                     return 'named-account-token'
                 }
                 $env:GH_TOKEN | Should -BeExactly 'named-account-token'
-                'api-result'
+                $Response
             }
 
             Invoke-GitHubHostGh -Hostname example.ghe.com -User pilot-owner -Arguments @('api', '--hostname', 'example.ghe.com', 'user') |
-                Should -BeExactly 'api-result'
+                Should -BeExactly $Response
         }
     }
 
