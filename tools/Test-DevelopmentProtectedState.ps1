@@ -38,7 +38,7 @@ function Assert-DevelopmentProtectedContext {
 # security-check: development-protected-variable
 function Read-DevelopmentProtectedVariables {
     param([string] $Api, [string] $RepositoryName, [string] $Token)
-    $response = Invoke-WebRequest -Uri "$($Api.TrimEnd('/'))/repos/$RepositoryName/environments/pr-authorization/variables?per_page=100&page=1" `
+    $response = Invoke-WebRequest -Uri "$($Api.TrimEnd('/'))/repos/$RepositoryName/environments/pr-authorization/variables?per_page=30&page=1" `
         -Headers @{ Authorization = "Bearer $Token"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' } `
         -Method GET -MaximumRedirection 0 -TimeoutSec 60 -MaximumRetryCount 0 -SkipHttpErrorCheck
     if ($response.StatusCode -ne 200) { throw "Cannot read current protected variables: HTTP $($response.StatusCode)." }
@@ -50,11 +50,11 @@ function Read-DevelopmentProtectedVariables {
         $count = $document.RootElement.GetProperty('total_count').GetInt32()
         $variables = $document.RootElement.GetProperty('variables')
         if ($variables.ValueKind -ne [Text.Json.JsonValueKind]::Array -or
-            $count -ne $variables.GetArrayLength() -or $count -gt 100) {
+            $count -ne $variables.GetArrayLength() -or $count -gt 30) {
             throw 'Protected variables must fit completely in one response; pagination is not an authorization snapshot.'
         }
         $values = @{ Reference = ''; Source = ''; Disposition = ''; Approval = '' }
-        $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($variable in $variables.EnumerateArray()) {
             foreach ($field in @('name', 'value', 'created_at', 'updated_at')) {
                 $property = [Text.Json.JsonElement]::new()
@@ -66,7 +66,7 @@ function Read-DevelopmentProtectedVariables {
             $name = $variable.GetProperty('name').GetString()
             if (-not $seen.Add($name)) { throw 'Protected variable response contains duplicate names.' }
             $value = $variable.GetProperty('value').GetString()
-            switch -CaseSensitive ($name) {
+            switch ($name) {
                 PLATFORM_REFERENCE_REPOSITORY { $values.Reference = $value }
                 PLATFORM_SOURCE_REPOSITORY { $values.Source = $value }
                 PLATFORM_DEVELOPMENT_DISPOSITION { $values.Disposition = $value }

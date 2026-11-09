@@ -79,6 +79,37 @@ Describe 'Private development cycle evidence' {
         { & $validate -RecordPath $path -RequireComplete } | Should -Throw '*not complete*'
     }
 
+    It 'retains a failed first result and its measurement in an interrupted cycle' {
+        $record.state = 'interrupted'
+        $record.firstLive.result = 'failed'
+        $record.standardRelease = $null
+        $record | ConvertTo-Json -Depth 20 | Set-Content $path
+        $result = & $validate -RecordPath $path
+        $result.EvidenceComplete | Should -BeFalse
+        $result.FirstLiveResult | Should -Be 'failed'
+        $result.ReadyToLiveSeconds | Should -Be 600
+        $result.Missing | Should -Contain 'successfulLive'
+        { & $validate -RecordPath $path -RequireComplete } | Should -Throw '*not complete*'
+    }
+
+    It 'requires later successful verification without rewriting the first failed milestone' {
+        $record.firstLive.result = 'failed'
+        $record | ConvertTo-Json -Depth 20 | Set-Content $path
+        { & $validate -RecordPath $path -RequireComplete } | Should -Throw '*successful live verification*'
+        $record.successfulLive = $record.firstLive.Clone()
+        $record.successfulLive.result = 'passed'
+        $record.successfulLive.at = '2026-01-01T10:20:00.0000000+00:00'
+        $record | ConvertTo-Json -Depth 20 | Set-Content $path
+        $result = & $validate -RecordPath $path -RequireComplete
+        $result.EvidenceComplete | Should -BeTrue
+        $result.FirstLiveResult | Should -Be 'failed'
+        $result.ReadyToLiveSeconds | Should -Be 600
+        $result.LiveToReleaseSeconds | Should -Be 1200
+        $record.successfulLive.result = 'failed'
+        $record | ConvertTo-Json -Depth 20 | Set-Content $path
+        { & $validate -RecordPath $path } | Should -Throw '*must be passed*'
+    }
+
     It 'rejects <Case> rather than inventing successful measurements' -ForEach @(
         @{ Case = 'a gap'; Change = { $record.intervals[1].start = '2026-01-01T10:04:00.0000000+00:00' }; Error = '*gaps or overlaps*' }
         @{ Case = 'an overlap'; Change = { $record.intervals[1].start = '2026-01-01T10:02:00.0000000+00:00' }; Error = '*gaps or overlaps*' }
@@ -86,6 +117,11 @@ Describe 'Private development cycle evidence' {
         @{ Case = 'reversed milestones'; Change = { $record.firstLive.at = '2025-01-01T10:00:00.0000000+00:00' }; Error = '*precedes*' }
         @{ Case = 'different live candidate'; Change = { $record.firstLive.revision = 'f' * 40 }; Error = '*exact candidate*' }
         @{ Case = 'different live digest'; Change = { $record.firstLive.digest = 'f' * 64 }; Error = '*exact candidate*' }
+        @{ Case = 'unknown live result'; Change = { $record.firstLive.result = 'unknown' }; Error = '*observed passed or failed*' }
+        @{ Case = 'unobserved future live result'; Change = {
+            $record.state = 'interrupted'; $record.standardRelease = $null
+            $record.firstLive.at = '2026-01-01T10:40:00.0000000+00:00'
+        }; Error = '*observedUntil precedes*' }
         @{ Case = 'baseline release relabeled as adoption'; Change = { $record.standardRelease.tag = $record.candidate.baselineRelease }; Error = '*new release and instance revision*' }
         @{ Case = 'candidate relabeled as adoption'; Change = { $record.standardRelease.instanceRevision = $record.candidate.revision }; Error = '*new release and instance revision*' }
         @{ Case = 'baseline main relabeled as adoption'; Change = { $record.standardRelease.instanceRevision = $record.candidate.baseRevision }; Error = '*new release and instance revision*' }

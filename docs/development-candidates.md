@@ -55,6 +55,7 @@ V chráněném environmentu `pr-authorization` spravuj mimo kandidáta:
 | Proměnná | Obsah |
 |---|---|
 | `PLATFORM_REFERENCE_REPOSITORY` | Přesná HTTPS identita povoleného repozitáře včetně hostu: `<server-url>/<owner>/<repo>`. |
+| `PLATFORM_SOURCE_REPOSITORY` | Environment-level kopie stejného source override jako ve standardní release cestě, pokud je override nastavený. Samotná repository-level nebo organization-level hodnota pro development nestačí; reader ji nemůže ověřit bez dalších oprávnění. Bez override obě cesty používají výchozí source důvěryhodného nástroje. |
 | `PLATFORM_DEVELOPMENT_APPROVAL` | Samostatně udělené schválení přesného obsahu a operace ve tvaru níže. Prázdná hodnota development nepovolí. |
 | `PLATFORM_DEVELOPMENT_DISPOSITION` | Výslovný přechod na přesný standardní main commit: `adopt` nebo `rollback`. Neprázdná hodnota další development zastaví. |
 
@@ -137,8 +138,10 @@ Verifier používá
 [`GET /repos/{owner}/{repo}/environments/{environment_name}/variables`](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/variables#list-environment-variables),
 API `2026-03-10`, s repository
 [`Environments: read`](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-environments).
-Všechny proměnné musí být v jedné úplné odpovědi, nejvýš 100 záznamů;
-neúplná stránka, chybějící reference, duplicitní jména, chyba API i neznámý
+Všechny proměnné musí být v jedné úplné odpovědi, nejvýš 30 záznamů
+podle připnutého kontraktu API;
+neúplná stránka, chybějící reference, duplicitní jména včetně rozdílu jen
+ve velikosti písmen, chyba API i neznámý
 stav běh zastaví. Nástroj nevypisuje hodnoty. Před uvolněním deployment
 credentials prokáže revokaci reader tokenu pomocí HTTP 204 a následného
 HTTP 401. Po těchto síťových krocích znovu posoudí expiraci schválení.
@@ -202,7 +205,12 @@ a důkazem; do té doby ponech `destructiveStatus: unverified`.
 To neuzavírá #246 ani jiná dotčená otevřená kritéria.
 
 Po prvním živém výsledku doplň `firstLive` s `at`, přesným `revision`,
-`digest`, `result: passed` a `evidenceUrl`. Zobecni změnu v source PR
+`digest`, skutečným `result: passed` nebo `failed` a `evidenceUrl`.
+Neúspěšný výsledek ani jeho čas nepřepisuj pozdějším úspěchem. Pokud první
+pokus selhal, ulož pozdější úspěšné ověření do `successfulLive` se stejnými
+poli; musí následovat po `firstLive` a před standardním release.
+Neúplný cyklus ponechá skutečný první výsledek i měření, ale nedostane
+stav dokončeného ověření. Zobecni změnu v source PR
 bez dat instance, vydej konkrétně schválený standardní release
 a převezmi ho běžným importem. Použij dosavadní github.com cestu až
 do výslovně schváleného přepnutí; development nástroje hosty nepřepínají.

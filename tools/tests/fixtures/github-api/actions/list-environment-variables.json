@@ -6,6 +6,7 @@
     "apiVersion": "2026-03-10",
     "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
+    "note": "The operation's variables-per-page parameter documents maximum 30 and default 10.",
     "schema": "#/paths/~1repos~1{owner}~1{repo}~1environments~1{environment_name}~1variables/get/responses/200/content/application~1json/schema"
   },
   "required": {

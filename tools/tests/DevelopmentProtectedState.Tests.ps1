@@ -62,7 +62,7 @@ Describe 'Protected variable snapshot' {
         $result.Disposition | Should -BeExactly ''
         Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
             $Method -ceq 'GET' -and $MaximumRedirection -eq 0 -and $MaximumRetryCount -eq 0 -and
-            $Uri -ceq 'https://api.example.test/repos/platform/instance/environments/pr-authorization/variables?per_page=100&page=1'
+            $Uri -ceq 'https://api.example.test/repos/platform/instance/environments/pr-authorization/variables?per_page=30&page=1'
         }
     }
     It 'rejects HTTP <StatusCode> instead of treating inaccessible state as absent' -ForEach @(
@@ -76,12 +76,22 @@ Describe 'Protected variable snapshot' {
         { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*one response*'
     }
     It 'rejects more than the maximum one-response variable count' {
-        $responseBody.variables = @((1..101) | ForEach-Object { $responseBody.variables[0].Clone() })
-        $responseBody.total_count = 101
+        $responseBody.variables = @((1..31) | ForEach-Object { $responseBody.variables[0].Clone() })
+        $responseBody.total_count = 31
         { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*one response*'
     }
     It 'rejects duplicate variable names' {
         $responseBody.variables[1].name = $responseBody.variables[0].name
+        { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*duplicate*'
+    }
+    It 'recognizes noncanonical case without ignoring an active disposition' {
+        $responseBody.variables[0].name = 'platform_development_disposition'
+        $responseBody.variables[0].value = '{"operation":"adopt"}'
+        (Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token).Disposition |
+            Should -BeExactly '{"operation":"adopt"}'
+    }
+    It 'rejects case-folded duplicate variable names' {
+        $responseBody.variables[1].name = $responseBody.variables[0].name.ToLowerInvariant()
         { Read-DevelopmentProtectedVariables -Api https://api.example.test -RepositoryName platform/instance -Token fake-token } | Should -Throw '*duplicate*'
     }
     It 'rejects invalid <Field> field <Case>' -ForEach @(
@@ -234,6 +244,13 @@ Describe 'Protected state credential boundary' {
         $arguments.PrivateKey = ''
         { & $guard @arguments 6>$null } | Should -Throw '*private key*'
         $cloud.Issued | Should -Be 0
+    }
+    It 'requires an environment-level source when authorize resolved a repository-level override' {
+        $source = $variables.PLATFORM_SOURCE_REPOSITORY
+        $variables.Remove('PLATFORM_SOURCE_REPOSITORY')
+        { & $guard @arguments 6>$null } | Should -Throw '*source changed*'
+        $variables.PLATFORM_SOURCE_REPOSITORY = $source
+        { & $guard @arguments 6>$null } | Should -Not -Throw
     }
     It 'retains uncertain issuance and refuses to retry it' {
         $cloud.LostIssuance = $true

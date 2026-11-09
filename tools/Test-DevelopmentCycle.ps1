@@ -29,6 +29,17 @@ function Assert-CycleText {
     if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace($Value)) { throw "Cycle record requires $Label." }
 }
 
+function Get-CycleLiveMilestone {
+    param([Collections.IDictionary] $Value, [string] $Label)
+    $timestamp = Get-CycleTimestamp $Value['at'] "$Label.at"
+    Assert-CycleText $Value['evidenceUrl'] "$Label.evidenceUrl"
+    if ($Value['revision'] -cne $candidate['revision'] -or $Value['digest'] -cne $candidate['digest'] -or
+        $Value['result'] -cnotin @('passed', 'failed')) {
+        throw 'Live result must identify the exact candidate and its observed passed or failed result.'
+    }
+    return $timestamp
+}
+
 $candidate = $record['candidate']
 if ($candidate -isnot [Collections.IDictionary]) { throw 'Cycle record requires a candidate object.' }
 foreach ($key in @('baselineRelease', 'pullRequest', 'approvalUrl', 'approvedBy', 'change')) {
@@ -60,6 +71,7 @@ if ($destructiveRequired) {
 
 $ready = Get-CycleTimestamp $record['readyAt'] 'readyAt'
 $firstLive = $null
+$successfulLive = $null
 $releaseVerified = $null
 $approvalRemoved = $null
 $missing = [Collections.Generic.List[string]]::new()
@@ -82,16 +94,18 @@ if ($record['state'] -ceq 'reverted') {
     Assert-CycleText $record['reversionEvidenceUrl'] 'reversionEvidenceUrl'
 }
 if ($null -ne $record['firstLive']) {
-    $firstLive = Get-CycleTimestamp $record['firstLive']['at'] 'firstLive.at'
-    Assert-CycleText $record['firstLive']['evidenceUrl'] 'firstLive.evidenceUrl'
-    if ($record['firstLive']['revision'] -cne $candidate['revision'] -or
-        $record['firstLive']['digest'] -cne $candidate['digest'] -or
-        $record['firstLive']['result'] -cne 'passed') {
-        throw 'First live result must identify the exact candidate and its successful observed result.'
-    }
+    $firstLive = Get-CycleLiveMilestone -Value $record['firstLive'] -Label firstLive
     if ($firstLive -lt $ready) { throw 'First live result precedes the prepared change.' }
+    if ($record['firstLive']['result'] -ceq 'passed') { $successfulLive = $firstLive }
 }
 else { $missing.Add('firstLive') }
+if ($null -ne $record['successfulLive']) {
+    $successfulLive = Get-CycleLiveMilestone -Value $record['successfulLive'] -Label successfulLive
+    if ($record['successfulLive']['result'] -cne 'passed' -or $null -eq $firstLive -or $successfulLive -lt $firstLive) {
+        throw 'Successful live verification must be passed and follow the first live result without replacing it.'
+    }
+}
+if ($null -ne $firstLive -and $null -eq $successfulLive) { $missing.Add('successfulLive') }
 if ($null -ne $record['standardRelease']) {
     $release = $record['standardRelease']
     $releaseVerified = Get-CycleTimestamp $release['verifiedAt'] 'standardRelease.verifiedAt'
@@ -107,7 +121,9 @@ if ($null -ne $record['standardRelease']) {
             throw 'Standard release adoption must be a new release and instance revision, not the baseline or development candidate.'
         }
     }
-    if ($null -eq $firstLive -or $releaseVerified -lt $firstLive) { throw 'Standard release verification must follow the first live result.' }
+    if ($null -eq $successfulLive -or $releaseVerified -lt $successfulLive) {
+        throw 'Standard release verification must follow successful live verification.'
+    }
     foreach ($name in @('functional', 'forbidden', 'idempotence', 'drift')) {
         $scenario = $release['scenarios'][$name]
         if ($scenario -isnot [Collections.IDictionary]) { $missing.Add("standardRelease.scenarios.$name"); continue }
@@ -135,6 +151,7 @@ if ($record['state'] -ceq 'completed') {
 
 $end = Get-CycleTimestamp $record['observedUntil'] 'observedUntil'
 if ($end -lt $ready -or ($null -ne $releaseVerified -and $end -lt $releaseVerified) -or
+    ($null -ne $firstLive -and $end -lt $firstLive) -or ($null -ne $successfulLive -and $end -lt $successfulLive) -or
     ($null -ne $approvalRemoved -and $end -lt $approvalRemoved)) {
     throw 'Cycle observedUntil precedes a recorded milestone.'
 }
@@ -164,6 +181,7 @@ $complete = $record['state'] -ceq 'completed' -and $missing.Count -eq 0
 if ($RequireComplete -and -not $complete) { throw "Cycle is not complete: state=$($record['state']); missing=$($missing -join ', ')." }
 [pscustomobject]@{
     EvidenceComplete = $complete; State = $record['state']; Missing = @($missing)
+    FirstLiveResult = if ($null -ne $firstLive) { $record['firstLive']['result'] } else { $null }
     ReadyToLiveSeconds = if ($null -ne $firstLive) { ($firstLive - $ready).TotalSeconds } else { $null }
     LiveToReleaseSeconds = if ($null -ne $releaseVerified) { ($releaseVerified - $firstLive).TotalSeconds } else { $null }
     BreakdownSeconds = $breakdown

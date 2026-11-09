@@ -58,6 +58,11 @@ BeforeAll {
             $allowed = switch -Regex ($clause) {
                 '^!cancelled\(\)$' { -not $Context.cancelled; break }
                 '^github\.run_attempt == 1$' { (Get-WorkflowConditionValue $Context 'github.run_attempt') -eq 1; break }
+                '^\(needs\.authorize\.outputs\.reference == '''' \|\| github\.run_attempt == 1\)$' {
+                    (Get-WorkflowConditionValue $Context 'needs.authorize.outputs.reference') -eq '' -or
+                        (Get-WorkflowConditionValue $Context 'github.run_attempt') -eq 1
+                    break
+                }
                 "^(?<path>(?:needs|github)\.[\w.-]+) (?<operator>==|!=) '(?<literal>[^']*)'$" {
                     $value = Get-WorkflowConditionValue $Context $Matches.path
                     if ($Matches.operator -eq '==') { $value -eq $Matches.literal }
@@ -171,6 +176,13 @@ Describe 'Deployment workflow generation' {
             $current[0].run | Should -Match '-Mode standard'
         }
         $standard.jobs.approve_apply.if | Should -Not -Match 'operation'
+        $context = Get-SubsetWorkflowContext $standard
+        $context.github.run_attempt = 2
+        $context.needs.select.outputs.phaseNodes = '["foundation"]'
+        (Get-WorkflowConditionResult $standard module_foundation $context).Allowed | Should -BeTrue
+        $context.needs.authorize.outputs.reference = 'https://example.test/platform/instance'
+        (Get-WorkflowConditionResult $standard module_foundation $context).Allowed | Should -BeFalse
+        (Get-WorkflowConditionResult $development module_foundation $context).Allowed | Should -BeFalse
     }
 
     It 'rejects invalid dispatch scope in the first credential-free job without shell interpolation' -Tag 'CodeSecurityDispatch' {
@@ -388,7 +400,9 @@ Describe 'Deployment workflow generation' {
             $job.if | Should -Match '^\$\{\{ !cancelled\(\) && '
             $job.if | Should -Match ([regex]::Escape(" && needs.approve_apply.result == 'success'"))
             $job.if | Should -Match ([regex]::Escape(" && needs.$plan.result == 'success'"))
-            $job.if | Should -Not -Match '\|\|'
+            $attemptGuard = "(needs.authorize.outputs.reference == '' || github.run_attempt == 1)"
+            $job.if | Should -Match ([regex]::Escape($attemptGuard))
+            $job.if.Replace($attemptGuard, 'true') | Should -Not -Match '\|\|'
         }
     }
 
@@ -592,8 +606,8 @@ Describe 'Deployment workflow generation' {
         $workflow.jobs.select.outputs.phaseNodes | Should -Be '${{ steps.modules.outputs.phaseNodes }}'
         $workflow.jobs.module_application.needs | Should -Be @('authorize', 'select', 'module_foundation')
         $workflow.jobs.module_observer.needs | Should -Be @('authorize', 'select')
-        $workflow.jobs.module_application.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''application'') && github.run_attempt == 1 && needs.module_foundation.result == ''success'' }}'
-        $workflow.jobs.module_observer.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''observer'') && github.run_attempt == 1 }}'
+        $workflow.jobs.module_application.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''application'') && (needs.authorize.outputs.reference == '''' || github.run_attempt == 1) && needs.module_foundation.result == ''success'' }}'
+        $workflow.jobs.module_observer.if | Should -Be '${{ !cancelled() && needs.authorize.outputs.allowed == ''true'' && needs.select.result == ''success'' && contains(fromJSON(needs.select.outputs.phaseNodes), ''observer'') && (needs.authorize.outputs.reference == '''' || github.run_attempt == 1) }}'
         $workflow.jobs.select.steps[-1].run | Should -Match 'trusted/platform/tools/Select-InstanceModules\.ps1 @arguments'
         $workflow.jobs.select.steps[-1].run | Should -Match 'TrustedInstancePath'
         $workflow.jobs.select.steps[-1].run | Should -Not -Match '\$\{\{'

@@ -94,7 +94,7 @@ function Add-DeploymentJob {
     }
     if ($Phase -eq 'rulesetPlan') { $needs += "module_$suffix" }
     $condition = "!cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), '$key')"
-    if (-not $Drift) { $condition += " && github.run_attempt == 1" }
+    if (-not $Drift) { $condition += " && (needs.authorize.outputs.reference == '' || github.run_attempt == 1)" }
     if ($Phase -eq 'apply') { $condition += " && needs.approve_apply.result == 'success' && needs.module_$suffix.result == 'success'" }
     foreach ($prerequisite in $Node.Prerequisites) {
         $condition += " && needs.$prerequisitePrefix$($prerequisite.Replace('-', '_').Replace(':', '_')).result == 'success'"
@@ -513,6 +513,7 @@ foreach ($jobId in @($development['jobs'].get_Keys())) {
         if ($step.Contains('with') -and $step['with']['path'] -ceq 'candidate') { $step['with']['fetch-depth'] = 0 }
     }
     if ($jobId -cmatch '^(module_|ruleset_plan_|apply_)') {
+        $job['if'] = $job['if'].Replace("(needs.authorize.outputs.reference == '' || github.run_attempt == 1)", 'github.run_attempt == 1')
         $steps = [Collections.Generic.List[object]]::new()
         foreach ($step in $job['steps']) {
             if ($step['name'] -ceq 'Recheck protected development state before Azure credentials') {
