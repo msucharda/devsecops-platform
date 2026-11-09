@@ -1,0 +1,32 @@
+{
+  "source": {
+    "operation": "GET /repos/{owner}/{repo}/environments/{environment_name}/variables",
+    "operationId": "actions/list-environment-variables",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/actions/variables#list-environment-variables",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/paths/~1repos~1{owner}~1{repo}~1environments~1{environment_name}~1variables/get/responses/200/content/application~1json/schema"
+  },
+  "required": {
+    "": ["total_count", "variables"],
+    "variables.[]": ["name", "value", "created_at", "updated_at"]
+  },
+  "body": {
+    "total_count": 2,
+    "variables": [
+      {
+        "name": "USERNAME",
+        "value": "octocat",
+        "created_at": "2019-08-10T14:59:22Z",
+        "updated_at": "2020-01-10T14:59:22Z"
+      },
+      {
+        "name": "EMAIL",
+        "value": "octocat@github.com",
+        "created_at": "2020-01-10T10:59:22Z",
+        "updated_at": "2020-01-11T11:59:22Z"
+      }
+    ]
+  }
+}

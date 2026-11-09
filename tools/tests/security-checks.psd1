@@ -4,6 +4,18 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'development-protected-context'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentProtectedState.Tests.ps1'; FullName = 'Protected state context*' })
+        }
+        @{
+            Name = 'development-protected-variable'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentProtectedState.Tests.ps1'; FullName = 'Protected variable snapshot*' })
+        }
+        @{
+            Name = 'development-protected-reader-result'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentProtectedState.Tests.ps1'; FullName = 'Protected reader result*' })
+        }
+        @{
             Name = 'development-approval-continuity'
             Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = '*Development approval continuity*' })
         }

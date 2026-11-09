@@ -14,11 +14,36 @@ cíl reference ani její provozní důkazy.
 ## Zavedení důvěryhodné cesty
 
 Nejdřív převezmi standardní release obsahující nové nástroje běžným
-vendoringem. Samostatným schváleným PR povyš katalogově přepsanou šablonu
-`platform/templates/instance/.github/workflows/development.yml` do živých
-workflow. Tento krok nemění importní oprávnění App a nesmí nasadit
-nepřepsané upstream akce. Zachovej stávající environmenty, schvalovatele,
-OIDC vazby, omezení App, tokeny i jejich revokaci.
+vendoringem. Samostatným schváleným PR povyš katalogově přepsané šablony
+`platform/templates/instance/.github/workflows/deploy.yml` a `development.yml`
+do živých workflow. Obě cesty musí používat stejnou ochranu před souběhem.
+Před povýšením dokonči nebo výslovně zastav staré deployment runs; jejich
+starší workflow nový kontrakt nemají. Tento krok nemění importní oprávnění App
+a nesmí nasadit nepřepsané upstream akce. Zachovej stávající environmenty,
+schvalovatele, OIDC vazby, omezení deployment App, tokeny i jejich revokaci.
+
+Zavedení navíc vyžaduje samostatně schválenou verifier App (ověřovací App).
+Její jediná volitelná pravomoc je repository `Environments: read`; implicitní
+`Metadata: read` se nezvyšuje. App má právě jednu organization installation
+se `repository_selection: selected` a právě jedním repozitářem instance.
+Nesmí sdílet klíč s membership ani deployment App a nesmí mít write oprávnění.
+GitHub tuto pravomoc neumí omezit jen na `pr-authorization`: dosáhne na
+environment metadata a proměnné celého vybraného repozitáře, nikoli na hodnoty
+jeho secrets. Toto omezení scope patří do žádosti o souhlas.
+
+Správce uloží následující vazby mimo kandidáta do každého použitého plan,
+ruleset-plan a apply environmentu:
+
+| Vazba | Typ a obsah |
+|---|---|
+| `PLATFORM_APPROVAL_READER_APP_ID` | Chráněná proměnná s přesným App ID. |
+| `PLATFORM_APPROVAL_READER_INSTALLATION_ID` | Chráněná proměnná s přesným installation ID. |
+| `PLATFORM_APPROVAL_READER_ENTERPRISE` | Chráněná proměnná s očekávaným vlastníkem App. |
+| `PLATFORM_APPROVAL_READER_PRIVATE_KEY` | Chráněný secret se samostatným klíčem verifier App. |
+
+Vznik App, installation, grant i zápis klíče vyžadují konkrétní živý souhlas.
+Source změna nic z toho neprovádí. `GITHUB_TOKEN` nemá workflow permission
+`environments`; obecné `actions: read` tuto pravomoc nenahrazuje.
 
 Důvěryhodná cesta běží pouze ručním `workflow_dispatch` z chráněné `main`
 na pevném `github.sha`. Autorizační nástroje načítá z tohoto commitu
@@ -99,12 +124,30 @@ ověří přesný kandidát, schválení, expiraci a standardní výchozí relea
 Nečitelný nebo neúplný stav běh zastaví. Kandidát nikdy nerozhoduje
 o vlastním povolení.
 
-Před každou credential skupinou samostatný trusted gate znovu načte aktuální
-schválení v `pr-authorization`; kopie z prvního jobu neprokazuje, že schválení
-nebylo odvolané. Nahrazení, odstranění nebo nastavená dispozice běh zastaví.
-Výsledek gate je vázaný na první `run_attempt`. „Re-run failed jobs“ ani
-opakování celého starého workflow nepovolí credentials; vytvoř nový dispatch.
-Zdrojový repozitář attestace se přebírá z téhož chráněného authorize jobu.
+Po review konkrétního phase environmentu trusted nástroj znovu ověří kandidáta
+a aktuální PR head, base i stav. Bezprostředně před Azure login a znovu před
+vydáním deployment App tokenu použije oddělenou verifier App pro aktuální
+read-only načtení proměnných `pr-authorization`. Kontroluje aktuální referenci,
+source, approval a disposition, nikoli jejich kopii z prvního jobu.
+Nahrazení nebo odstranění approval, změna reference/source i nastavená
+disposition development zastaví. Časové freshness okno není náhradní
+autorizační cesta.
+
+Verifier používá
+[`GET /repos/{owner}/{repo}/environments/{environment_name}/variables`](https://docs.github.com/en/enterprise-cloud@latest/rest/actions/variables#list-environment-variables),
+API `2026-03-10`, s repository
+[`Environments: read`](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-environments).
+Všechny proměnné musí být v jedné úplné odpovědi, nejvýš 100 záznamů;
+neúplná stránka, chybějící reference, duplicitní jména, chyba API i neznámý
+stav běh zastaví. Nástroj nevypisuje hodnoty. Před uvolněním deployment
+credentials prokáže revokaci reader tokenu pomocí HTTP 204 a následného
+HTTP 401. Po těchto síťových krocích znovu posoudí expiraci schválení.
+Čtení konfigurace a vydání jiného tokenu nejsou jedna atomická GitHub
+transakce; kontrakt neumožňuje cache ani opětovné použití starého výsledku.
+
+„Re-run failed jobs“ ani opakování celého starého workflow nepovolí
+credentials; vytvoř nový dispatch. Zdrojový repozitář attestace musí
+odpovídat čerstvému chráněnému stavu i původnímu authorize jobu.
 
 Tato cesta není sandbox schváleného kódu. Review musí posoudit i zachování
 token lifecycle: schválený modul se stejnými oprávněními procesu může měnit
@@ -123,6 +166,12 @@ platné dispozice, standardní deploy odmítne credentials. Expirace schválení
 vrácení živého stavu a lock automaticky neuvolní. Plánovaný drift dál
 porovnává skutečnost se standardním release; jeho nález není úspěšné
 ověření development kandidáta.
+
+Standardní plan i apply na povolené referenci používají stejný čerstvý reader
+uvnitř phase po jejím review. Aktuální approval/disposition ověří před Azure
+login i před App tokenem; změna, odvolání nebo expirace dispozice během čekání
+tak neprojde jen kvůli dřívějšímu authorize jobu. Neprázdná approval/disposition
+vyžaduje toto ověření i po odstranění konfigurační hodnoty reference.
 
 Změna živého stavu může přežít selhání workflow. Po přerušení zapiš stav
 `interrupted`, zjisti skutečný stav a použij obnovu příslušného modulu.

@@ -117,6 +117,8 @@ Describe 'Deployment workflow generation' {
         $output = Join-Path $TestDrive 'development-contract/deploy.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output
         $development = ConvertFrom-Yaml (Get-Content (Join-Path (Split-Path $output) 'development.yml') -Raw)
+        $development.concurrency.group | Should -Be 'deploy-instance-main'
+        $development.concurrency.'cancel-in-progress' | Should -BeFalse
         @($development.on.Keys) | Should -Be @('workflow_dispatch')
         $development.on.workflow_dispatch.inputs.operation.default | Should -Be 'plan'
         $authorization = $development.jobs.authorize
@@ -143,18 +145,31 @@ Describe 'Deployment workflow generation' {
             }
             $job.needs | Should -Contain 'authorize'
             $job.if | Should -Match "needs.authorize.outputs.allowed == 'true'"
-            $gate = $development.jobs["revalidate_$id"]
-            $gate.environment | Should -Be 'pr-authorization'
-            $gate.steps[1].env.PLATFORM_DEVELOPMENT_APPROVAL | Should -Be '${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}'
-            $job.needs | Should -Contain "revalidate_$id"
-            $job.if | Should -Match "needs.revalidate_$id.outputs.attempt == github.run_attempt"
+            $current = @($job.steps | Where-Object { $_['run'] -like '*Test-DevelopmentProtectedState.ps1*' })
+            $current.Count | Should -Be 2
+            foreach ($fresh in $current) {
+                $fresh.run | Should -Match '-Mode development'
+                $fresh.env.EXPECTED_APPROVAL | Should -Be '${{ needs.authorize.outputs.approval }}'
+                $fresh.env.PLATFORM_APPROVAL_READER_PRIVATE_KEY | Should -Be '${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}'
+                $fresh.Contains('if') | Should -BeFalse
+            }
+            $check[0].run | Should -Match 'Test-DevelopmentDeploymentAuthorization.ps1.*-Preflight'
             $job.if | Should -Match 'github.run_attempt == 1'
         }
         $development.jobs.approve_apply.environment | Should -Be 'approve-apply'
         $development.jobs.approve_apply.if | Should -Match "needs.authorize.outputs.operation == 'apply'"
         $development.jobs.approve_apply.if | Should -Match "github.ref == 'refs/heads/main'"
         $standard = ConvertFrom-Yaml (Get-Content $output -Raw)
+        $standard.concurrency.group | Should -Be 'deploy-instance-${{ github.event.pull_request.number || ''main'' }}'
+        $standard.concurrency.'cancel-in-progress' | Should -BeFalse
         @($standard.jobs.authorize.steps | Where-Object { $_['run'] -like '*Test-DeploymentRelease.ps1*' }).Count | Should -Be 1
+        foreach ($id in @($standard.jobs.Keys | Where-Object { $_ -cmatch '^(module_|ruleset_plan_|apply_)' })) {
+            $job = $standard.jobs[$id]
+            $current = @($job.steps | Where-Object { $_['run'] -like '*Test-DevelopmentProtectedState.ps1*' })
+            $current.Count | Should -Be 2
+            $current[0].if | Should -Be '${{ needs.authorize.outputs.reference != '''' }}'
+            $current[0].run | Should -Match '-Mode standard'
+        }
         $standard.jobs.approve_apply.if | Should -Not -Match 'operation'
     }
 

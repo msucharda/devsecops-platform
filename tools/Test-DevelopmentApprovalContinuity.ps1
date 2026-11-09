@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 # security-check: development-approval-continuity
 function Assert-DevelopmentApprovalContinuity {
     param([string] $Current, [string] $Expected, [string] $Attempt, [string] $AuthorizedAttempt, [string] $CurrentDisposition)
-    if ($Attempt -cne '1' -or $AuthorizedAttempt -cne $Attempt) {
+    if ($Attempt -ne '1' -or $AuthorizedAttempt -ne $Attempt) {
         throw 'Development execution requires a fresh dispatch, not a re-run of previous jobs.'
     }
     if (-not [string]::IsNullOrWhiteSpace($CurrentDisposition)) {

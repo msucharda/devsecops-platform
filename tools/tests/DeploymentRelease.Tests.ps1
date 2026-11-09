@@ -128,6 +128,17 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
             @{ Mode = 'transformed' }
         ) {
             { & $candidateVerifier @developmentArguments } | Should -Not -Throw
+        }
+
+        It 'accepts the workflow relative work path outside the trusted checkout' {
+            Push-Location $TestDrive
+            try {
+                $developmentArguments.WorkPath = '.\development-preflight'
+                { & $candidateVerifier @developmentArguments } | Should -Not -Throw
+                Test-Path -LiteralPath (Join-Path $TestDrive 'development-preflight\baseline.zip') | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $trusted 'development-preflight') | Should -BeFalse
+            }
+            finally { Pop-Location }
             Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
         }
 

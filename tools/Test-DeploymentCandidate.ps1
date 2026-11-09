@@ -18,6 +18,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$WorkPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($WorkPath)
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentCandidate.psm1')
 if (-not [string]::IsNullOrWhiteSpace($Disposition)) {
     throw 'Development execution is locked by a standard adoption or rollback disposition.'

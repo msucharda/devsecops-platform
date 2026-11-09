@@ -44,6 +44,7 @@ jobs:
     outputs:
       allowed: ${{ steps.authorize.outputs.allowed }}
       revision: ${{ steps.preflight.outputs.revision }}
+      reference: ${{ vars.PLATFORM_REFERENCE_REPOSITORY || ((vars.PLATFORM_DEVELOPMENT_APPROVAL != '' || vars.PLATFORM_DEVELOPMENT_DISPOSITION != '') && format('{0}/{1}', github.server_url, github.repository)) || '' }}
     steps:
       - name: Check out trusted authorization tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -203,12 +204,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -282,12 +303,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -361,12 +402,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -440,12 +501,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -514,12 +595,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -588,12 +689,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -700,12 +821,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -776,12 +917,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -857,12 +1018,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -928,12 +1109,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -999,12 +1200,32 @@ jobs:
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+      - name: Recheck protected development state before Azure credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Recheck protected development state before App credentials
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:

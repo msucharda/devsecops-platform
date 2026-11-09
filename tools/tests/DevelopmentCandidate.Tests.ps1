@@ -66,6 +66,7 @@ Describe 'Development candidate trust boundary' {
                 @{ Field = 'version'; Value = '1' }, @{ Field = 'version'; Value = 2L },
                 @{ Field = 'version'; Value = @(1L) }, @{ Field = 'operation'; Value = 'ADOPT' },
                 @{ Field = 'approvedBy'; Value = 42L }, @{ Field = 'approvalUrl'; Value = 42L },
+                @{ Field = 'approvedBy'; Value = ' ' }, @{ Field = 'approvalUrl'; Value = ' ' },
                 @{ Field = 'expiresAt'; Value = 'invalid' }
             )) {
                 $changed = $decision.Clone()
@@ -76,7 +77,26 @@ Describe 'Development candidate trust boundary' {
             $arguments.DispositionJson = ConvertTo-Json $decision
             $arguments.EventName = 'pull_request_target'
             { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*for main*'
+            $arguments.EventName = 'PUSH'
+            { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*for main*'
             $arguments.EventName = 'workflow_dispatch'
+            foreach ($value in @('[]', '[{}]', '"not-an-object"')) {
+                $arguments.DispositionJson = $value
+                { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*for main*'
+            }
+            $arguments.DispositionJson = ConvertTo-Json $decision
+            foreach ($value in @('[]', '[{}]', '"not-an-object"')) {
+                $arguments.DevelopmentApprovalJson = $value
+                { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*for main*'
+            }
+            $arguments.DevelopmentApprovalJson = ConvertTo-Json $approval
+            $changed = $decision.Clone()
+            $changed.repository = ' '
+            $arguments.RepositoryUrl = ' '
+            $arguments.DispositionJson = ConvertTo-Json $changed
+            { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*repository*'
+            $arguments.RepositoryUrl = $decision.repository
+            $arguments.DispositionJson = ConvertTo-Json $decision
             $arguments.DevelopmentApprovalJson = ''
             { & (Join-Path $tools 'Test-StandardDeploymentAvailability.ps1') @arguments } | Should -Throw '*locked*'
             $arguments.DevelopmentApprovalJson = ConvertTo-Json $approval

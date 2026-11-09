@@ -14,7 +14,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['actions-catalog'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_actions_catalog.result == 'success' && needs.apply_organization_rulesets.result == 'success' && needs.apply_organizations.result == 'success' && needs.revalidate_apply_actions_catalog.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_actions_catalog.result == 'success' && needs.apply_organization_rulesets.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: actions-catalog (apply)
     needs:
     - authorize
@@ -23,10 +23,10 @@ jobs:
     - module_actions_catalog
     - apply_organization_rulesets
     - apply_organizations
-    - revalidate_apply_actions_catalog
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -55,12 +55,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -68,6 +83,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -113,17 +140,17 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['emu-identity'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_emu_identity.result == 'success' && needs.revalidate_apply_emu_identity.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_emu_identity.result == 'success' }}
     name: emu-identity (apply)
     needs:
     - authorize
     - select
     - approve_apply
     - module_emu_identity
-    - revalidate_apply_emu_identity
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -152,12 +179,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -165,6 +207,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -200,7 +254,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_actions_catalog.result == 'success' && needs.apply_organizations.result == 'success' && needs.revalidate_apply_enterprise_baseline.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_actions_catalog.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: enterprise-baseline (apply)
     needs:
     - authorize
@@ -209,10 +263,10 @@ jobs:
     - module_enterprise_baseline
     - apply_actions_catalog
     - apply_organizations
-    - revalidate_apply_enterprise_baseline
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -241,12 +295,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -254,6 +323,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -299,7 +380,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' && needs.revalidate_apply_enterprise_baseline_code_security.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: enterprise-baseline / code-security (apply)
     needs:
     - authorize
@@ -307,10 +388,10 @@ jobs:
     - approve_apply
     - module_enterprise_baseline_code_security
     - apply_organizations
-    - revalidate_apply_enterprise_baseline_code_security
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -339,12 +420,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -352,6 +448,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -392,7 +500,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organization-roles'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_roles.result == 'success' && needs.apply_organizations.result == 'success' && needs.revalidate_apply_organization_roles.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_roles.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: organization-roles (apply)
     needs:
     - authorize
@@ -400,10 +508,10 @@ jobs:
     - approve_apply
     - module_organization_roles
     - apply_organizations
-    - revalidate_apply_organization_roles
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -432,12 +540,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -445,6 +568,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -485,7 +620,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organization-rulesets'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_rulesets.result == 'success' && needs.apply_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' && needs.revalidate_apply_organization_rulesets.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_rulesets.result == 'success' && needs.apply_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' }}
     name: organization-rulesets (apply)
     needs:
     - authorize
@@ -494,10 +629,10 @@ jobs:
     - module_organization_rulesets
     - apply_enterprise_baseline_code_security
     - apply_organizations
-    - revalidate_apply_organization_rulesets
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -526,12 +661,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -539,6 +689,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -589,17 +751,17 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.applyEnvironments)['organizations'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organizations.result == 'success' && needs.revalidate_apply_organizations.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organizations.result == 'success' }}
     name: organizations (apply)
     needs:
     - authorize
     - select
     - approve_apply
     - module_organizations
-    - revalidate_apply_organizations
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -628,12 +790,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -641,6 +818,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -765,7 +954,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['actions-catalog'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && github.run_attempt == 1 && needs.module_organization_rulesets.result == 'success' && needs.module_organizations.result == 'success' && needs.ruleset_plan_organization_rulesets.result == 'success' && needs.revalidate_module_actions_catalog.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && github.run_attempt == 1 && needs.module_organization_rulesets.result == 'success' && needs.module_organizations.result == 'success' && needs.ruleset_plan_organization_rulesets.result == 'success' }}
     name: actions-catalog
     needs:
     - authorize
@@ -773,12 +962,12 @@ jobs:
     - module_organization_rulesets
     - module_organizations
     - ruleset_plan_organization_rulesets
-    - revalidate_module_actions_catalog
     outputs:
       changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -807,12 +996,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -820,6 +1024,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -866,17 +1082,17 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['emu-identity'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && github.run_attempt == 1 && needs.revalidate_module_emu_identity.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && github.run_attempt == 1 }}
     name: emu-identity
     needs:
     - authorize
     - select
-    - revalidate_module_emu_identity
     outputs:
       changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -905,12 +1121,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -918,6 +1149,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -954,19 +1197,19 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.module_actions_catalog.result == 'success' && needs.module_organizations.result == 'success' && needs.revalidate_module_enterprise_baseline.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.module_actions_catalog.result == 'success' && needs.module_organizations.result == 'success' }}
     name: enterprise-baseline
     needs:
     - authorize
     - select
     - module_actions_catalog
     - module_organizations
-    - revalidate_module_enterprise_baseline
     outputs:
       changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -995,12 +1238,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1008,6 +1266,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -1054,18 +1324,18 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['enterprise-baseline'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && github.run_attempt == 1 && needs.module_organizations.result == 'success' && needs.revalidate_module_enterprise_baseline_code_security.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && github.run_attempt == 1 && needs.module_organizations.result == 'success' }}
     name: enterprise-baseline / code-security
     needs:
     - authorize
     - select
     - module_organizations
-    - revalidate_module_enterprise_baseline_code_security
     outputs:
       changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -1094,12 +1364,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1107,6 +1392,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -1148,18 +1445,18 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['organization-roles'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && github.run_attempt == 1 && needs.module_organizations.result == 'success' && needs.revalidate_module_organization_roles.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && github.run_attempt == 1 && needs.module_organizations.result == 'success' }}
     name: organization-roles
     needs:
     - authorize
     - select
     - module_organizations
-    - revalidate_module_organization_roles
     outputs:
       changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -1188,12 +1485,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1201,6 +1513,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -1242,19 +1566,19 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['organization-rulesets'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' && needs.revalidate_module_organization_rulesets.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' }}
     name: organization-rulesets
     needs:
     - authorize
     - select
     - module_enterprise_baseline_code_security
     - module_organizations
-    - revalidate_module_organization_rulesets
     outputs:
       changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -1283,12 +1607,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1296,6 +1635,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -1342,17 +1693,17 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.environments)['organizations'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && github.run_attempt == 1 && needs.revalidate_module_organizations.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && github.run_attempt == 1 }}
     name: organizations
     needs:
     - authorize
     - select
-    - revalidate_module_organizations
     outputs:
       changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -1381,12 +1732,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1394,6 +1760,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}
@@ -1451,430 +1829,6 @@ jobs:
       name: Report plan status without deployment credentials
       run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS -GitHubOutputPath $env:GITHUB_OUTPUT
       shell: pwsh
-  revalidate_apply_actions_catalog:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_actions_catalog.result == 'success' && needs.apply_organization_rulesets.result == 'success' && needs.apply_organizations.result == 'success' }}
-    name: Revalidate protected approval for apply_actions_catalog
-    needs:
-    - authorize
-    - select
-    - approve_apply
-    - module_actions_catalog
-    - apply_organization_rulesets
-    - apply_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_apply_emu_identity:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_emu_identity.result == 'success' }}
-    name: Revalidate protected approval for apply_emu_identity
-    needs:
-    - authorize
-    - select
-    - approve_apply
-    - module_emu_identity
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_apply_enterprise_baseline:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline.result == 'success' && needs.apply_actions_catalog.result == 'success' && needs.apply_organizations.result == 'success' }}
-    name: Revalidate protected approval for apply_enterprise_baseline
-    needs:
-    - authorize
-    - select
-    - approve_apply
-    - module_enterprise_baseline
-    - apply_actions_catalog
-    - apply_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_apply_enterprise_baseline_code_security:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' }}
-    name: Revalidate protected approval for apply_enterprise_baseline_code_security
-    needs:
-    - authorize
-    - select
-    - approve_apply
-    - module_enterprise_baseline_code_security
-    - apply_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_apply_organization_roles:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_roles.result == 'success' && needs.apply_organizations.result == 'success' }}
-    name: Revalidate protected approval for apply_organization_roles
-    needs:
-    - authorize
-    - select
-    - approve_apply
-    - module_organization_roles
-    - apply_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_apply_organization_rulesets:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organization_rulesets.result == 'success' && needs.apply_enterprise_baseline_code_security.result == 'success' && needs.apply_organizations.result == 'success' }}
-    name: Revalidate protected approval for apply_organization_rulesets
-    needs:
-    - authorize
-    - select
-    - approve_apply
-    - module_organization_rulesets
-    - apply_enterprise_baseline_code_security
-    - apply_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_apply_organizations:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && github.run_attempt == 1 && needs.approve_apply.result == 'success' && needs.module_organizations.result == 'success' }}
-    name: Revalidate protected approval for apply_organizations
-    needs:
-    - authorize
-    - select
-    - approve_apply
-    - module_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_module_actions_catalog:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'actions-catalog') && github.run_attempt == 1 && needs.module_organization_rulesets.result == 'success' && needs.module_organizations.result == 'success' && needs.ruleset_plan_organization_rulesets.result == 'success' }}
-    name: Revalidate protected approval for module_actions_catalog
-    needs:
-    - authorize
-    - select
-    - module_organization_rulesets
-    - module_organizations
-    - ruleset_plan_organization_rulesets
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_module_emu_identity:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'emu-identity') && github.run_attempt == 1 }}
-    name: Revalidate protected approval for module_emu_identity
-    needs:
-    - authorize
-    - select
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_module_enterprise_baseline:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline') && github.run_attempt == 1 && needs.module_actions_catalog.result == 'success' && needs.module_organizations.result == 'success' }}
-    name: Revalidate protected approval for module_enterprise_baseline
-    needs:
-    - authorize
-    - select
-    - module_actions_catalog
-    - module_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_module_enterprise_baseline_code_security:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'enterprise-baseline:code-security') && github.run_attempt == 1 && needs.module_organizations.result == 'success' }}
-    name: Revalidate protected approval for module_enterprise_baseline_code_security
-    needs:
-    - authorize
-    - select
-    - module_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_module_organization_roles:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-roles') && github.run_attempt == 1 && needs.module_organizations.result == 'success' }}
-    name: Revalidate protected approval for module_organization_roles
-    needs:
-    - authorize
-    - select
-    - module_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_module_organization_rulesets:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' }}
-    name: Revalidate protected approval for module_organization_rulesets
-    needs:
-    - authorize
-    - select
-    - module_enterprise_baseline_code_security
-    - module_organizations
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_module_organizations:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organizations') && github.run_attempt == 1 }}
-    name: Revalidate protected approval for module_organizations
-    needs:
-    - authorize
-    - select
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
-  revalidate_ruleset_plan_organization_rulesets:
-    environment: pr-authorization
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' && needs.module_organization_rulesets.result == 'success' }}
-    name: Revalidate protected approval for ruleset_plan_organization_rulesets
-    needs:
-    - authorize
-    - select
-    - module_enterprise_baseline_code_security
-    - module_organizations
-    - module_organization_rulesets
-    outputs:
-      attempt: ${{ steps.current.outputs.attempt }}
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out immutable trusted approval guard
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        path: trusted
-        persist-credentials: false
-        ref: ${{ github.sha }}
-    - env:
-        AUTHORIZED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
-        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
-        PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
-        PLATFORM_DEVELOPMENT_DISPOSITION: ${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}
-      id: current
-      name: Read current protected approval, including revocation
-      run: ./trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT
-      shell: pwsh
   ruleset_plan_organization_rulesets:
     env:
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
@@ -1886,7 +1840,7 @@ jobs:
       PLATFORM_STATE_STORAGE_ACCOUNT: ${{ vars.PLATFORM_STATE_STORAGE_ACCOUNT }}
       TF_IN_AUTOMATION: "true"
     environment: ${{ fromJSON(needs.select.outputs.rulesetEnvironments)['organization-rulesets'] }}
-    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' && needs.module_organization_rulesets.result == 'success' && needs.revalidate_ruleset_plan_organization_rulesets.outputs.attempt == github.run_attempt }}
+    if: ${{ !cancelled() && needs.authorize.outputs.allowed == 'true' && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.phaseNodes), 'organization-rulesets') && github.run_attempt == 1 && needs.module_enterprise_baseline_code_security.result == 'success' && needs.module_organizations.result == 'success' && needs.module_organization_rulesets.result == 'success' }}
     name: organization-rulesets (rulesetPlan)
     needs:
     - authorize
@@ -1894,12 +1848,12 @@ jobs:
     - module_enterprise_baseline_code_security
     - module_organizations
     - module_organization_rulesets
-    - revalidate_ruleset_plan_organization_rulesets
     outputs:
       changes: ${{ steps.run.outputs.changes }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
     - name: Check out trusted authorization tools
@@ -1928,12 +1882,27 @@ jobs:
     - env:
         DEVELOPMENT_OPERATION: ${{ needs.authorize.outputs.operation }}
         DEVELOPMENT_PR: ${{ inputs.pull-request }}
+        DEVELOPMENT_READ_TOKEN: ${{ github.token }}
         DEVELOPMENT_REVISION: ${{ needs.authorize.outputs.revision }}
         PLATFORM_DEVELOPMENT_APPROVAL: ${{ needs.authorize.outputs.approval }}
         PLATFORM_REFERENCE_REPOSITORY: ${{ needs.authorize.outputs.reference }}
         PLATFORM_SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source }}
       name: Revalidate development approval and exact bytes before phase credentials
-      run: ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+      run: |-
+        ./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+        ./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+      shell: pwsh
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before Azure credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1941,6 +1910,18 @@ jobs:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    - env:
+        EXPECTED_APPROVAL: ${{ needs.authorize.outputs.approval }}
+        EXPECTED_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+        EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+        EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
+        PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+        PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+        PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+        PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+      name: Recheck protected development state before App credentials
+      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
         PLATFORM_APP_ID: ${{ vars.PLATFORM_APP_ID }}

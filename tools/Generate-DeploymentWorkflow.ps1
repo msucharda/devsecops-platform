@@ -51,6 +51,22 @@ function Add-WorkflowCheckout {
     }
 }
 
+function Add-WorkflowProtectedStateGuard {
+    param([ValidateSet('Azure', 'App')][string] $Boundary)
+    $lines.Add("      - name: Recheck protected development state before $Boundary credentials")
+    Add-WorkflowBlock @'
+        if: ${{ needs.authorize.outputs.reference != '' }}
+        shell: pwsh
+        env:
+          EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
+          PLATFORM_APPROVAL_READER_APP_ID: ${{ vars.PLATFORM_APPROVAL_READER_APP_ID }}
+          PLATFORM_APPROVAL_READER_INSTALLATION_ID: ${{ vars.PLATFORM_APPROVAL_READER_INSTALLATION_ID }}
+          PLATFORM_APPROVAL_READER_ENTERPRISE: ${{ vars.PLATFORM_APPROVAL_READER_ENTERPRISE }}
+          PLATFORM_APPROVAL_READER_PRIVATE_KEY: ${{ secrets.PLATFORM_APPROVAL_READER_PRIVATE_KEY }}
+        run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode standard -ExpectedReference $env:EXPECTED_REFERENCE
+'@
+}
+
 function Add-DeploymentJob {
     [CmdletBinding()]
     param(
@@ -143,12 +159,18 @@ function Add-DeploymentJob {
       - name: Verify Terraform checksum
         shell: pwsh
         run: ./trusted/platform/tools/Test-ToolBinary.ps1 -Name Terraform
+'@
+    if (-not $Drift) { Add-WorkflowProtectedStateGuard -Boundary Azure }
+    Add-WorkflowBlock @'
       - name: Sign in to Azure with the phase managed identity
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+'@
+    if (-not $Drift) { Add-WorkflowProtectedStateGuard -Boundary App }
+    Add-WorkflowBlock @'
       - name: Issue a phase-scoped enterprise App installation token
         shell: pwsh
         env:
@@ -286,6 +308,7 @@ jobs:
     outputs:
       allowed: ${{ steps.authorize.outputs.allowed }}
       revision: ${{ steps.preflight.outputs.revision }}
+      reference: ${{ vars.PLATFORM_REFERENCE_REPOSITORY || ((vars.PLATFORM_DEVELOPMENT_APPROVAL != '' || vars.PLATFORM_DEVELOPMENT_DISPOSITION != '') && format('{0}/{1}', github.server_url, github.repository)) || '' }}
     steps:
 '@
 Add-WorkflowCheckout
@@ -490,40 +513,9 @@ foreach ($jobId in @($development['jobs'].get_Keys())) {
         if ($step.Contains('with') -and $step['with']['path'] -ceq 'candidate') { $step['with']['fetch-depth'] = 0 }
     }
     if ($jobId -cmatch '^(module_|ruleset_plan_|apply_)') {
-        $gateId = "revalidate_$jobId"
-        $gate = @{
-            name = "Revalidate protected approval for $jobId"
-            'runs-on' = 'ubuntu-latest'
-            environment = 'pr-authorization'
-            needs = @($job['needs'])
-            if = $job['if']
-            outputs = @{ attempt = '${{ steps.current.outputs.attempt }}' }
-            steps = @(
-                @{
-                    name = 'Check out immutable trusted approval guard'
-                    uses = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
-                    with = @{ ref = '${{ github.sha }}'; path = 'trusted'; 'persist-credentials' = $false }
-                },
-                @{
-                    name = 'Read current protected approval, including revocation'
-                    id = 'current'
-                    shell = 'pwsh'
-                    env = @{
-                        PLATFORM_DEVELOPMENT_APPROVAL = '${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}'
-                        PLATFORM_DEVELOPMENT_DISPOSITION = '${{ vars.PLATFORM_DEVELOPMENT_DISPOSITION }}'
-                        EXPECTED_APPROVAL = '${{ needs.authorize.outputs.approval }}'
-                        AUTHORIZED_ATTEMPT = '${{ needs.authorize.outputs.attempt }}'
-                    }
-                    run = './trusted/platform/tools/Test-DevelopmentApprovalContinuity.ps1 -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedAttempt $env:AUTHORIZED_ATTEMPT -GitHubOutputPath $env:GITHUB_OUTPUT'
-                }
-            )
-        }
-        $development['jobs'][$gateId] = $gate
-        $job['needs'] = @($job['needs']) + $gateId
-        $job['if'] = $job['if'].Replace(' }}', " && needs.$gateId.outputs.attempt == github.run_attempt }}")
         $steps = [Collections.Generic.List[object]]::new()
         foreach ($step in $job['steps']) {
-            if ($step['name'] -ceq 'Sign in to Azure with the phase managed identity') {
+            if ($step['name'] -ceq 'Recheck protected development state before Azure credentials') {
                 $steps.Add(@{
                     name = 'Revalidate development approval and exact bytes before phase credentials'; shell = 'pwsh'
                     env = @{
@@ -533,13 +525,25 @@ foreach ($jobId in @($development['jobs'].get_Keys())) {
                         DEVELOPMENT_PR = '${{ inputs.pull-request }}'
                         DEVELOPMENT_REVISION = '${{ needs.authorize.outputs.revision }}'
                         DEVELOPMENT_OPERATION = '${{ needs.authorize.outputs.operation }}'
+                        DEVELOPMENT_READ_TOKEN = '${{ github.token }}'
                     }
-                    run = './trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION'
+                    run = @'
+./trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION
+./trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./phase-context -Preflight
+'@
                 })
+            }
+            if ($step['name'] -clike 'Recheck protected development state before * credentials') {
+                $step.Remove('if')
+                $step['env']['EXPECTED_APPROVAL'] = '${{ needs.authorize.outputs.approval }}'
+                $step['env']['EXPECTED_SOURCE'] = '${{ needs.authorize.outputs.source }}'
+                $step['env']['EXPECTED_ATTEMPT'] = '${{ needs.authorize.outputs.attempt }}'
+                $step['run'] = './trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT'
             }
             $steps.Add($step)
         }
         $job['steps'] = $steps.ToArray()
+        $job['permissions']['pull-requests'] = 'read'
     }
 }
 $development['jobs']['approve_apply']['if'] = $development['jobs']['approve_apply']['if'].Replace(
