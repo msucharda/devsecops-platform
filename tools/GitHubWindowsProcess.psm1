@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 
 function Start-GitHubWindowsJobProcess {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Internal CLI execution requires the atomic job attachment and cannot be conditionally skipped.')]
     [CmdletBinding()]
     param([string] $FilePath, [string[]] $Arguments)
 
