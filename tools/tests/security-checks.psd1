@@ -4,6 +4,35 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'standard-deployment-development-lock'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development standard-deployment exclusion*' })
+        }
+        @{
+            Name = 'development-candidate-snapshot'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development immutable checkout*' }
+                @{ Path = 'tools/tests/DeploymentRelease.Tests.ps1'; FullName = '*does not hand off credentials for changed working bytes*' })
+        }
+        @{
+            Name = 'development-candidate-approval'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development exact-content approval*' })
+        }
+        @{
+            Name = 'development-candidate-boundary'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development editable boundary*' })
+        }
+        @{
+            Name = 'development-candidate-revision'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development immutable checkout*' })
+        }
+        @{
+            Name = 'development-dispatch-request'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development dispatch authorization*' })
+        }
+        @{
+            Name = 'development-dispatch-context'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentCandidate.Tests.ps1'; FullName = 'Development dispatch authorization*' })
+        }
+        @{
             Name = 'local-ci-benchmark-output-entry'
             Tests = @(@{
                 Path = 'tools/tests/LocalCiBenchmark.Tests.ps1'

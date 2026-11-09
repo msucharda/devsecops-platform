@@ -112,6 +112,45 @@ BeforeAll {
 }
 
 Describe 'Deployment workflow generation' {
+    It 'keeps development manual and reference-only and rechecks every credential boundary without weakening standard deploy' {
+        $output = Join-Path $TestDrive 'development-contract/deploy.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        $development = ConvertFrom-Yaml (Get-Content (Join-Path (Split-Path $output) 'development.yml') -Raw)
+        @($development.on.Keys) | Should -Be @('workflow_dispatch')
+        $development.on.workflow_dispatch.inputs.operation.default | Should -Be 'plan'
+        $authorization = $development.jobs.authorize
+        $authorization.environment | Should -Be 'pr-authorization'
+        $guard = @($authorization.steps | Where-Object { $_['run'] -like '*Test-DeploymentCandidate.ps1*' })
+        $guard.Count | Should -Be 1
+        $guard[0].env.PLATFORM_DEVELOPMENT_APPROVAL | Should -Be '${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}'
+        $guard[0].env.PLATFORM_REFERENCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_REFERENCE_REPOSITORY }}'
+        $guard[0].run | Should -Match '^\./trusted/platform/tools/'
+        $keys = @($authorization.steps | Where-Object { $_['env'] -and $_['env'].Contains('PLATFORM_APP_PRIVATE_KEY') })
+        foreach ($step in $keys) {
+            [array]::IndexOf($authorization.steps, $step) | Should -BeGreaterThan ([array]::IndexOf($authorization.steps, $guard[0]))
+        }
+        foreach ($id in @($development.jobs.Keys | Where-Object { $_ -cmatch '^(module_|ruleset_plan_|apply_)' })) {
+            $job = $development.jobs[$id]
+            $check = @($job.steps | Where-Object { $_['run'] -like '*Test-DeploymentCandidate.ps1*' })
+            $check.Count | Should -Be 1
+            $credentialSteps = @($job.steps | Where-Object {
+                $_['name'] -eq 'Sign in to Azure with the phase managed identity' -or
+                ($_.Contains('env') -and $_.env.Contains('PLATFORM_APP_PRIVATE_KEY'))
+            })
+            foreach ($step in $credentialSteps) {
+                [array]::IndexOf($job.steps, $step) | Should -BeGreaterThan ([array]::IndexOf($job.steps, $check[0]))
+            }
+            $job.needs | Should -Contain 'authorize'
+            $job.if | Should -Match "needs.authorize.outputs.allowed == 'true'"
+        }
+        $development.jobs.approve_apply.environment | Should -Be 'approve-apply'
+        $development.jobs.approve_apply.if | Should -Match "needs.authorize.outputs.operation == 'apply'"
+        $development.jobs.approve_apply.if | Should -Match "github.ref == 'refs/heads/main'"
+        $standard = ConvertFrom-Yaml (Get-Content $output -Raw)
+        @($standard.jobs.authorize.steps | Where-Object { $_['run'] -like '*Test-DeploymentRelease.ps1*' }).Count | Should -Be 1
+        $standard.jobs.approve_apply.if | Should -Not -Match 'operation'
+    }
+
     It 'rejects invalid dispatch scope in the first credential-free job without shell interpolation' -Tag 'CodeSecurityDispatch' {
         $output = Join-Path $TestDrive 'dispatch-scope.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output

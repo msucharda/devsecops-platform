@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "state": "inProgress",
+  "candidate": {
+    "baselineRelease": "v1.2.3",
+    "baseRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "pullRequest": "[PRIVATE PR URL]",
+    "change": "[EXACT CHANGE AND AFFECTED OBJECTS]",
+    "approvalUrl": "[SPECIFIC APPROVAL URL]",
+    "approvedBy": "[APPROVER]"
+  },
+  "verificationPlan": {
+    "bootstrap": false,
+    "teardown": false,
+    "recovery": false,
+    "acceptanceMilestone": false,
+    "rationale": "[IMPACT ASSESSMENT; UNVERIFIED CRITERIA REMAIN OPEN]"
+  },
+  "readyAt": "2026-01-01T10:00:00.0000000+00:00",
+  "firstLive": null,
+  "standardRelease": null,
+  "observedUntil": "2026-01-01T10:01:00.0000000+00:00",
+  "intervals": [
+    {
+      "kind": "humanWait",
+      "start": "2026-01-01T10:00:00.0000000+00:00",
+      "end": "2026-01-01T10:01:00.0000000+00:00"
+    }
+  ]
+}

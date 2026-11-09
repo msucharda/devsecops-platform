@@ -149,6 +149,12 @@ Nový import release vyžaduje vstupy publisheru `-CatalogPath` a `-ActionsOrgan
 
 ### Release preflight před credentials
 
+Samostatný reference-only development workflow popisuje
+[development candidate](development-candidates.md). Nemění standardní
+ověření release. Dokud správce po doloženém převzetí nebo návratu neodstraní
+externí development schválení, standardní deploy odmítne credentials,
+aby nepřepsal nerozhodnutý živý stav.
+
 Deploy pro scopes `full`, `code-security` a `catalog` ověří release ještě před načtením prvního App klíče, včetně membership-reader. Po kontrole původu PR načte kandidáta z pevného SHA pouze jako data. Spustí `Test-DeploymentRelease.ps1` z důvěryhodné base revize, nikoli nástroj kandidáta. Fork, App a vendoring PR nadále nezískají cloudový plan.
 
 Zdroj určuje existující `vars.PLATFORM_SOURCE_REPOSITORY`, výchozí `msucharda/devsecops-platform`. Kontrola bez zdrojového tokenu stáhne `platform-v<releaseVersion>.zip` z github.com a přes `Get-VendoringSource.ps1` vyžaduje attestaci signer workflow `<zdroj>/.github/workflows/release.yml`, přesný tag a commit na zdrojové `main`. Žádný nový token ani oprávnění nepřidává. Nedostupný zdroj nebo attestace nasazení zastaví.

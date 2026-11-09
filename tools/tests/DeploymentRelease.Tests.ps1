@@ -87,6 +87,73 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         $arguments = @{ CandidatePath = $candidate; WorkPath = $work; SourceRepository = 'upstream/platform'; PlatformOrganization = 'demo-platform' }
     }
 
+    Context 'Development baseline and candidate integration' -Tag 'DevelopmentIntegration' {
+        BeforeEach {
+            $candidateVerifier = Join-Path $tools 'Test-DeploymentCandidate.ps1'
+            Import-Module (Join-Path $tools 'DevelopmentCandidate.psm1') -Force
+            foreach ($root in @($sourceRoot, "$candidate/platform")) {
+                $null = New-Item -ItemType Directory -Path "$root/modules/demo" -Force
+                [IO.File]::WriteAllText("$root/modules/demo/main.tf", 'baseline')
+            }
+            $marker.files['modules/demo/main.tf'] = (Get-FileHash "$sourceRoot/modules/demo/main.tf").Hash.ToLowerInvariant()
+            $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
+            & git -C $candidate init --quiet
+            & git -C $candidate config core.autocrlf false
+            & git -C $candidate -c user.name=Fixture -c user.email=fixture@example.test add --all
+            & git -C $candidate -c user.name=Fixture -c user.email=fixture@example.test commit --quiet -m baseline
+            $trusted = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+            & git clone --quiet -- $candidate $trusted
+            $baseRevision = (& git -C $candidate rev-parse HEAD).Trim()
+            [IO.File]::WriteAllText("$candidate/platform/modules/demo/main.tf", 'development')
+            & git -C $candidate add --all
+            & git -C $candidate -c user.name=Fixture -c user.email=fixture@example.test commit --quiet -m development
+            $snapshot = Get-DevelopmentCandidateSnapshot -Path $candidate
+            $approval = @{
+                version = 1; repository = 'https://example.ghe.com/demo-platform/instance'
+                revision = $snapshot.Revision; baseRevision = $baseRevision; digest = $snapshot.Digest
+                pullRequest = '42'; operation = 'apply'; approvedBy = 'reviewer'
+                approvalUrl = 'https://example.ghe.com/demo-platform/instance/pull/42#approval'
+                expiresAt = [DateTimeOffset]::UtcNow.AddHours(1).ToString('o')
+            }
+            $developmentArguments = @{
+                CandidatePath = $candidate; TrustedPath = $trusted; WorkPath = $work
+                SourceRepository = 'upstream/platform'; PlatformOrganization = 'demo-platform'
+                ApprovalJson = ($approval | ConvertTo-Json); ReferenceRepository = $approval.repository
+                RepositoryUrl = $approval.repository; Revision = $snapshot.Revision; PullRequest = '42'; Operation = 'apply'
+            }
+        }
+
+        It 'accepts the exact approved development change only over an attested standard <Mode> baseline' -ForEach @(
+            @{ Mode = 'raw' }
+            @{ Mode = 'transformed' }
+        ) {
+            { & $candidateVerifier @developmentArguments } | Should -Not -Throw
+            Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+        }
+
+        It 'continues to reject development content on the standard release path' {
+            { & $preflight @arguments } | Should -Throw '*Candidate hash differs*'
+        }
+
+        It 'does not hand off credentials for changed working bytes even if Git flags hide them' {
+            & git -C $candidate update-index --assume-unchanged platform/modules/demo/main.tf
+            [IO.File]::WriteAllText("$candidate/platform/modules/demo/main.tf", 'changed after approval')
+            { & $candidateVerifier @developmentArguments } | Should -Throw '*working bytes differ from HEAD*'
+            Should -Invoke Invoke-RestMethod -Times 0
+        }
+
+        It 'rejects a baseline whose source attestation is missing' {
+            $api.attested = $false
+            { & $candidateVerifier @developmentArguments } | Should -Throw '*attestation*'
+        }
+
+        It 'does not reuse a partial baseline materialization as a successful validation' {
+            $null = New-Item -ItemType Directory -Path "$work/baseline" -Force
+            { & $candidateVerifier @developmentArguments } | Should -Throw '*work path must be fresh*'
+            Should -Invoke Invoke-RestMethod -Times 0
+        }
+    }
+
     It 'accepts the exact attested <Mode> release without using source credentials' -Tag 'ReleaseArchiveBoundary' -ForEach @(
         @{ Mode = 'raw' }
         @{ Mode = 'transformed' }

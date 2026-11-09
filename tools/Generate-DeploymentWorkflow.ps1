@@ -4,6 +4,7 @@ param(
     [string] $ModulesPath = (Join-Path $PSScriptRoot '../modules'),
     [string] $OutputPath = (Join-Path $PSScriptRoot '../templates/instance/.github/workflows/deploy.yml'),
     [string] $DriftOutputPath,
+    [string] $DevelopmentOutputPath,
     [switch] $Check
 )
 
@@ -303,6 +304,12 @@ Add-WorkflowBlock @'
           ref: ${{ steps.preflight.outputs.revision }}
           path: candidate
           persist-credentials: false
+      - name: Refuse standard deployment while development disposition is outstanding
+        if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
+        shell: pwsh
+        env:
+          PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
+        run: ./trusted/platform/tools/Test-StandardDeploymentAvailability.ps1
       - name: Verify release marker and provenance before credentials for every deployment scope
         if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
         shell: pwsh
@@ -426,6 +433,84 @@ Add-WorkflowBlock @'
 '@
 foreach ($node in $phaseGraph.PSBase.Values) { Add-DeploymentJob -Node $node -Phase apply }
 $deployContent = ($lines -join "`n") + "`n"
+
+# The separate manual workflow reuses the same graph, scopes, environment approvals and token lifecycle.
+$development = Get-PlatformYaml -Yaml $deployContent
+$development['name'] = 'Develop reference instance'
+$development['permissions']['pull-requests'] = 'read'
+$development['on'] = @{
+    workflow_dispatch = @{
+        inputs = @{
+            deployment = @{ description = 'Deployment scope'; required = $true; type = 'choice'; default = 'full'; options = @('full', 'code-security', 'catalog') }
+            'pull-request' = @{ description = 'Approved same-repository PR number'; required = $true; type = 'string' }
+            revision = @{ description = 'Approved full PR head SHA'; required = $true; type = 'string' }
+            operation = @{ description = 'Explicitly approved operation'; required = $true; type = 'choice'; default = 'plan'; options = @('plan', 'apply') }
+        }
+    }
+}
+$development['concurrency']['group'] = 'deploy-instance-main'
+$authorization = $development['jobs']['authorize']
+$authorization['name'] = 'Authorize exact reference development candidate outside the candidate'
+$authorization['outputs']['approval'] = '${{ steps.candidate.outputs.approval }}'
+$authorization['outputs']['reference'] = '${{ steps.candidate.outputs.reference }}'
+$authorization['outputs']['operation'] = '${{ steps.candidate.outputs.operation }}'
+$authorization['steps'] = @($authorization['steps'] | Where-Object {
+    $_['name'] -cne 'Refuse standard deployment while development disposition is outstanding'
+})
+foreach ($step in $authorization['steps']) {
+    if ($step['name'] -cin @('Check PR origin before loading any App key', 'Verify active platform-team membership')) {
+        $step['env'] = @{
+            DEVELOPMENT_PR = '${{ inputs.pull-request }}'; DEVELOPMENT_REVISION = '${{ inputs.revision }}'
+            DEVELOPMENT_READ_TOKEN = '${{ github.token }}'; PLATFORM_TEAM_SLUG = '${{ vars.PLATFORM_TEAM_SLUG }}'
+        }
+        $step['run'] = './trusted/platform/tools/Test-DevelopmentDeploymentAuthorization.ps1 -PullRequest $env:DEVELOPMENT_PR -Revision $env:DEVELOPMENT_REVISION -WorkPath ./development-context -GitHubOutputPath $env:GITHUB_OUTPUT'
+        if ($step['name'] -ceq 'Check PR origin before loading any App key') { $step['run'] += ' -Preflight' }
+    }
+    if ($step['name'] -ceq 'Verify release marker and provenance before credentials for every deployment scope') {
+        $step['name'] = 'Verify approved development content and attested baseline before credentials'
+        $step['id'] = 'candidate'
+        $step['env'] = @{
+            PLATFORM_SOURCE_REPOSITORY = '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+            PLATFORM_REFERENCE_REPOSITORY = '${{ vars.PLATFORM_REFERENCE_REPOSITORY }}'
+            PLATFORM_DEVELOPMENT_APPROVAL = '${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}'
+            DEVELOPMENT_PR = '${{ inputs.pull-request }}'; DEVELOPMENT_REVISION = '${{ inputs.revision }}'
+            DEVELOPMENT_OPERATION = '${{ inputs.operation }}'
+        }
+        $step['run'] = './trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION -GitHubOutputPath $env:GITHUB_OUTPUT'
+    }
+}
+foreach ($jobId in @($development['jobs'].get_Keys())) {
+    $job = $development['jobs'][$jobId]
+    foreach ($step in $job['steps']) {
+        if ($step.Contains('with') -and $step['with']['path'] -ceq 'candidate') { $step['with']['fetch-depth'] = 0 }
+    }
+    if ($jobId -cmatch '^(module_|ruleset_plan_|apply_)') {
+        $steps = [Collections.Generic.List[object]]::new()
+        foreach ($step in $job['steps']) {
+            if ($step['name'] -ceq 'Sign in to Azure with the phase managed identity') {
+                $steps.Add(@{
+                    name = 'Revalidate development approval and exact bytes before phase credentials'; shell = 'pwsh'
+                    env = @{
+                        PLATFORM_DEVELOPMENT_APPROVAL = '${{ needs.authorize.outputs.approval }}'
+                        PLATFORM_REFERENCE_REPOSITORY = '${{ needs.authorize.outputs.reference }}'
+                        PLATFORM_SOURCE_REPOSITORY = '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+                        DEVELOPMENT_PR = '${{ inputs.pull-request }}'
+                        DEVELOPMENT_REVISION = '${{ needs.authorize.outputs.revision }}'
+                        DEVELOPMENT_OPERATION = '${{ needs.authorize.outputs.operation }}'
+                    }
+                    run = './trusted/platform/tools/Test-DeploymentCandidate.ps1 -CandidatePath ./candidate -TrustedPath ./trusted -WorkPath ./development-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY -Revision $env:DEVELOPMENT_REVISION -PullRequest $env:DEVELOPMENT_PR -Operation $env:DEVELOPMENT_OPERATION'
+                })
+            }
+            $steps.Add($step)
+        }
+        $job['steps'] = $steps.ToArray()
+    }
+}
+$development['jobs']['approve_apply']['if'] = $development['jobs']['approve_apply']['if'].Replace(
+    ' }}', " && needs.authorize.outputs.operation == 'apply' }}")
+$development['jobs']['approve_apply']['steps'][0]['run'] = '''Platform-team approval granted for this exact reference-only development candidate; not a standard release.'' >> $env:GITHUB_STEP_SUMMARY'
+$development = ConvertTo-PlatformCanonicalJson $development | ConvertFrom-Json -AsHashtable -NoEnumerate
+$developmentContent = "# Generated by tools/Generate-DeploymentWorkflow.ps1. Do not edit.`n" + (ConvertTo-Yaml $development)
 
 $lines.Clear()
 Add-WorkflowBlock @'
@@ -565,9 +650,12 @@ Add-WorkflowBlock @'
 $driftContent = ($lines -join "`n") + "`n"
 
 $encoding = [System.Text.UTF8Encoding]::new($false)
-$outputs = [ordered]@{ $OutputPath = $deployContent; $DriftOutputPath = $driftContent }
-if ([System.IO.Path]::GetFullPath($OutputPath) -ceq [System.IO.Path]::GetFullPath($DriftOutputPath)) {
-    throw 'The deployment and drift workflows need different output paths.'
+if (-not $DevelopmentOutputPath) {
+    $DevelopmentOutputPath = Join-Path ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($OutputPath))) 'development.yml'
+}
+$outputs = [ordered]@{ $OutputPath = $deployContent; $DriftOutputPath = $driftContent; $DevelopmentOutputPath = $developmentContent }
+if (@($outputs.get_Keys() | ForEach-Object { [IO.Path]::GetFullPath($_) } | Select-Object -Unique).Count -ne 3) {
+    throw 'The deployment, drift and development workflows need different output paths.'
 }
 if ($Check) {
     foreach ($path in $outputs.Keys) {

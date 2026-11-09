@@ -66,6 +66,12 @@ jobs:
           ref: ${{ steps.preflight.outputs.revision }}
           path: candidate
           persist-credentials: false
+      - name: Refuse standard deployment while development disposition is outstanding
+        if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
+        shell: pwsh
+        env:
+          PLATFORM_DEVELOPMENT_APPROVAL: ${{ vars.PLATFORM_DEVELOPMENT_APPROVAL }}
+        run: ./trusted/platform/tools/Test-StandardDeploymentAvailability.ps1
       - name: Verify release marker and provenance before credentials for every deployment scope
         if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
         shell: pwsh
