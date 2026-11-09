@@ -32,6 +32,48 @@ function Get-DeploymentPullRequestBranchDenial {
     }
 }
 
+# security-check: deployment-pr-updater
+function Test-DeploymentPullRequestUpdater {
+    param(
+        [AllowNull()][object] $Action,
+        [AllowNull()][object] $Sender,
+        [string] $AuthorLogin,
+        [string] $TeamUrl,
+        [hashtable] $Headers,
+        [switch] $Preflight
+    )
+
+    if ($Action -isnot [string] -or $Action -cne 'synchronize') {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'Pull request plans require a head-update event; cloud plan NOT PERFORMED.' }
+    }
+    if ($Sender -isnot [Collections.IDictionary]) {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'Pull request updating actor is missing or unreadable; cloud plan NOT PERFORMED.' }
+    }
+    if ($Sender['type'] -cne 'User' -or $Sender['login'] -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($Sender['login']) -or $Sender['login'] -like '*[[]bot]') {
+        return [pscustomobject]@{ Allowed = $false; Reason = 'Pull request updating actor is not a human user; cloud plan NOT PERFORMED.' }
+    }
+    if ($Preflight -or $Sender['login'] -ceq $AuthorLogin) {
+        return [pscustomobject]@{ Allowed = $true; Reason = '' }
+    }
+
+    $url = "$TeamUrl/memberships/$([uri]::EscapeDataString($Sender['login']))"
+    try {
+        $membership = Invoke-RestMethod -Uri $url -Headers $Headers
+        if ($membership.state -ceq 'active') {
+            return [pscustomobject]@{ Allowed = $true; Reason = '' }
+        }
+        return [pscustomobject]@{ Allowed = $false; Reason = 'Pull request updating actor is not an active platform-team member; cloud plan NOT PERFORMED.' }
+    }
+    catch {
+        if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response -and
+            [int] $_.Exception.Response.StatusCode -eq 404) {
+            return [pscustomobject]@{ Allowed = $false; Reason = 'Pull request updating actor is not a platform-team member; cloud plan NOT PERFORMED.' }
+        }
+        throw "Platform-team authorization API failed; no credentials will be released: $($_.Exception.Message)"
+    }
+}
+
 $payload = Get-Content -LiteralPath $EventPath -Raw | ConvertFrom-Json -AsHashtable
 $allowed = $false
 $eligible = $false
@@ -46,6 +88,8 @@ if ($EventName -in @('push', 'workflow_dispatch', 'schedule')) {
 }
 elseif ($EventName -eq 'pull_request_target') {
     $pr = $payload['pull_request']
+    $updaterPreflight = Test-DeploymentPullRequestUpdater -Action $payload['action'] -Sender $payload['sender'] `
+        -AuthorLogin $pr['user']['login'] -Preflight
     $revision = $pr['head']['sha']
     if ($revision -cnotmatch '^[a-f0-9]{40}$') {
         throw 'Pull request head must be an immutable commit.'
@@ -64,6 +108,9 @@ elseif ($EventName -eq 'pull_request_target') {
     }
     elseif ($pr['user']['type'] -cne 'User' -or $pr['user']['login'] -like '*[[]bot]' -or $pr['performed_via_github_app']) {
         $reason = 'Pull request was created by an App; cloud plan NOT PERFORMED. Plan runs after review and merge.'
+    }
+    elseif (-not $updaterPreflight.Allowed) {
+        $reason = $updaterPreflight.Reason
     }
     elseif ($pr['draft']) {
         $reason = 'Draft pull request; cloud plan NOT PERFORMED.'
@@ -97,7 +144,7 @@ elseif ($EventName -eq 'pull_request_target') {
             try {
                 $membership = Invoke-RestMethod -Uri $url -Headers $headers
                 $allowed = $membership.state -ceq 'active'
-                $reason = if ($allowed) { 'Active platform-team author in the instance repository.' } else { 'Author is not an active platform-team member; cloud plan NOT PERFORMED.' }
+                $reason = if ($allowed) { 'Active platform-team author and pull-request updater in the instance repository.' } else { 'Author is not an active platform-team member; cloud plan NOT PERFORMED.' }
             }
             catch {
                 if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response -and [int] $_.Exception.Response.StatusCode -eq 404) {
@@ -106,6 +153,12 @@ elseif ($EventName -eq 'pull_request_target') {
                 else {
                     throw "Platform-team authorization API failed; no credentials will be released: $($_.Exception.Message)"
                 }
+            }
+            if ($allowed) {
+                $updater = Test-DeploymentPullRequestUpdater -Action $payload['action'] -Sender $payload['sender'] `
+                    -AuthorLogin $pr['user']['login'] -TeamUrl $teamUrl -Headers $headers
+                $allowed = $updater.Allowed
+                if (-not $allowed) { $reason = $updater.Reason }
             }
         }
     }

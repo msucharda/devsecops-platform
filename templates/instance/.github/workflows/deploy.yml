@@ -3,7 +3,7 @@ name: Deploy instance
 on:
   pull_request_target:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [synchronize]
   push:
     branches: [main]
   workflow_dispatch:
@@ -51,6 +51,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check PR origin before loading any App key
         id: preflight
         shell: pwsh
@@ -97,12 +124,53 @@ jobs:
     if: ${{ needs.authorize.outputs.allowed == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check out trusted authorization tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.authorize.outputs.revision }}
           path: candidate
           persist-credentials: false
+      - name: Install trusted runtime dependencies without cloud credentials
+        shell: pwsh
+        run: ./trusted/platform/tools/Install-ToolDependencies.ps1
+      - name: Verify release marker and provenance before candidate tools
+        shell: pwsh
+        env:
+          PLATFORM_SOURCE_REPOSITORY: ${{ vars.PLATFORM_SOURCE_REPOSITORY }}
+        run: ./trusted/platform/tools/Test-DeploymentRelease.ps1 -CandidatePath ./candidate -WorkPath ./release-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY
       - name: Install candidate runtime dependencies without cloud credentials
         shell: pwsh
         run: ./candidate/platform/tools/Install-ToolDependencies.ps1
@@ -128,6 +196,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -180,6 +275,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -264,6 +386,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -338,6 +487,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -417,6 +593,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -501,6 +704,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -580,6 +810,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -664,6 +921,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -748,6 +1032,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -809,6 +1120,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Report plan status without deployment credentials
         id: summary
         shell: pwsh
@@ -850,6 +1188,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -931,6 +1296,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1002,6 +1394,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1078,6 +1497,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1159,6 +1605,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1235,6 +1708,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1321,6 +1821,33 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Verify platform tools integrity
+        shell: pwsh
+        env:
+          EXPECTED_PLATFORM_TOOLS_SHA256: 7f1b64cb4b0e313ee219346354aca673e3973bb11e302c0162351d12691a88c6
+        run: |
+          $toolRoot = [IO.Path]::GetFullPath('./trusted/platform/tools')
+          $relativePaths = [Collections.Generic.List[string]]::new()
+          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace('\', '/')
+            if ($relative -ceq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The local tool dependency cache must not be a symbolic link.' }
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Platform tool source must not be a symbolic link.' }
+            if ($entry -isnot [IO.FileInfo]) { continue }
+            $relativePaths.Add($relative)
+          }
+          $relativePaths.Sort([StringComparer]::Ordinal)
+          $manifest = [Collections.Generic.List[string]]::new()
+          foreach ($relative in $relativePaths) {
+            $path = Join-Path $toolRoot $relative
+            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+          }
+          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {
+            throw 'Platform tools differ from the generated workflow pin.'
+          }
       - name: Check out the immutable candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

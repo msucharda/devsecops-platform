@@ -11,6 +11,37 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PlatformTools.psm1')
 $modules = Get-PlatformModuleGraph -ModulesPath $ModulesPath
 $phaseGraph = Get-PlatformModulePhaseGraph -Modules $modules
+
+function Get-WorkflowToolSourceSha256 {
+    param([Parameter(Mandatory)][string] $ToolRoot)
+
+    $root = [IO.Path]::GetFullPath($ToolRoot)
+    $paths = [Collections.Generic.List[string]]::new()
+    foreach ($entry in Get-ChildItem -LiteralPath $root -Recurse -Force) {
+        $relative = [IO.Path]::GetRelativePath($root, $entry.FullName).Replace('\', '/')
+        if ($relative -eq '.dependencies' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'The local tool dependency cache must not be a symbolic link.'
+        }
+        if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or
+            $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Platform tool source '$relative' must not be a symbolic link."
+        }
+        if ($entry -isnot [IO.FileInfo]) { continue }
+        $paths.Add($relative)
+    }
+    $paths.Sort([StringComparer]::Ordinal)
+    $manifest = [Collections.Generic.List[string]]::new()
+    foreach ($relative in $paths) {
+        $path = Join-Path $root $relative
+        $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        $manifest.Add($relative + [char] 0 + $digest)
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+}
+
+$platformToolsSha256 = Get-WorkflowToolSourceSha256 -ToolRoot $PSScriptRoot
 $lines = [System.Collections.Generic.List[string]]::new()
 $nodesExpression = 'fromJSON(needs.select.outputs.phaseNodes)'
 
@@ -33,6 +64,40 @@ function Add-WorkflowCheckout {
           path: instance
           persist-credentials: false
 '@
+    Add-WorkflowToolsIntegrityCheck -ToolRoot './instance/platform/tools'
+}
+
+function Add-WorkflowToolsIntegrityCheck {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $ToolRoot)
+
+    $lines.Add('      - name: Verify platform tools integrity')
+    $lines.Add('        shell: pwsh')
+    $lines.Add('        env:')
+    $lines.Add("          EXPECTED_PLATFORM_TOOLS_SHA256: $platformToolsSha256")
+    $lines.Add('        run: |')
+    $lines.Add("          `$toolRoot = [IO.Path]::GetFullPath('$ToolRoot')")
+    $lines.Add('          $relativePaths = [Collections.Generic.List[string]]::new()')
+    $lines.Add('          foreach ($entry in Get-ChildItem -LiteralPath $toolRoot -Recurse -Force) {')
+    $lines.Add('            $relative = [IO.Path]::GetRelativePath($toolRoot, $entry.FullName).Replace(''\'', ''/'')')
+    $lines.Add('            if ($relative -ceq ''.dependencies'' -and $entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ''The local tool dependency cache must not be a symbolic link.'' }')
+    $lines.Add('            if ($relative.StartsWith(''tests/'', [StringComparison]::Ordinal) -or $relative.StartsWith(''.dependencies/'', [StringComparison]::Ordinal)) { continue }')
+    $lines.Add('            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ''Platform tool source must not be a symbolic link.'' }')
+    $lines.Add('            if ($entry -isnot [IO.FileInfo]) { continue }')
+    $lines.Add('            $relativePaths.Add($relative)')
+    $lines.Add('          }')
+    $lines.Add('          $relativePaths.Sort([StringComparer]::Ordinal)')
+    $lines.Add('          $manifest = [Collections.Generic.List[string]]::new()')
+    $lines.Add('          foreach ($relative in $relativePaths) {')
+    $lines.Add('            $path = Join-Path $toolRoot $relative')
+    $lines.Add('            $digest = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()')
+    $lines.Add('            $manifest.Add($relative + [char] 0 + $digest)')
+    $lines.Add('          }')
+    $lines.Add('          $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))')
+    $lines.Add('          $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()')
+    $lines.Add('          if ($actual -cne $env:EXPECTED_PLATFORM_TOOLS_SHA256) {')
+    $lines.Add("            throw 'Platform tools differ from the generated workflow pin.'")
+    $lines.Add('          }')
 }
 
 function Add-TeardownMainCheck {
@@ -144,6 +209,13 @@ Add-WorkflowBlock @'
       - name: Install runtime dependencies without cloud credentials
         shell: pwsh
         run: ./instance/platform/tools/Install-ToolDependencies.ps1
+'@
+Add-WorkflowBlock @'
+      - name: Verify release marker and provenance before teardown credentials
+        shell: pwsh
+        env:
+          PLATFORM_SOURCE_REPOSITORY: ${{ vars.PLATFORM_SOURCE_REPOSITORY }}
+        run: ./instance/platform/tools/Test-DeploymentRelease.ps1 -CandidatePath ./instance -WorkPath ./release-preflight -PlatformOrganization $env:GITHUB_REPOSITORY_OWNER -SourceRepository $env:PLATFORM_SOURCE_REPOSITORY
       - name: Require an enabled and confirmed teardown
         shell: pwsh
         env:

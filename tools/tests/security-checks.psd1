@@ -384,6 +384,12 @@
             )
         }
         @{
+            Name = 'deployment-pr-updater'
+            Tests = @(
+                @{ Path = 'tools/tests/PullRequestAuthorization.Tests.ps1'; FullName = @('*denies an authorized author when the actor updating*', '*denies a pull request event with no sender*', '*rejects a non-synchronize action*', '*denies a non-human pull request update actor*', '*allows an active platform-team updater*', '*denies a pull request update by a pending platform-team member*', '*updating actor membership API is unavailable*') }
+            )
+        }
+        @{
             Name = 'bootstrap-environment-bypass'
             Tests = @(
                 @{ Path = 'tools/tests/GitHubBootstrap.Tests.ps1'; FullName = @('*main-only vendoring environments*', '*admin bypass confirmation*') }

@@ -268,7 +268,7 @@ Teprve po dokončení skript zapne Actions a vrátí `CredentialsConfigured: tru
 
 ### PR se změnou githubApps nebo credentials
 
-Změny sekcí `githubApps` a `credentials` v `instance.yaml` existující instance musí projít PR a požadovaným review. Cloudový plan nesmí použít změněná App metadata ani credential vazby před merge. Guard v `tools/Select-InstanceModules.ps1` proto porovná obě sekce kandidáta s důvěryhodnou konfigurací z base commitu `main`. Pokud autorizace povolí PR platformního autora a validace konfigurace projde, změna těchto sekcí záměrně způsobí selhání dvou jobů ve workflow `Deploy instance`, `select` a `plan_complete`:
+Změny sekcí `githubApps` a `credentials` v `instance.yaml` existující instance musí projít PR a požadovaným review. Cloudový plan nesmí použít změněná App metadata ani credential vazby před merge. Guard v `tools/Select-InstanceModules.ps1` proto porovná obě sekce kandidáta s důvěryhodnou konfigurací z base commitu `main`. Pokud autorizace povolí PR autora i aktéra poslední synchronizace jako členy platformního týmu a validace konfigurace projde, změna těchto sekcí záměrně způsobí selhání dvou jobů ve workflow `Deploy instance`, `select` a `plan_complete`:
 
 | Job | Text, podle kterého reviewer pozná záměrné selhání |
 |---|---|
@@ -279,7 +279,7 @@ Reviewer musí zároveň ověřit, že job `Validate configuration against the v
 
 Dva neúspěšné joby nejsou podmínkou každého PR se změnou těchto sekcí. Importní PR vytvořený App nedostane cloudový plan: autorizační preflight vrátí `eligible=false` a `allowed=false`. Přeskočí se deploy kontrola release, načtení App klíče i výběr modulů. Deploy ověří marker a původ release až na chráněné `main` po merge, před App credentials. Ani zelený autorizační job, ani přeskočené navazující joby neprokazují ověření release nebo změněných vazeb v App PR. Reviewer musí zkontrolovat autora PR, výstup autorizace a skutečně provedené kroky.
 
-`pull_request_target` používá živé workflow a důvěryhodné nástroje z base revize; importovaná šablona v `platform/` je nenahrazuje. Při upgradu proto ověř také verzi těchto nástrojů a stav samostatného povýšení živých workflow.
+`pull_request_target` používá živé workflow a důvěryhodné nástroje z base revize; importovaná šablona v `platform/` je nenahrazuje. Cloudový plan se spouští jen při `synchronize`, kdy může autorizační job ověřit uživatele, který poslal aktuální head. Samotné otevření, opětovné otevření ani označení PR jako připraveného plan nespustí; po otevření PR je nutné poslat nový commit. Při upgradu proto ověř také verzi těchto nástrojů a stav samostatného povýšení živých workflow.
 
 Ruleset `platform-instance-main`, který vytváří `tools/Invoke-GitHubBootstrap.ps1`, neobsahuje pravidlo `required_status_checks`. Tyto dva neúspěšné joby tedy samy o sobě podle tohoto rulesetu merge neblokují. Nadále platí platformní CODEOWNER review, security review změny `instance.yaml` a ostatní pravidla review. Před merge ověř i další aktivní pravidla repozitáře a zděděné rulesety; bootstrapový ruleset nedokazuje, že merge dovolí celá instance. Tento postup neopravňuje k bypassu ani k vypnutí ochran.
 
@@ -321,7 +321,7 @@ Po schváleném prvním merge ověř skutečnou dokončenou analýzu jeho přesn
 
 ### Environmenty, noční plan a teardown
 
-Bootstrap omezí každý environment na větev `main`. `pull_request_target` používá base ref `main`; kontrola autora PR zůstává v trusted autorizačním jobu. Běžný plan, ruleset plan a jejich varianty `<environment>-drift` nemají reviewery. Workflow `drift.yml` spouští plan denně v **02:17 UTC**, s oddělenými environmenty běžného a ruleset planu; nikdy neotevře apply gate.
+Bootstrap omezí každý environment na větev `main`. `pull_request_target` používá base ref `main`; kontrola autora PR i aktéra synchronizace zůstává v trusted autorizačním jobu. Běžný plan, ruleset plan a jejich varianty `<environment>-drift` nemají reviewery. Workflow `drift.yml` spouští plan denně v **02:17 UTC**, s oddělenými environmenty běžného a ruleset planu; nikdy neotevře apply gate.
 
 Bootstrap vytvoří environment `drift-report` bez reviewerů, jen z `main`. Issue driftu zapisuje samostatná App, kterou platformní tým ručně registruje a nainstaluje jen do repozitáře `instance`:
 

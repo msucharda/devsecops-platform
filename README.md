@@ -209,7 +209,7 @@ modules:
 .\tools\Select-InstanceModules.ps1 -ModulesPath .\tools\tests\fixtures\modules -InstancePath .\instance.yaml
 ```
 
-Workflow `deploy.yml` reaguje na `pull_request_target` proti `main`, push do `main` a ruční spuštění z `main`. Noční plan patří do samostatného workflow `drift.yml` (viz [Detekce driftu](#detekce-driftu)). Job `authorize` načte jen nástroje z neměnného base commitu. Nejprve odmítne forky, App autory a draft PR bez načtení App klíče. Pro ostatní PR ověří aktivní členství autora v platformním týmu přes samostatnou App s `members: read`. Tento job nikdy nenačte kód z PR a nedostane credential modulu.
+Workflow `deploy.yml` reaguje na `pull_request_target` pouze při aktualizaci headu (`synchronize`), push do `main` a ruční spuštění z `main`. Samotné otevření PR cloudový plan nespustí; po otevření je nutné poslat nový commit. Noční plan patří do samostatného workflow `drift.yml` (viz [Detekce driftu](#detekce-driftu)). Job `authorize` načte jen nástroje z neměnného base commitu. Nejprve odmítne forky, App autory a draft PR bez načtení App klíče. U synchronizační události ověří aktivní členství autora i uživatele, který poslal aktuální head, v platformním týmu přes samostatnou App s `members: read`. Tento job nikdy nenačte kód z PR a nedostane credential modulu.
 
 Job `validate` bez environmentu, OIDC a cloudových secrets ověří `instance.yaml` schématem vendorovaného release. Autorizovaný job `select` používá trusted nástroje a před zveřejněním environmentů porovná App metadata i credential vazby PR s base konfigurací. Jejich změna vyžaduje review a merge; cloudový plan pak poběží z chráněné `main`.
 
@@ -229,7 +229,7 @@ Job `plan_complete` výslovně označí neautorizovaný PR plan jako `NOT PERFOR
 
 Workflow `drift.yml` spouští plan všech vybraných modulů denně v 02:17 UTC a ručně přes `workflow_dispatch`, jen z `main`. Nikdy neodemkne apply. Používá vlastní concurrency skupinu `drift-instance-main`, aby čekající noční běh nezrušil čekající nasazení z `main`.
 
-- Joby `authorize`, `validate` a `select` ověří `main` a 40znakový SHA revize stejně jako `deploy.yml`, bez App klíče.
+- Joby `authorize`, `validate` a `select` ověří `main` a 40znakový SHA revize stejně jako `deploy.yml`, bez App klíče. `select` navíc před zveřejněním výběru a navazujícími credentials ověří marker i attestaci vendorovaného release.
 - Běžný plan běží v environmentu `<plan-environment>-drift` a ruleset plan v `<ruleset-plan-environment>-drift`. Ruleset klíč a token nedostane žádný jiný job.
 - Ruleset plan navíc spustí `Test-RulesetBypassVisibility.ps1`. Skript vyžaduje u každého lokálního organizačního rulesetu pole `bypass_actors`; chybějící pole není „bez bypassu“, ale chyba. Zděděné enterprise rulesety skript spočítá a report je uvede jako nepokryté.
 - Job `report_drift` v environmentu `drift-report` vyhodnotí výsledky všech jobů skriptem `Get-DriftReport.ps1` bez credentials. Chybějící, neúspěšný nebo nečitelný výsledek označí běh jako neúplný (fail-closed); job pak skončí chybou.
@@ -292,7 +292,7 @@ $arguments.PrerequisiteOutputsPath = $arguments.ArtifactsPath
 
 Workflow vendoringu, katalogový kontrakt, oddělené App identity a deklarovaný ruční import popisuje [Vendoring](docs/vendoring.md). Automatický import release mění jen `platform/`; povýšení přepsaných šablon do živých workflow zůstává schváleným ručním krokem #16 bez rozšíření App oprávnění.
 
-Testy Pester volají veřejné skripty bootstrapu, generátoru, výběru, validátorů, token issueru, reportování a runneru. Kontrolují výsledné YAML, JSON, summary, environmenty, pořadí jobů, PR původ, členství autora a oddělení skutečných App oprávnění. GitHub API testy nahrazují jen HTTP hranici; nevolají cloud. Testy bootstrapu nahrazují jen GitHub CLI, Azure CLI a HTTP API; ověřují potvrzení před změnou, preflight bez zápisu, ochrany backendu, scope identit, oddělení fází, opakovaný běh a dokončení přerušeného běhu. Testy runneru vyžadují Terraform; CI ho instaluje před Pesterem. Používají skutečný lokální backend a vestavěný provider `terraform_data`, včetně úplných pravidel a bypass driftu izolovaného ruleset rootu. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
+Testy Pester volají veřejné skripty bootstrapu, generátoru, výběru, validátorů, token issueru, reportování a runneru. Kontrolují výsledné YAML, JSON, summary, environmenty, pořadí jobů, PR původ, členství autora i aktéra změny headu a oddělení skutečných App oprávnění. GitHub API testy nahrazují jen HTTP hranici; nevolají cloud. Testy bootstrapu nahrazují jen GitHub CLI, Azure CLI a HTTP API; ověřují potvrzení před změnou, preflight bez zápisu, ochrany backendu, scope identit, oddělení fází, opakovaný běh a dokončení přerušeného běhu. Testy runneru vyžadují Terraform; CI ho instaluje před Pesterem. Používají skutečný lokální backend a vestavěný provider `terraform_data`, včetně úplných pravidel a bypass driftu izolovaného ruleset rootu. Jeden regresní test na hranici procesu Terraformu upraví JSON planu, aby ověřil odmítnutí neznámého výstupu, který chybí v `planned_values`. Jeden soubor můžeš spustit přímo:
 
 ```powershell
 .\tools\Invoke-Tests.ps1 -Path .\tools\tests\ModuleRunner.Tests.ps1
@@ -438,7 +438,7 @@ Před spuštěním teardownu proto administrátor Entra ID přiřadí aspoň jed
 Generátor `tools/Generate-TeardownWorkflow.ps1` vytvoří `.github/workflows/teardown.yml` z vybraných modulů. CI selže, pokud se commitnutý workflow liší od výstupu generátoru.
 
 1. Workflow spustíš ručně (`workflow_dispatch`) na větvi `main`. Vstup `instance` musí přesně odpovídat `name` z `instance.yaml`.
-2. Job `select` odmítne běh, pokud `teardown.allowed` není `true` nebo instance nevybírá modul `emu-identity`. Výchozí hodnota `teardown.allowed` je `false`.
+2. Job `select` odmítne běh, pokud `teardown.allowed` není `true` nebo instance nevybírá modul `emu-identity`. Před výběrem a všemi navazujícími credentials ověří marker i attestaci vendorovaného release. Výchozí hodnota `teardown.allowed` je `false`.
 3. Environment `approve-teardown-platform` vyžaduje schválení platformním týmem. Potom environment `teardown` vyžaduje schválení security týmem.
 4. Job `enterprise_owner` v plan environmentu `emu-identity` ověří přes Graph přímé přiřazení Enterprise Owner. Pokud chybí, skončí chybou s popisem ručního kroku.
 5. Joby `outputs_<module>` načtou ze state výstupy modulů, na kterých závisí jiné moduly.

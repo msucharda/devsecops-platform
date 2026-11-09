@@ -4,6 +4,26 @@ BeforeAll {
     $generator = Join-Path $toolsPath 'Generate-DeploymentWorkflow.ps1'
     $fixtures = Join-Path $PSScriptRoot 'fixtures/modules'
 
+    function Get-TestPlatformToolsSha256 {
+        param([Parameter(Mandatory)][string] $ToolRoot)
+
+        $paths = [Collections.Generic.List[string]]::new()
+        foreach ($file in Get-ChildItem -LiteralPath $ToolRoot -File -Recurse -Force) {
+            $relative = [IO.Path]::GetRelativePath($ToolRoot, $file.FullName).Replace('\', '/')
+            if ($relative.StartsWith('tests/', [StringComparison]::Ordinal) -or
+                $relative.StartsWith('.dependencies/', [StringComparison]::Ordinal)) { continue }
+            $paths.Add($relative)
+        }
+        $paths.Sort([StringComparer]::Ordinal)
+        $manifest = [Collections.Generic.List[string]]::new()
+        foreach ($relative in $paths) {
+            $digest = (Get-FileHash -LiteralPath (Join-Path $ToolRoot $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest.Add($relative + [char] 0 + $digest)
+        }
+        $bytes = [Text.Encoding]::UTF8.GetBytes([string]::Join("`n", $manifest))
+        return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    }
+
     function New-ModuleGraphFixture {
         [CmdletBinding(SupportsShouldProcess)]
         param(
@@ -617,11 +637,15 @@ Describe 'Deployment workflow generation' {
         $output = Join-Path $TestDrive 'authorization.yml'
         & $generator -ModulesPath $fixtures -OutputPath $output
         $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        @($workflow.on.pull_request_target.types) | Should -Be @('synchronize')
         $authorization = $workflow.jobs.authorize
         $authorization.environment | Should -Be 'pr-authorization'
         $authorization.steps[0].with.ref | Should -Be '${{ github.event.pull_request.base.sha || github.sha }}'
         $authorization.steps[0].with.'persist-credentials' | Should -BeFalse
-        $authorization.steps[1].run | Should -Match '-Preflight'
+        $integrityIndex = [array]::FindIndex($authorization.steps, [Predicate[object]] { param($step) $step['name'] -eq 'Verify platform tools integrity' })
+        $preflightIndex = [array]::FindIndex($authorization.steps, [Predicate[object]] { param($step) $step['run'] -match 'Test-DeploymentAuthorization\.ps1 -Preflight' })
+        $integrityIndex | Should -Be 1
+        $preflightIndex | Should -BeGreaterThan $integrityIndex
         ($authorization.steps | Where-Object name -EQ 'Issue the isolated membership-reader token').if |
             Should -Be '${{ steps.preflight.outputs.eligible == ''true'' }}'
         @($authorization.steps | Where-Object { $_['uses'] -like 'actions/checkout@*' }).Count | Should -Be 2
@@ -639,12 +663,35 @@ Describe 'Deployment workflow generation' {
         & $generator -ModulesPath $fixtures -OutputPath $output
         $workflow = ConvertFrom-Yaml (Get-Content $output -Raw)
         $steps = @($workflow.jobs.authorize.steps)
-        $guard = @($steps | Where-Object { $_['run'] -like '*Test-DeploymentRelease.ps1*' })
+        $integrity = @($steps | Where-Object { $_['name'] -eq 'Verify platform tools integrity' })
+        $guard = @($steps | Where-Object { $_['name'] -like 'Verify release marker*' })
+        $integrity.Count | Should -Be 1
         $guard.Count | Should -Be 1
+        $integrity[0].env.EXPECTED_PLATFORM_TOOLS_SHA256 | Should -Match '^[0-9a-f]{64}$'
+        $integrity[0].run | Should -Match 'Get-ChildItem.*-Recurse'
+        $integrity[0].run | Should -Match 'EXPECTED_PLATFORM_TOOLS_SHA256'
+        $integrity[0].ContainsKey('if') | Should -BeFalse
+        $integrity[0].ContainsKey('continue-on-error') | Should -BeFalse
+        [array]::IndexOf($steps, $integrity[0]) | Should -BeLessThan (
+            [array]::FindIndex($steps, [Predicate[object]] { param($step) $step['run'] -match 'Test-DeploymentAuthorization\.ps1 -Preflight' })
+        )
+        [array]::IndexOf($steps, $integrity[0]) | Should -BeLessThan ([array]::IndexOf($steps, $guard[0]))
         $guard[0].run | Should -Match '^\./trusted/platform/tools/'
         $guard[0].env.PLATFORM_SOURCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
         $guard[0].if | Should -Be '${{ steps.preflight.outputs.allowed == ''true'' || steps.preflight.outputs.eligible == ''true'' }}'
         $guard[0].if | Should -Not -Match 'deployment'
+        $validateSteps = @($workflow.jobs.validate.steps)
+        $validateIntegrity = @($validateSteps | Where-Object { $_['name'] -eq 'Verify platform tools integrity' })
+        $validateGuardIndex = [array]::FindIndex($validateSteps, [Predicate[object]] { param($step) $step['run'] -match 'Test-DeploymentRelease\.ps1' })
+        $trustedInstallIndex = [array]::FindIndex($validateSteps, [Predicate[object]] { param($step) $step['run'] -match 'trusted/platform/tools/Install-ToolDependencies\.ps1' })
+        $candidateInstallIndex = [array]::FindIndex($validateSteps, [Predicate[object]] { param($step) $step['run'] -match 'candidate/platform/tools/Install-ToolDependencies\.ps1' })
+        $validateIntegrity.Count | Should -Be 1
+        $validateGuardIndex | Should -BeGreaterThan -1
+        $trustedInstallIndex | Should -BeGreaterThan -1
+        $candidateInstallIndex | Should -BeGreaterThan -1
+        [array]::IndexOf($validateSteps, $validateIntegrity[0]) | Should -BeLessThan $trustedInstallIndex
+        $trustedInstallIndex | Should -BeLessThan $validateGuardIndex
+        $validateGuardIndex | Should -BeLessThan $candidateInstallIndex
         $candidate = $steps | Where-Object { $_['name'] -eq 'Check out release candidate as data before credentials' }
         $candidate.with.ref | Should -Be '${{ steps.preflight.outputs.revision }}'
         $candidate.with.'persist-credentials' | Should -BeFalse
@@ -654,6 +701,32 @@ Describe 'Deployment workflow generation' {
         }
         $workflow.jobs.validate.needs | Should -Be 'authorize'
         $workflow.jobs.select.needs | Should -Contain 'validate'
+    }
+
+    It 'fails closed when the pinned platform tool tree changes' -Tag 'DeploymentRelease' {
+        $output = Join-Path $TestDrive 'tool-tree-integrity.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $output -Raw)
+        $step = @($workflow.jobs.authorize.steps | Where-Object { $_['name'] -eq 'Verify platform tools integrity' })[0]
+        $toolRoot = Join-Path $TestDrive 'integrity-tools'
+        $null = New-Item -ItemType Directory -Path $toolRoot
+        $toolPath = Join-Path $toolRoot 'Test-DeploymentRelease.ps1'
+        [IO.File]::WriteAllText($toolPath, 'trusted verifier')
+        $verification = [scriptblock]::Create($step.run.Replace("'./trusted/platform/tools'", "'$toolRoot'"))
+        $previousPin = $env:EXPECTED_PLATFORM_TOOLS_SHA256
+        try {
+            $env:EXPECTED_PLATFORM_TOOLS_SHA256 = Get-TestPlatformToolsSha256 -ToolRoot $toolRoot
+            { & $verification } | Should -Not -Throw
+            $dependencyCache = Join-Path $toolRoot '.dependencies'
+            $null = New-Item -ItemType Directory -Path $dependencyCache
+            [IO.File]::WriteAllText((Join-Path $dependencyCache 'cache-entry'), 'verified dependency cache')
+            { & $verification } | Should -Not -Throw
+            [IO.File]::WriteAllText($toolPath, 'modified verifier')
+            { & $verification } | Should -Throw '*generated workflow pin*'
+        }
+        finally {
+            $env:EXPECTED_PLATFORM_TOOLS_SHA256 = $previousPin
+        }
     }
 
     It 'rejects a ruleset exception with undeclared broader privileges' {
@@ -881,6 +954,71 @@ Describe 'Drift workflow generation' {
         $job.steps[-1].run | Should -Match 'Test-DeploymentAuthorization\.ps1 -Preflight'
         (ConvertTo-Json $job -Depth 20) | Should -Not -Match 'PRIVATE_KEY|New-PlatformGitHubToken'
         $drift.jobs.select.steps[-1].run | Should -Not -Match 'TrustedInstancePath'
+    }
+
+    It 'verifies the vendored release before drift jobs receive credentials' -Tag 'DeploymentRelease' {
+        $authorizeSteps = @($drift.jobs.authorize.steps)
+        $steps = @($drift.jobs.select.steps)
+        $integrity = @($steps | Where-Object { $_['name'] -eq 'Verify platform tools integrity' })
+        $authorizationIntegrity = @($authorizeSteps | Where-Object { $_['name'] -eq 'Verify platform tools integrity' })
+        $guard = @($steps | Where-Object { $_['name'] -like 'Verify release marker*' })
+        $integrity.Count | Should -Be 1
+        $authorizationIntegrity.Count | Should -Be 1
+        $guard.Count | Should -Be 1
+        $integrity[0].env.EXPECTED_PLATFORM_TOOLS_SHA256 | Should -Match '^[0-9a-f]{64}$'
+        $integrity[0].ContainsKey('if') | Should -BeFalse
+        $integrity[0].ContainsKey('continue-on-error') | Should -BeFalse
+        [array]::IndexOf($authorizationSteps, $authorizationIntegrity[0]) | Should -BeLessThan (
+            [array]::FindIndex($authorizationSteps, [Predicate[object]] { param($step) $step['run'] -match 'Test-DeploymentAuthorization\.ps1 -Preflight' })
+        )
+        $trustedInstallIndex = [array]::FindIndex($steps, [Predicate[object]] { param($step) $step['run'] -match 'trusted/platform/tools/Install-ToolDependencies\.ps1' })
+        [array]::IndexOf($steps, $integrity[0]) | Should -BeLessThan $trustedInstallIndex
+        [array]::IndexOf($steps, $integrity[0]) | Should -BeLessThan ([array]::IndexOf($steps, $guard[0]))
+        $guard[0].run | Should -Match 'trusted/platform/tools/Test-DeploymentRelease\.ps1'
+        $guard[0].env.PLATFORM_SOURCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+        $guard[0].if | Should -BeNullOrEmpty
+        $guard[0].ContainsKey('continue-on-error') | Should -BeFalse
+        [array]::IndexOf($steps, $guard[0]) | Should -BeLessThan (
+            [array]::FindIndex($steps, [Predicate[object]] { param($step) $step['run'] -match 'Select-InstanceModules\.ps1' })
+        )
+        foreach ($id in $planJobs) {
+            $drift.jobs[$id].needs | Should -Contain 'select'
+        }
+        $validateSteps = @($drift.jobs.validate.steps)
+        $validateIntegrity = @($validateSteps | Where-Object { $_['name'] -eq 'Verify platform tools integrity' })
+        $candidateInstallIndex = [array]::FindIndex($validateSteps, [Predicate[object]] { param($step) $step['run'] -match 'candidate/platform/tools/Install-ToolDependencies\.ps1' })
+        $validateReleaseIndex = [array]::FindIndex($validateSteps, [Predicate[object]] { param($step) $step['run'] -match 'Test-DeploymentRelease\.ps1' })
+        $validateIntegrity.Count | Should -Be 1
+        $validateReleaseIndex | Should -BeGreaterThan -1
+        [array]::IndexOf($validateSteps, $validateIntegrity[0]) | Should -BeLessThan $validateReleaseIndex
+        $validateReleaseIndex | Should -BeLessThan $candidateInstallIndex
+        (ConvertTo-Json $drift.permissions -Compress -Depth 5) |
+            Should -Not -Match 'write-all|\"id-token\":\"write\"'
+        $credentialJobs = @()
+        foreach ($job in $drift.jobs.Values) {
+            $jobPermissions = if ($job.ContainsKey('permissions')) { ConvertTo-Json $job.permissions -Compress -Depth 5 } else { '' }
+            $hasIdToken = $jobPermissions -match 'write-all|\"id-token\":\"write\"'
+            if ($hasIdToken -or (ConvertTo-Json $job -Depth 20) -match 'secrets\.|New-PlatformGitHubToken\.ps1') {
+                $credentialJobs += $job
+            }
+        }
+        foreach ($job in @($credentialJobs | Where-Object { $_.name -ne 'Reconcile the drift issue' })) {
+            $job.needs | Should -Contain 'select'
+            $job.if | Should -Match "needs\.select\.result == 'success'"
+            $job.if | Should -Not -Match '\|\||always\(\)|failure\(\)'
+        }
+        $reportSteps = @($drift.jobs.report_drift.steps)
+        $reportIntegrityIndex = [array]::FindIndex($reportSteps, [Predicate[object]] { param($step) $step['name'] -eq 'Verify platform tools integrity' })
+        $issueTokenIndex = [array]::FindIndex($reportSteps, [Predicate[object]] { param($step) $step['run'] -match 'New-PlatformGitHubToken\.ps1 -DriftReport' })
+        $reportIntegrityIndex | Should -BeGreaterOrEqual 0
+        $issueTokenIndex | Should -BeGreaterThan $reportIntegrityIndex
+
+        $context = Get-SubsetWorkflowContext $drift
+        (Get-WorkflowConditionResult $drift 'report_drift' $context).Allowed | Should -BeTrue
+        Set-WorkflowConditionValue $context 'needs.select.result' 'failure'
+        (Get-WorkflowConditionResult $drift 'report_drift' $context).Allowed | Should -BeTrue
+        Set-WorkflowConditionValue $context 'needs.validate.result' 'failure'
+        (Get-WorkflowConditionResult $drift 'report_drift' $context).Allowed | Should -BeTrue
     }
 
     It 'plans every module in its separate read-only drift environment and publishes only the change state' {

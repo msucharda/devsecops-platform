@@ -35,7 +35,7 @@ Describe 'Deployment authorization' {
     ) {
         $pullRequest.head.ref = $Branch
         $path = Join-Path $TestDrive 'vendor.json'
-        @{ pull_request = $pullRequest } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        @{ action = 'synchronize'; pull_request = $pullRequest; sender = @{ login = 'member'; type = 'User' } } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
         Mock Invoke-RestMethod {
             param($Uri)
             if ($Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team') { return [pscustomobject] $teamResponse }
@@ -66,7 +66,7 @@ Describe 'Deployment authorization' {
     ) {
         $pullRequest.head.ref = $Branch
         $path = Join-Path $TestDrive 'ordinary.json'
-        @{ pull_request = $pullRequest } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        @{ action = 'synchronize'; pull_request = $pullRequest; sender = @{ login = 'member'; type = 'User' } } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
         Mock Invoke-RestMethod {
             param($Uri)
             if ($Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team') { return [pscustomobject] $teamResponse }
@@ -83,10 +83,146 @@ Describe 'Deployment authorization' {
 
         $result.Allowed | Should -BeTrue
         $result.Eligible | Should -BeTrue
-        $result.Reason | Should -Be 'Active platform-team author in the instance repository.'
+        $result.Reason | Should -Be 'Active platform-team author and pull-request updater in the instance repository.'
         Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
             $Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team/memberships/member'
         }
+    }
+
+    It 'denies an authorized author when the actor updating the head is not a platform-team member' {
+        $path = Join-Path $TestDrive 'unauthorized-pusher.json'
+        @{ action = 'synchronize'; pull_request = $pullRequest; sender = @{ login = 'outsider'; type = 'User' } } |
+            ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod {
+            param($Uri)
+            if ($Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team') {
+                return [pscustomobject]@{ slug = 'platform-team' }
+            }
+            if ($Uri -like '*/memberships/member') { return [pscustomobject]@{ state = 'active' } }
+            throw [Microsoft.PowerShell.Commands.HttpResponseException]::new('Not Found',
+                [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound))
+        }
+
+        $result = & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance `
+            -Ref refs/heads/main -Team platform-team -ApiUrl https://api.example.test
+
+        $result.Allowed | Should -BeFalse
+        $result.Reason | Should -Match 'updating actor is not a platform-team member'
+    }
+
+    It 'denies a pull request event with no sender before membership lookup' {
+        $path = Join-Path $TestDrive 'missing-sender.json'
+        @{ action = 'synchronize'; pull_request = $pullRequest } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod { throw 'A missing sender must never reach membership lookup.' }
+
+        $result = & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance -Preflight
+
+        $result.Allowed | Should -BeFalse
+        $result.Eligible | Should -BeFalse
+        $result.Reason | Should -Match 'updating actor is missing or unreadable'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'rejects a non-synchronize action: <Case>' -ForEach @(
+        @{ Case = 'opened'; Action = 'opened' }
+        @{ Case = 'missing'; Action = $null }
+        @{ Case = 'array'; Action = @('synchronize') }
+        @{ Case = 'object'; Action = @{ name = 'synchronize' } }
+    ) {
+        $path = Join-Path $TestDrive "invalid-action-$Case.json"
+        @{ action = $Action; pull_request = $pullRequest; sender = @{ login = 'member'; type = 'User' } } |
+            ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod { throw 'A non-synchronize event must never reach membership lookup.' }
+
+        $result = & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance -Preflight
+
+        $result.Allowed | Should -BeFalse
+        $result.Eligible | Should -BeFalse
+        $result.Reason | Should -Match 'require a head-update event'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'denies a non-human pull request update actor: <Case>' -ForEach @(
+        @{ Case = 'bot account'; Sender = @{ login = 'automation'; type = 'Bot' } }
+        @{ Case = 'bot login'; Sender = @{ login = 'automation[bot]'; type = 'User' } }
+        @{ Case = 'empty login'; Sender = @{ login = ''; type = 'User' } }
+        @{ Case = 'non-string login'; Sender = @{ login = 42; type = 'User' } }
+    ) {
+        $path = Join-Path $TestDrive "invalid-sender-$Case.json"
+        @{ action = 'synchronize'; pull_request = $pullRequest; sender = $Sender } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod { throw 'A non-human sender must never reach membership lookup.' }
+
+        $result = & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance -Preflight
+
+        $result.Allowed | Should -BeFalse
+        $result.Eligible | Should -BeFalse
+        $result.Reason | Should -Match 'updating actor is not a human user'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'allows an active platform-team updater distinct from the PR author' {
+        $path = Join-Path $TestDrive 'authorized-pusher.json'
+        @{ action = 'synchronize'; pull_request = $pullRequest; sender = @{ login = 'updater'; type = 'User' } } |
+            ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod {
+            param($Uri)
+            if ($Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team') {
+                return [pscustomobject]@{ slug = 'platform-team' }
+            }
+            [pscustomobject]@{ state = 'active' }
+        }
+
+        $result = & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance `
+            -Ref refs/heads/main -Team platform-team -ApiUrl https://api.example.test
+
+        $result.Allowed | Should -BeTrue
+        $result.Reason | Should -Be 'Active platform-team author and pull-request updater in the instance repository.'
+        Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter {
+            $Uri -like '*/memberships/*'
+        }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team/memberships/updater'
+        }
+    }
+
+    It 'denies a pull request update by a pending platform-team member' {
+        $path = Join-Path $TestDrive 'pending-updater.json'
+        @{ action = 'synchronize'; pull_request = $pullRequest; sender = @{ login = 'updater'; type = 'User' } } |
+            ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod {
+            param($Uri)
+            if ($Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team') {
+                return [pscustomobject]@{ slug = 'platform-team' }
+            }
+            if ($Uri -like '*/memberships/member') { return [pscustomobject]@{ state = 'active' } }
+            [pscustomobject]@{ state = 'pending' }
+        }
+
+        $result = & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance `
+            -Ref refs/heads/main -Team platform-team -ApiUrl https://api.example.test
+
+        $result.Allowed | Should -BeFalse
+        $result.Reason | Should -Match 'updating actor is not an active platform-team member'
+    }
+
+    It 'does not release credentials when the updating actor membership API is unavailable' {
+        $path = Join-Path $TestDrive 'updater-api-error.json'
+        @{ action = 'synchronize'; pull_request = $pullRequest; sender = @{ login = 'updater'; type = 'User' } } |
+            ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        Mock Invoke-RestMethod {
+            param($Uri)
+            if ($Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team') {
+                return [pscustomobject]@{ slug = 'platform-team' }
+            }
+            if ($Uri -like '*/memberships/member') { return [pscustomobject]@{ state = 'active' } }
+            throw 'Updater membership API unavailable.'
+        }
+        $output = Join-Path $TestDrive 'updater-api-error-output'
+
+        { & $authorize -EventPath $path -EventName pull_request_target -Repository platform/instance `
+                -Ref refs/heads/main -Team platform-team -ApiUrl https://api.example.test -GitHubOutputPath $output } |
+            Should -Throw '*authorization API failed*Updater membership API unavailable*'
+        Test-Path -LiteralPath $output | Should -BeFalse
     }
 
     It 'denies an unreadable head branch before membership lookup: <Case>' -ForEach @(
@@ -101,7 +237,7 @@ Describe 'Deployment authorization' {
         if ($Case -eq 'missing') { $pullRequest.head.Remove('ref') }
         else { $pullRequest.head.ref = $Value }
         $path = Join-Path $TestDrive 'unreadable.json'
-        @{ pull_request = $pullRequest } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+        @{ action = 'synchronize'; pull_request = $pullRequest; sender = @{ login = 'member'; type = 'User' } } | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
         Mock Invoke-RestMethod {
             param($Uri)
             if ($Uri -eq 'https://api.example.test/orgs/platform/teams/platform-team') { return [pscustomobject] $teamResponse }
@@ -119,11 +255,13 @@ Describe 'Deployment authorization' {
 
     It 'denies a fork without contacting the membership API or receiving module credentials' {
         $payload = @{
+            action = 'synchronize'
             pull_request = @{
                 head = @{ ref = 'feature/update'; sha = ('a' * 40); repo = @{ id = 2; full_name = 'outsider/instance' } }
                 base = @{ ref = 'main'; repo = @{ id = 1; full_name = 'platform/instance' } }
                 user = @{ login = 'member'; type = 'User' }
             }
+            sender = @{ login = 'member'; type = 'User' }
         }
         $path = Join-Path $TestDrive 'fork.json'
         ConvertTo-Json $payload -Depth 20 | Set-Content -LiteralPath $path
@@ -139,12 +277,14 @@ Describe 'Deployment authorization' {
         @{ Kind = 'App attribution'; Type = 'User'; ViaApp = @{ id = 101 } }
     ) {
         $payload = @{
+            action = 'synchronize'
             pull_request = @{
                 head = @{ ref = 'feature/update'; sha = ('a' * 40); repo = @{ id = 1; full_name = 'platform/instance' } }
                 base = @{ ref = 'main'; repo = @{ id = 1; full_name = 'platform/instance' } }
                 user = @{ login = 'importer'; type = $Type }
                 performed_via_github_app = $ViaApp
             }
+            sender = @{ login = 'member'; type = 'User' }
         }
         $path = Join-Path $TestDrive 'app.json'
         ConvertTo-Json $payload -Depth 20 | Set-Content -LiteralPath $path
@@ -162,11 +302,13 @@ Describe 'Deployment authorization' {
         @{ State = 'pending'; Allowed = $false }
     ) {
         $payload = @{
+            action = 'synchronize'
             pull_request = @{
                 head = @{ ref = 'feature/update'; sha = ('b' * 40); repo = @{ id = 1; full_name = 'platform/instance' } }
                 base = @{ ref = 'main'; repo = @{ id = 1; full_name = 'platform/instance' } }
                 user = @{ login = 'member'; type = 'User' }
             }
+            sender = @{ login = 'member'; type = 'User' }
         }
         $path = Join-Path $TestDrive 'membership.json'
         ConvertTo-Json $payload -Depth 20 | Set-Content -LiteralPath $path
@@ -190,11 +332,13 @@ Describe 'Deployment authorization' {
 
     It 'denies an unrelated author after establishing that the protected team API is available' {
         $payload = @{
+            action = 'synchronize'
             pull_request = @{
                 head = @{ ref = 'feature/update'; sha = ('d' * 40); repo = @{ id = 1; full_name = 'platform/instance' } }
                 base = @{ ref = 'main'; repo = @{ id = 1; full_name = 'platform/instance' } }
                 user = @{ login = 'outsider'; type = 'User' }
             }
+            sender = @{ login = 'outsider'; type = 'User' }
         }
         $path = Join-Path $TestDrive 'outsider.json'
         ConvertTo-Json $payload -Depth 20 | Set-Content -LiteralPath $path
@@ -214,11 +358,13 @@ Describe 'Deployment authorization' {
 
     It 'never treats unavailable authorization API as successful membership' {
         $payload = @{
+            action = 'synchronize'
             pull_request = @{
                 head = @{ ref = 'feature/update'; sha = ('a' * 40); repo = @{ id = 1; full_name = 'platform/instance' } }
                 base = @{ ref = 'main'; repo = @{ id = 1; full_name = 'platform/instance' } }
                 user = @{ login = 'member'; type = 'User' }
             }
+            sender = @{ login = 'member'; type = 'User' }
         }
         $path = Join-Path $TestDrive 'unavailable.json'
         ConvertTo-Json $payload -Depth 20 | Set-Content -LiteralPath $path

@@ -53,6 +53,41 @@ Describe 'Teardown workflow generation' {
         $workflow.jobs.approve_teardown_platform.needs | Should -Be @('select')
     }
 
+    It 'verifies the vendored release before approvals or credentialed teardown jobs' -Tag 'DeploymentRelease' {
+        $steps = @($workflow.jobs.select.steps)
+        $integrity = @($steps | Where-Object { $_['name'] -eq 'Verify platform tools integrity' })
+        $guard = @($steps | Where-Object { $_['name'] -like 'Verify release marker*' })
+        $integrity.Count | Should -Be 1
+        $guard.Count | Should -Be 1
+        $integrity[0].env.EXPECTED_PLATFORM_TOOLS_SHA256 | Should -Match '^[0-9a-f]{64}$'
+        $integrity[0].run | Should -Match 'Get-ChildItem.*-Recurse'
+        $integrity[0].ContainsKey('if') | Should -BeFalse
+        $integrity[0].ContainsKey('continue-on-error') | Should -BeFalse
+        $installIndex = [array]::FindIndex($steps, [Predicate[object]] { param($step) $step['run'] -match 'Install-ToolDependencies\.ps1' })
+        [array]::IndexOf($steps, $integrity[0]) | Should -BeLessThan $installIndex
+        [array]::IndexOf($steps, $integrity[0]) | Should -BeLessThan ([array]::IndexOf($steps, $guard[0]))
+        $guard[0].run | Should -Match '^./instance/platform/tools/Test-DeploymentRelease\.ps1 '
+        $guard[0].env.PLATFORM_SOURCE_REPOSITORY | Should -Be '${{ vars.PLATFORM_SOURCE_REPOSITORY }}'
+        $guard[0].ContainsKey('if') | Should -BeFalse
+        $guard[0].ContainsKey('continue-on-error') | Should -BeFalse
+        [array]::IndexOf($steps, $guard[0]) | Should -BeLessThan (
+            [array]::FindIndex($steps, [Predicate[object]] { param($step) $step['run'] -match 'Test-TeardownConfiguration\.ps1' })
+        )
+        (ConvertTo-Json $workflow.permissions -Compress -Depth 5) |
+            Should -Not -Match 'write-all|\"id-token\":\"write\"'
+        foreach ($job in $workflow.jobs.Values) {
+            $jobPermissions = if ($job.ContainsKey('permissions')) { ConvertTo-Json $job.permissions -Compress -Depth 5 } else { '' }
+            $hasIdToken = $jobPermissions -match 'write-all|\"id-token\":\"write\"'
+            $usesSecrets = (ConvertTo-Json $job -Depth 20) -match 'secrets\.|New-PlatformGitHubToken\.ps1'
+            if ($hasIdToken -or $usesSecrets) {
+                $job.needs | Should -Contain 'select'
+                $condition = $job.if -replace '^\$\{\{ |\}\}$', ''
+                $condition | Should -Match '^(?:!cancelled\(\) && )?needs\.select\.result == ''success''(?: &&|$)'
+            }
+        }
+        $workflow.jobs.approve_teardown_platform.needs | Should -Contain 'select'
+    }
+
     It 'destroys only selected phase roots when rulesets require the early baseline but not the late baseline' {
         $realOutput = Join-Path $TestDrive 'teardown-selected-phases.yml'
         & $generator -ModulesPath (Join-Path $repositoryRoot 'modules') -OutputPath $realOutput

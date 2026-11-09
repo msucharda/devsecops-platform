@@ -60,14 +60,14 @@ run "protects_default_branches_without_bypass" {
             dismiss_stale_reviews_on_push                   = true
             require_code_owner_review                       = true
             require_extra_approval_for_unattributed_changes = true
-            require_last_push_approval                      = false
+            require_last_push_approval                      = true
             required_approving_review_count                 = 1
             required_review_thread_resolution               = false
           }
         },
       ])
     ])
-    error_message = "The baseline must require one fresh CODEOWNER approval, extra approval for unattributed changes and CodeQL high-or-higher, and deny deletion and force push."
+    error_message = "The baseline must require one fresh CODEOWNER approval, approval of the latest push, extra approval for unattributed changes and CodeQL high-or-higher, and deny deletion and force push."
   }
 }
 
