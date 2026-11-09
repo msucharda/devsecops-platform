@@ -85,6 +85,7 @@ function Invoke-GitHubWorkerWatchdog {
 }
 
 function Start-GitHubHostWorkerWatchdog {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Internal lifetime enforcement must not be skipped by WhatIf.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][ValidateRange(1, [long]::MaxValue)][long] $DeadlineUtcTicks,
@@ -103,6 +104,7 @@ function Initialize-GitHubHostWorkerLifetime {
 }
 
 function Stop-GitHubHostProcessGroup {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Mandatory owned-process cleanup must not be skipped by WhatIf.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][ValidateRange(1, [int]::MaxValue)][int] $ProcessId,
