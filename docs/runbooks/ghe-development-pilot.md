@@ -91,8 +91,9 @@ kvůli ověření jejich rozsahu.
 3. Pouze čtením zaznamenej state a bootstrap inventory v neveřejném úložišti,
    včetně jejich hashů a času čtení. Bootstrap removal odvozuje organizaci
    platformy z instance a deployment identifier a vyžaduje shodu inventory
-   s jejím repozitářem `instance`. Ověř, že nejde o vývojovou organizaci,
-   její repozitář ani identitu potřebnou k obnově vývoje.
+   s jejím repozitářem `instance`. Ověř, že nejde o organizaci pro vývoj
+   platformy ani její repozitář. Sdílené identity posuď odděleně podle
+   následujícího kroku; jejich sdílení samo neporušuje organizační hranici.
 4. Zkontroluj také ruční plán mazání. Smaže-li operátor všechny organizace
    enterprise místo přesných organizací instance, zdrojový scope ho neochrání.
    Důkaz musí výslovně vyloučit organizaci pro vývoj platformy, její repozitáře,
@@ -111,10 +112,13 @@ Zdrojová úprava host adaptéru sama nevyžaduje změnu enterprise, SSO ani SCI
 Modul [`emu-identity`](../../modules/emu-identity/README.md) ale spravuje Entra
 skupiny a app-role assignments, přes které SCIM zřizuje uživatele a jejich role.
 Jejich odstranění může odebrat i přístup do organizace pro vývoj platformy,
-přestože její GitHub objekty zůstanou zachované. Než A3 označíš za splněné,
-ověř skutečné přiřazení vývojových účtů a jejich cestu přístupu a obnovy
-nezávislou na odstraňovaných prostředcích. Tento runbook takové přiřazení
-nevytváří ani nepovoluje.
+přestože její GitHub objekty zůstanou zachované. Před potřebným zásahem
+do těchto prostředků posuď konkrétní dopad a dolož ověřitelný plán návratu.
+A3 nevyžaduje novou nezávislou identitu ani odolnost proti libovolnému
+enterprise nebo Entra teardownu. Samotná sdílená závislost neblokuje pilot,
+který ji nemění; neověřenou obnovu a odloženou destruktivní akceptaci však
+zaznamenej odděleně jako neověřené. Tento runbook přiřazení ani zásah
+nevytváří a nepovoluje.
 
 Pokud se objeví potřeba sdílené změny, před zápisem vytvoř neveřejný záznam:
 
