@@ -22,7 +22,7 @@ bez přihlášení. Toto rozdělení umožní vyvíjet v GHE.com bez zrušení v
 distribuce podle tohoto ADR.
 
 Ve stejném interview uživatel schválil samostatnou organizaci pro vývoj
-v GHE.com. Tato organizace musí zůstat mimo správu a teardown referenční
+platformy v GHE.com. Tato organizace musí zůstat mimo správu a teardown referenční
 instance, aby odstranění instance neodstranilo zdrojový kód, issues ani CI
 potřebné k obnově. Rozhodnutí nevyžaduje samostatný enterprise.
 
@@ -81,7 +81,7 @@ Potřebná oprávnění App musí doložit konkrétní operace přenosu a nesmě
 obejít ruleset. Toto rozhodnutí nepovoluje vytvoření App, přidání
 oprávnění ani vložení přihlašovacích údajů.
 
-Omezení sdíleného enterprise a hranici správy vývojové organizace
+Omezení sdíleného enterprise a hranici správy organizace pro vývoj platformy
 upřesňuje [ADR 0004](0004-instance-owns-enterprise-and-tenant.md).
 
 ## Podmínky přepnutí

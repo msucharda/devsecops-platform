@@ -17,7 +17,7 @@ Jedno nasazení platformy: jeden enterprise EMU na GHE.com, jeden tenant Entra I
 _Avoid_: prostředí, deployment
 
 **Reference instance** (referenční instance):
-Instance autora platformy, na které autor testuje release. Referenční instance získá release stejným postupem jako zákazník.
+Instance autora platformy pro ověřování release a schválených development kandidátů. Release získá stejným postupem jako zákazník; vývojové ověření nenahrazuje akceptaci release.
 _Avoid_: testovací prostředí, demo
 
 **Release** (release):
@@ -99,7 +99,7 @@ _Avoid_: mirror, import
 ### Týmy
 
 **Platform team** (platformní tým):
-Tým zákazníka, který vlastní instanci a mění ji jen přes PR.
+Tým zákazníka, který vlastní instanci a standardně ji mění jen přes PR. Pouze na referenční instanci může provést ohraničený, výslovně schválený UI/API experiment podle ADR 0002; zákaznický postup tím nemění.
 _Avoid_: admin tým, ops
 
 **Security team** (security tým):
@@ -119,6 +119,10 @@ _Avoid_: admin token, servisní PAT
 **Platform organization** (organizace platformy):
 Organizace, ve které platformní tým spravuje instanci. Týmy workloadů do ní nemají přístup.
 _Avoid_: admin organizace
+
+**Platform development organization** (organizace pro vývoj platformy):
+Samostatná organizace v GHE.com pro zdrojový vývoj platformy, issues a interní CI. Není organizací spravovanou referenční instancí a její teardown ji neodstraňuje. S referenční instancí ale sdílí enterprise politiky, SSO a SCIM; nejde o další instanci ani úplně izolovaný enterprise.
+_Avoid_: vývojová organizace, organizace workloadů
 
 **Actions organization** (organizace akcí):
 Organizace se schválenými vendorovanými akcemi pro workflow instance.

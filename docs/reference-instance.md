@@ -72,7 +72,9 @@ Instance repository (repozitář instance) je repozitář v organizaci platformy
 - `instance.yaml`: Instance configuration (konfiguraci instance),
 - workflow nasazení a `CODEOWNERS`.
 
-Šablona repozitáře instance je v `templates/instance/`. Po vzniku repozitáře instance mění platformní tým instanci jen přes PR.
+Šablona repozitáře instance je v `templates/instance/`. Po vzniku repozitáře instance mění platformní tým instanci standardně jen přes PR. Pouze na referenční instanci jsou přípustné ohraničené, výslovně schválené UI/API experimenty podle [ADR 0002](adr/0002-customers-vendor-releases.md), s evidencí změněných objektů a následným převzetím do kódu nebo vrácením.
+
+[ADR 0019](adr/0019-reference-development-candidates.md) vymezuje samostatný development mode pro změny kódu. Jde o návrhový kontrakt, nikoli již implementovanou možnost průvodce nebo workflow. Současná kontrola nadále vyžaduje přesný ověřený release; úpravu `platform/` nesmíš zprovoznit vypnutím preflightu. Žádné z těchto rozhodnutí nepovoluje konkrétní živý zásah.
 
 Repozitář instance vytvoří GitHub část bootstrapu v #11. #11 čeká na #10, které uzavře fáze B. Během fází A a B proto repozitář instance neexistuje a konfigurace instance leží v `$work`:
 
