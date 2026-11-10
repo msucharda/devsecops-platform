@@ -19,6 +19,23 @@ chybou timeoutu, nikoli přežitím mutanta (#247). Vyšší limit poskytuje rez
 pro kolísání runnerů, nezrychluje testy. Timeout, neúplný report i přeživší mutant
 nadále znamenají selhání; lokální výchozí limity se nemění.
 
+CI rozděluje celý inventář mutací do 24 shardů původním deterministickým
+algoritmem po celých kontrolách. Rozdělení nemění testové selektory ani
+ekvivalentní výjimky. Agregátor vyžaduje všech 24 reportů, stejné inventory hash,
+přesné disjunktní pokrytí všech mutantů a nezměněnou klasifikaci výsledků.
+Integrační test v `MutationRunner.Tests.ps1` provádí skutečný výběrový blok
+runneru nad celým aktuálním inventářem a ověřuje každou kontrolu i mutanta
+právě jednou. Běží v úplném Linux Source CI; lokální `SourceCi.Tests.ps1`
+zachovává lehké kontroly kontraktu workflow.
+
+Počet vychází z pomalejšího měření se dvěma workers: za 720,66 s se dokončilo
+137 z 441 mutantů. Inventář 1 829 mutantů a 171 kontrol se při 24 shardech
+rozdělí na 75 až 77 mutantů na shard. Lineární odhad pro největší shard je
+405,04 s, tedy rezerva přibližně 44 % proti limitu 720 s. Jde o odhad,
+nikoli záruku stejné ceny různých testových selektorů. Skutečný cílový CI běh
+musí výsledek potvrdit. Baseline má stále 480 s, mutace 720 s a celý job
+20 minut; runner ani jeho kapacita se nemění. Více shardů zvyšuje počet jobů.
+
 - Před každým pushem spusť `./tools/Invoke-LocalCi.ps1` (výchozí režim `-Changed`). Platí to i pro změny jen v dokumentaci. Push je povolený jen po návratovém kódu 0.
   - `-Changed` analyzuje změněné PowerShell soubory, ověří manifesty a generované workflow a spustí dotčené izolované unit a contract suites. Kategorie určuje `tools/test-profiles.psd1`; nový test musí mít právě jednu kategorii.
   - Změna `tools/Invoke-LocalCi.ps1`, `tools/LocalCi*.psm1`, `tools/Test-LocalCiResult.ps1` nebo `.githooks/pre-push` vybere lokální suites `LocalCi*.Tests.ps1` a lokální testy, které odkazují na změněný soubor. Při neznámém gate souboru, chybějícím souboru, nenalezených odkazech, chybějících suites gate nebo nečitelném zdroji testu vybere celý izolovaný profil. Známé soubory určuje `KnownGateFiles` v `tools/LocalCi.psm1`; samotná zmínka názvu ve fixture neprokazuje závislost nového souboru.

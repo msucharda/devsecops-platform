@@ -23,15 +23,15 @@ Describe 'Source CI job dependencies' {
         [array]::IndexOf($steps, $cache[0]) | Should -BeLessThan ([array]::IndexOf($steps, $install[0]))
     }
 
-    It 'requires all four mutation shards before the stable mutation check can pass' {
+    It 'requires all 24 mutation shards before the stable mutation check can pass' {
         $shards = $workflow.jobs['mutation-shards']
         $shards['timeout-minutes'] | Should -Be 20
-        @($shards.strategy.matrix.shard) | Should -BeExactly @(0, 1, 2, 3)
+        @($shards.strategy.matrix.shard) | Should -BeExactly @(0..23)
         $shards.strategy['fail-fast'] | Should -BeFalse
         $shards['continue-on-error'] | Should -Not -BeTrue
-        $shards.env.MUTATION_SHARD | Should -BeExactly '${{ matrix.shard }}/4'
+        $shards.env.MUTATION_SHARD | Should -BeExactly '${{ matrix.shard }}/24'
         $step = @($shards.steps | Where-Object { $_['name'] -eq 'Weaken every marked security check' })
-        $step[0].run | Should -BeExactly './tools/Invoke-MutationTests.ps1 -Shard $env:MUTATION_SHARD -TimeoutSeconds 720 -ReportPath ./artifacts/mutation-report.json'
+        $step[0].run | Should -BeExactly './tools/Invoke-MutationTests.ps1 -Shard $env:MUTATION_SHARD -BaselineTimeoutSeconds 480 -TimeoutSeconds 720 -ReportPath ./artifacts/mutation-report.json'
         $workflow.jobs.mutation.name | Should -BeExactly 'Security check mutation tests'
         @($workflow.jobs.mutation.needs) | Should -BeExactly @('mutation-shards')
         $workflow.jobs.mutation.if | Should -BeExactly '${{ always() }}'
@@ -43,7 +43,7 @@ Describe 'Source CI job dependencies' {
         $download[0].with.path | Should -BeExactly 'artifacts/mutation-shards'
         $merge = @($workflow.jobs.mutation.steps | Where-Object { $_['name'] -eq 'Verify the full mutation inventory' })
         $merge.Count | Should -Be 1
-        $merge[0].run | Should -BeExactly './tools/Invoke-MutationTests.ps1 -MergeReport @(Get-ChildItem ./artifacts/mutation-shards -Recurse -Filter mutation-report.json | Select-Object -ExpandProperty FullName) -ShardCount 4 -ReportPath ./artifacts/mutation-report.json'
+        $merge[0].run | Should -BeExactly './tools/Invoke-MutationTests.ps1 -MergeReport @(Get-ChildItem ./artifacts/mutation-shards -Recurse -Filter mutation-report.json | Select-Object -ExpandProperty FullName) -ShardCount 24 -ReportPath ./artifacts/mutation-report.json'
     }
 
     It 'fails the mutation aggregate when its shards are <Result>' -ForEach @(
