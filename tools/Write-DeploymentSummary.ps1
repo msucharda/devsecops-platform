@@ -51,7 +51,8 @@ function Get-DeploymentApplySummary {
     if ($nodes -isnot [array] -or @($nodes | Where-Object {
         $_ -isnot [string] -or $_ -cnotmatch '^[a-z][a-z0-9-]*(:[a-z][a-z0-9-]*)?\z'
     }).Count -gt 0) { throw 'Apply INCOMPLETE: unreadable selected phases.' }
-    if ($Needs['plan_complete']['outputs']['changes'] -cnotin @('true', 'false')) { throw 'Apply INCOMPLETE: unreadable plan change decision.' }
+    if ($Needs['plan_complete']['outputs']['changes'] -isnot [string] -or
+        $Needs['plan_complete']['outputs']['changes'] -cnotin @('true', 'false')) { throw 'Apply INCOMPLETE: unreadable plan change decision.' }
     if ($Needs['plan_complete']['outputs']['changes'] -ceq 'false') { return 'No changes. No apply was required or performed.' }
     if ($nodes.Count -eq 0) { throw 'Apply INCOMPLETE: an empty phase selection cannot require apply.' }
     if ($Needs['approve_apply']['result'] -isnot [string] -or $Needs['approve_apply']['result'] -cne 'success') { throw 'Apply INCOMPLETE: shared apply approval did not succeed.' }

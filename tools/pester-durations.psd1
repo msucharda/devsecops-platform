@@ -42,7 +42,8 @@
     # Source CI run 40961020894: 3.7723 seconds, rounded up.
     'TerraformTestProcess.Tests.ps1' = 4
     'OrganizationModule.Tests.ps1' = 7
-    'WorkflowGenerator.Tests.ps1' = 10
+    # Windows targeted XML, 2026-11-10: 55.4604 seconds; pending Linux CI measurement.
+    'WorkflowGenerator.Tests.ps1' = 56
     'TeardownEnterpriseOwner.Tests.ps1' = 6
     'InstanceSetup.Tests.ps1' = 6
     'InstanceSetupManualSteps.Tests.ps1' = 17
@@ -68,9 +69,11 @@
     'CodeSecurityCoverage.Tests.ps1' = 2
     'AcceptanceRunEvidence.Tests.ps1' = 2
     # Windows targeted protocol run, 2026-11-10; rounded up pending Linux CI measurements.
-    'DevelopmentControl.Tests.ps1' = 18
+    'DevelopmentControl.Tests.ps1' = 22
     'DevelopmentTokenController.Tests.ps1' = 35
-    'DevelopmentTokenLifecycle.Tests.ps1' = 13
+    'DevelopmentTokenLifecycle.Tests.ps1' = 10
+    'DevelopmentCandidate.Tests.ps1' = 27
+    'DeploymentSummary.Tests.ps1' = 3
     'OrganizationRoles.Tests.ps1' = 2
     'TeardownWorkflow.Tests.ps1' = 6
     'GitHubAcceptance.Tests.ps1' = 2

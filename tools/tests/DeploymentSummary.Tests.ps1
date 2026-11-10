@@ -88,6 +88,16 @@ Describe 'Deployment apply status' {
             Should -Throw '*unreadable authorization decision*'
     }
 
+    It 'rejects a nonscalar plan change decision <Case>' -ForEach @(
+        @{ Case = 'empty array'; Value = @() }
+        @{ Case = 'singleton false'; Value = @('false') }
+        @{ Case = 'singleton true'; Value = @('true') }
+    ) {
+        $needs.plan_complete.outputs.changes = $Value
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 1 -JobSummaryPath '' 6>$null } |
+            Should -Throw '*unreadable plan change decision*'
+    }
+
     It 'reports denied authorization without implying an apply' {
         $needs.authorize.outputs.allowed = 'false'
         $needs.select.result = 'skipped'

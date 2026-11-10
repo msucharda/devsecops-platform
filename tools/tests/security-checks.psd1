@@ -1302,6 +1302,21 @@
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
         @{
+            Mutant = 'Write-DevelopmentTokenEvent: operator ''-cne'' -> -ine in ''$contextValue.authorizationRevision -cne $ExpectedHead''#1'
+            Reason = 'Equivalent: the context parser and caller-head guard independently require lowercase full hexadecimal SHAs.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Write-DevelopmentTokenEvent: operator ''-cne'' -> -ine in ''$journalState.Phase -cne ''pending''''#1'
+            Reason = 'Equivalent: the strict journal reader returns only canonical literal phases, never case aliases.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Write-DevelopmentTokenEvent: operator ''-cne'' -> -ine in ''$journalState.Context -cne $Context''#1'
+            Reason = 'Equivalent: both contexts are canonical. Repository-name case is the only unconstrained case and both are already exactly bound to the same caller repository by the writer and protected reader.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
             Mutant = 'Complete-DevelopmentTokenRetirement: operator ''-cnotmatch'' -> -inotmatch in ''$RetirementRunId -cnotmatch ''^[1-9][0-9]{0,18}\z''''#1'
             Reason = 'Equivalent: the decimal-ID expression has no letters or case-dependent character classes.'
             Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'

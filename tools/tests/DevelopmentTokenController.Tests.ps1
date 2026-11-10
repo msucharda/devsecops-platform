@@ -487,6 +487,28 @@ Describe 'Protected development token controller' {
         @($server.Requests | Where-Object { $_.Uri -like '*/installation/*' }).Count | Should -Be 0
     }
 
+    It 'does not probe or persist an issued leaf from phase <Phase> rather than pending' -ForEach @(
+        @{ Phase = 'issued' }
+        @{ Phase = 'retired' }
+    ) {
+        Set-TestIssuedLeaf
+        if ($Phase -ceq 'retired') {
+            $retired = Complete-DevelopmentTokenRetirement @arguments -AppJwt 'offline-app-jwt' -RetirementRunId '999'
+            $arguments.ExpectedHead = $retired.ControlRevision
+        }
+        $snapshot = Read-DevelopmentControl -ApiUrl $arguments.ApiUrl -Repository $arguments.Repository -ReadToken $arguments.ReadToken
+        $known = Read-DevelopmentTokenJournal -Json $snapshot.TokenJournal
+        $known.Phase | Should -BeExactly $Phase
+        $writes = $server.Changes.Count
+        $probes = @($server.Requests | Where-Object { $_.Uri -like '*/installation/*' }).Count
+
+        { Write-DevelopmentTokenEvent @arguments -Event issued -Envelope $known.Envelope } |
+            Should -Throw '*Issued token has no matching pending intent*'
+
+        $server.Changes.Count | Should -Be $writes
+        @($server.Requests | Where-Object { $_.Uri -like '*/installation/*' }).Count | Should -Be $probes
+    }
+
     It 'retires the persisted exact leaf only after DELETE 204 and direct GET 401' {
         Set-TestIssuedLeaf
         $result = Complete-DevelopmentTokenRetirement @arguments -AppJwt 'offline-app-jwt' -RetirementRunId '999'
