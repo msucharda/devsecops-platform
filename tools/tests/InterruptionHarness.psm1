@@ -28,7 +28,7 @@ if (`$PSBoundParameters.ContainsKey('Method')) {
 }
 & `$$($transport.Callback) @PSBoundParameters
 "@
-        Set-Item -LiteralPath "Function:$($transport.Function)" -Value ([scriptblock]::Create($body))
+        Set-Item -LiteralPath "Function:$($transport.Function)" -Value ([scriptblock]::Create($body).GetNewClosure())
         Set-Alias -Name $transport.Command -Value $transport.Function
     }
     foreach ($name in $Command.get_Keys()) {
@@ -36,7 +36,7 @@ if (`$PSBoundParameters.ContainsKey('Method')) {
             throw 'Interruption commands require a simple command name and a scriptblock.'
         }
         $functionName = "Invoke-InterruptionStub-$name"
-        Set-Item -LiteralPath "Function:$functionName" -Value ([scriptblock]::Create("& `$Command['$name'] @args"))
+        Set-Item -LiteralPath "Function:$functionName" -Value $Command[$name]
         Set-Alias -Name $name -Value $functionName
     }
     & $Path @Arguments

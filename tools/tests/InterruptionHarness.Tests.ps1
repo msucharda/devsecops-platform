@@ -104,6 +104,31 @@ gh fixture-argument
                 -RestMethod { throw 'Unexpected REST request.' } } | Should -Throw '*Injected transport failure*'
     }
 
+    It 'keeps the <Transport> callback bound when the invoked script shadows adapter variables' -ForEach @(
+        @{ Transport = 'web'; Invocation = "Invoke-WebRequest -Uri 'https://offline.invalid/app'"; Expected = 'web-original' }
+        @{ Transport = 'rest'; Invocation = "Invoke-RestMethod -Uri 'https://offline.invalid/app'"; Expected = 'rest-original' }
+        @{ Transport = 'cli'; Invocation = 'gh fixture-argument'; Expected = 'cli-original:fixture-argument' }
+    ) {
+        $entry = Join-Path $TestDrive "shadow-$Transport.ps1"
+        Set-Content -LiteralPath $entry -Value @"
+param(`$WebRequest, `$RestMethod)
+`$command = @{ gh = { throw 'Script-local command was dispatched.' } }
+$Invocation
+"@
+        Mock Invoke-WebRequest { throw 'Unexpected Pester web dispatcher.' }
+        Mock Invoke-RestMethod { throw 'Unexpected Pester REST dispatcher.' }
+
+        $result = Invoke-InterruptionScript -Path $entry -Arguments @{
+            WebRequest = { throw 'Script parameter replaced the web callback.' }
+            RestMethod = { throw 'Script parameter replaced the REST callback.' }
+        } -WebRequest { 'web-original' } -RestMethod { 'rest-original' } `
+            -Command @{ gh = { "cli-original:$($args -join ',')" } }
+
+        $result | Should -BeExactly $Expected
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
     It 'preserves supplied nested script defaults without changing caller defaults' {
         $nested = Join-Path $TestDrive 'nested-default.ps1'
         Set-Content -LiteralPath $nested -Value "[CmdletBinding()] param([string] `$StatePath = 'unexpected-user-state'); `$StatePath"
