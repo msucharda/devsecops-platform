@@ -67,6 +67,10 @@
     'DriftReport.Tests.ps1' = 6
     'CodeSecurityCoverage.Tests.ps1' = 2
     'AcceptanceRunEvidence.Tests.ps1' = 2
+    # Windows targeted protocol run, 2026-11-10; rounded up pending Linux CI measurements.
+    'DevelopmentControl.Tests.ps1' = 18
+    'DevelopmentTokenController.Tests.ps1' = 35
+    'DevelopmentTokenLifecycle.Tests.ps1' = 13
     'OrganizationRoles.Tests.ps1' = 2
     'TeardownWorkflow.Tests.ps1' = 6
     'GitHubAcceptance.Tests.ps1' = 2

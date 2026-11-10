@@ -1,4 +1,5 @@
 #Requires -Version 7.4
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Mode', Justification = 'Read by the nested control designation guard.')]
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('development', 'standard')][string] $Mode,

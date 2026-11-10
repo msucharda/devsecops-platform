@@ -5,34 +5,54 @@
     Checks = @(
         @{
             Name = 'development-token-capacity'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*Protected development token journal*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = @(
+                '*persists pending*', '*reads 256 valid records*'
+            ) })
         }
         @{
             Name = 'development-control-write-http'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = @(
+                '*appends one journal*', '*rejects HTTP <Code>*'
+            ) })
         }
         @{
             Name = 'development-control-issuance'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = @(
+                '*appends one journal*', '*persists a context-bound*', '*does not persist or hand off*',
+                '*refuses a new pending intent*', '*does not probe or persist an issued leaf*'
+            ) })
         }
         @{
             Name = 'development-token-retirement'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = @(
+                '*retires the persisted exact leaf*', '*recovers a lost successful DELETE*', '*does not retire on*',
+                '*returns the same acknowledged retirement*', '*rejects invalid retirement run*',
+                '*missing App JWT*', '*unknown pending leaf*'
+            ) })
         }
         @{
             Name = 'development-token-active-installation'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = @(
+                '*blocks already-invalid retirement for installation*', '*accepts the same active installation*'
+            ) })
         }
         @{
             Name = 'development-control-writer'
             Tests = @(
-                @{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' }
+                @{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = @(
+                    '*appends one journal*', '*rejects <Case> before any API*',
+                    '*rejects a stale caller head*', '*rejects an authorization blob*',
+                    '*models fresh recovery after a committed issued CAS*'
+                ) }
                 @{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = '*explicit protected writer*' }
             )
         }
         @{
             Name = 'development-control-append'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = @(
+                '*appends one journal*', '*rejects an incorrect <Case>*',
+                '*refuses a competing head*', '*fails closed on <Fault>*'
+            ) })
         }
         @{
             Name = 'development-control-journal'
@@ -40,19 +60,26 @@
         }
         @{
             Name = 'development-protocol-object'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = @(
+                '*persists pending*', '*rejects malformed journal*', '*rejects context <Field>*',
+                '*incomplete context*', '*unknown context field*', '*exact JSON size bound*'
+            ) })
         }
         @{
             Name = 'development-protocol-unique-fields'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = @(
+                '*persists pending*', '*duplicate nested journal fields*'
+            ) })
         }
         @{
             Name = 'development-token-context'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = @(
+                '*persists pending*', '*rejects context <Field>*', '*incomplete context*', '*unknown context field*'
+            ) })
         }
         @{
             Name = 'development-token-journal'
-            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*' })
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*Protected development token journal*' })
         }
         @{
             Name = 'development-token-key'
