@@ -113,13 +113,83 @@ Při existující attestaci nástroj stáhne bundle z `bundle_url` každé attes
 
 Ověření z lokálního bundle nepotřebuje token, protože `gh` nevolá API attestací. Rozhodnutí: nástroj vždy používá `--bundle`. Probe na GitHub-hosted runneru referenční instance GHE.com (gh 2.102.0) ověřil attestaci z github.com i bez `--bundle` a bez tokenu, ale starší verze `gh` bez tokenu selžou. `--bundle` funguje v obou případech. Stejný probe potvrdil síťovou dostupnost github.com, API attestací, úložiště bundle a Sigstore trust root z runneru GHE.com a odmítnutí změněného artefaktu.
 
-Import release (`kind: release`) vyžaduje stav `verified` a signer workflow (podepisující workflow) `<zdroj>/.github/workflows/release.yml`. Stav `not-present` import release zastaví ještě před rozbalením. Signer workflow běží z otagovaného commitu, a proto jeho vlastní kontrola předka `main` nestačí. Import release proto nezávisle ověří přes `GET /repos/{owner}/{repo}/compare/main...{commit}`, že commit tagu je na `main`: `status` musí být `behind` nebo `identical` a `merge_base_commit.sha` musí být tento commit. Jinak se import zastaví před stažením assetu. Attestace platí pro stažený artefakt, nikoli pro všechny soubory release. Automatický zdrojový ZIP akce může mít stav `not-present`; tento stav nikdy neznamená ověřenou provenance (provenienci).
+Import release (`kind: release`) vyžaduje stav `verified` a signer workflow (podepisující workflow) `<zdroj>/.github/workflows/release.yml`. Stav `not-present` import release zastaví ještě před rozbalením. Signer workflow běží z otagovaného commitu, a proto jeho vlastní kontrola předka nestačí. Standardní import ověřuje zdrojovou autoritu nezávisle podle uzavřené politiky popsané níže. Generický režim `Get-VendoringSource.ps1` zůstává beze změny: při explicitním `-ProtectedBranch` před stažením assetu porovná tuto větev s commitem tagu. Vyžaduje `status` rovný `behind` nebo `identical` a `merge_base_commit.sha` shodný s commitem. Attestace platí pro stažený artefakt, nikoli pro všechny soubory release. Automatický zdrojový ZIP akce může mít stav `not-present`; tento stav nikdy neznamená ověřenou provenance (provenienci).
 
 Sdílená IP adresa hosted runneru může vyčerpat limit neautentizovaných požadavků; probe po jednom volání viděl `X-RateLimit-Remaining: 55`. Nástroj při HTTP 403 nebo 429 s vyčerpaným limitem čeká podle `retry-after` nebo `x-ratelimit-reset`, u secondary rate limit bez hlaviček 60, 120 a 240 s. Zkusí nejvýše 3 opakování a čeká nejvýše 300 s. Pak skončí chybou `rate limit for the source is exhausted`.
 
 `ConvertTo-VendoredSource.ps1` přepíše skutečné YAML hodnoty `uses` v composite akcích, včetně vnořených `action.yml` a `action.yaml`. Pro release přepíše kroky a reusable job references v `templates/instance/.github/workflows/`. Nepřepisuje text ve skriptech, komentáře, testovací fixtures ani zdrojové CI, které pod `platform/` neběží jako workflow instance. Vlastníka a repozitář porovnává bez rozlišení velikosti písmen: `Azure/login` odpovídá katalogovému `azure/login`. Katalog vyžaduje kanonické klíče malými písmeny. Shoda musí zahrnout celého vlastníka i repozitář; jinou identitu nástroj odmítne. Subpath akce zachová včetně velikosti písmen a upstream ref nahradí katalogovým SHA. Chybějící katalogová akce způsobí chybu s jejím názvem ještě před vytvořením výstupu.
 
 Lokální `./` odkazy a `docker://` references zůstávají beze změny; nejsou to vzdálené GitHub akce. Docker images musí security tým posoudit zvlášť. Dynamické `uses` a YAML anchors nebo aliases nástroj odmítne místo neúplného přepisu. Import zachová binární soubory. Příprava na Linuxu zapíše executable bits (příznaky spustitelnosti) do manifestu mimo připravený strom; publikace je po artifact přenosu obnoví v souborech i Git indexu. Manifest musí obsahovat právě všechny připravené soubory a boolean příznaky; nesmí obsahovat příkazy ani libovolné filesystem paths (cesty souborového systému). Lokální příprava na Windows bez původních Unix modes (unixových režimů) spustitelnost nezjistí; člověk ji musí doložit z původního archivu nebo provést přípravu na Linuxu.
+
+### Autorita standardního release
+
+Standardní import `kind: release` a `Test-DeploymentRelease.ps1` volají
+`Get-VendoringSource.ps1 -SourcePolicy PlatformReleaseV1`. Tento režim vyžaduje
+povinnou attestaci a nepřijme změnu vstupu `-ProtectedBranch main`.
+Deklaraci `release-source-policy.json` čte až z ověřeného a bezpečně rozbaleného
+assetu. Výchozí režim `Generic` deklaraci nevyhodnocuje.
+
+Chybějící deklarace znamená výhradně původní autoritu `refs/heads/main`.
+Totéž výslovně deklaruje `{"schemaVersion":1,"line":"main"}`.
+Nečitelný soubor, neplatný JSON, symbolický odkaz, jiná velikost písmen názvu,
+duplicitní nebo neznámé pole, jiná verze a neznámá `line` import zastaví;
+nejde o důvod pro návrat k `main`.
+
+Varianta `{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}`
+určuje výhradně `refs/heads/source-publication/v1`. Číslo `7` je příklad,
+nikoli nakonfigurovaná App. Skutečné kladné celočíselné ID musí odpovídat
+publikační App na github.com. Deklarace nepovoluje libovolný ref, jiný host
+ani development kandidáta.
+
+`PublicationSource.psm1` ověří aktivní exact-ref (přesnou ref) vazbu required
+checku `GHE accepted source` na tuto App. Vyžaduje vlastní repository ruleset,
+jediný přesný include bez excludes, strict required checks a vynucení také
+při vytvoření ref. Potom načte všechny stránky check runs přesného SHA
+s `filter=all`. Duplicitní ID, více odpovídajících checks, neúplný inventář,
+změněný počet nebo více než 100 stránek znamenají chybu; nástroj nevybírá
+nejnovější check podle jména.
+
+Consumer přijme jen `completed/success` check připnuté App s uzavřeným JSON
+v `output.summary`: `schemaVersion`, `kind`, `phase`, `ref`, `commit`
+a `receiptSha256`. Verze je `1`, kind je `platform-source-publication`
+a přijatelná phase je pouze `published`. Ref a commit musí přesně odpovídat
+kontraktu a SHA release. `external_id` musí být
+`platform-source-publication/v1:<receiptSha256>`. Digest má 64 lowercase hex
+znaků. Samotné obecné CI success ani phase `admitted` nestačí.
+
+Consumer nezávisle porovná commit release s pevným, právě přečteným SHA
+publikační ref a znovu přečte ref před návratem. Změnu ref odmítne.
+Původní tag, signer workflow, digest assetu a attestace zůstávají povinné.
+Nová čtení github.com používají REST `2026-03-10`, bez credentials.
+Nezřizují source App ani přístup instance.
+
+No-bypass skutečné publikace je **publisher-attested** (doložený publisherem),
+nikoli nezávislý aktuální audit bypass listu anonymním consumerem.
+Chybějící `bypass_actors` znamená neznámou viditelnost, nikoli `[]`.
+Je-li seznam viditelný, neplatný tvar i známý bypass publikační App ověření
+zastaví. Platné svědectví vyžaduje úplný autorizovaný trusted preflight
+a následný skutečný rule-suite pass bez bypassu.
+
+Dvoufázový protokol zachovává stejné check ID, context, App, digest
+a `external_id`. `admitted` dovoluje pouze server admission (přijetí
+serverem); consumer jej odmítne. `Resolve-PlatformPublicationWitness`
+dovolí finalizaci teprve po exact-ref readbacku a odpovídající pass rule suite,
+vázané na repository, actor, before/after SHA a aktivní check ruleset.
+Při obnově nesmí platný `published` klesnout na `admitted`. Ztracená odpověď
+nebo exit code `0` nenahrazují readback.
+
+Veřejný build volá `Test-PlatformReleaseSource.ps1` před archivací. Nástroj
+ověří přesný checkout a nezměněnou deklaraci včetně její absence.
+Legacy release zachovává původní Git ancestry do `origin/main`;
+publikovaná varianta používá tutéž anonymní kontrolu jako import.
+Deklarace zůstává běžnou součástí assetu, raw markeru i transformovaného
+stromu. Výstupy `SourcePath`, `Commit` a `Sha256` se nemění.
+
+Tyto zdrojové kontroly neimplementují Git přenos, kontrolu celé přenášené
+historie ani chráněnou vazbu autorizovaného preflightu na App writer.
+Nezakládají publikační App a nedokládají živý release candidate.
+Tyto podmínky [ticketu B](https://github.com/msucharda/devsecops-platform/issues/260)
+zůstávají před přepnutím povinné; zdrojová implementace není jejich akceptací.
 
 ## Diff, oprávnění a hranice cloudového planu
 

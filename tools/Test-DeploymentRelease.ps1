@@ -81,7 +81,8 @@ $inputs = & (Join-Path $PSScriptRoot 'Resolve-PlatformReleaseImport.ps1') `
 $source = & (Join-Path $PSScriptRoot 'Get-VendoringSource.ps1') `
     -Repository $inputs.SourceRepository -Tag $inputs.Tag -AssetName $inputs.Asset `
     -ApiUrl 'https://api.github.com' -WorkPath (Join-Path $WorkPath 'source') -InstallationToken '' `
-    -RequireAttestation -SignerWorkflow "$($inputs.SourceRepository)/.github/workflows/release.yml" -ProtectedBranch main
+    -RequireAttestation -SignerWorkflow "$($inputs.SourceRepository)/.github/workflows/release.yml" -ProtectedBranch main `
+    -SourcePolicy PlatformReleaseV1
 $raw = Get-ReleaseFileHash -Path $source.SourcePath -RawRelease
 Assert-ReleaseFileHash -Expected $raw -Actual $marker['files'] -Label Marker
 $actualFiles = Get-ReleaseFileHash -Path (Join-Path $candidate 'platform')

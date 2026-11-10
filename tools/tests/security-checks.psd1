@@ -4,6 +4,38 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'platform-release-build-boundary'
+            Tests = @(@{ Path = 'tools/tests/PlatformReleaseSource.Tests.ps1'; FullName = 'Platform release source build boundary*' })
+        }
+        @{
+            Name = 'vendoring-platform-source-mode'
+            Tests = @(@{ Path = 'tools/tests/VendoringSource.Tests.ps1'; FullName = 'Tagged vendoring source and attestation policy*' })
+        }
+        @{
+            Name = 'platform-publication-binding-rule'
+            Tests = @(@{ Path = 'tools/tests/PublicationSource.Tests.ps1'; FullName = 'Published platform source evidence*' })
+        }
+        @{
+            Name = 'platform-published-source'
+            Tests = @(@{ Path = 'tools/tests/PublicationSource.Tests.ps1'; FullName = 'Published platform source evidence*' })
+        }
+        @{
+            Name = 'platform-release-source-policy'
+            Tests = @(@{ Path = 'tools/tests/PublicationSource.Tests.ps1'; FullName = 'Platform release source policy*' })
+        }
+        @{
+            Name = 'platform-publication-witness'
+            Tests = @(@{ Path = 'tools/tests/PublicationWitness.Tests.ps1'; FullName = 'Platform publication witness*' })
+        }
+        @{
+            Name = 'platform-publication-check-selection'
+            Tests = @(@{ Path = 'tools/tests/PublicationWitness.Tests.ps1'; FullName = 'Publication witness reconciliation*' })
+        }
+        @{
+            Name = 'platform-publication-reconciliation'
+            Tests = @(@{ Path = 'tools/tests/PublicationWitness.Tests.ps1'; FullName = 'Publication witness reconciliation*' })
+        }
+        @{
             Name = 'github-repository-target'
             Tests = @(@{ Path = 'tools/tests/GitHubHost.Tests.ps1'; FullName = 'GitHub cloud repository targets*' })
         }

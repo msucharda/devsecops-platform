@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot '../PublicationSource.psm1') -Force
     $tools = Split-Path $PSScriptRoot -Parent
     $preflight = Join-Path $tools 'Test-DeploymentRelease.ps1'
     function gh { $global:LASTEXITCODE = 0 }
@@ -94,6 +95,22 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         if ($Mode -ceq 'raw') { '{"version":2,"actions":{}}' | Set-Content "$candidate/vendoring/actions.json" }
         else { '{"version":1,"kind":"release"}' | Set-Content "$candidate/platform/.vendoring.json" }
         { & $preflight @arguments } | Should -Not -Throw
+        Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
+    }
+
+    It 'uses the standard publication opt-in while retaining the complete authenticated <Mode> file set' -Tag PlatformSourcePolicy -ForEach @(
+        @{ Mode = 'raw' }; @{ Mode = 'transformed' }
+    ) {
+        $relative = 'release-source-policy.json'
+        [IO.File]::WriteAllText((Join-Path $sourceRoot $relative), '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}')
+        Copy-Item -LiteralPath (Join-Path $sourceRoot $relative) -Destination (Join-Path "$candidate/platform" $relative)
+        $marker.files[$relative] = (Get-FileHash (Join-Path $sourceRoot $relative)).Hash.ToLowerInvariant()
+        $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
+        Mock Assert-PlatformPublishedSource {}
+        & $preflight @arguments
+        Should -Invoke Assert-PlatformPublishedSource -Times 1 -Exactly -ParameterFilter {
+            $Repository -ceq 'upstream/platform' -and $Commit -ceq '3333333333333333333333333333333333333333' -and $PublisherAppId -eq 7
+        }
         Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
     }
 

@@ -137,8 +137,8 @@ jobs:
           $verification = @{}
           if ($env:IMPORT_KIND -ceq 'release') {
             # A platform release is trusted only when its asset was attested by the source release workflow for this tag
-            # and the tagged commit is on the source main branch.
-            $verification = @{ RequireAttestation = $true; SignerWorkflow = "$env:SOURCE_REPOSITORY/.github/workflows/release.yml"; ProtectedBranch = 'main' }
+            # and the tagged commit satisfies its authenticated, closed source authority.
+            $verification = @{ RequireAttestation = $true; SignerWorkflow = "$env:SOURCE_REPOSITORY/.github/workflows/release.yml"; ProtectedBranch = 'main'; SourcePolicy = 'PlatformReleaseV1' }
           }
           $source = ./platform/tools/Get-VendoringSource.ps1 -Repository $env:SOURCE_REPOSITORY -Tag $env:SOURCE_TAG -ApiUrl $env:SOURCE_API_URL -AssetName $env:SOURCE_ASSET -WorkPath ./vendor/source @verification
           $marker = @{}

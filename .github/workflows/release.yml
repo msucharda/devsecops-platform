@@ -1,6 +1,6 @@
 name: Platform release
 
-# A pushed SemVer tag on a commit of main publishes platform-<tag>.zip with a build provenance attestation.
+# A pushed SemVer tag on an accepted source commit publishes platform-<tag>.zip with a build provenance attestation.
 # Instance repositories import the release with import-release.yml, which verifies the attestation against
 # this workflow file (signer workflow) and the tag (source ref).
 on:
@@ -44,10 +44,7 @@ jobs:
             echo "::error::Tag $TAG moved after the workflow started."
             exit 1
           fi
-          if ! git merge-base --is-ancestor "$commit" origin/main; then
-            echo "::error::Tag $TAG must point to a commit of main."
-            exit 1
-          fi
+          pwsh -NoLogo -NoProfile -File ./tools/Test-PlatformReleaseSource.ps1 -SourcePath . -Repository "$GITHUB_REPOSITORY" -Commit "$commit"
           mkdir -p artifacts
           asset="artifacts/platform-${TAG}.zip"
           git archive --format=zip --prefix="devsecops-platform-${TAG#v}/" --output="$asset" "$commit"

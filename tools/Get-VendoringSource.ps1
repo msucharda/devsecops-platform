@@ -10,6 +10,7 @@ param(
     [ValidatePattern('^$|^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+/\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$')][string] $SignerWorkflow,
     [switch] $RequireAttestation,
     [ValidatePattern('^$|^[A-Za-z0-9][A-Za-z0-9._/-]*$')][string] $ProtectedBranch,
+    [ValidateSet('Generic', 'PlatformReleaseV1', IgnoreCase = $false)][string] $SourcePolicy = 'Generic',
     [ValidateRange(0, 3600)][int] $MaxRateLimitWaitSeconds = 300,
     [string] $InstallationToken = $env:SOURCE_GITHUB_TOKEN
 )
@@ -60,6 +61,18 @@ function Test-AttestationRequirementMet {
     param([string] $Attestation, [bool] $Required, [string] $SignerWorkflow)
     if (-not $Required) { return $true }
     return $Attestation -eq 'verified' -and -not [string]::IsNullOrEmpty($SignerWorkflow)
+}
+
+# security-check: vendoring-platform-source-mode
+function Assert-VendoringSourceMode {
+    param([string] $Mode, [bool] $Required, [string] $ProtectedBranch, [string] $PublicationLine, [string] $ApiUrl)
+    if ($Mode -ceq 'PlatformReleaseV1') {
+        if (-not $Required) { throw 'PlatformReleaseV1 requires verified release attestation.' }
+        if ($ProtectedBranch -cne 'main') { throw 'PlatformReleaseV1 does not accept a protected branch override.' }
+        if ($PublicationLine -eq 'ghe-publication' -and ([uri] $ApiUrl).Host -ne 'api.github.com') {
+            throw 'GHE publication releases require the public GitHub.com source API.'
+        }
+    }
 }
 
 # security-check: vendoring-commit-on-branch
@@ -196,6 +209,7 @@ if (([uri] $ApiUrl).Scheme -cne 'https' -or
 if ($InstallationToken -and $InstallationToken -cnotmatch '^ghs_') {
     throw 'Source credentials must be an installation token, not a personal PAT or OAuth token.'
 }
+Assert-VendoringSourceMode -Mode $SourcePolicy -Required $RequireAttestation.IsPresent -ProtectedBranch $ProtectedBranch
 if (Test-Path -LiteralPath $WorkPath) { throw "Work path '$WorkPath' already exists." }
 $headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
 if ($InstallationToken) { $headers.Authorization = "Bearer $InstallationToken" }
@@ -216,7 +230,7 @@ while ($object.type -ceq 'tag') {
 if ($object.type -cne 'commit' -or $object.sha -cnotmatch '^[a-f0-9]{40}$') { throw 'Source tag must resolve to a commit SHA.' }
 $commit = $object.sha
 if ($RequireAttestation -and -not $ProtectedBranch) { throw 'A required attestation needs the protected source branch the release commit must be on.' }
-if ($ProtectedBranch) {
+if ($ProtectedBranch -and $SourcePolicy -cne 'PlatformReleaseV1') {
     # per_page=1 keeps the response small; status and merge_base_commit cover the whole comparison.
     $basehead = "$([uri]::EscapeDataString($ProtectedBranch))...$commit"
     $comparison = Invoke-SourceRequest { Invoke-RestMethod -Uri "$base/compare/${basehead}?per_page=1" -Headers $headers }
@@ -359,10 +373,35 @@ try {
     }
 }
 finally { $archive.Dispose() }
+$sourcePath = Join-Path $extracted @($rootNames)[0]
+if ($SourcePolicy -ceq 'PlatformReleaseV1') {
+    Import-Module (Join-Path $PSScriptRoot 'PublicationSource.psm1')
+    $policy = Get-PlatformReleaseSourcePolicy -SourcePath $sourcePath
+    Assert-VendoringSourceMode -Mode $SourcePolicy -Required $RequireAttestation.IsPresent -ProtectedBranch $ProtectedBranch `
+        -PublicationLine $policy.Line -ApiUrl $ApiUrl
+    if ($policy.Line -ceq 'main') {
+        $comparison = Invoke-SourceRequest { Invoke-RestMethod -Uri "$base/compare/main...${commit}?per_page=1" -Headers $headers }
+        if (-not (Test-CommitOnBranch -Comparison $comparison -Commit $commit)) {
+            throw "Source tag '$Tag' is not on the legacy main authority; import stopped."
+        }
+    }
+    else {
+        $publicHeaders = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
+        $readPublication = {
+            param($Route)
+            $requestUri = "$base/$Route"
+            $response = Invoke-SourceRequest {
+                Invoke-WebRequest -Uri $requestUri -Headers $publicHeaders -MaximumRedirection 0
+            }
+            return ,($response.Content | ConvertFrom-Json -AsHashtable -NoEnumerate)
+        }
+        $null = Assert-PlatformPublishedSource -Repository $Repository -Commit $commit -PublisherAppId $policy.PublisherAppId -Read $readPublication
+    }
+}
 $result = [pscustomobject]@{
     Repository = $Repository; Tag = $Tag; Commit = $commit; Sha256 = $digest
     Asset = $AssetName; Attestation = $attestation
-    SourcePath = Join-Path $extracted @($rootNames)[0]
+    SourcePath = $sourcePath
 }
 $result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $WorkPath 'receipt.json') -Encoding utf8NoBOM
 $result

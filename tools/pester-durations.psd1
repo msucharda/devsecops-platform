@@ -74,7 +74,12 @@
     'OrganizationDrift.Tests.ps1' = 2
     'InstallToolDependencies.Tests.ps1' = 2
     'CredentialContract.Tests.ps1' = 2
-    'VendoringSource.Tests.ps1' = 2
+    # Local Windows file-suite XML, 2026-11-10; rounded up, not a Linux benchmark.
+    'VendoringSource.Tests.ps1' = 10
+    'DeploymentRelease.Tests.ps1' = 26
+    'PlatformReleaseSource.Tests.ps1' = 3
+    'PublicationSource.Tests.ps1' = 5
+    'PublicationWitness.Tests.ps1' = 3
     'ModuleSelection.Tests.ps1' = 2
     'LocalCiGate.Unit.Tests.ps1' = 5
     'RulesetCodeSecurity.Tests.ps1' = 1

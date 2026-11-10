@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot '../PublicationSource.psm1') -Force
     $download = Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-VendoringSource.ps1'
     function gh { $global:LASTEXITCODE = 0 }
     function ConvertTo-SnappyLiteral([string] $Text) {
@@ -59,6 +60,7 @@ Describe 'Tagged vendoring source and attestation policy' {
         $verifyExitCodes = @(0)
         $verifyCalls = [Collections.Generic.List[object]]::new()
         $bundleBytes = ConvertTo-SnappyLiteral '{"mediaType":"sigstore-bundle"}'
+        $sourcePolicyJson = $null
         $comparison = Get-GitHubApiFixture -Name repos/compare-commits -Set @{ status = 'behind'; 'merge_base_commit.sha' = '3333333333333333333333333333333333333333' }
         Mock Invoke-RestMethod {
             param($Uri)
@@ -79,6 +81,12 @@ Describe 'Tagged vendoring source and attestation policy' {
                 $writer = [IO.StreamWriter]::new($entry.Open())
                 $writer.Write("name: fixture`ndescription: fixture`nruns:`n  using: node20`n  main: index.js`n")
                 $writer.Dispose()
+                if ($null -ne $sourcePolicyJson) {
+                    $policyEntry = $archive.CreateEntry('upstream-commit/release-source-policy.json')
+                    $policyWriter = [IO.StreamWriter]::new($policyEntry.Open())
+                    $policyWriter.Write($sourcePolicyJson)
+                    $policyWriter.Dispose()
+                }
             }
             finally { $archive.Dispose() }
         } -ParameterFilter { $Uri -notlike 'https://bundles.test/*' }
@@ -102,6 +110,128 @@ Describe 'Tagged vendoring source and attestation policy' {
             $Uri -eq 'https://api.github.com/repos/upstream/action/zipball/3333333333333333333333333333333333333333'
         }
         Should -Invoke gh -Times 0 -Exactly
+    }
+
+    It 'keeps the authenticated platform opt-in without a declaration on main' {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1
+        $result.Commit | Should -BeExactly '3333333333333333333333333333333333333333'
+        $result.Attestation | Should -BeExactly 'verified'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'https://api.github.com/repos/upstream/action/compare/main...3333333333333333333333333333333333333333?per_page=1'
+        }
+    }
+
+    It 'rejects a platform opt-in without required attestation before reading the tag' {
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -ProtectedBranch main -SourcePolicy PlatformReleaseV1 } | Should -Throw '*requires verified release attestation*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'rejects the case-folded source policy mode <Mode> before reading the tag' -Tag PlatformModeCasing -ForEach @(
+        @{ Mode = 'generic' }; @{ Mode = 'platformreleasev1' }
+    ) {
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -ProtectedBranch main -SourcePolicy $Mode } | Should -Throw '*SourcePolicy*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'rejects a platform branch override <Branch> before reading the tag' -ForEach @(
+        @{ Branch = 'other' }; @{ Branch = 'Main' }
+    ) {
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -ProtectedBranch $Branch -SourcePolicy PlatformReleaseV1 } | Should -Throw '*branch override*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'does not fall back from an invalid authenticated declaration to main' {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $sourcePolicyJson = '{"schemaVersion":1,"line":"unknown"}'
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 } | Should -Throw '*Invalid*declaration line*'
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Uri -like '*/compare/*' }
+    }
+
+    It 'verifies a platform publication only after provenance, anonymously and without changing the source receipt shape' {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $sourcePolicyJson = '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}'
+        Mock Invoke-WebRequest { [pscustomobject]@{ Content = '{"id":42}' } } -ParameterFilter { $Uri -like '*/rulesets/42' }
+        Mock Assert-PlatformPublishedSource {
+            param($Read)
+            $readback = & $Read 'rulesets/42'
+            $readback['id'] | Should -Be 42
+        }
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -InstallationToken ghs_existing_source -SourcePolicy PlatformReleaseV1
+        $result.Commit | Should -BeExactly '3333333333333333333333333333333333333333'
+        $result.Sha256 | Should -Match '^[0-9a-f]{64}$'
+        Test-Path -LiteralPath (Join-Path $result.SourcePath 'release-source-policy.json') | Should -BeTrue
+        Should -Invoke Assert-PlatformPublishedSource -Times 1 -Exactly -ParameterFilter {
+            $Repository -ceq 'upstream/action' -and $Commit -ceq '3333333333333333333333333333333333333333' -and $PublisherAppId -eq 7
+        }
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -ceq 'https://api.github.com/repos/upstream/action/rulesets/42' -and -not $Headers.ContainsKey('Authorization') -and
+            $Headers['X-GitHub-Api-Version'] -ceq '2026-03-10' -and $MaximumRedirection -eq 0
+        }
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Uri -like '*/compare/*' }
+        Should -Invoke gh -Times 1 -Exactly
+    }
+
+    It 'does not interpret an unauthenticated policy or write a receipt after failed provenance' {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $verifyExitCodes = @(1)
+        $sourcePolicyJson = '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}'
+        Mock Assert-PlatformPublishedSource { throw 'Must not reach the publication verifier.' }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 } | Should -Throw '*Invalid or unverifiable source attestation*'
+        Should -Invoke Assert-PlatformPublishedSource -Times 0 -Exactly
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'rejects a public publication declaration in another host App namespace' {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $sourcePolicyJson = '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}'
+        Mock Assert-PlatformPublishedSource { throw 'Must not use another host App namespace.' }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.example.ghe.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 } | Should -Throw '*public GitHub.com source API*'
+        Should -Invoke Assert-PlatformPublishedSource -Times 0 -Exactly
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'keeps the legacy platform main path available on an explicitly supported private source host' {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.example.ghe.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1
+        $result.Commit | Should -BeExactly '3333333333333333333333333333333333333333'
+    }
+
+    It 'compares canonical URI hosts without treating DNS case as a different App namespace' {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $sourcePolicyJson = '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}'
+        Mock Assert-PlatformPublishedSource {}
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://API.GITHUB.COM -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1
+        $result.Commit | Should -BeExactly '3333333333333333333333333333333333333333'
+        Should -Invoke Assert-PlatformPublishedSource -Times 1 -Exactly
+    }
+
+    It 'retains the generic explicit branch contract without interpreting a platform declaration' {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $sourcePolicyJson = '{'
+        Mock Assert-PlatformPublishedSource { throw 'Generic verification must not opt in.' }
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main
+        $result.Attestation | Should -BeExactly 'verified'
+        Should -Invoke Assert-PlatformPublishedSource -Times 0 -Exactly
     }
 
     It 'stops an invalid attestation before extracting any source' {

@@ -47,6 +47,7 @@ v neveřejném záznamu přesnou revizi, skutečný výsledek, čas a případn�
 | `tools/agents/Invoke-GatedMerge.ps1` | Tentýž host a aktér; čerstvá evaluace a jediný squash merge přes `--match-head-commit`, potom readback. | Pilot jej nesmí spustit bez konkrétního merge mandátu. Samotné `pass` není souhlas. Publikaci ani převod PR schválení mezi hosty tento nástroj neřeší. |
 | `.github/workflows/ci.yml` | GHE.com repozitář; jeho vlastní `GITHUB_TOKEN`, `contents: read`; GitHub-hosted Linux runners a pinované externí akce. | Zdrojový workflow nepoužívá Azure credential, App instance ani publisher. GHE pilot musí skutečně dokončit statické kontroly, Pester, Terraform, interruption harness a mutace beze změny kategorií či agregátů. Ověř Actions dostupnost, schválené upstream SHA, síťové zdroje a přístup k artefaktům. Nedostupnou akci nebo runner nenahrazuj vynecháním jobu. |
 | Review a lokální gate | Existující lokální nástroje, lidské a Copilot review na cílovém hostu. | Commit-bound lokální gate před každým pushem a úplné Linux Source CI na přesném head SHA zůstávají povinné. Ověř dostupnost Copilot review, členství reviewerů a potřebnou licenci/politiku; nedostupnost neopravňuje k vypnutí požadavku. |
+| `.github/dependabot.yml` | Nativní Dependabot cílového hostu; čtyři týdenní `github-actions` aktualizace pro kořen, instance workflow templates, acceptance workflow a test fixtures. | Ověř skutečný připnutý konfigurační soubor, dostupnost služby a konkrétní update job nebo PR včetně jeho identity a navazujících checks. Konfigurace sama nedokládá spuštění aktualizace. Nastavení security updates nedokládá funkčnost version updates. Nezaměňuj identitu služby za source `GITHUB_TOKEN`, App/MI instance nebo publisher. Potřebná změna politiky, přístupu či licence vyžaduje odpovídající souhlas. |
 | Tracker a odkazy | Issues a PR cílového repozitáře, s jednoznačným hostem a mapováním původu. | Pilot nepřenáší tracker. Otevřenou práci a odkazy řeší [ticket C](https://github.com/msucharda/devsecops-platform/issues/261), až po splnění skutečných předpokladů. Historické odkazy na github.com se automaticky nepřepisují na stejné číslo v GHE.com. |
 | Workflow a identity instance | Host z neveřejné konfigurace; oddělené module Apps, plan/apply identities, OIDC a chráněné environments. | Nejsou identitou source CI. Pilot nesmí získat klíče, Azure role ani instalace Apps reference. Jejich lifecycle a scope se nemění přidáním source repozitáře do stejného enterprise. |
 | `.github/workflows/release.yml`, `Publish-PlatformRelease.ps1`, `Test-DeploymentRelease.ps1` a vendoring | Veřejný github.com source a release; build, OIDC attestace a standardní import. | Veřejná distribuce zůstává na github.com. Kontrola release a jeho signer workflow se nepřesměruje na neveřejný pilot. Funkční publikaci stejného SHA, celou přenášenou historii a úplný RC průchod prokazuje [ticket B](https://github.com/msucharda/devsecops-platform/issues/260). |
@@ -98,7 +99,11 @@ Nové přihlášení a rozšíření přístupu patří oprávněnému uživatel
 
 Podle [ADR 0004](../adr/0004-instance-owns-enterprise-and-tenant.md) zůstává
 organizace pro vývoj platformy mimo organizační správu reference. Samotné
-odlišné jméno nestačí: ověř konfiguraci, uložený state i provozní inventory.
+odlišné jméno nestačí: propoj připnutou aktuální konfiguraci se skutečným
+instalovaným runtime, jeho guardy a konkrétními selektory správy a odstranění.
+Pokud operace vybírá objekty z uloženého state nebo provozního inventory,
+ověř také potřebný rozsah těchto vstupů. Zdrojový kód bez důkazu skutečně
+instalované verze ani samotný Git marker nejsou provozním readbackem.
 Nevyvolávej `destroy`, teardown workflow ani `Remove-Bootstrap.ps1`, ani
 kvůli ověření jejich rozsahu.
 
@@ -109,13 +114,23 @@ kvůli ověření jejich rozsahu.
 2. Ověř všechny organizační parametry a state roots. `organizations/main.tf`
    vytváří pouze organizace `actions` a `workloads`. Organization-scoped
    moduly validují přesnou množinu organizací instance; katalog akcí cílí do
-   organizace akcí. Žádný target, identita objektu v uloženém state ani dříve
-   zahájený krok nesmí odkazovat na organizaci pro vývoj platformy.
-3. Pouze čtením zaznamenej state a bootstrap inventory v neveřejném úložišti,
-   včetně jejich hashů a času čtení. Bootstrap removal odvozuje organizaci
+   organizace akcí. Odliš org/repo DELETE, kontrolu již ručně odstraněné
+   organizace a odinstalaci App: nejde o stejnou operaci. U destroy provisionerů
+   pracujících se `self.input` nenahrazuj neověřený uložený vstup aktuální
+   konfigurací. Žádný prokázaný target ani dříve zahájený krok nesmí odkazovat
+   na organizaci pro vývoj platformy.
+3. Pouze čtením zaznamenej dostupný potřebný state/inventory scope a původ
+   důkazu v neveřejném úložišti. Nečti těla state bez odpovídajícího oprávnění
+   a schváleného rozsahu; nezřizuj grant jen kvůli existenci této možnosti.
+   Bootstrap removal odvozuje organizaci
    platformy z instance a deployment identifier a vyžaduje shodu inventory
    s jejím repozitářem `instance`. Ověř, že nejde o organizaci pro vývoj
-   platformy ani její repozitář. Sdílené identity posuď odděleně podle
+   platformy ani její repozitář. Samostatně dolož, zda konkrétní DELETE URI
+   vzniká pouze z tohoto ověřeného názvu, nebo z libovolné položky inventory.
+   Pokud aktuální readback a totožný runtime prokážou rovnocennou hranici
+   konkrétního selektoru bez čtení state, zaznamenej tento důkaz i jeho meze.
+   Nepřečtený state ani neznámou cestu inventory tím nevykazuj jako ověřené.
+   Sdílené identity posuď odděleně podle
    následujícího kroku; jejich sdílení samo neporušuje organizační hranici.
 4. Zkontroluj také ruční plán mazání. Smaže-li operátor všechny organizace
    enterprise místo přesných organizací instance, zdrojový scope ho neochrání.
@@ -125,9 +140,14 @@ kvůli ověření jejich rozsahu.
    lifecycle EMU uživatelů a týmů, licence a enterprise-owned Apps.
    Vyloučení organizačních objektů neprokazuje nezávislost těchto závislostí.
 
-Chybějící nebo nečitelný state, neznámý vlastník objektu a neověřený rozsah
-zůstávají blokací A2. Neprovedený teardown se nesmí vykázat jako úspěšný
-destruktivní test.
+Chybějící nebo nečitelný vstup zůstává neověřený. Pojmenuj přesný selektor
+nebo operaci, jejichž rozsah kvůli tomu nelze doložit, a dopad na A2.
+Neznámý vlastník skutečně vybíraného objektu nebo neověřený rozsah blokuje
+dotčenou hranici; samotná absence lokální `InventoryPath` není důkazem,
+že prokázaný pevný org/repo selektor zahrnuje vývojovou organizaci.
+Tento postup neprohlašuje neznámý state za prázdný ani nenahrazuje nezbytný
+provozní důkaz zdrojovým odhadem. Neprovedený teardown se nesmí vykázat
+jako úspěšný destruktivní test.
 
 ## Dopad sdílených změn a návrat
 
