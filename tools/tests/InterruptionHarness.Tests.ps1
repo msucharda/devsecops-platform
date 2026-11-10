@@ -104,6 +104,23 @@ gh fixture-argument
                 -RestMethod { throw 'Unexpected REST request.' } } | Should -Throw '*Injected transport failure*'
     }
 
+    It 'preserves supplied nested script defaults without changing caller defaults' {
+        $nested = Join-Path $TestDrive 'nested-default.ps1'
+        Set-Content -LiteralPath $nested -Value "[CmdletBinding()] param([string] `$StatePath = 'unexpected-user-state'); `$StatePath"
+        $entry = Join-Path $TestDrive 'entry-default.ps1'
+        Set-Content -LiteralPath $entry -Value 'param($Nested); & $Nested'
+        $defaults = @{ 'nested-default.ps1:StatePath' = (Join-Path $TestDrive 'pending.json') }
+        $saved = $PSDefaultParameterValues
+
+        $result = Invoke-InterruptionScript -Path $entry -Arguments @{ Nested = $nested } `
+            -WebRequest { throw 'Unexpected web request.' } -RestMethod { throw 'Unexpected REST request.' } `
+            -DefaultParameterValues $defaults
+
+        $result | Should -BeExactly $defaults['nested-default.ps1:StatePath']
+        $PSDefaultParameterValues | Should -Be $saved
+        $defaults.Count | Should -Be 1
+    }
+
     It 'rejects unsupported cmdlet parameters before dispatching a request' {
         $entry = Join-Path $TestDrive 'invalid-parameters.ps1'
         Set-Content -LiteralPath $entry -Value "Invoke-WebRequest -Uri 'https://offline.invalid/app' -UnsupportedParameter value"

@@ -8,9 +8,11 @@ function Invoke-InterruptionScript {
         [Parameter(Mandatory)][hashtable] $Arguments,
         [Parameter(Mandatory)][scriptblock] $WebRequest,
         [Parameter(Mandatory)][scriptblock] $RestMethod,
-        [hashtable] $Command = @{}
+        [hashtable] $Command = @{},
+        [System.Collections.IDictionary] $DefaultParameterValues = @{}
     )
 
+    $PSDefaultParameterValues = $DefaultParameterValues
     # Keep cmdlet parameter validation, but omit Pester's per-request call history in large matrices.
     $null = @($WebRequest, $RestMethod)
     foreach ($transport in @(

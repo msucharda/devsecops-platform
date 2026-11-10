@@ -132,7 +132,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $arguments.ResourcesOnly = $true
         $run = {
             $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
-                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
+                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command `
+                -DefaultParameterValues $PSDefaultParameterValues 3>$null 6>$null
         }
 
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
@@ -147,7 +148,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         # Interruptions of the resource steps are covered by the previous test.
         $arguments.ResourcesOnly = $true
         $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
-            -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
+            -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command `
+            -DefaultParameterValues $PSDefaultParameterValues 3>$null 6>$null
         Initialize-TestVendoringAppSet -Instance $instance -Cloud $cloud -KeysPath $keysPath -CasePath $casePath
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
         $arguments.VendoringActionApp = 'action-import'
@@ -159,7 +161,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $arguments.ResourcesOnly = $false
         $run = {
             $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
-                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
+                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command `
+                -DefaultParameterValues $PSDefaultParameterValues 3>$null 6>$null
         }
 
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
@@ -173,7 +176,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
         $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
-            -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
+            -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command `
+            -DefaultParameterValues $PSDefaultParameterValues 3>$null 6>$null
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
         $record.releaseVersion = '0.1.0-rc.5'
         $record.apps.authorization.previousKeys = @(@{
@@ -195,7 +199,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $initialInventory = [IO.File]::ReadAllText($inventory)
         $run = {
             $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
-                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
+                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command `
+                -DefaultParameterValues $PSDefaultParameterValues 3>$null 6>$null
         }
 
         # Two writes have eight interruption cases; share their preflight cost across all four CI shards.

@@ -18,6 +18,8 @@ skriptu; adaptér zachovává validaci parametrů původních HTTP cmdlets, ale 
 Pester call history pro každý požadavek. Matice dál porovnává skutečný stav
 stubů, lokální inventory a duplicitní vytvoření po každém přerušení. Běžné
 bootstrap testy dál používají Pester mocks včetně kontrol počtu volání.
+Adaptér přebírá také `PSDefaultParameterValues` testu, aby vnořené skripty
+zachovaly izolované cesty v `TestDrive`, včetně pending state pro token issuance.
 
 Vzdálené mutation shardy mají pro mutační fázi limit 720 s a pro celý job
 20 minut. Baseline si zachovává samostatný limit 480 s. Run `42283655555`
