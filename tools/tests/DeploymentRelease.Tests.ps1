@@ -43,7 +43,11 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
             '{"version":1,"kind":"release"}' | Set-Content "$candidate/platform/.vendoring.json"
         }
         $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
-        $api = @{ attested = $true; exitCode = 0 }
+        $api = @{ attested = $true; exitCode = 0; retained = $false }
+        $proofBytes = @{
+            91 = [Text.Encoding]::UTF8.GetBytes('{"proof":"build"}')
+            92 = [Text.Encoding]::UTF8.GetBytes('{"proof":"publication"}')
+        }
         Mock Invoke-RestMethod {
             param($Uri)
             if ($Uri -like '*/git/ref/tags/v1.2.3') {
@@ -53,7 +57,21 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
                 return Get-GitHubApiFixture -Name repos/compare-commits -Set @{ status = 'behind'; 'merge_base_commit.sha' = '3333333333333333333333333333333333333333' }
             }
             if ($Uri -like '*/releases/tags/v1.2.3') {
-                return Get-GitHubApiFixture -Name repos/get-release-by-tag -Set @{ 'assets.0.name' = 'platform-v1.2.3.zip' }
+                $release = Get-GitHubApiFixture -Name repos/get-release-by-tag -Set @{
+                    'assets.0.name' = 'platform-v1.2.3.zip'; tag_name = 'v1.2.3'; draft = $false
+                }
+                if ($api.retained) {
+                    $release.assets = @($release.assets[0]) + @(
+                        foreach ($kind in @('provenance', 'publication')) {
+                            $id = if ($kind -ceq 'provenance') { 91 } else { 92 }
+                            Get-GitHubApiFixture -Name repos/upload-release-asset -Set @{
+                                id = $id; name = "platform-v1.2.3.$kind.sigstore.json"; state = 'uploaded'
+                                digest = 'sha256:' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($proofBytes[$id])).ToLowerInvariant()
+                            }
+                        }
+                    )
+                }
+                return $release
             }
             if ($Uri -like '*/attestations/sha256:*') {
                 $response = Get-GitHubApiFixture -Name repos/list-attestations
@@ -85,6 +103,20 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
             ($args -join ' ') | Should -Match '--source-ref refs/tags/v1\.2\.3 --source-digest 3{40} --deny-self-hosted-runners'
             $global:LASTEXITCODE = $api.exitCode
         }
+        Mock Invoke-WebRequest -ModuleName PublicationAttestation {
+            param([uri] $Uri, [string] $OutFile)
+            [IO.File]::WriteAllBytes($OutFile, $proofBytes[[int] $Uri.Segments[-1]])
+        }
+        Mock gh -ModuleName PublicationAttestation {
+            $global:LASTEXITCODE = $api.exitCode
+            $name = if ($args -contains 'https://slsa.dev/provenance/v1') { 'provenance' } else { 'publication' }
+            $projection = (Get-Content (Join-Path $PSScriptRoot "fixtures/attestation/$name-verification.json") -Raw |
+                ConvertFrom-Json -AsHashtable -NoEnumerate).body
+            $statement = $projection[0].verificationResult.statement
+            $statement.subject[0].digest.sha256 = (Get-FileHash -LiteralPath $args[2]).Hash.ToLowerInvariant()
+            if ($name -ceq 'publication') { $statement.predicate.commit = '3333333333333333333333333333333333333333' }
+            ConvertTo-Json -InputObject $projection -Depth 30 -Compress
+        }
         $arguments = @{ CandidatePath = $candidate; WorkPath = $work; SourceRepository = 'upstream/platform'; PlatformOrganization = 'demo-platform' }
     }
 
@@ -106,10 +138,12 @@ Describe 'Deployment release preflight' -Tag 'DeploymentRelease' {
         Copy-Item -LiteralPath (Join-Path $sourceRoot $relative) -Destination (Join-Path "$candidate/platform" $relative)
         $marker.files[$relative] = (Get-FileHash (Join-Path $sourceRoot $relative)).Hash.ToLowerInvariant()
         $marker | ConvertTo-Json -Depth 10 | Set-Content "$candidate/.platform-bootstrap.json"
+        $api.retained = $true
         Mock Assert-PlatformPublishedSource {}
         & $preflight @arguments
         Should -Invoke Assert-PlatformPublishedSource -Times 1 -Exactly -ParameterFilter {
-            $Repository -ceq 'upstream/platform' -and $Commit -ceq '3333333333333333333333333333333333333333' -and $PublisherAppId -eq 7
+            $Repository -ceq 'upstream/platform' -and $Commit -ceq '3333333333333333333333333333333333333333' -and
+                $PublisherAppId -eq 7 -and $ProvenanceBundlePath -and $PublicationBundlePath
         }
         Should -Invoke Invoke-RestMethod -ParameterFilter { $Headers.ContainsKey('Authorization') } -Times 0
     }

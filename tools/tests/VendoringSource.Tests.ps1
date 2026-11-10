@@ -27,6 +27,70 @@ BeforeAll {
     $snappyAst = [Management.Automation.Language.Parser]::ParseFile($download, [ref] $null, [ref] $null)
     $snappyFunction = $snappyAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertFrom-SnappyBlock' }, $true)
     . ([scriptblock]::Create($snappyFunction.Extent.Text))
+    $retainedSourceSetup = {
+        $sourcePolicyJson = '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}'
+        $release = Get-GitHubApiFixture -Name repos/get-release-by-tag -Set @{ tag_name = 'v1.2.3'; draft = $false }
+        $release.assets = @(
+            Get-GitHubApiFixture -Name repos/upload-release-asset -Set @{ id = 20; name = 'platform-v1.2.3.zip' }
+            Get-GitHubApiFixture -Name repos/upload-release-asset -Set @{
+                id = 21; name = 'platform-v1.2.3.provenance.sigstore.json'; state = 'uploaded'
+                digest = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'
+            }
+            Get-GitHubApiFixture -Name repos/upload-release-asset -Set @{
+                id = 22; name = 'platform-v1.2.3.publication.sigstore.json'; state = 'uploaded'
+                digest = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'
+            }
+        )
+        Mock Invoke-RestMethod { return $release } -ParameterFilter { $Uri -like '*/releases/tags/v1.2.3' }
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        Mock Invoke-RestMethod { return $fakeAttestations } -ParameterFilter { $Uri -like '*/attestations/*' }
+        Mock Invoke-WebRequest -ModuleName PublicationAttestation { [IO.File]::WriteAllText($OutFile, '{}') }
+        $fixtureVerifiedProvenance = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/attestation/provenance-verification.json') -Raw |
+            ConvertFrom-Json -AsHashtable -NoEnumerate).body
+        $fixtureVerifiedProvenance[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.repository = 'https://github.com/upstream/action'
+        $fixtureVerifiedProvenance[0].verificationResult.statement.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit = '3' * 40
+        $fixtureVerifiedPublication = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/attestation/publication-verification.json') -Raw |
+            ConvertFrom-Json -AsHashtable -NoEnumerate).body
+        $fixtureVerifiedPublication[0].verificationResult.statement.predicate.repository = 'upstream/action'
+        $fixtureVerifiedPublication[0].verificationResult.statement.predicate.commit = '3' * 40
+        Mock gh -ModuleName PublicationAttestation {
+            $global:LASTEXITCODE = 0
+            $fixtureCliResult = if ($args -contains 'https://slsa.dev/provenance/v1') { ,$fixtureVerifiedProvenance } else { ,$fixtureVerifiedPublication }
+            $fixtureCliResult[0].verificationResult.statement.subject[0].digest.sha256 =
+                (Get-FileHash -LiteralPath $args[2] -Algorithm SHA256).Hash.ToLowerInvariant()
+            ConvertTo-Json -InputObject $fixtureCliResult -Depth 30
+        }
+        $fixtureActiveRules = Get-GitHubApiFixture -Name repos/get-branch-rules.merge-gate-required-check -Set @{
+            '1.parameters.required_status_checks.0.context' = 'GHE accepted source'
+            '1.parameters.required_status_checks.0.integration_id' = 7
+            '1.parameters.strict_required_status_checks_policy' = $true
+            '1.ruleset_id' = 42; '1.ruleset_source' = 'upstream/action'
+        }
+        $fixturePublicationRuleset = Get-GitHubApiFixture -Name repos/get-repo-ruleset.no-bypass -Set @{
+            source = 'upstream/action'
+            'conditions.ref_name.include' = @('refs/heads/source-publication/v1')
+            'conditions.ref_name.exclude' = @()
+            rules = @(@{ type = 'required_status_checks'; parameters = $fixtureActiveRules[1].parameters })
+        }
+        $fixturePublicationRef = Get-GitHubApiFixture -Name git/get-ref -Set @{
+            ref = 'refs/heads/source-publication/v1'; 'object.sha' = '3' * 40
+        }
+        $fixturePublicationAncestry = Get-GitHubApiFixture -Name repos/compare-commits -Set @{
+            status = 'identical'; 'merge_base_commit.sha' = '3' * 40
+        }
+        Mock Invoke-WebRequest {
+            $route = ([uri] $Uri).PathAndQuery -replace '^/repos/upstream/action/', ''
+            $fixtureResponse = switch -Exact ($route) {
+                'rules/branches/source-publication%2Fv1?per_page=100&page=1' { ,$fixtureActiveRules; break }
+                'rules/branches/source-publication%2Fv1?per_page=100&page=2' { ,@(); break }
+                'rulesets/42' { $fixturePublicationRuleset; break }
+                'git/ref/heads/source-publication/v1' { $fixturePublicationRef; break }
+                "compare/$('3' * 40)...$('3' * 40)?per_page=1" { $fixturePublicationAncestry; break }
+                default { throw "Unexpected retained publication source API: $route" }
+            }
+            [pscustomobject]@{ Content = (ConvertTo-Json -InputObject $fixtureResponse -Depth 30) }
+        } -ParameterFilter { -not $OutFile }
+    }
 }
 
 Describe 'Snappy attestation bundle decoding' {
@@ -112,8 +176,12 @@ Describe 'Tagged vendoring source and attestation policy' {
         Should -Invoke gh -Times 0 -Exactly
     }
 
-    It 'keeps the authenticated platform opt-in without a declaration on main' {
+    It 'keeps the authenticated platform opt-in with <Declaration> on main' -ForEach @(
+        @{ Declaration = 'an absent declaration'; Policy = $null }
+        @{ Declaration = 'an explicit main declaration'; Policy = '{"schemaVersion":1,"line":"main"}' }
+    ) {
         $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $sourcePolicyJson = $Policy
         $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
             -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
             -SourcePolicy PlatformReleaseV1
@@ -124,9 +192,58 @@ Describe 'Tagged vendoring source and attestation policy' {
         }
     }
 
+    It 'rejects the platform legacy main authority with <Declaration> when <Case>' -Tag PlatformLegacyMain -ForEach @(
+        foreach ($declaration in @(
+            @{ Declaration = 'an absent declaration'; Policy = $null }
+            @{ Declaration = 'an explicit main declaration'; Policy = '{"schemaVersion":1,"line":"main"}' }
+        )) {
+            # Case-folded and empty fields are deliberately invalid comparison responses.
+            foreach ($invalid in @(
+                @{ Case = 'the commit is ahead'; Status = 'ahead'; MergeBase = '3333333333333333333333333333333333333333' }
+                @{ Case = 'the commit diverged'; Status = 'diverged'; MergeBase = '3333333333333333333333333333333333333333' }
+                @{ Case = 'the status differs in case'; Status = 'Behind'; MergeBase = '3333333333333333333333333333333333333333' }
+                @{ Case = 'the status is empty'; Status = ''; MergeBase = '3333333333333333333333333333333333333333' }
+                @{ Case = 'the merge base is another commit'; Status = 'behind'; MergeBase = '4444444444444444444444444444444444444444' }
+                @{ Case = 'the merge base is abbreviated'; Status = 'identical'; MergeBase = '3333333' }
+                @{ Case = 'the merge base is empty'; Status = 'behind'; MergeBase = '' }
+            )) {
+                @{
+                    Declaration = $declaration.Declaration; Policy = $declaration.Policy
+                    Case = $invalid.Case; Status = $invalid.Status; MergeBase = $invalid.MergeBase
+                }
+            }
+        }
+    ) {
+        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
+        $sourcePolicyJson = $Policy
+        $comparison = Get-GitHubApiFixture -Name repos/compare-commits -Set @{
+            status = $Status
+            'merge_base_commit.sha' = $MergeBase
+        }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 } | Should -Throw '*legacy main authority*'
+        Should -Invoke gh -Times 1 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'https://api.github.com/repos/upstream/action/compare/main...3333333333333333333333333333333333333333?per_page=1'
+        }
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
     It 'rejects a platform opt-in without required attestation before reading the tag' {
         { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
             -ProtectedBranch main -SourcePolicy PlatformReleaseV1 } | Should -Throw '*requires verified release attestation*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'rejects a platform signer override <Signer> before reading the tag' -ForEach @(
+        @{ Signer = 'upstream/action/.github/workflows/ci.yml' }
+        @{ Signer = 'upstream/action/.github/workflows/Release.yml' }
+        @{ Signer = '' }
+    ) {
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow $Signer -ProtectedBranch main -SourcePolicy PlatformReleaseV1 } |
+            Should -Throw '*PlatformReleaseV1 requires the exact release signer workflow*'
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly
     }
 
@@ -156,9 +273,128 @@ Describe 'Tagged vendoring source and attestation policy' {
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Uri -like '*/compare/*' }
     }
 
-    It 'verifies a platform publication only after provenance, anonymously and without changing the source receipt shape' {
+    It 'imports the retained publication protocol without reading the historical App check' -Tag RetainedPublicationImport {
+        . $retainedSourceSetup
+
+        $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -InstallationToken ghs_existing_source -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip
+
+        $result.Commit | Should -BeExactly ('3' * 40)
+        $result.Attestation | Should -BeExactly 'verified'
+        @($result.PSObject.Properties.Name) | Should -Be @('Repository', 'Tag', 'Commit', 'Sha256', 'Asset', 'Attestation', 'SourcePath')
+        Test-Path -LiteralPath (Join-Path $result.SourcePath 'release-source-policy.json') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeTrue
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -like '*/attestations/*' }
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Uri -like '*/check-runs*' }
+        Should -Invoke gh -ModuleName PublicationAttestation -Times 2 -Exactly
+        Should -Invoke gh -Times 1 -Exactly
+    }
+
+    It 'does not import retained evidence from a release whose draft state is <Case>' -Tag RetainedPublicationImport -ForEach @(
+        @{ Case = 'true'; Value = $true }
+        @{ Case = 'a string'; Value = 'false' }
+        @{ Case = 'a number'; Value = 0 }
+        @{ Case = 'absent'; Value = $null }
+    ) {
+        . $retainedSourceSetup
+        if ($null -eq $Value) { $release.Remove('draft') } else { $release.draft = $Value }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip } |
+            Should -Throw '*evidence must belong to a published release*'
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'does not fall back when the retained <Kind> bundle is missing' -Tag RetainedPublicationImport -ForEach @(
+        @{ Kind = 'provenance'; Index = 1 }; @{ Kind = 'publication'; Index = 2 }
+    ) {
+        . $retainedSourceSetup
+        $release.assets = @($release.assets | Where-Object { $_.id -ne (20 + $Index) })
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip } |
+            Should -Throw '*exactly one retained*'
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly -ParameterFilter { $Uri -like '*/attestations/*' }
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'does not fall back to the old check protocol when both retained bundles are absent' -Tag RetainedPublicationImport {
+        . $retainedSourceSetup
+        $release.assets = @($release.assets[0])
         $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
-        $sourcePolicyJson = '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}'
+        Mock Invoke-RestMethod { return $fakeAttestations } -ParameterFilter { $Uri -like '*/attestations/*' }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip } |
+            Should -Throw '*both retained attestation bundles*no legacy fallback*'
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly -ParameterFilter { $Uri -like '*/check-runs*' }
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'does not accept valid retained proofs under another ZIP asset name' -Tag RetainedPublicationImport {
+        . $retainedSourceSetup
+        $release.assets[0].name = 'other.zip'
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 -AssetName other.zip } |
+            Should -Throw '*exact ZIP asset*'
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'does not apply the new publication protocol to a signed legacy main declaration' -Tag RetainedPublicationImport {
+        . $retainedSourceSetup
+        $sourcePolicyJson = '{"schemaVersion":1,"line":"main"}'
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip } |
+            Should -Throw '*Legacy main releases cannot claim the new publication protocol*'
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'rejects a failed <Kind> signature policy without downgrading the import' -Tag RetainedPublicationImport -ForEach @(
+        @{ Kind = 'original build provenance'; PredicateType = 'https://slsa.dev/provenance/v1' }
+        @{ Kind = 'publication'; PredicateType = 'https://github.com/msucharda/devsecops-platform/attestations/source-publication/v1' }
+    ) {
+        . $retainedSourceSetup
+        Mock gh -ModuleName PublicationAttestation { $global:LASTEXITCODE = 1; '[]' } -ParameterFilter {
+            $args -contains $PredicateType
+        }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip } |
+            Should -Throw '*signature or pinned signer policy verification failed*'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -like '*/attestations/*' }
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'keeps live authority invalidation when <Case>' -Tag RetainedPublicationImport -ForEach @(
+        @{ Case = 'the active App binding changes'; Change = { $fixtureActiveRules[1].parameters.required_status_checks[0].integration_id = 8 }; Error = '*not bound to the pinned App*' }
+        @{ Case = 'the commit leaves the publication ref'; Change = { $fixturePublicationAncestry.status = 'ahead' }; Error = '*not independently verified on the publication ref*' }
+        @{ Case = 'the signed phase is only admitted'; Change = { $fixtureVerifiedPublication[0].verificationResult.statement.predicate.phase = 'admitted' }; Error = '*not published*' }
+    ) {
+        . $retainedSourceSetup
+        . $Change
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip } |
+            Should -Throw $Error
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'preserves the current repository provenance lookup rather than bypassing it with an offline bundle' -Tag RetainedPublicationImport {
+        . $retainedSourceSetup
+        Mock Invoke-RestMethod { throw 'Current repository provenance lookup is unavailable.' } -ParameterFilter { $Uri -like '*/attestations/*' }
+        { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
+            -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
+            -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip } |
+            Should -Throw '*Current repository provenance lookup is unavailable*'
+        Should -Invoke gh -ModuleName PublicationAttestation -Times 0 -Exactly
+        Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
+    }
+
+    It 'verifies a platform publication only after provenance, anonymously and without changing the source receipt shape' {
+        . $retainedSourceSetup
         Mock Invoke-WebRequest {
             [pscustomobject]@{
                 Content = (Get-GitHubApiFixture -Name repos/get-repo-ruleset.no-bypass -Set @{ source = 'upstream/action' } |
@@ -172,7 +408,7 @@ Describe 'Tagged vendoring source and attestation policy' {
         }
         $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
             -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
-            -InstallationToken ghs_existing_source -SourcePolicy PlatformReleaseV1
+            -InstallationToken ghs_existing_source -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip
         $result.Commit | Should -BeExactly '3333333333333333333333333333333333333333'
         $result.Sha256 | Should -Match '^[0-9a-f]{64}$'
         Test-Path -LiteralPath (Join-Path $result.SourcePath 'release-source-policy.json') | Should -BeTrue
@@ -219,12 +455,11 @@ Describe 'Tagged vendoring source and attestation policy' {
     }
 
     It 'compares canonical URI hosts without treating DNS case as a different App namespace' {
-        $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
-        $sourcePolicyJson = '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}'
+        . $retainedSourceSetup
         Mock Assert-PlatformPublishedSource {}
         $result = & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://API.GITHUB.COM -WorkPath $work `
             -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
-            -SourcePolicy PlatformReleaseV1
+            -SourcePolicy PlatformReleaseV1 -AssetName platform-v1.2.3.zip
         $result.Commit | Should -BeExactly '3333333333333333333333333333333333333333'
         Should -Invoke Assert-PlatformPublishedSource -Times 1 -Exactly
     }

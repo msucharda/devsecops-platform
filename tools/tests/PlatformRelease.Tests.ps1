@@ -1,7 +1,9 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot '../PublicationAttestation.psm1') -Force
     $publish = Join-Path (Split-Path $PSScriptRoot -Parent) 'Publish-PlatformRelease.ps1'
     $commit = 'a' * 40
+    function gh { $global:LASTEXITCODE = 0 }
 }
 
 Describe 'Platform release publication' {
@@ -12,7 +14,7 @@ Describe 'Platform release publication' {
         $arguments = @{ Repository = 'octo/devsecops-platform'; Tag = 'v1.2.0'; Commit = $commit; AssetPath = $asset; ApiUrl = 'https://api.github.com'; Token = 'workflow-token' }
         # The stub models one repository: the tag reference, an optional annotated tag object and the releases with assets.
         # Response shapes come from the shared fixtures of the documented operations (REST API version 2026-03-10).
-        $cloud = @{ refType = 'commit'; refSha = $commit; tagObject = $null; releases = [Collections.Generic.List[object]]::new(); nextId = 10; publishResponse = $null; uploadDigest = $null; uploadUrl = $null }
+        $cloud = @{ refType = 'commit'; refSha = $commit; tagObject = $null; releases = [Collections.Generic.List[object]]::new(); nextId = 10; publishResponse = $null; uploadDigest = $null; uploadUrl = $null; assetContent = @{}; readbackChange = $null }
         $newRelease = {
             param([hashtable] $Data)
             $id = $cloud.nextId++
@@ -34,7 +36,7 @@ Describe 'Platform release publication' {
             [pscustomobject] @{ StatusCode = $Status; Content = $content }
         }
         $cloudTransport = {
-            param([uri] $Uri, [string] $Method = 'GET', $Body)
+            param([uri] $Uri, [string] $Method = 'GET', $Body, [string] $OutFile)
             $Method = $Method.ToUpperInvariant()
             $path = $Uri.AbsolutePath
             $query = [Web.HttpUtility]::ParseQueryString($Uri.Query)
@@ -48,6 +50,17 @@ Describe 'Platform release publication' {
                 $page = [int] $query['page']
                 $items = @($cloud.releases | Select-Object -Skip (($page - 1) * 100) -First 100)
                 return & $respond 200 $items
+            }
+            if ($Method -eq 'GET' -and $path -cmatch '^/repos/octo/devsecops-platform/releases/assets/([0-9]+)$' -and $OutFile) {
+                [IO.File]::WriteAllBytes($OutFile, $cloud.assetContent[[int] $Matches[1]])
+                return
+            }
+            if ($Method -eq 'GET' -and $path -cmatch '^/repos/octo/devsecops-platform/releases/([0-9]+)$') {
+                $release = @($cloud.releases | Where-Object { $_.id -eq [int] $Matches[1] })[0]
+                $response = Get-GitHubApiFixture -Name repos/get-release
+                foreach ($key in $release.get_Keys()) { if ($response.Contains($key)) { $response[$key] = $release[$key] } }
+                if ($cloud.readbackChange) { & $cloud.readbackChange $response }
+                return & $respond 200 $response
             }
             if ($Method -eq 'POST' -and $path -ceq '/repos/octo/devsecops-platform/releases') {
                 $release = & $newRelease (ConvertFrom-Json $Body -AsHashtable)
@@ -66,6 +79,7 @@ Describe 'Platform release publication' {
                 $hash = 'sha256:' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($sent)).ToLowerInvariant()
                 $item = & $newAsset $query['name'] $(if ($cloud.uploadDigest) { $cloud.uploadDigest } else { $hash })
                 $release.assets.Add($item)
+                $cloud.assetContent[[int] $item.id] = $sent
                 return & $respond 201 $item
             }
             if ($Method -eq 'DELETE' -and $path -cmatch '^/repos/octo/devsecops-platform/releases/assets/([0-9]+)$') {
@@ -89,6 +103,266 @@ Describe 'Platform release publication' {
             return & $respond 404 @{ message = 'Not Found' }
         }
         $writes = [Collections.Generic.List[string]]::new()
+    }
+
+    Describe 'Retained platform release publication' -Tag RetainedPublication {
+        BeforeEach {
+            # These are verification-output projections, not cryptographic Sigstore bundles.
+            [IO.File]::WriteAllText($asset, 'hello', [Text.UTF8Encoding]::new($false))
+            $digest = 'sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
+            $arguments.PublisherAppId = 7
+            $arguments.ProvenanceBundlePath = Join-Path $TestDrive 'provenance.sigstore.json'
+            $arguments.PublicationBundlePath = Join-Path $TestDrive 'publication.sigstore.json'
+            [IO.File]::WriteAllText($arguments.ProvenanceBundlePath, '{"proof":"build"}')
+            [IO.File]::WriteAllText($arguments.PublicationBundlePath, '{"proof":"publication"}')
+            $verifiedBuild = (Get-Content (Join-Path $PSScriptRoot 'fixtures/attestation/provenance-verification.json') -Raw | ConvertFrom-Json -AsHashtable).body
+            $verifiedPublication = (Get-Content (Join-Path $PSScriptRoot 'fixtures/attestation/publication-verification.json') -Raw | ConvertFrom-Json -AsHashtable).body
+            $verifiedPublication[0].verificationResult.statement.predicate.repository = 'octo/devsecops-platform'
+            $verifiedBuild[0].verificationResult.statement.subject[0].name = 'platform-v1.2.0.zip'
+            $verifiedPublication[0].verificationResult.statement.subject[0].name = 'platform-v1.2.0.zip'
+            Mock gh -ModuleName PublicationAttestation {
+                $global:LASTEXITCODE = 0
+                $projection = if ($args -contains 'https://slsa.dev/provenance/v1') { ,$verifiedBuild } else { ,$verifiedPublication }
+                ConvertTo-Json -InputObject $projection -Depth 30 -Compress
+            }
+            Mock Invoke-WebRequest {
+                param([uri] $Uri, [string] $Method = 'GET', $Body, [string] $OutFile)
+                $Method = $Method.ToUpperInvariant()
+                if ($Method -ne 'GET') { $writes.Add("$Method $($Uri.AbsolutePath)") }
+                & $cloudTransport -Uri $Uri -Method $Method -Body $Body -OutFile $OutFile
+            }
+            Mock Invoke-WebRequest -ModuleName PublicationAttestation {
+                param([uri] $Uri, [string] $OutFile)
+                & $cloudTransport -Uri $Uri -OutFile $OutFile
+            }
+        }
+
+        It 'publishes the ZIP and both verified retained proofs before finalizing the release' {
+            $result = & $publish @arguments 6>$null
+
+            $result.Created | Should -BeTrue
+            $release = $cloud.releases[0]
+            $release.draft | Should -BeFalse
+            @($release.assets.name | Sort-Object) | Should -Be @(
+                'platform-v1.2.0.provenance.sigstore.json'
+                'platform-v1.2.0.publication.sigstore.json'
+                'platform-v1.2.0.zip'
+            )
+            $writes[-1] | Should -BeLike 'PATCH */releases/*'
+            Should -Invoke gh -ModuleName PublicationAttestation -Times 4 -Exactly
+        }
+
+        It 'confirms an existing published proof without replacing it with fresh signature bytes' {
+            $null = & $publish @arguments 6>$null
+            $originalDigests = @($cloud.releases[0].assets.digest)
+            $writes.Clear()
+            [IO.File]::WriteAllText($arguments.ProvenanceBundlePath, '{"proof":"fresh-build-signature"}')
+            [IO.File]::WriteAllText($arguments.PublicationBundlePath, '{"proof":"fresh-publication-signature"}')
+
+            $result = & $publish @arguments 6>$null
+
+            $result.Created | Should -BeFalse
+            $writes.Count | Should -Be 0
+            @($cloud.releases[0].assets.digest) | Should -Be $originalDigests
+        }
+
+        It 'retains a verified single proof after interruption even when the new signature bytes differ' {
+            $release = & $newRelease @{ tag_name = 'v1.2.0'; draft = $true; prerelease = $false; target_commitish = $commit; name = 'v1.2.0' }
+            $originalBytes = [Text.Encoding]::UTF8.GetBytes('{"proof":"original-publication-signature"}')
+            $originalDigest = 'sha256:' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($originalBytes)).ToLowerInvariant()
+            $original = & $newAsset 'platform-v1.2.0.publication.sigstore.json' $originalDigest
+            $release.assets.Add($original)
+            $cloud.assetContent[[int] $original.id] = $originalBytes
+            $cloud.releases.Add($release)
+
+            $null = & $publish @arguments 6>$null
+
+            $release.draft | Should -BeFalse
+            @($release.assets).Count | Should -Be 3
+            ($release.assets | Where-Object name -CEQ 'platform-v1.2.0.publication.sigstore.json').id | Should -Be $original.id
+            @($writes | Where-Object { $_ -like 'DELETE *' }).Count | Should -Be 0
+        }
+
+        It 'rejects ambiguous partial proofs before changing a draft' {
+            $release = & $newRelease @{ tag_name = 'v1.2.0'; draft = $true; prerelease = $false; target_commitish = $commit; name = 'v1.2.0' }
+            foreach ($index in 1..2) {
+                $release.assets.Add((& $newAsset 'platform-v1.2.0.provenance.sigstore.json' ('sha256:' + 'b' * 64) 'open'))
+            }
+            $cloud.releases.Add($release)
+
+            { & $publish @arguments 6>$null } | Should -Throw '*exactly one retained Provenance attestation asset*'
+
+            $writes.Count | Should -Be 0
+        }
+
+        It 'recovers a documented <State> residue for the <Kind> proof without trusting it as uploaded' -ForEach @(
+            @{ State = 'open'; Kind = 'provenance' }
+            @{ State = 'open'; Kind = 'publication' }
+            @{ State = 'starter'; Kind = 'provenance' }
+            @{ State = 'starter'; Kind = 'publication' }
+        ) {
+            $release = & $newRelease @{ tag_name = 'v1.2.0'; draft = $true; prerelease = $false; target_commitish = $commit; name = 'v1.2.0' }
+            # The upload endpoint's documented 502 residue is "starter", despite the asset schema's narrower enum.
+            $partial = & $newAsset "platform-v1.2.0.$Kind.sigstore.json" $null $State
+            $release.assets.Add($partial)
+            $cloud.releases.Add($release)
+
+            $null = & $publish @arguments 6>$null
+
+            $release.draft | Should -BeFalse
+            @($release.assets).Count | Should -Be 3
+            $writes | Should -Contain "DELETE /repos/octo/devsecops-platform/releases/assets/$($partial.id)"
+            @($release.assets | Where-Object state -CNE 'uploaded').Count | Should -Be 0
+        }
+
+        It 'rejects an invalid case-variant partial-upload state before changing a draft' {
+            $release = & $newRelease @{ tag_name = 'v1.2.0'; draft = $true; prerelease = $false; target_commitish = $commit; name = 'v1.2.0' }
+            # Deliberately invalid: the documented state is case-sensitive "open".
+            $release.assets.Add((& $newAsset 'platform-v1.2.0.provenance.sigstore.json' ('sha256:' + 'b' * 64) 'Open'))
+            $cloud.releases.Add($release)
+
+            { & $publish @arguments 6>$null } | Should -Throw '*Invalid retained Provenance attestation asset metadata*'
+
+            $writes.Count | Should -Be 0
+        }
+
+        It 'requires complete proof metadata on an already published release with <Case>' -ForEach @(
+            @{ Case = 'a missing proof'; Missing = $true; Error = '*exactly one retained Provenance attestation asset*' }
+            @{ Case = 'a partial proof'; Missing = $false; Error = '*Invalid retained Provenance attestation asset metadata*' }
+        ) {
+            $null = & $publish @arguments 6>$null
+            $release = $cloud.releases[0]
+            $proof = @($release.assets | Where-Object name -CEQ 'platform-v1.2.0.provenance.sigstore.json')[0]
+            if ($Missing) { $null = $release.assets.Remove($proof) }
+            else { $proof.state = 'open' }
+            $writes.Clear()
+
+            { & $publish @arguments 6>$null } | Should -Throw $Error
+
+            $writes.Count | Should -Be 0
+        }
+
+        It 'rejects an existing published release with a nonpositive identity before adopting its proofs' {
+            $null = & $publish @arguments 6>$null
+            # Deliberately invalid: the release ID must be positive, also before the final readback.
+            $cloud.releases[0].id = 0
+            $writes.Clear()
+
+            { & $publish @arguments 6>$null } | Should -Throw '*Release identity changed before finalization*'
+
+            $writes.Count | Should -Be 0
+        }
+
+        It 'refuses a ZIP whose final readback differs before publishing the verified proofs' {
+            $cloud.readbackChange = {
+                param($response)
+                ($response.assets | Where-Object name -CEQ 'platform-v1.2.0.zip').digest = 'sha256:' + 'f' * 64
+            }
+
+            { & $publish @arguments 6>$null } | Should -Throw '*Release asset inventory changed before finalization*'
+
+            $cloud.releases[0].draft | Should -BeTrue
+            @($writes | Where-Object { $_ -like 'PATCH *' }).Count | Should -Be 0
+        }
+
+        It 'rejects a valid retained proof for a different <ClaimCase> rather than adopting it' -ForEach @(
+            @{ ClaimCase = 'check ID' }; @{ ClaimCase = 'receipt' }
+        ) {
+            $release = & $newRelease @{ tag_name = 'v1.2.0'; draft = $true; prerelease = $false; target_commitish = $commit; name = 'v1.2.0' }
+            $foreignBytes = [Text.Encoding]::UTF8.GetBytes('{"proof":"foreign-operation"}')
+            $foreignDigest = 'sha256:' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($foreignBytes)).ToLowerInvariant()
+            $foreignAsset = & $newAsset 'platform-v1.2.0.publication.sigstore.json' $foreignDigest
+            $release.assets.Add($foreignAsset)
+            $cloud.assetContent[[int] $foreignAsset.id] = $foreignBytes
+            $cloud.releases.Add($release)
+            Mock gh -ModuleName PublicationAttestation {
+                $global:LASTEXITCODE = 0
+                $projection = if ($args -contains 'https://slsa.dev/provenance/v1') { ,$verifiedBuild } else {
+                    $copy = ConvertTo-Json -InputObject $verifiedPublication -Depth 30 -Compress | ConvertFrom-Json -AsHashtable -NoEnumerate
+                    $path = $args[[array]::IndexOf($args, '--bundle') + 1]
+                    if ([IO.File]::ReadAllText($path).Contains('foreign-operation')) {
+                        if ($ClaimCase -ceq 'check ID') { $copy[0].verificationResult.statement.predicate.checkId = 10 }
+                        else {
+                            $copy[0].verificationResult.statement.predicate.receiptSha256 = 'c' * 64
+                            $copy[0].verificationResult.statement.predicate.externalId = "platform-source-publication/v1:$('c' * 64)"
+                        }
+                    }
+                    ,$copy
+                }
+                ConvertTo-Json -InputObject $projection -Depth 30 -Compress
+            }
+
+            { & $publish @arguments 6>$null } | Should -Throw '*another operation cannot be adopted*'
+
+            $release.draft | Should -BeTrue
+            $writes.Count | Should -Be 0
+        }
+
+        It 'never falls back to one-asset publishing after <Case>' -ForEach @(
+            @{ Case = 'a missing provenance bundle'; Change = { $arguments.ProvenanceBundlePath = '' } }
+            @{ Case = 'a missing publication bundle'; Change = { $arguments.PublicationBundlePath = '' } }
+            @{ Case = 'a missing publisher App'; Change = { $arguments.PublisherAppId = 0 } }
+            @{ Case = 'all explicitly supplied proof inputs being empty'; Change = {
+                $arguments.PublisherAppId = 0
+                $arguments.ProvenanceBundlePath = ''
+                $arguments.PublicationBundlePath = ''
+            } }
+        ) {
+            . $Change
+
+            { & $publish @arguments 6>$null } | Should -Throw '*requires the publisher App and both attestation bundles*'
+
+            $writes.Count | Should -Be 0
+            $cloud.releases.Count | Should -Be 0
+        }
+
+        It 'does not modify a release after its final readback has <Case>' -ForEach @(
+            @{ Case = 'already been published'; Value = $false }
+            @{ Case = 'an unreadable draft state'; Value = $null }
+            @{ Case = 'a string draft state'; Value = 'true' }
+        ) {
+            $cloud.readbackChange = { param($response) $response.draft = $Value }
+
+            { & $publish @arguments 6>$null } | Should -Throw '*Release draft state changed before finalization*'
+
+            @($writes | Where-Object { $_ -like 'PATCH *' }).Count | Should -Be 0
+        }
+
+        It 'refuses a tag moved between asset upload and finalization' {
+            $cloud.readbackChange = { param($response) $null = $response; $cloud.refSha = 'f' * 40 }
+
+            { & $publish @arguments 6>$null } | Should -Throw '*tag moved before finalization*'
+
+            $cloud.releases[0].draft | Should -BeTrue
+            @($writes | Where-Object { $_ -like 'PATCH *' }).Count | Should -Be 0
+        }
+
+        It 'rejects a final readback with <Case> instead of finalizing another release' -ForEach @(
+            @{ Case = 'another release ID'; Id = 999 }
+            @{ Case = 'a null release ID'; Id = $null }
+            @{ Case = 'a string release ID'; Id = '10' }
+            @{ Case = 'a nonpositive release ID'; Id = 0 }
+        ) {
+            # Null/string/nonpositive IDs deliberately violate the documented numeric release ID.
+            $cloud.readbackChange = { param($response) $response.id = $Id }
+
+            { & $publish @arguments 6>$null } | Should -Throw '*Release identity changed before finalization*'
+
+            $cloud.releases[0].draft | Should -BeTrue
+            @($writes | Where-Object { $_ -like 'PATCH *' }).Count | Should -Be 0
+        }
+
+        It 'rejects retained publishing against <Case> without remote writes' -ForEach @(
+            @{ Case = 'a GHE API'; Api = 'https://api.example.ghe.com' }
+            @{ Case = 'an unexpected public API path'; Api = 'https://api.github.com/other' }
+            @{ Case = 'a case-variant public API origin'; Api = 'https://API.github.com' }
+        ) {
+            $arguments.ApiUrl = $Api
+
+            { & $publish @arguments 6>$null } | Should -Throw '*requires the public github.com API*'
+
+            $writes.Count | Should -Be 0
+        }
     }
 
     Describe 'Platform release publication' {
@@ -319,6 +593,8 @@ Describe 'Platform release publication' {
             @{ Case = 'draft is null'; Change = { param($r) $r.draft = $null } }
             @{ Case = 'prerelease is the string false'; Change = { param($r) $r.prerelease = 'false' } }
             @{ Case = 'prerelease is null'; Change = { param($r) $r.prerelease = $null } }
+            # Deliberately invalid: assets is an object, not the documented array; Count must not spoof an array.
+            @{ Case = 'a scalar asset with a spoofed count'; Change = { param($r) $r.assets = @{ name = 'platform-v1.2.0.zip'; state = 'uploaded'; digest = $digest; Count = 1 } } }
         ) {
             $cloud.publishResponse = $Change
 

@@ -1,0 +1,53 @@
+{
+  "source": {
+    "documentation": "https://cli.github.com/manual/gh_attestation_verify",
+    "cliVersion": "2.102.1",
+    "statementSchema": "https://github.com/in-toto/attestation/blob/v1.1.1/spec/v1/statement.md",
+    "predicateSchema": "https://slsa.dev/spec/v1.1/provenance",
+    "note": "The documented CLI verification projection with a SLSA v1 predicate. Tests stub gh verification; this is not a cryptographically valid bundle and does not prove signature verification."
+  },
+  "body": [
+    {
+      "attestation": {},
+      "verificationResult": {
+        "statement": {
+          "_type": "https://in-toto.io/Statement/v1",
+          "subject": [
+            {
+              "name": "platform-v1.2.3.zip",
+              "digest": {
+                "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+              }
+            }
+          ],
+          "predicateType": "https://slsa.dev/provenance/v1",
+          "predicate": {
+            "buildDefinition": {
+              "buildType": "https://actions.github.io/buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "ref": "refs/tags/v1.2.3",
+                  "repository": "https://github.com/upstream/platform",
+                  "path": ".github/workflows/release.yml"
+                }
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+https://github.com/upstream/platform@refs/tags/v1.2.3",
+                  "digest": {
+                    "gitCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "https://github.com/actions/runner/github-hosted"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

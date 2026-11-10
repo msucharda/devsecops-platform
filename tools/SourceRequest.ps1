@@ -31,7 +31,7 @@ function Invoke-SourceRequest {
             elseif ($message -match 'secondary rate limit') { $wait = $secondaryWait; $secondaryWait *= 2 }
             else { throw }
             if ($attempt -gt 3 -or $wait -gt $MaxRateLimitWaitSeconds) {
-                throw "GitHub API rate limit for the source is exhausted (HTTP $status); retry after $wait s or import a private source with its installation token. $($_.Exception.Message)"
+                throw "GitHub API rate limit for the source is exhausted (HTTP $status); retry after $wait s. $($_.Exception.Message)"
             }
             Write-Warning "GitHub API rate limit reached (HTTP $status); retrying in $wait s."
             Start-Sleep -Seconds $wait

@@ -1,6 +1,7 @@
 #Requires -Version 7.4
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'PublicationWitness.psm1')
+Import-Module (Join-Path $PSScriptRoot 'PublicationAttestation.psm1')
 
 # security-check: platform-release-source-policy
 function Get-PlatformReleaseSourcePolicy {
@@ -108,12 +109,18 @@ function Get-PublicationBindingRule {
 
 # security-check: platform-published-source
 function Assert-PlatformPublishedSource {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Live')]
     param(
         [Parameter(Mandatory)][string] $Repository,
         [Parameter(Mandatory)][string] $Commit,
         [Parameter(Mandatory)][long] $PublisherAppId,
-        [Parameter(Mandatory)][scriptblock] $Read
+        [Parameter(Mandatory)][scriptblock] $Read,
+        [Parameter(Mandatory, ParameterSetName = 'Attested')][string] $ArchivePath,
+        [Parameter(Mandatory, ParameterSetName = 'Attested')][ValidatePattern('\A[0-9a-f]{64}\z')][string] $ArchiveSha256,
+        [Parameter(Mandatory, ParameterSetName = 'Attested')][string] $ProvenanceBundlePath,
+        [Parameter(Mandatory, ParameterSetName = 'Attested')][string] $PublicationBundlePath,
+        [Parameter(Mandatory, ParameterSetName = 'Attested')][string] $Tag,
+        [Parameter(Mandatory, ParameterSetName = 'Attested')][string] $SignerWorkflow
     )
 
     if ($Commit -cnotmatch '\A[0-9a-f]{40}\z') { throw 'Invalid published source commit.' }
@@ -177,25 +184,43 @@ function Assert-PlatformPublishedSource {
             }
         }
     }
-    $allChecks = [Collections.Generic.List[object]]::new()
-    $total = $null
-    for ($page = 1; ; $page++) {
-        if ($page -gt 100) { throw 'Publication check pagination exceeds 100 pages.' }
-        $part = & $Read "commits/$Commit/check-runs?filter=all&per_page=100&page=$page"
-        if ($part -isnot [Collections.IDictionary] -or
-            ($part['total_count'] -isnot [long] -and $part['total_count'] -isnot [int]) -or $part['total_count'] -lt 0 -or
-            $part['check_runs'] -isnot [Collections.IList] -or $part['check_runs'].Count -gt 100) {
-            throw 'Invalid publication check pagination response.'
+    $witnessEvidence = 'live-app-check'
+    if ($PSCmdlet.ParameterSetName -ceq 'Attested') {
+        $archiveLock = [IO.File]::Open($ArchivePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try {
+            $null = Get-PlatformBuildProvenance -ArchivePath $ArchivePath -ArchiveSha256 $ArchiveSha256 -BundlePath $ProvenanceBundlePath `
+                -Repository $Repository -Tag $Tag -Commit $Commit -SignerWorkflow $SignerWorkflow
+            $predicate = Get-PlatformPublicationAttestation -ArchivePath $ArchivePath -ArchiveSha256 $ArchiveSha256 -BundlePath $PublicationBundlePath `
+                -Repository $Repository -Tag $Tag -Commit $Commit -SignerWorkflow $SignerWorkflow -PublisherAppId $PublisherAppId
+            $selection = @{
+                Check = @{ id = $predicate['checkId'] }
+                Witness = @{ receiptSha256 = $predicate['receiptSha256'] }
+            }
+            $witnessEvidence = 'sigstore-publication-predicate'
         }
-        if ($null -eq $total) { $total = $part['total_count'] }
-        if ($part['total_count'] -ne $total) { throw 'Publication check inventory changed during pagination.' }
-        foreach ($check in $part['check_runs']) { $allChecks.Add($check) }
-        if ($allChecks.Count -gt $total) { throw 'Publication check pagination exceeds its declared inventory.' }
-        if ($allChecks.Count -eq $total) { break }
-        if ($part['check_runs'].Count -eq 0) { throw 'Incomplete publication check pagination.' }
+        finally { $archiveLock.Dispose() }
     }
-    $selection = Get-PlatformPublicationWitness -CheckRuns @{ total_count = $total; check_runs = $allChecks } `
-        -PublisherAppId $PublisherAppId -Commit $Commit
+    else {
+        $allChecks = [Collections.Generic.List[object]]::new()
+        $total = $null
+        for ($page = 1; ; $page++) {
+            if ($page -gt 100) { throw 'Publication check pagination exceeds 100 pages.' }
+            $part = & $Read "commits/$Commit/check-runs?filter=all&per_page=100&page=$page"
+            if ($part -isnot [Collections.IDictionary] -or
+                ($part['total_count'] -isnot [long] -and $part['total_count'] -isnot [int]) -or $part['total_count'] -lt 0 -or
+                $part['check_runs'] -isnot [Collections.IList] -or $part['check_runs'].Count -gt 100) {
+                throw 'Invalid publication check pagination response.'
+            }
+            if ($null -eq $total) { $total = $part['total_count'] }
+            if ($part['total_count'] -ne $total) { throw 'Publication check inventory changed during pagination.' }
+            foreach ($check in $part['check_runs']) { $allChecks.Add($check) }
+            if ($allChecks.Count -gt $total) { throw 'Publication check pagination exceeds its declared inventory.' }
+            if ($allChecks.Count -eq $total) { break }
+            if ($part['check_runs'].Count -eq 0) { throw 'Incomplete publication check pagination.' }
+        }
+        $selection = Get-PlatformPublicationWitness -CheckRuns @{ total_count = $total; check_runs = $allChecks } `
+            -PublisherAppId $PublisherAppId -Commit $Commit
+    }
     $reference = & $Read 'git/ref/heads/source-publication/v1'
     if ($reference -isnot [Collections.IDictionary] -or $reference['ref'] -isnot [string] -or
         $reference['ref'] -cne 'refs/heads/source-publication/v1' -or $reference['object'] -isnot [Collections.IDictionary] -or
@@ -221,7 +246,22 @@ function Assert-PlatformPublishedSource {
         Ref = 'refs/heads/source-publication/v1'; Commit = $Commit; PublisherAppId = $PublisherAppId
         CheckId = $selection.Check['id']; ReceiptSha256 = $selection.Witness['receiptSha256']
         ProtectionEvidence = 'active-exact-ref-app-binding'; NoBypassEvidence = 'publisher-attested'
+        WitnessEvidence = $witnessEvidence
     }
 }
 
-Export-ModuleMember -Function Get-PlatformReleaseSourcePolicy, Assert-PlatformPublishedSource
+function New-PlatformPublicationPredicate {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Constructs only an in-memory predicate from read-only verified source evidence.')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Repository,
+        [Parameter(Mandatory)][string] $Commit,
+        [Parameter(Mandatory)][long] $PublisherAppId,
+        [Parameter(Mandatory)][scriptblock] $Read
+    )
+
+    $null = Assert-PlatformPublishedSource -Repository $Repository -Commit $Commit -PublisherAppId $PublisherAppId -Read $Read
+    throw 'Publication operation binding is not verified; refusing to sign.'
+}
+
+Export-ModuleMember -Function Get-PlatformReleaseSourcePolicy, Assert-PlatformPublishedSource, New-PlatformPublicationPredicate

@@ -44,16 +44,32 @@ jobs:
             echo "::error::Tag $TAG moved after the workflow started."
             exit 1
           fi
-          pwsh -NoLogo -NoProfile -File ./tools/Test-PlatformReleaseSource.ps1 -SourcePath . -Repository "$GITHUB_REPOSITORY" -Commit "$commit"
           mkdir -p artifacts
+          pwsh -NoLogo -NoProfile -File ./tools/Test-PlatformReleaseSource.ps1 -SourcePath . -Repository "$GITHUB_REPOSITORY" -Commit "$commit" -PublicationPredicatePath artifacts/publication-predicate.json
+          if [ -f artifacts/publication-predicate.json ]; then
+            publisher_app_id="$(pwsh -NoLogo -NoProfile -Command '(Get-Content -LiteralPath artifacts/publication-predicate.json -Raw | ConvertFrom-Json).publisherAppId')"
+            echo "publication=true" >> "$GITHUB_OUTPUT"
+            echo "publisher-app-id=$publisher_app_id" >> "$GITHUB_OUTPUT"
+          else
+            echo "publication=false" >> "$GITHUB_OUTPUT"
+          fi
           asset="artifacts/platform-${TAG}.zip"
           git archive --format=zip --prefix="devsecops-platform-${TAG#v}/" --output="$asset" "$commit"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "asset=$asset" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
+        id: provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.build.outputs.asset }}
+      - name: Attest published source
+        id: publication
+        if: steps.build.outputs.publication == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.build.outputs.asset }}
+          predicate-path: artifacts/publication-predicate.json
+          predicate-type: https://github.com/msucharda/devsecops-platform/attestations/source-publication/v1
       - name: Publish release
         shell: pwsh
         env:
@@ -61,6 +77,18 @@ jobs:
           TAG: ${{ github.ref_name }}
           COMMIT: ${{ steps.build.outputs.commit }}
           ASSET: ${{ steps.build.outputs.asset }}
+          SOURCE_PUBLICATION: ${{ steps.build.outputs.publication }}
+          PUBLISHER_APP_ID: ${{ steps.build.outputs.publisher-app-id }}
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          PUBLICATION_BUNDLE: ${{ steps.publication.outputs.bundle-path }}
         run: |
-          $result = ./tools/Publish-PlatformRelease.ps1 -Repository $env:GITHUB_REPOSITORY -Tag $env:TAG -Commit $env:COMMIT -AssetPath $env:ASSET
+          $parameters = @{ Repository = $env:GITHUB_REPOSITORY; Tag = $env:TAG; Commit = $env:COMMIT; AssetPath = $env:ASSET }
+          if ($env:SOURCE_PUBLICATION -ceq 'true') {
+            if ($env:PUBLISHER_APP_ID -cnotmatch '\A[1-9][0-9]*\z') { throw 'Missing validated publisher App identity.' }
+            $parameters.PublisherAppId = [long] $env:PUBLISHER_APP_ID
+            $parameters.ProvenanceBundlePath = $env:PROVENANCE_BUNDLE
+            $parameters.PublicationBundlePath = $env:PUBLICATION_BUNDLE
+          }
+          elseif ($env:SOURCE_PUBLICATION -cne 'false') { throw 'Missing validated release source line.' }
+          $result = ./tools/Publish-PlatformRelease.ps1 @parameters
           "Release [$($result.Tag)]($($result.Url)): ``$($result.Asset)`` ``$($result.Digest)``" >> $env:GITHUB_STEP_SUMMARY

@@ -68,6 +68,131 @@ Describe 'Published platform source evidence' {
         $evidence.NoBypassEvidence | Should -BeExactly 'publisher-attested'
     }
 
+    It 'refuses a signing predicate when a published App summary has no verified operation binding' -Tag PublicationPredicate {
+        { New-PlatformPublicationPredicate -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $read } |
+            Should -Throw '*Publication operation binding is not verified; refusing to sign*'
+        $reads | Should -Contain "commits/$commit/check-runs?filter=all&per_page=100&page=1"
+        $reads | Should -Contain "compare/$commit...${commit}?per_page=1"
+    }
+
+    Describe 'Release predicate build boundary' {
+        BeforeEach {
+            $source = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+            $null = New-Item -ItemType Directory -Path $source
+            '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":1}' |
+                Set-Content -LiteralPath (Join-Path $source 'release-source-policy.json')
+            $predicatePath = Join-Path $TestDrive "publication-predicate-$([guid]::NewGuid().ToString('N')).json"
+            Mock git {
+                $global:LASTEXITCODE = 0
+                if ($args -contains 'rev-parse') { return $commit }
+            }
+            $fixturePublicationRead = $read
+            Mock Invoke-WebRequest {
+                param([uri] $Uri)
+                $route = $Uri.PathAndQuery -replace '^/repos/upstream/platform/', ''
+                [pscustomobject]@{ Content = (ConvertTo-Json -InputObject (& $fixturePublicationRead $route) -Depth 100) }
+            }
+            $build = Join-Path $PSScriptRoot '../Test-PlatformReleaseSource.ps1'
+        }
+
+        It 'clears stale signing input and refuses the unimplemented operation binding before signing' -Tag PublicationPredicate {
+            'stale publication predicate' | Set-Content -LiteralPath $predicatePath
+
+            { & $build -SourcePath $source -Repository upstream/platform -Commit $commit -PublicationPredicatePath $predicatePath } |
+                Should -Throw '*Publication operation binding is not verified; refusing to sign*'
+
+            Test-Path -LiteralPath $predicatePath | Should -BeFalse
+            Should -Invoke Invoke-WebRequest -ParameterFilter {
+                -not $Headers.ContainsKey('Authorization') -and $MaximumRedirection -eq 0
+            }
+        }
+
+        It 'removes a stale predicate before rejecting <Case>' -Tag PublicationPredicate -ForEach @(
+            @{ Case = 'an admitted witness'; Change = {
+                $summary = $check.output.summary | ConvertFrom-Json -AsHashtable
+                $summary.phase = 'admitted'
+                $check.output.summary = $summary | ConvertTo-Json -Compress
+            }; Error = '*not published*' }
+            @{ Case = 'a failed witness'; Change = { $check.conclusion = 'failure' }; Error = '*check conclusion*' }
+            @{ Case = 'another publisher App'; Change = { $check.app.id = 2 }; Error = '*Missing or ambiguous publication witness checks*' }
+            @{ Case = 'another source revision'; Change = { $check.head_sha = 'b' * 40 }; Error = '*check head_sha*' }
+            @{ Case = 'another external identity'; Change = { $check.external_id = "platform-source-publication/v1:$('b' * 64)" }; Error = '*external_id*' }
+        ) {
+            'stale signed input must not survive' | Set-Content -LiteralPath $predicatePath
+            . $Change
+
+            { & $build -SourcePath $source -Repository upstream/platform -Commit $commit -PublicationPredicatePath $predicatePath } |
+                Should -Throw $Error
+            Test-Path -LiteralPath $predicatePath | Should -BeFalse
+        }
+
+        It 'keeps legacy main builds outside the new publication attestation protocol' -Tag PublicationPredicate {
+            '{"schemaVersion":1,"line":"main"}' |
+                Set-Content -LiteralPath (Join-Path $source 'release-source-policy.json')
+            'stale publication predicate' | Set-Content -LiteralPath $predicatePath
+
+            $null = & $build -SourcePath $source -Repository upstream/platform -Commit $commit -PublicationPredicatePath $predicatePath
+
+            Test-Path -LiteralPath $predicatePath | Should -BeFalse
+            Should -Invoke Invoke-WebRequest -Times 0
+            Should -Invoke git -Times 1 -Exactly -ParameterFilter {
+                $args -contains 'merge-base' -and $args -contains 'refs/remotes/origin/main'
+            }
+        }
+
+        It 'refuses a directory as predicate output before any validation or deletion' -Tag PublicationPredicate {
+            $null = New-Item -ItemType Directory -Path $predicatePath
+            { & $build -SourcePath $source -Repository upstream/platform -Commit invalid -PublicationPredicatePath $predicatePath } |
+                Should -Throw '*regular predicate output file*'
+            (Get-Item -LiteralPath $predicatePath).PSIsContainer | Should -BeTrue
+            Should -Invoke git -Times 0
+            Should -Invoke Invoke-WebRequest -Times 0
+        }
+
+        It 'refuses reparse-point predicate output without following or deleting it' -Tag PublicationPredicate {
+            'preserved' | Set-Content -LiteralPath $predicatePath
+            $fixtureOutput = Get-Item -LiteralPath $predicatePath
+            $fixtureOutput | Add-Member -MemberType NoteProperty -Name Attributes -Value ([IO.FileAttributes]::ReparsePoint) -Force
+            Mock Get-Item { $fixtureOutput } -ParameterFilter { $LiteralPath -ceq $predicatePath }
+            Mock Remove-Item { throw 'Must not remove a link.' }
+
+            { & $build -SourcePath $source -Repository upstream/platform -Commit invalid -PublicationPredicatePath $predicatePath } |
+                Should -Throw '*regular predicate output file*'
+            [IO.File]::ReadAllText($predicatePath).Trim() | Should -BeExactly 'preserved'
+            Should -Invoke git -Times 0
+            Should -Invoke Remove-Item -Times 0
+        }
+
+        It 'refuses a dangling predicate link even when Test-Path cannot see its target' -Tag PublicationPredicate {
+            # A dangling filesystem entry is modeled without granting symlink-creation privileges.
+            $fixtureDangling = [IO.FileInfo]::new($predicatePath)
+            $fixtureDangling | Add-Member -MemberType NoteProperty -Name Attributes -Value ([IO.FileAttributes]::ReparsePoint) -Force
+            $fixtureDangling | Add-Member -MemberType NoteProperty -Name PSIsContainer -Value $false
+            Mock Test-Path { $false } -ParameterFilter { $LiteralPath -ceq $predicatePath }
+            Mock Get-Item { $fixtureDangling } -ParameterFilter { $LiteralPath -ceq $predicatePath }
+
+            { & $build -SourcePath $source -Repository upstream/platform -Commit invalid -PublicationPredicatePath $predicatePath } |
+                Should -Throw '*regular predicate output file*'
+            Should -Invoke git -Times 0
+        }
+
+        It 'does not expose a partial signing predicate after a filesystem write failure' -Tag PublicationPredicate {
+            Mock New-PlatformPublicationPredicate { @{ schemaVersion = 1 } }
+            Mock Set-Content {
+                param([string] $LiteralPath)
+                [IO.File]::WriteAllText($LiteralPath, '{"schemaVersion":')
+                throw 'Injected predicate write failure.'
+            }
+
+            { & $build -SourcePath $source -Repository upstream/platform -Commit $commit -PublicationPredicatePath $predicatePath } |
+                Should -Throw '*Injected predicate write failure*'
+
+            Test-Path -LiteralPath $predicatePath | Should -BeFalse
+            @(Get-ChildItem -LiteralPath (Split-Path $predicatePath -Parent) -Filter "$([IO.Path]::GetFileName($predicatePath)).*.new").Count |
+                Should -Be 0
+        }
+    }
+
     It 'rejects a missing or expired witness even when publication ref and ancestry remain valid' -Tag WitnessRetention {
         (Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $read).Commit |
             Should -BeExactly $commit
@@ -78,6 +203,48 @@ Describe 'Published platform source evidence' {
             Should -Throw '*Missing or ambiguous publication witness checks*'
         $reads | Should -Contain "commits/$commit/check-runs?filter=all&per_page=100&page=1"
         $reads | Should -Not -Contain "compare/$commit...${commit}?per_page=1"
+    }
+
+    It 'verifies retained provenance and publication without reading an expired historical check' -Tag DurablePublication {
+        Import-Module (Join-Path $PSScriptRoot '../PublicationAttestation.psm1')
+        $archivePath = Join-Path $TestDrive 'platform-v1.2.3.zip'
+        [IO.File]::WriteAllText($archivePath, 'hello')
+        $provenanceBundlePath = Join-Path $TestDrive 'provenance.json'
+        $publicationBundlePath = Join-Path $TestDrive 'publication.json'
+        '{}' | Set-Content -LiteralPath $provenanceBundlePath
+        '{}' | Set-Content -LiteralPath $publicationBundlePath
+        $fixtureVerifiedProvenance = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/attestation/provenance-verification.json') -Raw |
+            ConvertFrom-Json -AsHashtable -NoEnumerate).body
+        $fixtureVerifiedPublication = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/attestation/publication-verification.json') -Raw |
+            ConvertFrom-Json -AsHashtable -NoEnumerate).body
+        $fixtureVerifiedPublication[0].verificationResult.statement.predicate.commit = $commit
+        $fixtureVerifiedPublication[0].verificationResult.statement.predicate.publisherAppId = 1
+        $fixtureVerifiedPublication[0].verificationResult.statement.predicate.checkId = 4
+        $fixtureVerifiedPublication[0].verificationResult.statement.predicate.receiptSha256 = 'a' * 64
+        $fixtureVerifiedPublication[0].verificationResult.statement.predicate.externalId = "platform-source-publication/v1:$('a' * 64)"
+        Mock gh -ModuleName PublicationAttestation {
+            $global:LASTEXITCODE = 0
+            if ($args -contains 'https://slsa.dev/provenance/v1') {
+                return ConvertTo-Json -InputObject $fixtureVerifiedProvenance -Depth 30
+            }
+            return ConvertTo-Json -InputObject $fixtureVerifiedPublication -Depth 30
+        }
+        $checks.total_count = 0
+        $checks.check_runs = @()
+
+        $evidence = Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $read `
+            -ArchivePath $archivePath -ArchiveSha256 '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824' `
+            -ProvenanceBundlePath $provenanceBundlePath -PublicationBundlePath $publicationBundlePath `
+            -Tag v1.2.3 -SignerWorkflow upstream/platform/.github/workflows/release.yml
+
+        $evidence.CheckId | Should -Be 4
+        $evidence.ReceiptSha256 | Should -BeExactly ('a' * 64)
+        $evidence.WitnessEvidence | Should -BeExactly 'sigstore-publication-predicate'
+        $evidence.ProtectionEvidence | Should -BeExactly 'active-exact-ref-app-binding'
+        $reads | Should -Not -Contain "commits/$commit/check-runs?filter=all&per_page=100&page=1"
+        $reads | Should -Contain 'rulesets/42'
+        $reads | Should -Contain "compare/$commit...${commit}?per_page=1"
+        Should -Invoke gh -ModuleName PublicationAttestation -Times 2 -Exactly
     }
 
     It 'rejects a scalar valid binding rule at the helper list guard' -Tag BindingRuleType {

@@ -17,6 +17,7 @@
         'OrganizationScope.Tests.ps1'
         'PowerShellAnalysisCache.Tests.ps1'
         'PlatformReleaseSource.Tests.ps1'
+        'PublicationAttestation.Tests.ps1'
         'PublicationSource.Tests.ps1'
         'PublicationWitness.Tests.ps1'
         'TerraformTestProcess.Tests.ps1'

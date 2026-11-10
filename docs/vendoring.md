@@ -147,18 +147,47 @@ jediný přesný include bez excludes, strict required checks a vynucení také
 při vytvoření ref. Branch rules načítá přes pevné stránkované cesty až
 po prázdnou stránku, nejvýše 100 stránek po 100 položkách. Pozdější chyba,
 nadměrná stránka nebo další binding nesmějí změnit neúplný inventář v úspěch.
-Potom načte všechny stránky check runs přesného SHA
+Producer před podpisem načte všechny stránky check runs přesného SHA
 s `filter=all`. Duplicitní ID, více odpovídajících checks, neúplný inventář,
 změněný počet nebo více než 100 stránek znamenají chybu; nástroj nevybírá
 nejnovější check podle jména.
 
-Consumer přijme jen `completed/success` check připnuté App s uzavřeným JSON
+Producer přijme jen `completed/success` check připnuté App s uzavřeným JSON
 v `output.summary`: `schemaVersion`, `kind`, `phase`, `ref`, `commit`
 a `receiptSha256`. Verze je `1`, kind je `platform-source-publication`
 a přijatelná phase je pouze `published`. Ref a commit musí přesně odpovídat
 kontraktu a SHA release. `external_id` musí být
 `platform-source-publication/v1:<receiptSha256>`. Digest má 64 lowercase hex
 znaků. Samotné obecné CI success ani phase `admitted` nestačí.
+
+Release nové větve musí vedle `platform-<tag>.zip` uchovat dvě attestace:
+`platform-<tag>.provenance.sigstore.json` a
+`platform-<tag>.publication.sigstore.json`. Druhá používá predicate type
+`https://github.com/msucharda/devsecops-platform/attestations/source-publication/v1`.
+Uzavřený predicate obsahuje `schemaVersion`, `kind`, `phase`, `repository`,
+`ref`, `commit`, `publisherAppId`, `checkId`, `context`, `externalId`
+a `receiptSha256`. `New-PlatformPublicationPredicate` je vytvoří pouze
+ze skutečně ověřeného published checku. Certifikát autentizuje signer workflow,
+nikoli App; pravdivost App tvrzení závisí na tomto produceru a jeho chráněném běhu.
+
+Consumer stáhne oba přesně pojmenované release assets, ověří jejich stav a digest
+a vyžaduje publikovaný release, nikoli draft. Obě attestace musí ověřit stejný
+ZIP a jeho původně stažený SHA-256. `PublicationAttestation.psm1` používá
+výchozí veřejné trust roots CLI (Sigstore Public Good a GitHub Sigstore) a
+[`gh attestation verify`](https://cli.github.com/manual/gh_attestation_verify):
+source repository, tag a SHA, signer SHA, přesnou certificate identity
+`https://github.com/<signer-workflow>@refs/tags/<tag>`, GitHub OIDC issuer
+a zákaz self-hosted runneru. Samotný exit code `0` nestačí: consumer následně
+ověří právě jeden in-toto statement, subject a uzavřený published predicate.
+Izoluje přitom hostový a credential kontext CLI a po volání jej obnoví.
+
+Původní lookup build provenance přes attestation API aktuálního repozitáře
+zůstává povinný. Lokální bundle jej nenahrazuje: samotné offline ověření
+podle dokumentace CLI nerozpozná přejmenování ani opětovné použití názvu
+repozitáře. Nová cesta odstraňuje pouze závislost consumeru na čtení historického
+App checku, nikoli ostatní dosavadní kontroly původu. Chybějící či neplatná
+nová attestace nesmí přejít na starý check protokol ani na legacy `main`.
+Platný původní release bez nové deklarace zachovává dosavadní cestu.
 
 Consumer nezávisle porovná commit release s pevným, právě přečteným SHA
 publikační ref a znovu přečte ref před návratem. Změnu ref odmítne.
@@ -176,13 +205,17 @@ od 1. října 2026 zahrnují check suites, check runs a commit statuses,
 včetně kontrol externích integrací. Výchozí retence je 90 dní;
 veřejný repozitář dovoluje 1–90 dní, soukromý 1–400 dní.
 Jde o limity služby, nikoli ověřenou konfiguraci konkrétního repozitáře.
-Po smazání svědectví consumer release odmítne i při zachovaném tagu,
-assetu, publikační ref a ancestry. Chybějící check nenahradí obecným CI
-success ani přechodem na legacy autoritu. Současný protokol proto
-nezaručuje ověřitelnost release po celou dobu jeho uchování.
-Tato dostupnostní mez zůstává otevřená; dokumentace ani negativní test
-nejsou opravou pozitivní cesty. Trvalé svědectví nebo jeho obnova
-vyžadují samostatně schválený protokol a nejsou implementované.
+Producer proto musí check ověřit před podpisem trvalého predicate.
+Consumer později ověřuje podepsané tvrzení a aktuální autoritu, nikoli
+dostupnost historického checku. Podpis neprokazuje, že původní check
+nebyl později změněn nebo smazán.
+
+**Rozhodnutí uživatele z 10. listopadu 2026:** „Trvalý podepsaný důkaz;
+pozdější změna historického checku sama release nezneplatní (doporučeno)“.
+Rozhodnutí schvaluje právě tuto změnu invalidace. Ověření obsahu, původu,
+podpisu, aktuální App/ruleset vazby a revize zůstává povinné.
+Nezavádí obnovovací ani nový revokační protokol a není důkazem funkčnosti
+nebo souhlasem s živou publikací.
 
 No-bypass skutečné publikace je **publisher-attested** (doložený publisherem),
 nikoli nezávislý aktuální audit bypass listu anonymním consumerem.
@@ -217,10 +250,31 @@ nejde o její potvrzení ani downgrade na `admitted`. Neexistuje vstup
 zůstává samostatnou důkazní mezerou vedle chybějící chráněné execution
 identity publisheru. Ztracená odpověď nebo exit code `0` nenahrazují readback.
 
+**Dispozice koordinátora z 10. listopadu 2026:** pozitivní producer může
+místo nedokumentovaného serverového check-ID joinu použít uzavřený
+App-authenticated operation record stejného checku. Samostatná publisher App
+musí ověřit oprávnění a pravidla, přesný before→after ref, skutečnou
+active/pass/no-bypass rule suite a vazbu téhož `checkId` a receipt.
+Jde výhradně o publisher-attested důkaz, nikoli server-attested join.
+Resume nesmí přijmout jinou operaci, check nebo suite ani vybrat latest podle
+jména. Nečitelný bypass stav, ztracené ACK a cizí souběžný zápis vyžadují
+vlastní odmítnutí nebo doloženou obnovu původní operace.
+Tato dispozice dovoluje implementaci; neprokazuje chráněnou execution identity,
+custodii credentials ani živé splnění B.
+
+**Současné omezení produceru:** operation record ani jeho ověřovač nejsou
+implementované. `New-PlatformPublicationPredicate` proto po základních kontrolách
+vždy odmítne připravit podpis s chybou
+`Publication operation binding is not verified; refusing to sign.`
+Samotné App summary, aktuální ruleset a ancestry nejsou důkazem konkrétní operace.
+Release guard před kontrolami odstraní starý predicate; odmítnutí nevytvoří nový
+predicate ani nespustí podpis. Pozitivní `ghe-publication` build tím není dokončený.
+
 Veřejný build volá `Test-PlatformReleaseSource.ps1` před archivací. Nástroj
 ověří přesný checkout a nezměněnou deklaraci včetně její absence.
-Legacy release zachovává původní Git ancestry do `origin/main`;
-publikovaná varianta používá tutéž anonymní kontrolu jako import.
+Legacy release zachovává původní Git ancestry do `origin/main` a nevytváří
+publication predicate. Publikovaná varianta navíc vyžaduje dosud nedokončené
+ověření konkrétní operace; bez něj build skončí před archivací a podpisem.
 Deklarace zůstává běžnou součástí assetu, raw markeru i transformovaného
 stromu. Výstupy `SourcePath`, `Commit` a `Sha256` se nemění.
 
@@ -229,6 +283,42 @@ historie ani chráněnou vazbu autorizovaného preflightu na App writer.
 Nezakládají publikační App a nedokládají živý release candidate.
 Tyto podmínky [ticketu B](https://github.com/msucharda/devsecops-platform/issues/260)
 zůstávají před přepnutím povinné; zdrojová implementace není jejich akceptací.
+
+### Obnova veřejného release workflow
+
+Po přerušení spusť znovu **celé workflow** stejného release tagu, nikoli jen
+neúspěšný job. Nový pokus musí znovu ověřit zdroj, vytvořit ZIP a obě attestace.
+Samotný publisher nedoplňuje chybějící důkaz ze starého běhu a nesmí při
+chybějících vstupech nové cesty publikovat legacy release.
+
+Event SHA označuje revizi původní události. Run a attempt označují konkrétní
+běh a jeho pokus; nový pokus nemění původní událost. Checkout SHA označuje
+skutečně sestavenou revizi. Release guard vyžaduje jeho přesnou shodu
+s commitem předaným buildu a s aktuálním tagem. Run ID, attempt ani původní
+event SHA samy neprokazují shodu po přesunutí tagu a nenahrazují tuto kontrolu.
+Přesunutý tag vyžaduje zastavení a samostatné rozhodnutí, nikoli převzetí
+jiné revize v původním release.
+
+Publisher vyhledá právě jeden release stejného tagu včetně draftu.
+Již uložené proof assets znovu stáhne, ověří jejich digest, podpis, původ
+a celý uzavřený publication predicate. Platný původní proof zachová i tehdy,
+když nový pokus vytvořil jiné signature bytes. Cizí `checkId` nebo receipt
+nesmí převzít. Chybějící či nedokončený upload v draftu může dokončit;
+publikovaný release nikdy nemění.
+
+U draftu publisher odstraní nedokončený proof asset se stavem `open` nebo
+`starter` a upload zopakuje. Upload dokumentace pro REST `2026-03-10`
+[výslovně popisuje `starter` po upstream HTTP 502](https://docs.github.com/en/rest/releases/assets?apiVersion=2026-03-10#upload-a-release-asset),
+přestože schema release assetu uvádí pouze `uploaded` a `open`.
+Tato dokumentovaná odlišnost platí jen pro obnovu draftu; `starter` nikdy
+neprojde jako dokončený proof ani jako asset publikovaného release.
+
+Před finalizací publisher znovu přečte release podle pevného ID, vyžaduje
+úplný inventář tří přesných assets, ověří oba vzdálené proofs a znovu přečte
+tag. Změněný draft stav, obsah nebo tag finalizaci zastaví. Po ztraceném ACK
+finalizace nový celý pokus buď ověří tentýž publikovaný release beze změny,
+nebo oznámí konkrétní rozpor. Obnova netvoří nový writer, credential ani
+oprávnění a není souhlasem s živým opakováním.
 
 ## Diff, oprávnění a hranice cloudového planu
 

@@ -28,13 +28,39 @@ function Test-AttestationRequirementMet {
 
 # security-check: vendoring-platform-source-mode
 function Assert-VendoringSourceMode {
-    param([string] $Mode, [bool] $Required, [string] $ProtectedBranch, [string] $PublicationLine, [string] $ApiUrl)
+    param([string] $Mode, [bool] $Required, [string] $ProtectedBranch, [string] $PublicationLine, [string] $ApiUrl,
+        [string] $Repository, [string] $SignerWorkflow)
     if ($Mode -ceq 'PlatformReleaseV1') {
         if (-not $Required) { throw 'PlatformReleaseV1 requires verified release attestation.' }
         if ($ProtectedBranch -cne 'main') { throw 'PlatformReleaseV1 does not accept a protected branch override.' }
+        if ($SignerWorkflow -cne "$Repository/.github/workflows/release.yml") {
+            throw 'PlatformReleaseV1 requires the exact release signer workflow.'
+        }
         if ($PublicationLine -eq 'ghe-publication' -and ([uri] $ApiUrl).Host -ne 'api.github.com') {
             throw 'GHE publication releases require the public GitHub.com source API.'
         }
+    }
+}
+
+# security-check: vendoring-retained-release-state
+function Assert-VendoringRetainedRelease {
+    param([Collections.IDictionary] $Release)
+    if ($Release['draft'] -isnot [bool] -or $Release['draft']) {
+        throw 'Retained publication evidence must belong to a published release.'
+    }
+}
+
+# security-check: vendoring-platform-publication-evidence
+function Assert-VendoringPublicationEvidence {
+    param([string] $Line, [AllowNull()][Collections.IDictionary] $Bundles, [string] $AssetName, [string] $Tag)
+    if ($Line -eq 'ghe-publication') {
+        if ($null -eq $Bundles) {
+            throw 'GHE publication releases require both retained attestation bundles; no legacy fallback.'
+        }
+        if ($AssetName -cne "platform-$Tag.zip") { throw 'GHE publication releases require the exact ZIP asset.' }
+    }
+    elseif ($null -ne $Bundles) {
+        throw 'Legacy main releases cannot claim the new publication protocol.'
     }
 }
 
@@ -172,7 +198,8 @@ if (([uri] $ApiUrl).Scheme -cne 'https' -or
 if ($InstallationToken -and $InstallationToken -cnotmatch '^ghs_') {
     throw 'Source credentials must be an installation token, not a personal PAT or OAuth token.'
 }
-Assert-VendoringSourceMode -Mode $SourcePolicy -Required $RequireAttestation.IsPresent -ProtectedBranch $ProtectedBranch
+Assert-VendoringSourceMode -Mode $SourcePolicy -Required $RequireAttestation.IsPresent -ProtectedBranch $ProtectedBranch `
+    -Repository $Repository -SignerWorkflow $SignerWorkflow
 if (Test-Path -LiteralPath $WorkPath) { throw "Work path '$WorkPath' already exists." }
 $headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
 if ($InstallationToken) { $headers.Authorization = "Bearer $InstallationToken" }
@@ -214,6 +241,21 @@ $downloadHeaders = @{} + $headers
 if ($AssetName) { $downloadHeaders.Accept = 'application/octet-stream' }
 $null = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-WebRequest -Uri $downloadUrl -Headers $downloadHeaders -OutFile $archivePath }
 $digest = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+$attestation = 'not-present'
+$retainedBundles = $null
+if ($SourcePolicy -ceq 'PlatformReleaseV1' -and $AssetName) {
+    $bundleNames = @("platform-$Tag.provenance.sigstore.json", "platform-$Tag.publication.sigstore.json")
+    $retainedAssets = @($release.assets | Where-Object { $_.name -iin $bundleNames })
+    if ($retainedAssets.Count -gt 0) {
+        Assert-VendoringSourceMode -Mode $SourcePolicy -Required $RequireAttestation.IsPresent -ProtectedBranch $ProtectedBranch `
+            -Repository $Repository -SignerWorkflow $SignerWorkflow `
+            -PublicationLine 'ghe-publication' -ApiUrl $ApiUrl
+        $releaseDocument = $release | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -NoEnumerate
+        Assert-VendoringRetainedRelease -Release $releaseDocument
+        Import-Module (Join-Path $PSScriptRoot 'PublicationAttestation.psm1')
+        $retainedBundles = Get-PlatformReleaseEvidence -Release $releaseDocument -Repository $Repository -Tag $Tag -Directory $WorkPath
+    }
+}
 # GitHub.com returns 404 for an unrecorded digest, but private access failures can look identical.
 $digestUri = "$base/attestations/sha256:$digest"
 $pageHeaders = $null
@@ -236,7 +278,6 @@ catch {
     Write-Warning 'Public GitHub.com source has no attestation for the downloaded digest (404). Provenance is NOT VERIFIED.'
     $response = @{ attestations = @() }
 }
-$attestation = 'not-present'
 $pageUri = $digestUri
 $visited = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $null = $visited.Add(([uri] $digestUri).AbsoluteUri)
@@ -341,7 +382,9 @@ if ($SourcePolicy -ceq 'PlatformReleaseV1') {
     Import-Module (Join-Path $PSScriptRoot 'PublicationSource.psm1')
     $policy = Get-PlatformReleaseSourcePolicy -SourcePath $sourcePath
     Assert-VendoringSourceMode -Mode $SourcePolicy -Required $RequireAttestation.IsPresent -ProtectedBranch $ProtectedBranch `
+        -Repository $Repository -SignerWorkflow $SignerWorkflow `
         -PublicationLine $policy.Line -ApiUrl $ApiUrl
+    Assert-VendoringPublicationEvidence -Line $policy.Line -Bundles $retainedBundles -AssetName $AssetName -Tag $Tag
     if ($policy.Line -ceq 'main') {
         $comparison = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-RestMethod -Uri "$base/compare/main...${commit}?per_page=1" -Headers $headers }
         if (-not (Test-CommitOnBranch -Comparison $comparison -Commit $commit)) {
@@ -358,7 +401,9 @@ if ($SourcePolicy -ceq 'PlatformReleaseV1') {
             }
             return ,($response.Content | ConvertFrom-Json -AsHashtable -NoEnumerate)
         }
-        $null = Assert-PlatformPublishedSource -Repository $Repository -Commit $commit -PublisherAppId $policy.PublisherAppId -Read $readPublication
+        $null = Assert-PlatformPublishedSource -Repository $Repository -Commit $commit -PublisherAppId $policy.PublisherAppId -Read $readPublication `
+            -ArchivePath $archivePath -ArchiveSha256 $digest -ProvenanceBundlePath $retainedBundles.Provenance -PublicationBundlePath $retainedBundles.Publication `
+            -Tag $Tag -SignerWorkflow $SignerWorkflow
     }
 }
 $result = [pscustomobject]@{

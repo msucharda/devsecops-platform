@@ -56,7 +56,8 @@
     # Source CI run 40880936626: 4.45 seconds, rounded up.
     'CodeSecurity.Tests.ps1' = 5
     'DriftIssue.Tests.ps1' = 4
-    'GitHubApiFixture.Tests.ps1' = 3
+    # Local Windows file-suite XML, 2026-11-10: 17.4193 seconds, not a Linux benchmark.
+    'GitHubApiFixture.Tests.ps1' = 18
     # Local Linux file-suite XML, 2026-11-10: 1.5658 seconds after moving full-inventory coverage to Integration.
     'SourceCi.Tests.ps1' = 2
     'DeadlineHttp.Tests.ps1' = 3
@@ -75,10 +76,12 @@
     'InstallToolDependencies.Tests.ps1' = 2
     'CredentialContract.Tests.ps1' = 2
     # Local Windows file-suite XML, 2026-11-10; rounded up, not a Linux benchmark.
-    'VendoringSource.Tests.ps1' = 10
+    'VendoringSource.Tests.ps1' = 34
     'DeploymentRelease.Tests.ps1' = 26
-    'PlatformReleaseSource.Tests.ps1' = 3
-    'PublicationSource.Tests.ps1' = 5
+    'PlatformReleaseSource.Tests.ps1' = 4
+    'PublicationSource.Tests.ps1' = 18
+    'PublicationAttestation.Tests.ps1' = 12
+    'PlatformRelease.Tests.ps1' = 15
     'PublicationWitness.Tests.ps1' = 3
     'ModuleSelection.Tests.ps1' = 2
     'LocalCiGate.Unit.Tests.ps1' = 5

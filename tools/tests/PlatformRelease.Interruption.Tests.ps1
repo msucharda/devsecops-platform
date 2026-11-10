@@ -69,6 +69,36 @@ Describe 'Platform release interruption harness' -Tag 'Interruption' {
         @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
     }
 
+    It 'recovers the ZIP and both retained proofs after every upload or finalization interruption' {
+        [IO.File]::WriteAllText($asset, 'hello', [Text.UTF8Encoding]::new($false))
+        $arguments.PublisherAppId = 7
+        $arguments.ProvenanceBundlePath = Join-Path $TestDrive 'provenance.sigstore.json'
+        $arguments.PublicationBundlePath = Join-Path $TestDrive 'publication.sigstore.json'
+        [IO.File]::WriteAllText($arguments.ProvenanceBundlePath, '{"proof":"build"}')
+        [IO.File]::WriteAllText($arguments.PublicationBundlePath, '{"proof":"publication"}')
+        # Primary-annotated verification projections isolate crypto I/O, not release state or recovery.
+        $verifiedBuild = (Get-Content (Join-Path $PSScriptRoot 'fixtures/attestation/provenance-verification.json') -Raw | ConvertFrom-Json -AsHashtable).body
+        $verifiedPublication = (Get-Content (Join-Path $PSScriptRoot 'fixtures/attestation/publication-verification.json') -Raw | ConvertFrom-Json -AsHashtable).body
+        $verifiedBuild[0].verificationResult.statement.subject[0].name = 'platform-v1.2.0.zip'
+        $verifiedPublication[0].verificationResult.statement.subject[0].name = 'platform-v1.2.0.zip'
+        $verifiedPublication[0].verificationResult.statement.predicate.repository = 'octo/devsecops-platform'
+        Mock gh -ModuleName PublicationAttestation {
+            $global:LASTEXITCODE = 0
+            $projection = if ($args -contains 'https://slsa.dev/provenance/v1') { ,$verifiedBuild } else { ,$verifiedPublication }
+            ConvertTo-Json -InputObject $projection -Depth 30 -Compress
+        }
+        Mock Invoke-WebRequest -ModuleName PublicationAttestation {
+            param([uri] $Uri, [string] $OutFile)
+            & $cloudTransport -Uri $Uri -OutFile $OutFile
+        }
+
+        $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
+
+        $report = Format-InterruptionResult -Name 'Publish-PlatformRelease.ps1 (retained proofs)' -Result $result
+        Write-Information $report -InformationAction Continue
+        @($result | Where-Object { -not $_.Passed }).Count | Should -Be 0 -Because $report
+    }
+
     It 'recovers from an interruption at every mutating step of a resumed draft with a stale asset' {
         $reset = {
             $cloud.releases.Clear()

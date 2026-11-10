@@ -1,0 +1,40 @@
+{
+  "source": {
+    "documentation": "https://cli.github.com/manual/gh_attestation_verify",
+    "cliVersion": "2.102.1",
+    "statementSchema": "https://github.com/in-toto/attestation/blob/v1.1.1/spec/v1/statement.md",
+    "note": "The documented --format json projection used by the policy reader. Tests stub gh verification; this is not a cryptographically valid bundle and does not prove signature verification."
+  },
+  "body": [
+    {
+      "attestation": {},
+      "verificationResult": {
+        "statement": {
+          "_type": "https://in-toto.io/Statement/v1",
+          "subject": [
+            {
+              "name": "platform-v1.2.3.zip",
+              "digest": {
+                "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+              }
+            }
+          ],
+          "predicateType": "https://github.com/msucharda/devsecops-platform/attestations/source-publication/v1",
+          "predicate": {
+            "schemaVersion": 1,
+            "kind": "platform-source-publication",
+            "phase": "published",
+            "repository": "upstream/platform",
+            "ref": "refs/heads/source-publication/v1",
+            "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "publisherAppId": 7,
+            "checkId": 9,
+            "context": "GHE accepted source",
+            "externalId": "platform-source-publication/v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "receiptSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      }
+    }
+  ]
+}

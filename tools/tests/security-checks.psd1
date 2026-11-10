@@ -4,8 +4,44 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'platform-attestation-verification'
+            Tests = @(@{
+                Path = 'tools/tests/PublicationAttestation.Tests.ps1'
+                FullName = 'Durable publication attestation*'
+            })
+        }
+        @{
+            Name = 'platform-attested-publication-predicate'
+            Tests = @(@{
+                Path = 'tools/tests/PublicationAttestation.Tests.ps1'
+                FullName = 'Durable publication attestation*'
+            })
+        }
+        @{
+            Name = 'platform-retained-attestation-assets'
+            Tests = @(@{
+                Path = 'tools/tests/PublicationAttestation.Tests.ps1'
+                FullName = 'Retained release attestation bundles*'
+            })
+        }
+        @{
+            Name = 'platform-publication-predicate-output'
+            Tests = @(@{ Path = 'tools/tests/PublicationSource.Tests.ps1'; FullName = '*Release predicate build boundary*' })
+        }
+        @{
             Name = 'platform-release-build-boundary'
             Tests = @(@{ Path = 'tools/tests/PlatformReleaseSource.Tests.ps1'; FullName = 'Platform release source build boundary*' })
+        }
+        @{
+            Name = 'vendoring-retained-release-state'
+            Tests = @(@{
+                Path = 'tools/tests/VendoringSource.Tests.ps1'
+                FullName = @('*retained evidence from a release whose draft state*', '*imports the retained publication protocol*')
+            })
+        }
+        @{
+            Name = 'vendoring-platform-publication-evidence'
+            Tests = @(@{ Path = 'tools/tests/VendoringSource.Tests.ps1'; FullName = 'Tagged vendoring source and attestation policy*' })
         }
         @{
             Name = 'vendoring-platform-source-mode'
@@ -590,9 +626,21 @@
             )
         }
         @{
+            Name = 'release-retained-input'
+            Tests = @(@{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*Retained platform release publication*', '*publishes a <Kind> release*') })
+        }
+        @{
+            Name = 'release-retained-publication-binding'
+            Tests = @(@{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = '*Retained platform release publication*' })
+        }
+        @{
+            Name = 'release-asset-inventory'
+            Tests = @(@{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*Retained platform release publication*', '*published release with different content*', '*publish response that does not match*', '*identical published release*') })
+        }
+        @{
             Name = 'release-published-state'
             Tests = @(
-                @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*published release with different content*', '*publish response that does not match*', '*identical published release*') }
+                @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*published release with different content*', '*publish response that does not match*', '*identical published release*', '*Retained platform release publication*') }
             )
         }
         @{
@@ -1066,6 +1114,11 @@
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
+        @{
+            Mutant = 'Assert-RetainedReleaseEvidence: operator ''-cne'' -> -ine in ''$remotePredicate[$key] -cne $Predicate[$key]''#1'
+            Reason = 'Equivalent for the closed v1 predicates: both have already passed Get-PlatformPublicationAttestation against identical repository, commit, App and signer pins. Fixed string fields are exact; the only variable receipt is lowercase hex and check IDs are integral. No two accepted values differ only by case. PublicationAttestation.Tests.ps1 separately rejects an uppercase receipt before this comparison.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/265'
+        }
         @{
             Mutant = 'Test-SecurityManagerAssignment: operator ''-ceq'' -> -ieq in ''$entry[''type''] -ceq ''enterprise''''#1'
             Reason = 'Equivalent mutant: the preceding scalar-string and case-sensitive enum guards permit only the exact values organization and enterprise.'
