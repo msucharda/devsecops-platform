@@ -21,15 +21,15 @@ $arguments = Get-Content -LiteralPath $ArgumentsPath -Raw | ConvertFrom-Json -As
 if ($Mode -ceq 'first') {
     $move = @(Select-String -LiteralPath $SnapshotCommand -SimpleMatch '[IO.Directory]::Move($staging, $Destination)')
     if ($move.Count -ne 1) { throw 'Fixture requires one atomic snapshot publication boundary.' }
-    $global:fixtureSnapshotSyncRoot = $SyncRoot
-    $breakpoint = Set-PSBreakpoint -Script $SnapshotCommand -Line $move[0].LineNumber -Action {
-        [IO.File]::WriteAllText((Join-Path $global:fixtureSnapshotSyncRoot 'first-staged'), '')
+    $barrierAction = {
+        [IO.File]::WriteAllText((Join-Path $SyncRoot 'first-staged'), '')
         $timer = [Diagnostics.Stopwatch]::StartNew()
-        while (-not [IO.File]::Exists((Join-Path $global:fixtureSnapshotSyncRoot 'release-first'))) {
+        while (-not [IO.File]::Exists((Join-Path $SyncRoot 'release-first'))) {
             if ($timer.Elapsed.TotalSeconds -ge 45) { throw 'First publisher release timed out.' }
             Start-Sleep -Milliseconds 20
         }
-    }
+    }.GetNewClosure()
+    $breakpoint = Set-PSBreakpoint -Script $SnapshotCommand -Line $move[0].LineNumber -Action $barrierAction
     try { $null = & $SnapshotCommand @arguments }
     finally { Remove-PSBreakpoint -Breakpoint $breakpoint }
     [IO.File]::WriteAllText((Join-Path $SyncRoot 'first-complete'), '')
