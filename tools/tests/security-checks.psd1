@@ -1302,6 +1302,11 @@
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
         @{
+            Mutant = 'Assert-DevelopmentControlDesignation: operator ''-cnotin'' -> -inotin in ''$State.TokenJournalPhase -cnotin @(''absent'', ''clear'', ''retired'')''#1'
+            Reason = 'Equivalent: the protected reader returns literal absent for journal-free v1 or canonical lowercase phases from the strict journal reader for v2; caller-supplied case aliases cannot reach this guard.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
             Mutant = 'Write-DevelopmentTokenEvent: operator ''-cne'' -> -ine in ''$contextValue.authorizationRevision -cne $ExpectedHead''#1'
             Reason = 'Equivalent: the context parser and caller-head guard independently require lowercase full hexadecimal SHAs.'
             Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'

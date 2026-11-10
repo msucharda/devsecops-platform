@@ -58,7 +58,7 @@ function Get-DeploymentApplySummary {
     if ($Needs['approve_apply']['result'] -isnot [string] -or $Needs['approve_apply']['result'] -cne 'success') { throw 'Apply INCOMPLETE: shared apply approval did not succeed.' }
     foreach ($node in $nodes) {
         $job = 'apply_' + $node.Replace('-', '_').Replace(':', '_')
-        if (-not $Needs.Contains($job) -or $Needs[$job] -isnot [Collections.IDictionary] -or
+        if ($Needs[$job] -isnot [Collections.IDictionary] -or
             $Needs[$job]['result'] -isnot [string] -or $Needs[$job]['result'] -cne 'success') { throw "Apply INCOMPLETE: $job did not succeed." }
     }
     return 'Apply completed for every selected phase. Manual confirmations are not automatically verified.'
