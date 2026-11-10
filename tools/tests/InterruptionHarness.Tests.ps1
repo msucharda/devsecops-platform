@@ -55,6 +55,124 @@ BeforeAll {
 }
 
 Describe 'Interruption harness' {
+    It 'dispatches nested script requests through scoped transports without Pester call-history overhead' {
+        $nested = Join-Path $TestDrive 'nested.ps1'
+        Set-Content -LiteralPath $nested -Value @'
+param($Address)
+Invoke-RestMethod -Uri $Address -Method POST -Headers @{ test = 'rest' } -Body '{"value":1}' -ContentType application/json -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
+'@
+        $entry = Join-Path $TestDrive 'entry.ps1'
+        Set-Content -LiteralPath $entry -Value @'
+param($Address, $Nested)
+Invoke-WebRequest -Uri $Address -Method PUT -Headers @{ test = 'web' } -Body '{"value":2}' -ContentType application/json -SkipHttpErrorCheck -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
+& $Nested -Address $Address
+gh fixture-argument
+'@
+        Mock Invoke-WebRequest { throw 'Unexpected Pester web dispatcher.' }
+        Mock Invoke-RestMethod { throw 'Unexpected Pester REST dispatcher.' }
+        $calls = [Collections.Generic.List[string]]::new()
+        $web = {
+            param($Uri, $Method, $Headers, $Body)
+            $calls.Add("$Method $Uri $($Headers.test) $Body")
+            'web-result'
+        }
+        $rest = {
+            param($Uri, $Method, $Headers, $Body)
+            $calls.Add("$Method $Uri $($Headers.test) $Body")
+            'rest-result'
+        }
+
+        $result = @(Invoke-InterruptionScript -Path $entry -Arguments @{ Address = 'https://offline.invalid/app'; Nested = $nested } `
+                -WebRequest $web -RestMethod $rest -Command @{ gh = { "cli-result:$($args -join ',')" } })
+
+        $result | Should -BeExactly @('web-result', 'rest-result', 'cli-result:fixture-argument')
+        $calls.ToArray() | Should -BeExactly @(
+            'PUT https://offline.invalid/app web {"value":2}'
+            'POST https://offline.invalid/app rest {"value":1}'
+        )
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+        { Invoke-WebRequest -Uri 'https://offline.invalid/app' } | Should -Throw '*Unexpected Pester web dispatcher*'
+        { Invoke-RestMethod -Uri 'https://offline.invalid/app' } | Should -Throw '*Unexpected Pester REST dispatcher*'
+    }
+
+    It 'propagates transport failures rather than returning a successful script result' {
+        $entry = Join-Path $TestDrive 'failed-transport.ps1'
+        Set-Content -LiteralPath $entry -Value "Invoke-WebRequest -Uri 'https://offline.invalid/app'; 'must not succeed'"
+
+        { Invoke-InterruptionScript -Path $entry -Arguments @{} -WebRequest { throw 'Injected transport failure.' } `
+                -RestMethod { throw 'Unexpected REST request.' } } | Should -Throw '*Injected transport failure*'
+    }
+
+    It 'keeps the <Transport> callback bound when the invoked script shadows adapter variables' -ForEach @(
+        @{ Transport = 'web'; Invocation = "Invoke-WebRequest -Uri 'https://offline.invalid/app'"; Expected = 'web-original' }
+        @{ Transport = 'rest'; Invocation = "Invoke-RestMethod -Uri 'https://offline.invalid/app'"; Expected = 'rest-original' }
+        @{ Transport = 'cli'; Invocation = 'gh fixture-argument'; Expected = 'cli-original:fixture-argument' }
+    ) {
+        $entry = Join-Path $TestDrive "shadow-$Transport.ps1"
+        Set-Content -LiteralPath $entry -Value @"
+param(`$WebRequest, `$RestMethod)
+`$command = @{ gh = { throw 'Script-local command was dispatched.' } }
+$Invocation
+"@
+        Mock Invoke-WebRequest { throw 'Unexpected Pester web dispatcher.' }
+        Mock Invoke-RestMethod { throw 'Unexpected Pester REST dispatcher.' }
+
+        $result = Invoke-InterruptionScript -Path $entry -Arguments @{
+            WebRequest = { throw 'Script parameter replaced the web callback.' }
+            RestMethod = { throw 'Script parameter replaced the REST callback.' }
+        } -WebRequest { 'web-original' } -RestMethod { 'rest-original' } `
+            -Command @{ gh = { "cli-original:$($args -join ',')" } }
+
+        $result | Should -BeExactly $Expected
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'dispatches every pipeline input using the default <Transport> parameter set' -ForEach @(
+        @{ Transport = 'web'; Cmdlet = 'Invoke-WebRequest' }
+        @{ Transport = 'rest'; Cmdlet = 'Invoke-RestMethod' }
+    ) {
+        $entry = Join-Path $TestDrive "pipeline-$Transport.ps1"
+        Set-Content -LiteralPath $entry -Value "'first', 'second' | $Cmdlet -Uri https://offline.invalid/app -Method POST"
+        Mock Invoke-WebRequest { throw 'Unexpected Pester web dispatcher.' }
+        Mock Invoke-RestMethod { throw 'Unexpected Pester REST dispatcher.' }
+
+        $result = @(Invoke-InterruptionScript -Path $entry -Arguments @{} `
+                -WebRequest { param($Body) "web:$Body" } -RestMethod { param($Body) "rest:$Body" })
+
+        $result | Should -BeExactly @("${Transport}:first", "${Transport}:second")
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'preserves supplied nested script defaults without changing caller defaults' {
+        $nested = Join-Path $TestDrive 'nested-default.ps1'
+        Set-Content -LiteralPath $nested -Value "[CmdletBinding()] param([string] `$StatePath = 'unexpected-user-state'); `$StatePath"
+        $entry = Join-Path $TestDrive 'entry-default.ps1'
+        Set-Content -LiteralPath $entry -Value 'param($Nested); & $Nested'
+        $defaults = @{ 'nested-default.ps1:StatePath' = (Join-Path $TestDrive 'pending.json') }
+        $saved = $PSDefaultParameterValues
+
+        $result = Invoke-InterruptionScript -Path $entry -Arguments @{ Nested = $nested } `
+            -WebRequest { throw 'Unexpected web request.' } -RestMethod { throw 'Unexpected REST request.' } `
+            -DefaultParameterValues $defaults
+
+        $result | Should -BeExactly $defaults['nested-default.ps1:StatePath']
+        $PSDefaultParameterValues | Should -Be $saved
+        $defaults.Count | Should -Be 1
+    }
+
+    It 'rejects unsupported cmdlet parameters before dispatching a request' {
+        $entry = Join-Path $TestDrive 'invalid-parameters.ps1'
+        Set-Content -LiteralPath $entry -Value "Invoke-WebRequest -Uri 'https://offline.invalid/app' -UnsupportedParameter value"
+        $observed = @{ Dispatched = $false }
+
+        { Invoke-InterruptionScript -Path $entry -Arguments @{} -WebRequest { $observed.Dispatched = $true } `
+                -RestMethod { throw 'Unexpected REST request.' } } | Should -Throw '*UnsupportedParameter*'
+        $observed.Dispatched | Should -BeFalse
+    }
+
     It 'reports a duplicate after an abrupt stop when the tool saves its intent only in a finally block' {
         $run = { Invoke-ToyTool }
 
