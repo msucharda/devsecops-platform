@@ -68,6 +68,14 @@ Describe 'Published platform source evidence' {
         $evidence.NoBypassEvidence | Should -BeExactly 'publisher-attested'
     }
 
+    It 'rejects a scalar valid binding rule at the helper list guard' -Tag BindingRuleType {
+        InModuleScope PublicationSource -Parameters @{ Rule = $branchRules[1] } {
+            { Get-PublicationBindingRule -Rules @($Rule) -PublisherAppId 1 } | Should -Not -Throw
+            { Get-PublicationBindingRule -Rules $Rule -PublisherAppId 1 } |
+                Should -Throw 'Invalid active publication binding rules.'
+        }
+    }
+
     It 'rejects another matching binding hidden on a later branch-rules page' -Tag BranchRulePagination {
         $original = $read
         $later = $branchRules[1] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable

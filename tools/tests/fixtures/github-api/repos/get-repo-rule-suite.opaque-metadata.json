@@ -7,8 +7,8 @@
     "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
     "schema": "#/components/schemas/rule-suite",
-    "variant": "documented metadata oneOf shapes with opaque identifiers",
-    "note": "The primary rule-suite example is projected onto rule-suite-required-status-checks and rule-suite-pull-request metadata schemas. Metadata has no primary example. Values are synthetic; type/state have no documented enum and status-check IDs are not asserted to share the check-run namespace."
+    "variant": "illustrative schema-ambiguous metadata with opaque identifiers",
+    "note": "These synthetic objects illustrate properties of rule-suite-required-status-checks and rule-suite-pull-request, not contract-valid positive oneOf coverage. Neither alternative requires its distinguishing property or prohibits additional properties, so each non-null object matches both alternatives and fails the enclosing literal oneOf in the pinned schema. Its discriminator names rule_type, which exists on the enclosing evaluation, not these metadata objects. This is a primary-schema ambiguity, not an observation of invalid live data; no discriminator semantics are inferred. Metadata has no primary example. Type/state have no documented enum and status-check IDs are not asserted to share the check-run namespace."
   },
   "required": {
     "": null

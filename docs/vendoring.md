@@ -183,6 +183,14 @@ Ani platný pass neprokazuje konkrétní vyhodnocené check-run ID:
 metadata mohou chybět nebo být `null` a schéma nezaručuje mapování jejich
 status-check ID na check-run ID.
 
+Větve `metadata.oneOf` v připnutém primárním schématu nemají povinný rozlišující
+atribut a nezakazují další vlastnosti. Nenulové objekty fixture
+`get-repo-rule-suite.opaque-metadata.json` proto odpovídají oběma větvím,
+nikoli doslovnému `oneOf`. Jde o nejednoznačnost primárního schématu,
+ne o doloženou chybu živých odpovědí. Fixture dokládá pouze ilustrační
+regrese bez oprávnění k finalizaci, nikoli pozitivní kontraktní pokrytí union.
+Resolver z ní neodvozuje rozlišovací pravidlo ani mapování ID.
+
 Resolver proto i po platném readbacku vrací `Disposition=unverified`
 a `Requires=protected-check-binding`, nikdy `ready-to-finalize`
 ani přijatou dispozici `published`. Zachová pouze již přečtenou `Phase`;

@@ -545,7 +545,7 @@ Describe 'Publication witness reconciliation' {
         $result.Requires | Should -BeExactly 'protected-check-binding'
     }
 
-    It 'does not infer protected binding for <Phase> from <Case> in documented metadata shapes' -Tag ProtectedCheckBinding -ForEach @(
+    It 'does not infer protected binding for <Phase> from <Case> in illustrative schema-ambiguous metadata' -Tag ProtectedCheckBinding -ForEach @(
         foreach ($phase in @('admitted', 'published')) {
             @{ Phase = $phase; Case = 'opaque status-check ID' }
             @{ Phase = $phase; Case = 'an apparent check-run ID match' }
@@ -629,6 +629,23 @@ Describe 'Publication witness reconciliation' {
         $parameters.BeforeCommit = 'not-a-sha'
         $parameters.RuleSuite.before_sha = 'not-a-sha'
         { Resolve-PlatformPublicationWitness @parameters } | Should -Throw '*expected before commit*'
+    }
+
+    It 'rejects the isolated nested evaluation guard <Case>' -Tag PublicationEvaluationGuards -ForEach @(
+        @{ Case = 'string source ID' }
+        @{ Case = 'case-folded source type' }
+        @{ Case = 'case-folded rule type' }
+    ) {
+        $parameters = New-PublicationReconciliation
+        $evaluation = $parameters.RuleSuite.rule_evaluations[0]
+        # Deliberately invalidate one nested binding field while preserving the other operation evidence.
+        switch ($Case) {
+            'string source ID' { $evaluation.rule_source.id = [string] $parameters.RulesetId }
+            'case-folded source type' { $evaluation.rule_source.type = 'RULESET' }
+            'case-folded rule type' { $evaluation.rule_type = 'Required_status_checks' }
+        }
+        { Resolve-PlatformPublicationWitness @parameters } |
+            Should -Throw 'Missing or ambiguous active publication check rule evaluation.'
     }
 
     It 'rejects case-variant persisted receipt binding' {
