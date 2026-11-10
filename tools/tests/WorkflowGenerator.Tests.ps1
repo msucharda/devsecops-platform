@@ -177,6 +177,7 @@ Describe 'Deployment workflow generation' {
             $current.Count | Should -Be 2
             foreach ($fresh in $current) {
                 $fresh.run | Should -Match '-Mode development'
+                $fresh.run | Should -Match 'Legacy development execution is disabled'
                 $fresh.env.EXPECTED_APPROVAL | Should -Be '${{ needs.authorize.outputs.approval }}'
                 $fresh.env.DEVELOPMENT_READ_TOKEN | Should -Be '${{ github.token }}'
                 $fresh.env.EXPECTED_CONTROL_REVISION | Should -Be '${{ needs.authorize.outputs.controlRevision }}'
@@ -250,6 +251,8 @@ Describe 'Deployment workflow generation' {
         $control = @($authorization.steps | Where-Object { $_['id'] -eq 'control' })
         $control.Count | Should -Be 1
         $control[0].run | Should -Match 'Read-DevelopmentControl.ps1 -Mode development'
+        $control[0].run | Should -Match 'Legacy development execution is disabled'
+        $control[0].run | Should -Not -Match '-GitHubOutputPath'
         $control[0].run | Should -Not -Match 'AllowNonReference'
         $control[0].env.DEVELOPMENT_READ_TOKEN | Should -Be '${{ github.token }}'
         $authorization.outputs.controlRevision | Should -Be '${{ steps.control.outputs.controlRevision }}'

@@ -19,6 +19,17 @@ Nové journal helpers ještě netvoří dvoujobový orchestrátor. Chybí také
 doložené získání chráněného writeru a důvěryhodný zdroj potvrzeného headu
 pro obnovu v nové VM. Tento stav nepovoluje aktivaci development apply.
 
+Současná šablona `development.yml` proto záměrně končí chybou před prvním
+App klíčem. Authorize job nepublikuje authorization outputs. Stejná
+bezpodmínečná blokace zůstává před Azure a App credentials každé legacy
+fáze. Ani control v2, úplný approval, chybějící writer nebo obnovený
+historický výstup nesmí odemknout starý job s reusable credentials.
+Jde o bezpečné zablokování nedokončené cesty, nikoli o hotovou two-VM
+implementaci nebo důkaz F2. Development authorization navíc odmítá control
+v1 bez journalu; standardní reader jeho zpětnou kompatibilitu zachovává.
+Blokace sama nezastaví již zařazený historický workflow, který nové nástroje
+nečte. Audit těchto cest a jejich ukončení zůstávají podmínkou živé aktivace.
+
 ## Zavedení důvěryhodné cesty
 
 Nejdřív převezmi standardní release obsahující nové nástroje běžným
@@ -192,8 +203,10 @@ Symlink, submodule, necommitnutý, nový nebo ignorovaný payload kontrola
 odmítne. Jedinou výjimkou mimo kandidáta je ověřovaná cache závislostí
 důvěryhodného runtime pod `platform/tools/.dependencies/`.
 
-Po review a konkrétním schválení spusť `Develop reference instance`
-s číslem PR, plným SHA, scope a operací. Výchozí operace je `plan`.
+Po dokončení a nezávislém ověření izolované execution cesty, jejím standardním
+vydání a konkrétním schválení bude možné spustit `Develop reference instance`
+s číslem PR, plným SHA, scope a operací. Současná šablona spuštění blokuje.
+Výchozí operace zůstává `plan`.
 `apply` musí samostatně projít stávajícím `approve-apply`; jeho následné
 module jobs zachovávají existující phase environmenty a oprávnění.
 Před prvním App klíčem i před credentials každé fáze nástroj znovu

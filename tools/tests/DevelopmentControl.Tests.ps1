@@ -42,6 +42,9 @@ Describe 'Protected development control snapshot' {
         }
         Mock Invoke-WebRequest -ModuleName DevelopmentControl {
             param($Uri)
+            # GitHub API host and repository names are case-insensitive; preserve the file path.
+            $root = 'https://api.example.test/repos/platform/instance'
+            if ($Uri -like "$root/*") { $Uri = $root + ([string] $Uri).Substring($root.Length) }
             $reads.Total++
             if ($reads.Total -eq $failAt) { return [pscustomobject]@{ StatusCode = 500; Content = '{}' } }
             if ($status.ContainsKey([string] $Uri)) {
@@ -397,6 +400,19 @@ Describe 'Protected development control snapshot' {
         { Read-DevelopmentControl @arguments } | Should -Throw '*development-token-journal.json*'
     }
 
+    It 'rejects a caller <Field> case alias at the journal target boundary' -ForEach @(
+        @{ Field = 'ApiUrl'; Value = 'https://API.example.test' }
+        @{ Field = 'Repository'; Value = 'platform/Instance' }
+    ) {
+        $contextFields = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/development-token-context.json') -Raw |
+            ConvertFrom-Json -AsHashtable
+        $journal = Add-DevelopmentTokenJournalEvent -Json (New-DevelopmentTokenJournal) -Event pending `
+            -Context (New-DevelopmentTokenContext -Value $contextFields) -PreviousHead ('d' * 40)
+        Set-TestControlV2 -Journal $journal
+        $arguments[$Field] = $Value
+        { Read-DevelopmentControl @arguments } | Should -Throw '*journal origin or repository*'
+    }
+
     It 'rejects an unreadable or malformed v2 journal rather than assuming retirement' -ForEach @(
         @{ Json = '{}' }; @{ Json = 'null' }; @{ Json = '{"version":1,"records":null}' }
     ) {
@@ -497,12 +513,58 @@ Describe 'Protected development control snapshot' {
         }
 
         It 'exposes only the protected snapshot as single-line authorization outputs' {
+            $command.Mode = 'standard'
             $result = & $controlCommand @command
             $result.ControlRevision | Should -BeExactly ('c' * 40)
             $output = Get-Content -LiteralPath $command.GitHubOutputPath
             $output.Count | Should -Be 5
             $output | Should -Contain 'reference=https://example.test/platform/instance'
             $output | Should -Contain 'approval={"revision":"approved"}'
+        }
+
+        It 'blocks the emitted v<Version> development authorization step before any legacy credential or handoff' -ForEach @(
+            @{ Version = 1; Expected = '*development authorization requires protected control document v2*' }
+            @{ Version = 2; Expected = '*Legacy development execution is disabled*' }
+        ) {
+            if ($Version -eq 2) { Set-TestControlV2 }
+            Import-Module (Join-Path $PSScriptRoot '../ToolDependencies.psm1')
+            Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
+            $workflowPath = Join-Path $PSScriptRoot '../../templates/instance/.github/workflows/development.yml'
+            $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $workflowPath -Raw)
+            $step = @($workflow.jobs.authorize.steps | Where-Object { $_['id'] -ceq 'control' })
+            $step.Count | Should -Be 1
+            $step[0].run | Should -Match '^\./trusted/platform/tools/Read-DevelopmentControl.ps1 -Mode development'
+            $environment = @{
+                GITHUB_REPOSITORY = $command.Repository; GITHUB_SERVER_URL = $command.ServerUrl
+                GITHUB_API_URL = $command.ApiUrl; DEVELOPMENT_READ_TOKEN = $command.ReadToken
+                GITHUB_RUN_ATTEMPT = $command.RunAttempt; GITHUB_OUTPUT = $command.GitHubOutputPath
+            }
+            $saved = @{}
+            Mock Invoke-RestMethod { throw 'Unexpected credential mint at the blocked development entrypoint.' }
+            try {
+                foreach ($name in $environment.Keys) {
+                    $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+                    [Environment]::SetEnvironmentVariable($name, $environment[$name])
+                }
+                $entrypoint = $step[0].run.Replace('./trusted/platform/tools/Read-DevelopmentControl.ps1', '& $controlCommand')
+                { & ([scriptblock]::Create($entrypoint)) } | Should -Throw $Expected
+                Test-Path -LiteralPath $command.GitHubOutputPath | Should -BeFalse
+                Should -Invoke Invoke-RestMethod -Times 0
+                Should -Invoke Invoke-WebRequest -ModuleName DevelopmentControl -Times 0 -ParameterFilter { $Method -cne 'GET' }
+            }
+
+            finally {
+                foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+            }
+        }
+
+        It 'never authorizes journal-free v1 development for <Spelling>' -ForEach @(
+            @{ Spelling = 'development' }; @{ Spelling = 'Development' }; @{ Spelling = 'DEVELOPMENT' }
+        ) {
+            $command.Mode = $Spelling
+            { & $controlCommand @command } | Should -Throw '*development authorization requires protected control document v2*'
+            Test-Path -LiteralPath $command.GitHubOutputPath | Should -BeFalse
+            Should -Invoke Invoke-WebRequest -ModuleName DevelopmentControl -Times 0 -ParameterFilter { $Method -cne 'GET' }
         }
 
         It 'rejects invalid request <Field>: <Value> before sending the token' -ForEach @(
@@ -609,6 +671,7 @@ Describe 'Protected development control snapshot' {
 
     Describe 'Protected credential boundary' {
         BeforeEach {
+            Set-TestControlV2
             $approval = @{
                 version = 1L; repository = 'https://example.test/platform/instance'
                 baseRevision = 'a' * 40; revision = 'b' * 40; digest = 'c' * 64; pullRequest = '42'
@@ -630,8 +693,46 @@ Describe 'Protected development control snapshot' {
 
         It 'revalidates current authorization using only GETs with the existing job token' {
             { & $phaseCommand @phaseArguments 6>$null } | Should -Not -Throw
-            Should -Invoke Invoke-WebRequest -ModuleName DevelopmentControl -Times 7 -Exactly -ParameterFilter {
+            Should -Invoke Invoke-WebRequest -ModuleName DevelopmentControl -Times 8 -Exactly -ParameterFilter {
                 $Method -ceq 'GET' -and $Headers.Authorization -ceq 'Bearer fake-token'
+            }
+        }
+
+        It 'blocks both emitted v2 phase credential guards even with an otherwise valid retained authorization' {
+            Import-Module (Join-Path $PSScriptRoot '../ToolDependencies.psm1')
+            Import-Module (Get-ToolDependencyPath -Name powershell-yaml -ReuseLoaded)
+            $workflowPath = Join-Path $PSScriptRoot '../../templates/instance/.github/workflows/development.yml'
+            $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $workflowPath -Raw)
+            $guards = @($workflow.jobs.module_organization_rulesets.steps | Where-Object {
+                $_['run'] -like '*Test-DevelopmentProtectedState.ps1*'
+            })
+            $guards.Count | Should -Be 2
+            $environment = @{
+                GITHUB_REPOSITORY = $phaseArguments.Repository; GITHUB_SERVER_URL = $phaseArguments.ServerUrl
+                GITHUB_API_URL = $phaseArguments.ApiUrl; GITHUB_SHA = $phaseArguments.Revision
+                GITHUB_EVENT_NAME = $phaseArguments.EventName; GITHUB_RUN_ATTEMPT = $phaseArguments.RunAttempt
+                DEVELOPMENT_READ_TOKEN = $phaseArguments.ReadToken
+                EXPECTED_REFERENCE = $phaseArguments.ExpectedReference
+                EXPECTED_CONTROL_REVISION = $phaseArguments.ExpectedControlRevision
+                EXPECTED_APPROVAL = $phaseArguments.ExpectedApproval; EXPECTED_SOURCE = $phaseArguments.ExpectedSourceRepository
+                EXPECTED_ATTEMPT = $phaseArguments.ExpectedAttempt
+            }
+            $saved = @{}
+            Mock Invoke-RestMethod { throw 'Unexpected credential mint at the blocked development phase.' }
+            try {
+                foreach ($name in $environment.Keys) {
+                    $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+                    [Environment]::SetEnvironmentVariable($name, $environment[$name])
+                }
+                foreach ($guard in $guards) {
+                    $entrypoint = $guard.run.Replace('./trusted/platform/tools/Test-DevelopmentProtectedState.ps1', '& $phaseCommand')
+                    { & ([scriptblock]::Create($entrypoint)) 6>$null } | Should -Throw '*Legacy development execution is disabled*'
+                }
+                Should -Invoke Invoke-RestMethod -Times 0
+                Should -Invoke Invoke-WebRequest -ModuleName DevelopmentControl -Times 0 -ParameterFilter { $Method -cne 'GET' }
+            }
+            finally {
+                foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
             }
         }
 

@@ -32,6 +32,8 @@ Describe 'Recoverable development leaf token' {
         @{ Case = 'space'; Value = 'not a header token' }
         @{ Case = 'newline'; Value = "not-a-token`n" }
         @{ Case = 'non-ASCII'; Value = 'token' + [char] 0x7f }
+        @{ Case = 'Unicode Kelvin case fold'; Value = 'token' + [char] 0x212a }
+        @{ Case = 'Unicode long-s case fold'; Value = 'token' + [char] 0x017f }
     ) {
         { Protect-DevelopmentLeafToken -Token $Value -RecoveryKey $key -ContextSha256 $context } |
             Should -Throw '*bounded ASCII*'
@@ -41,11 +43,12 @@ Describe 'Recoverable development leaf token' {
         @{ Case = 'wrong version'; Field = 'version'; Value = 2; Expected = '*version*' }
         @{ Case = 'numeric context'; Field = 'contextSha256'; Value = 123; Expected = '*fields must be strings*' }
         @{ Case = 'different bound envelope context'; Field = 'contextSha256'; Value = 'b' * 64; Expected = '*context does not match*' }
+        @{ Case = 'case-aliased envelope context'; Field = 'contextSha256'; Value = 'A' * 64; Expected = '*context does not match*' }
         @{ Case = 'array key digest'; Field = 'keySha256'; Value = @('a'); Expected = '*fields must be strings*' }
         @{ Case = 'invalid key digest'; Field = 'keySha256'; Value = 'invalid'; Expected = '*key digest*' }
         @{ Case = 'uppercase key digest'; Field = 'keySha256'; Upper = $true; Expected = '*key digest*' }
-        @{ Case = 'invalid token digest'; Field = 'tokenSha256'; Value = 'invalid'; Expected = '*token digest*' }
-        @{ Case = 'uppercase token digest'; Field = 'tokenSha256'; Upper = $true; Expected = '*token digest*' }
+        @{ Case = 'invalid token digest'; Field = 'tokenSha256'; Value = 'invalid'; Expected = '*Invalid encrypted token digest*' }
+        @{ Case = 'uppercase token digest'; Field = 'tokenSha256'; Upper = $true; Expected = '*Invalid encrypted token digest*' }
         @{ Case = 'different valid token digest'; Field = 'tokenSha256'; Value = 'e' * 64; Expected = '*token digest does not match*' }
         @{ Case = 'short nonce'; Field = 'nonce'; Value = [Convert]::ToBase64String([byte[]] (1..11)); Expected = '*field lengths*' }
         @{ Case = 'long nonce'; Field = 'nonce'; Value = [Convert]::ToBase64String([byte[]] (1..13)); Expected = '*field lengths*' }
@@ -69,8 +72,12 @@ Describe 'Recoverable development leaf token' {
     }
 
     It 'rejects malformed encrypted token document <Case>' -ForEach @(
-        @{ Case = 'array' }; @{ Case = 'unknown field' }; @{ Case = 'missing field' }
-        @{ Case = 'duplicate field' }; @{ Case = 'case changed field' }; @{ Case = 'oversized' }
+        @{ Case = 'array'; Expected = '*envelope must be an object*' }
+        @{ Case = 'unknown field'; Expected = '*unknown or duplicate fields*' }
+        @{ Case = 'missing field'; Expected = '*envelope is incomplete*' }
+        @{ Case = 'duplicate field'; Expected = '*unknown or duplicate fields*' }
+        @{ Case = 'case changed field'; Expected = '*unknown or duplicate fields*' }
+        @{ Case = 'oversized'; Expected = '*envelope exceeds the size bound*' }
     ) {
         $sealed = Protect-DevelopmentLeafToken -Token $token -RecoveryKey $key -ContextSha256 $context
         switch ($Case) {
@@ -81,7 +88,7 @@ Describe 'Recoverable development leaf token' {
             'case changed field' { $sealed = $sealed.Replace('"version"', '"Version"') }
             'oversized' { $sealed += ' ' * 16385 }
         }
-        { Unprotect-DevelopmentLeafToken -Envelope $sealed -RecoveryKey $key -ContextSha256 $context } | Should -Throw
+        { Unprotect-DevelopmentLeafToken -Envelope $sealed -RecoveryKey $key -ContextSha256 $context } | Should -Throw $Expected
     }
 
     Describe 'Protected development token journal' {
@@ -165,6 +172,7 @@ Describe 'Recoverable development leaf token' {
             @{ Field = 'apiUrl'; Case = 'path'; Value = 'https://api.example.test/other'; Expected = '*API origin*' }
             @{ Field = 'apiUrl'; Case = 'uppercase origin'; Value = 'https://API.example.test'; Expected = '*API origin*' }
             @{ Field = 'repository'; Case = 'malformed'; Value = 'platform'; Expected = '*repository*' }
+            @{ Field = 'repository'; Case = 'uppercase owner'; Value = 'Platform/instance'; Expected = '*Invalid development token repository*' }
             @{ Field = 'referenceOwner'; Case = 'different'; Value = 'other'; Expected = '*non-reference*' }
             @{ Field = 'organization'; Case = 'reference authority'; Value = 'platform'; Expected = '*non-reference*' }
             @{ Field = 'organization'; Case = 'case alias'; Value = 'Platform'; Expected = "*'organization'*" }
@@ -243,7 +251,16 @@ Describe 'Recoverable development leaf token' {
                 $journal = Add-DevelopmentTokenJournalEvent -Json $journal -Event retired -Context $context -PreviousHead ('4' * 40) `
                     -RevokeStatusCode 204 -NegativeStatusCode 401 -RetirementRunId '999' -ProofKind revoked
             }
-            { Add-DevelopmentTokenJournalEvent -Json $journal -Event $Event -Context $context -PreviousHead ('5' * 40) } |
+            if ($Event -ceq 'pending' -and $Before -cin @('pending', 'issued')) {
+                $contextValue.runId = '12345'
+                $context = New-DevelopmentTokenContext -Value $contextValue
+            }
+            $evidence = switch ($Event) {
+                issued { @{ Envelope = $envelope; IssuanceProbeStatusCode = 200 } }
+                retired { @{ RevokeStatusCode = 204; NegativeStatusCode = 401; RetirementRunId = '999'; ProofKind = 'revoked' } }
+                default { @{} }
+            }
+            { Add-DevelopmentTokenJournalEvent -Json $journal -Event $Event -Context $context -PreviousHead ('5' * 40) @evidence } |
                 Should -Throw $Expected
         }
 
@@ -306,6 +323,7 @@ Describe 'Recoverable development leaf token' {
         It 'rejects changed <Field> across finished cycles' -ForEach @(
             @{ Field = 'apiUrl'; Value = 'https://api.other.test' }
             @{ Field = 'repository'; Value = 'platform/other' }
+            @{ Field = 'repository'; Value = 'platform/Instance' }
         ) {
             $retired = (New-TestJournalTrace).retired
             $contextValue.runId = '12345'

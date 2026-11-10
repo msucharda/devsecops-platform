@@ -40,13 +40,15 @@ function Assert-DevelopmentDispatchRequest {
 # security-check: development-dispatch-context
 function Assert-DevelopmentDispatchContext {
     param([AllowNull()][object] $Pull)
-    if ($Pull -isnot [Collections.IDictionary] -or $Pull['state'] -cne 'open' -or
+    if ($Pull -isnot [Collections.IDictionary] -or $Pull['state'] -isnot [string] -or $Pull['state'] -cne 'open' -or
         $Pull['merged'] -isnot [bool] -or $Pull['merged'] -or
         $Pull['draft'] -isnot [bool] -or $Pull['draft'] -or
-        [string] $Pull['number'] -cne $PullRequest) {
+        $Pull['number'] -isnot [long] -or [string] $Pull['number'] -cne $PullRequest) {
         throw 'Development deployment requires the specified open, unmerged, ready PR.'
     }
-    if ($Pull['head']['sha'] -cne $Revision -or $Pull['base']['sha'] -cne $Sha) {
+    if ($Pull['head'] -isnot [Collections.IDictionary] -or $Pull['head']['sha'] -isnot [string] -or
+        $Pull['head']['sha'] -cne $Revision -or $Pull['base'] -isnot [Collections.IDictionary] -or
+        $Pull['base']['sha'] -isnot [string] -or $Pull['base']['sha'] -cne $Sha) {
         throw 'Development PR head or trusted base changed; obtain a new exact-content approval.'
     }
     if ($Pull['user'] -isnot [Collections.IDictionary] -or $Pull['user']['login'] -isnot [string] -or

@@ -33,6 +33,7 @@ Describe 'Protected development token controller' {
             Fault = ''; Corrupt = ''; LeafStatus = 200; RevokeFault = ''; RevokeCount = 0; InstallationStatus = 200
             RevokeStatus = 204; AfterRevokeStatus = 401
             HttpKind = ''; HttpStatus = 0; ForeignAt = ''
+            ReplyKind = ''; ReplyField = ''; ReplyMode = ''; ReplyValue = $null
         }
         $installation = Get-GitHubApiFixture -Name apps/get-installation -Set @{
             id = 456; app_id = 123; 'account.login' = 'workloads'; 'account.type' = 'Organization'
@@ -70,10 +71,12 @@ Describe 'Protected development token controller' {
                 Authorization = $Headers.Authorization; Redirects = $MaximumRedirection; Retries = $MaximumRetryCount
             })
             $value = $null
+            $responseKind = ''
             $statusCode = 200
             if ($methodName -cin @('POST', 'PATCH')) {
                 $inputValue = ConvertFrom-Json -InputObject $Body -AsHashtable
                 $kind = if ($Uri -like '*/git/trees') { 'tree' } elseif ($Uri -like '*/git/commits') { 'commit' } else { 'ref' }
+                $responseKind = $kind
                 if ($server.ForeignAt -ceq $kind) {
                     $server.Head = '9' * 40
                     $server.Commits[$server.Head] = Get-GitHubApiFixture -Name git/get-commit -Set @{
@@ -123,6 +126,15 @@ Describe 'Protected development token controller' {
                     'readback-journal' {
                         if ($kind -ceq 'ref') { $server.Journals[$newCommit.tree.sha] += ' ' }
                     }
+                    'readback-head' {
+                        if ($kind -ceq 'ref') {
+                            $server.Head = '9' * 40
+                            $foreign = ConvertFrom-Json (ConvertTo-Json $newCommit -Depth 30) -AsHashtable
+                            $foreign.sha = $server.Head
+                            $foreign.parents[0].sha = $inputValue.sha
+                            $server.Commits[$server.Head] = $foreign
+                        }
+                    }
                 }
             }
             elseif ($Uri -ceq 'https://api.example.test/installation/token' -and $methodName -ceq 'DELETE') {
@@ -149,6 +161,7 @@ Describe 'Protected development token controller' {
                 }
             }
             elseif ($Uri -match '/git/commits/([a-f0-9]{40})$') {
+                $responseKind = 'parent'
                 $value = ConvertFrom-Json (ConvertTo-Json $server.Commits[$Matches[1]] -Depth 30) -AsHashtable
                 # Deliberately invalid discriminator, preserving the otherwise valid fixture.
                 if ($server.Corrupt -ceq 'canonical-array-sha') { $value.sha = @('c' * 40) }
@@ -156,14 +169,40 @@ Describe 'Protected development token controller' {
             elseif ($Uri -match '/git/trees/([a-f0-9]{40})$') {
                 $revision = $Matches[1]
                 $value = $server.Trees[$server.Commits[$revision].tree.sha]
+                # Deliberately inconsistent immutable-object metadata isolates exact readback checks.
+                if (($server.Corrupt -ceq 'pre-cas-authorization' -and $server.Changes.Count -eq 2) -or
+                    ($server.Corrupt -ceq 'readback-authorization' -and $server.Changes.Count -eq 3)) {
+                    $value = ConvertFrom-Json (ConvertTo-Json $value -Depth 30) -AsHashtable
+                    $value.tree[0].sha = 'd' * 40
+                }
             }
             elseif ($Uri -match '/contents/(development-control.json|development-token-journal.json)\?ref=([a-f0-9]{40})$') {
-                if ($Matches[1] -ceq 'development-control.json') { $value = $controlFile }
+                $fileName = $Matches[1]
+                $revision = $Matches[2]
+                if ($fileName -ceq 'development-control.json') {
+                    $value = $controlFile
+                    if (($server.Corrupt -ceq 'pre-cas-authorization' -and $server.Changes.Count -eq 2) -or
+                        ($server.Corrupt -ceq 'readback-authorization' -and $server.Changes.Count -eq 3)) {
+                        $value = ConvertFrom-Json (ConvertTo-Json $value -Depth 30) -AsHashtable
+                        $value.sha = 'd' * 40
+                    }
+                }
                 else {
-                    $journal = $server.Journals[$server.Commits[$Matches[2]].tree.sha]
+                    $journal = $server.Journals[$server.Commits[$revision].tree.sha]
+                    if ($server.Corrupt -ceq 'readback-journal-case' -and $server.Changes.Count -eq 6) {
+                        $record = (ConvertFrom-Json $journal -AsHashtable).records[-1]
+                        $ciphertext = (ConvertFrom-Json $record.envelope -AsHashtable).ciphertext
+                        $letter = [regex]::Match($ciphertext, '[a-zA-Z]')
+                        if (-not $letter.Success -or [regex]::Matches($journal, [regex]::Escape($ciphertext)).Count -ne 1) {
+                            throw 'Offline ciphertext case-corruption fixture requires one unambiguous ASCII letter.'
+                        }
+                        $replacement = if ($letter.Value -cmatch '[a-z]') { $letter.Value.ToUpperInvariant() } else { $letter.Value.ToLowerInvariant() }
+                        $changedCiphertext = $ciphertext.Remove($letter.Index, 1).Insert($letter.Index, $replacement)
+                        $journal = $journal.Replace($ciphertext, $changedCiphertext)
+                    }
                     $value = Get-GitHubApiFixture -Name repos/get-content.file -Set @{
                         name = 'development-token-journal.json'; path = 'development-token-journal.json'
-                        sha = $server.Trees[$server.Commits[$Matches[2]].tree.sha].tree[-1].sha
+                        sha = $server.Trees[$server.Commits[$revision].tree.sha].tree[-1].sha
                     }
                     $bytes = [Text.Encoding]::UTF8.GetBytes($journal)
                     $value.content = [Convert]::ToBase64String($bytes)
@@ -173,6 +212,28 @@ Describe 'Protected development token controller' {
             elseif ($Uri -like '*/rules/branches/platform-control`?*') { $value = $rules }
             elseif ($Uri -like '*/rulesets/42`?includes_parents=true') { $value = $ruleset }
             else { throw "Unexpected offline controller request: $Method $Uri" }
+            # Deliberately invalid responses change one field of a primary-schema fixture.
+            if ($responseKind -cne '' -and $server.ReplyKind -ceq $responseKind) {
+                $value = ConvertFrom-Json (ConvertTo-Json -InputObject $value -Depth 30) -AsHashtable -NoEnumerate
+                if ($server.ReplyField -ceq '$root') {
+                    $value = if ($server.ReplyMode -ceq 'array') { ,@($value) } else { $server.ReplyValue }
+                }
+                else {
+                    $parts = $server.ReplyField.Split('.')
+                    $cursor = $value
+                    for ($index = 0; $index -lt $parts.Count - 1; $index++) {
+                        if ($cursor -is [Collections.IList]) { $cursor = $cursor[[int] $parts[$index]] }
+                        else { $cursor = $cursor[$parts[$index]] }
+                    }
+                    $field = $parts[-1]
+                    $replacement = switch ($server.ReplyMode) {
+                        'array' { ,@($cursor[$field]) }
+                        'upper' { $cursor[$field].ToUpperInvariant() }
+                        default { $server.ReplyValue }
+                    }
+                    $cursor[$field] = $replacement
+                }
+            }
             return [pscustomobject]@{ StatusCode = $statusCode; Content = ConvertTo-Json -InputObject $value -Depth 30 }
         }
     }
@@ -259,6 +320,9 @@ Describe 'Protected development token controller' {
         @{ Case = 'noncanonical context'; Field = 'Context'; Value = ' '; Expected = '*exact canonical context*' }
         @{ Case = 'short head'; Field = 'ExpectedHead'; Value = 'abc'; Expected = '*exact canonical context*' }
         @{ Case = 'uppercase head'; Field = 'ExpectedHead'; Value = 'C' * 40; Expected = '*exact canonical context*' }
+        @{ Case = 'API case alias'; Field = 'ApiUrl'; Value = 'https://API.example.test'; Expected = '*exact canonical context*' }
+        @{ Case = 'repository case alias'; Field = 'Repository'; Value = 'Platform/instance'; Expected = '*exact canonical context*' }
+        @{ Case = 'authorization blob case alias'; Field = 'ExpectedControlBlobSha'; Value = 'E' * 40; Expected = '*exact canonical context*' }
     ) {
         if ($Case -ceq 'noncanonical context') { $arguments.Context += ' ' }
         elseif ($Case -like 'context*') {
@@ -292,6 +356,9 @@ Describe 'Protected development token controller' {
         @{ Case = 'canonical-array-sha'; Expected = '*canonical parent commit tree*' }
         @{ Case = 'acknowledged-head'; Expected = '*acknowledge the exact new head*' }
         @{ Case = 'readback-journal'; Expected = '*immutable readback differs*' }
+        @{ Case = 'pre-cas-authorization'; Expected = '*foreign heads are not accepted*' }
+        @{ Case = 'readback-head'; Expected = '*immutable readback differs*' }
+        @{ Case = 'readback-authorization'; Expected = '*immutable readback differs*' }
     ) {
         $server.Corrupt = $Case
         { Write-DevelopmentTokenEvent @arguments -Event pending } | Should -Throw $Expected
@@ -321,6 +388,52 @@ Describe 'Protected development token controller' {
         @($server.Changes | Where-Object Kind -CEQ ref).Count | Should -Be 0
     }
 
+    It 'rejects malformed <Kind> response <Field> <Mode> before accepting an append' -ForEach @(
+        @(
+        foreach ($kind in @('parent', 'tree', 'commit')) {
+            $expected = switch ($kind) {
+                parent { '*canonical parent commit tree*' }
+                tree { '*invalid tree*' }
+                commit { '*one new direct child*' }
+            }
+            @{ Kind = $kind; Field = '$root'; Mode = 'array'; Expected = $expected }
+            @{ Kind = $kind; Field = '$root'; Value = $null; Expected = $expected }
+            @{ Kind = $kind; Field = 'sha'; Mode = 'array'; Expected = $expected }
+            if ($kind -ceq 'parent') {
+                @{ Kind = $kind; Field = 'sha'; Value = 'b' * 40; Expected = $expected }
+                @{ Kind = $kind; Field = 'sha'; Mode = 'upper'; Expected = $expected }
+            }
+            else {
+                @{ Kind = $kind; Field = 'sha'; Value = 'not-a-sha'; Expected = $expected }
+                @{ Kind = $kind; Field = 'sha'; Mode = 'upper'; Expected = $expected }
+            }
+        }
+        @{ Kind = 'parent'; Field = 'tree'; Mode = 'array'; Expected = '*canonical parent commit tree*' }
+        @{ Kind = 'parent'; Field = 'tree.sha'; Mode = 'array'; Expected = '*canonical parent commit tree*' }
+        @{ Kind = 'parent'; Field = 'tree.sha'; Value = 'not-a-sha'; Expected = '*canonical parent commit tree*' }
+        @{ Kind = 'parent'; Field = 'tree.sha'; Mode = 'upper'; Expected = '*canonical parent commit tree*' }
+        @{ Kind = 'tree'; Field = 'tree.0.sha'; Value = 'b' * 40; Expected = '*authorization blob*' }
+        @{ Kind = 'commit'; Field = 'sha'; Value = 'c' * 40; Expected = '*one new direct child*' }
+        @{ Kind = 'commit'; Field = 'tree'; Mode = 'array'; Expected = '*one new direct child*' }
+        @{ Kind = 'commit'; Field = 'tree.sha'; Mode = 'upper'; Expected = '*one new direct child*' }
+        @{ Kind = 'commit'; Field = 'parents'; Value = 'not-an-array'; Expected = '*one new direct child*' }
+        @{ Kind = 'commit'; Field = 'parents.0'; Value = 'not-an-object'; Expected = '*one new direct child*' }
+        @{ Kind = 'commit'; Field = 'parents.0.sha'; Mode = 'upper'; Expected = '*one new direct child*' }
+        ) | ForEach-Object {
+            if (-not $_.Contains('Mode')) { $_.Mode = 'value' }
+            if (-not $_.Contains('Value')) { $_.Value = $null }
+            $_
+        }
+    ) {
+        param($Kind, $Field, $Mode = '', $Value, $Expected)
+        $server.Sequence = 9
+        $server.ReplyKind = $Kind
+        $server.ReplyField = $Field
+        $server.ReplyMode = $Mode
+        $server.ReplyValue = $Value
+        { Write-DevelopmentTokenEvent @arguments -Event pending } | Should -Throw $Expected
+    }
+
     It 'does not persist or hand off a leaf rejected with HTTP <Code>' -ForEach @(
         foreach ($code in @(401, 403, 404, 429, 500)) { @{ Code = $code } }
     ) {
@@ -332,6 +445,23 @@ Describe 'Protected development token controller' {
         $server.LeafStatus = $Code
         { Write-DevelopmentTokenEvent @arguments -Event issued -Envelope $envelope } | Should -Throw '*exact issued leaf must authenticate*'
         $server.Changes.Count | Should -Be 3
+    }
+
+    It 'rejects case-only encrypted journal readback corruption without accepting an issued handoff' {
+        $pending = Write-DevelopmentTokenEvent @arguments -Event pending
+        $arguments.ExpectedHead = $pending.ControlRevision
+        $snapshot = Read-DevelopmentControl -ApiUrl $arguments.ApiUrl -Repository $arguments.Repository -ReadToken $arguments.ReadToken
+        $journal = Read-DevelopmentTokenJournal -Json $snapshot.TokenJournal
+        $envelope = Protect-DevelopmentLeafToken -Token 'offline-leaf' -RecoveryKey $key -ContextSha256 $journal.ContextSha256
+        $server.Corrupt = 'readback-journal-case'
+        { Write-DevelopmentTokenEvent @arguments -Event issued -Envelope $envelope } | Should -Throw '*immutable readback differs*'
+        $server.Corrupt = ''
+        $persisted = Read-DevelopmentControl -ApiUrl $arguments.ApiUrl -Repository $arguments.Repository -ReadToken $arguments.ReadToken
+        $known = Read-DevelopmentTokenJournal -Json $persisted.TokenJournal
+        $known.Phase | Should -BeExactly 'issued'
+        Unprotect-DevelopmentLeafToken -Envelope $known.Envelope -RecoveryKey $key -ContextSha256 $known.ContextSha256 |
+            Should -BeExactly 'offline-leaf'
+        { Write-DevelopmentTokenEvent @arguments -Event pending } | Should -Throw '*do not adopt a newer head*'
     }
 
     It 'refuses a new pending intent bound to a different original authorization revision' {
@@ -479,6 +609,8 @@ Describe 'Protected development token controller' {
 
     # Deliberately invalid installation variants change one documented discriminator.
     It 'blocks already-invalid retirement for installation <Case>' -ForEach @(
+        @{ Case = 'null root' }
+        @{ Case = 'array root' }
         @{ Case = 'wrong ID'; Field = 'id'; Value = 457 }
         @{ Case = 'string ID'; Field = 'id'; Value = '456' }
         @{ Case = 'wrong App'; Field = 'app_id'; Value = 124 }
@@ -501,7 +633,9 @@ Describe 'Protected development token controller' {
     ) {
         Set-TestIssuedLeaf
         $server.LeafStatus = 401
-        if ($Case -ceq 'enterprise account') {
+        if ($Case -ceq 'null root') { $installation = $null }
+        elseif ($Case -ceq 'array root') { $installation = @($installation) }
+        elseif ($Case -ceq 'enterprise account') {
             $installation.account = (Get-GitHubApiFixture -Name apps/get-app.owner-enterprise).owner
         }
         elseif ($Case -like 'missing*') { $null = $installation.Remove($Field) }
@@ -540,6 +674,18 @@ Describe 'Protected development token controller' {
         $arguments.ExpectedHead = $pending.ControlRevision
         { Complete-DevelopmentTokenRetirement @arguments -AppJwt 'offline-app-jwt' -RetirementRunId '999' } |
             Should -Throw '*unknown pending issuance remains blocked*'
+        $server.RevokeCount | Should -Be 0
+        @($server.Requests | Where-Object { $_.Uri -like '*/installation/*' -or $_.Uri -like '*/app/installations/*' }).Count |
+            Should -Be 0
+    }
+
+    It 'does not decrypt or revoke a known leaf for a different recovery context' {
+        Set-TestIssuedLeaf
+        $contextValue.runId = '12345'
+        $arguments.Context = New-DevelopmentTokenContext -Value $contextValue
+        $server.Requests.Clear()
+        { Complete-DevelopmentTokenRetirement @arguments -AppJwt 'offline-app-jwt' -RetirementRunId '999' } |
+            Should -Throw '*exact persisted known issued leaf*'
         $server.RevokeCount | Should -Be 0
         @($server.Requests | Where-Object { $_.Uri -like '*/installation/*' -or $_.Uri -like '*/app/installations/*' }).Count |
             Should -Be 0

@@ -613,6 +613,22 @@ Describe 'Development candidate trust boundary' {
         }
 
         It 'refuses a <Case> before authorizing a candidate' -ForEach @(
+            # Deliberately invalid scalar discriminator in an otherwise valid PR fixture.
+            @{ Case = 'empty-array head'; Change = { $pull.head.sha = @() }; Error = '*head or trusted base changed*' }
+            @{ Case = 'array head SHA'; Change = { $pull.head.sha = @('b' * 40) }; Error = '*head or trusted base changed*' }
+            @{ Case = 'null head SHA'; Change = { $pull.head.sha = $null }; Error = '*head or trusted base changed*' }
+            @{ Case = 'array head object'; Change = { $pull.head = @($pull.head) }; Error = '*head or trusted base changed*' }
+            @{ Case = 'null head object'; Change = { $pull.head = $null }; Error = '*head or trusted base changed*' }
+            @{ Case = 'empty-array base'; Change = { $pull.base.sha = @() }; Error = '*head or trusted base changed*' }
+            @{ Case = 'array base SHA'; Change = { $pull.base.sha = @('a' * 40) }; Error = '*head or trusted base changed*' }
+            @{ Case = 'null base SHA'; Change = { $pull.base.sha = $null }; Error = '*head or trusted base changed*' }
+            @{ Case = 'array base object'; Change = { $pull.base = @($pull.base) }; Error = '*head or trusted base changed*' }
+            @{ Case = 'null base object'; Change = { $pull.base = $null }; Error = '*head or trusted base changed*' }
+            @{ Case = 'empty-array PR state'; Change = { $pull.state = @() }; Error = '*open, unmerged, ready PR*' }
+            @{ Case = 'array PR state'; Change = { $pull.state = @('open') }; Error = '*open, unmerged, ready PR*' }
+            @{ Case = 'null PR state'; Change = { $pull.state = $null }; Error = '*open, unmerged, ready PR*' }
+            @{ Case = 'string PR number'; Change = { $pull.number = '42' }; Error = '*specified open*' }
+            @{ Case = 'array PR number'; Change = { $pull.number = @(42) }; Error = '*specified open*' }
             @{ Case = 'changed head'; Change = { $pull.head.sha = 'c' * 40 }; Error = '*head or trusted base changed*' }
             @{ Case = 'noncanonical head'; Change = { $pull.head.sha = 'B' * 40 }; Error = '*head or trusted base changed*' }
             @{ Case = 'changed base'; Change = { $pull.base.sha = 'c' * 40 }; Error = '*head or trusted base changed*' }

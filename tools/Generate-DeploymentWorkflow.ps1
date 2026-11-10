@@ -494,7 +494,8 @@ Add-WorkflowBlock @'
 '@
 $deployContent = ($lines -join "`n") + "`n"
 
-# The separate manual workflow reuses the same graph, scopes, environment approvals and token lifecycle.
+# Keep the legacy graph blocked until isolated execution and durable recovery are connected.
+$legacyDevelopmentBlock = "throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'"
 $development = Get-PlatformYaml -Yaml $deployContent
 $development['name'] = 'Develop reference instance'
 $development['permissions']['pull-requests'] = 'read'
@@ -521,7 +522,7 @@ $authorization['steps'] = @($authorization['steps'] | Where-Object {
 })
 foreach ($step in $authorization['steps']) {
     if ($step['name'] -ceq 'Read current authorization from the protected control ref') {
-        $step['run'] = './trusted/platform/tools/Read-DevelopmentControl.ps1 -Mode development -GitHubOutputPath $env:GITHUB_OUTPUT'
+        $step['run'] = './trusted/platform/tools/Read-DevelopmentControl.ps1 -Mode development | Out-Null' + "`n" + $legacyDevelopmentBlock
     }
     if ($step['name'] -cin @('Check PR origin before loading any App key', 'Verify active platform-team membership')) {
         $step['env'] = @{
@@ -583,6 +584,7 @@ foreach ($jobId in @($development['jobs'].get_Keys())) {
                 $step['env']['EXPECTED_SOURCE'] = '${{ needs.authorize.outputs.source }}'
                 $step['env']['EXPECTED_ATTEMPT'] = '${{ needs.authorize.outputs.attempt }}'
                 $step['run'] = './trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT'
+                $step['run'] += "`n" + $legacyDevelopmentBlock
             }
             $steps.Add($step)
         }

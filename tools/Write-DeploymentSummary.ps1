@@ -38,10 +38,12 @@ function Get-DeploymentApplySummary {
         $Needs['authorize']['outputs']['attempt'] -ne $Attempt) {
         throw 'Apply INCOMPLETE: stale authorization attempt. Use Re-run all jobs outside the reference, or a new dispatch for the reference.'
     }
-    if ($Needs['authorize']['result'] -cne 'success') { throw 'Apply INCOMPLETE: trusted authorization failed.' }
+    if ($Needs['authorize']['result'] -isnot [string] -or $Needs['authorize']['result'] -cne 'success') { throw 'Apply INCOMPLETE: trusted authorization failed.' }
+    if ($Needs['authorize']['outputs']['allowed'] -isnot [string]) { throw 'Apply INCOMPLETE: unreadable authorization decision.' }
     if ($Needs['authorize']['outputs']['allowed'] -ceq 'false') { return 'Apply NOT PERFORMED: the author is not authorized for deployment credentials.' }
     if ($Needs['authorize']['outputs']['allowed'] -cne 'true') { throw 'Apply INCOMPLETE: unreadable authorization decision.' }
-    if ($Needs['select']['result'] -cne 'success' -or $Needs['plan_complete']['result'] -cne 'success') {
+    if ($Needs['select']['result'] -isnot [string] -or $Needs['select']['result'] -cne 'success' -or
+        $Needs['plan_complete']['result'] -isnot [string] -or $Needs['plan_complete']['result'] -cne 'success') {
         throw 'Apply INCOMPLETE: trusted selection or cloud plan failed.'
     }
     if ($Requested -eq 'false') { return 'Apply NOT PERFORMED: this event or operation requests plan only.' }
@@ -52,10 +54,11 @@ function Get-DeploymentApplySummary {
     if ($Needs['plan_complete']['outputs']['changes'] -cnotin @('true', 'false')) { throw 'Apply INCOMPLETE: unreadable plan change decision.' }
     if ($Needs['plan_complete']['outputs']['changes'] -ceq 'false') { return 'No changes. No apply was required or performed.' }
     if ($nodes.Count -eq 0) { throw 'Apply INCOMPLETE: an empty phase selection cannot require apply.' }
-    if ($Needs['approve_apply']['result'] -cne 'success') { throw 'Apply INCOMPLETE: shared apply approval did not succeed.' }
+    if ($Needs['approve_apply']['result'] -isnot [string] -or $Needs['approve_apply']['result'] -cne 'success') { throw 'Apply INCOMPLETE: shared apply approval did not succeed.' }
     foreach ($node in $nodes) {
         $job = 'apply_' + $node.Replace('-', '_').Replace(':', '_')
-        if (-not $Needs.Contains($job) -or $Needs[$job]['result'] -cne 'success') { throw "Apply INCOMPLETE: $job did not succeed." }
+        if (-not $Needs.Contains($job) -or $Needs[$job] -isnot [Collections.IDictionary] -or
+            $Needs[$job]['result'] -isnot [string] -or $Needs[$job]['result'] -cne 'success') { throw "Apply INCOMPLETE: $job did not succeed." }
     }
     return 'Apply completed for every selected phase. Manual confirmations are not automatically verified.'
 }

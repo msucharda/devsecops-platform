@@ -48,6 +48,9 @@ function Assert-DevelopmentControlDesignation {
     if ($State.TokenJournalPhase -cnotin @('absent', 'clear', 'retired')) {
         throw 'Unfinished development token blocks candidate, standard adopt and rollback; complete trusted recovery first.'
     }
+    if ($Mode -eq 'development' -and $State.ControlVersion -ne 2) {
+        throw 'New development authorization requires protected control document v2; legacy v1 is standard-only.'
+    }
 }
 
 Assert-DevelopmentControlContext -Name $Repository -Server $ServerUrl -Api $ApiUrl -Token $ReadToken

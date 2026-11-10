@@ -49,6 +49,8 @@ Describe 'Deployment apply status' {
         @{ Result = '' }
         @{ Result = 'unknown' }
         @{ Result = $null }
+        @{ Result = @() }
+        @{ Result = @('success') }
     ) {
         $needs.apply_observer.result = $Result
         { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 1 -JobSummaryPath '' 6>$null } |
@@ -64,6 +66,26 @@ Describe 'Deployment apply status' {
         $needs.apply_observer.result = 'skipped'
         { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested $Requested -RunAttempt 1 -JobSummaryPath '' 6>$null } |
             Should -Not -Throw
+    }
+
+    It 'rejects a nonscalar success result for prerequisite <Job>' -ForEach @(
+        foreach ($job in @('authorize', 'select', 'plan_complete', 'approve_apply')) {
+            @{ Job = $job; Result = @() }
+            @{ Job = $job; Result = @('success') }
+        }
+    ) {
+        $needs[$Job].result = $Result
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 1 -JobSummaryPath '' 6>$null } |
+            Should -Throw '*Apply INCOMPLETE*'
+    }
+
+    It 'rejects a nonscalar authorization decision <Case>' -ForEach @(
+        @{ Case = 'empty array'; Value = @() }
+        @{ Case = 'singleton array'; Value = @('true') }
+    ) {
+        $needs.authorize.outputs.allowed = $Value
+        { & $reporter -NeedsJson (ConvertTo-Json $needs -Depth 20) -Apply -ApplyRequested true -RunAttempt 1 -JobSummaryPath '' 6>$null } |
+            Should -Throw '*unreadable authorization decision*'
     }
 
     It 'reports denied authorization without implying an apply' {
@@ -94,6 +116,7 @@ Describe 'Deployment apply status' {
         @{ Case = 'missing shared approval'; Change = { $needs.approve_apply.result = 'skipped' }; Error = '*shared apply approval*' }
         @{ Case = 'uppercase shared approval'; Change = { $needs.approve_apply.result = 'SUCCESS' }; Error = '*shared apply approval*' }
         @{ Case = 'missing selected apply'; Change = { $needs.Remove('apply_observer') }; Error = '*apply_observer*' }
+        @{ Case = 'array selected apply'; Change = { $needs.apply_observer = @($needs.apply_observer) }; Error = '*apply_observer*' }
         @{ Case = 'uppercase selected apply status'; Change = { $needs.apply_observer.result = 'SUCCESS' }; Error = '*apply_observer*' }
     ) {
         . $Change

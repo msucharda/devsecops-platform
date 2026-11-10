@@ -75,7 +75,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -91,7 +93,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -198,7 +202,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -214,7 +220,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -313,7 +321,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -329,7 +339,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -437,7 +449,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -453,7 +467,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -556,7 +572,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -572,7 +590,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -683,7 +703,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -699,7 +721,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -811,7 +835,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -827,7 +853,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -918,7 +946,9 @@ jobs:
       id: control
       if: ${{ steps.preflight.outputs.allowed == 'true' || steps.preflight.outputs.eligible == 'true' }}
       name: Read current authorization from the protected control ref
-      run: ./trusted/platform/tools/Read-DevelopmentControl.ps1 -Mode development -GitHubOutputPath $env:GITHUB_OUTPUT
+      run: |-
+        ./trusted/platform/tools/Read-DevelopmentControl.ps1 -Mode development | Out-Null
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         DEVELOPMENT_OPERATION: ${{ inputs.operation }}
@@ -1057,7 +1087,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1073,7 +1105,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -1180,7 +1214,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1196,7 +1232,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -1295,7 +1333,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1311,7 +1351,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -1419,7 +1461,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1435,7 +1479,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -1538,7 +1584,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1554,7 +1602,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -1665,7 +1715,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1681,7 +1733,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -1788,7 +1842,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1804,7 +1860,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}
@@ -1936,7 +1994,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before Azure credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - name: Sign in to Azure with the phase managed identity
       uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -1952,7 +2012,9 @@ jobs:
         EXPECTED_REFERENCE: ${{ needs.authorize.outputs.reference }}
         EXPECTED_SOURCE: ${{ needs.authorize.outputs.source }}
       name: Recheck protected development state before App credentials
-      run: ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+      run: |-
+        ./trusted/platform/tools/Test-DevelopmentProtectedState.ps1 -Mode development -ExpectedReference $env:EXPECTED_REFERENCE -ExpectedControlRevision $env:EXPECTED_CONTROL_REVISION -ExpectedApproval $env:EXPECTED_APPROVAL -ExpectedSourceRepository $env:EXPECTED_SOURCE -ExpectedAttempt $env:EXPECTED_ATTEMPT
+        throw 'Legacy development execution is disabled: isolated VM controller, protected writer and acknowledged recovery head are not connected.'
       shell: pwsh
     - env:
         PLATFORM_APP_ENTERPRISE: ${{ vars.PLATFORM_APP_ENTERPRISE }}

@@ -27,7 +27,7 @@
             Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = @(
                 '*retires the persisted exact leaf*', '*recovers a lost successful DELETE*', '*does not retire on*',
                 '*returns the same acknowledged retirement*', '*rejects invalid retirement run*',
-                '*missing App JWT*', '*unknown pending leaf*'
+                '*missing App JWT*', '*unknown pending leaf*', '*different recovery context*'
             ) })
         }
         @{
@@ -44,14 +44,17 @@
                     '*rejects a stale caller head*', '*rejects an authorization blob*',
                     '*models fresh recovery after a committed issued CAS*'
                 ) }
-                @{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = '*explicit protected writer*' }
+                @{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = @(
+                    '*explicit protected writer*', '*does not issue from a legacy v1 control snapshot*'
+                ) }
             )
         }
         @{
             Name = 'development-control-append'
             Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = @(
                 '*appends one journal*', '*rejects an incorrect <Case>*',
-                '*refuses a competing head*', '*fails closed on <Fault>*'
+                '*refuses a competing head*', '*fails closed on <Fault>*', '*rejects malformed <Kind>*',
+                '*case-only encrypted journal readback*'
             ) })
         }
         @{
@@ -1298,6 +1301,171 @@
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
+        @{
+            Mutant = 'Complete-DevelopmentTokenRetirement: operator ''-cnotmatch'' -> -inotmatch in ''$RetirementRunId -cnotmatch ''^[1-9][0-9]{0,18}\z''''#1'
+            Reason = 'Equivalent: the decimal-ID expression has no letters or case-dependent character classes.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Complete-DevelopmentTokenRetirement: operator ''-cnotin'' -> -inotin in ''$journal.Phase -cnotin @(''issued'', ''retired'')''#1'
+            Reason = 'Equivalent: the strict journal reader returns only canonical literal phases, never case aliases.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Complete-DevelopmentTokenRetirement: operator ''-cne'' -> -ine in ''$journal.Context -cne $Context''#1'
+            Reason = 'Equivalent: both contexts are canonical. Repository-name case is the only unconstrained case and both are already exactly bound to the same caller repository by the writer and protected reader.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentActiveInstallation: operator ''-cne'' -> -ine in ''([string] $Installation[''app_id'']) -cne $Context.appId''#1'
+            Reason = 'Equivalent: the installation App ID is a validated integer and the context App ID is decimal; case cannot make unequal IDs equal.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentActiveInstallation: operator ''-cne'' -> -ine in ''([string] $Installation[''id'']) -cne $Context.installationId''#1'
+            Reason = 'Equivalent: the installation ID is a validated integer and the context ID is decimal; case cannot make unequal IDs equal.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentActiveInstallation: operator ''-cne'' -> -ine in ''$Installation[''account''][''login''].ToLowerInvariant() -cne $Context.organization''#1'
+            Reason = 'Equivalent: the documented case-insensitive login is explicitly lowercased and the context organization accepts only lowercase ASCII letters, digits and hyphens.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenWriteContext: operator ''-cne'' -> -ine in ''$canonical -cne $Context''#1'
+            Reason = 'Equivalent: exact field names and canonical ASCII values are checked before comparison. Canonical serialization preserves repository-name case; alternate JSON escapes, order or whitespace do not differ solely by case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenWriteContext: operator ''-cne'' -> -ine in ''$before.ControlRevision -cne $ExpectedHead''#1'
+            Reason = 'Equivalent: the protected reader and preceding caller-head expression both require lowercase full hexadecimal SHAs.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenWriteContext: operator ''-cne'' -> -ine in ''$before.ControlBlobSha -cne $ExpectedControlBlobSha''#1'
+            Reason = 'Equivalent: the protected reader requires a lowercase blob SHA; the expected blob already exactly matches the lowercase validated context authorizationBlob.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Write-DevelopmentControlJournal: operator ''-cne'' -> -ine in ''(Get-DevelopmentControlFileSha -Tree $tree) -cne $ExpectedControlBlobSha''#1'
+            Reason = 'Equivalent: the tree-file reader requires a lowercase blob SHA and the expected blob is already exactly bound to the lowercase validated context.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Write-DevelopmentControlJournal: operator ''-cne'' -> -ine in ''$fresh.ControlRevision -cne $ExpectedHead''#1'
+            Reason = 'Equivalent: both the fresh protected ref and caller head are independently constrained to lowercase full SHAs.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Write-DevelopmentControlJournal: operator ''-cne'' -> -ine in ''$fresh.ControlBlobSha -cne $ExpectedControlBlobSha''#1'
+            Reason = 'Equivalent: the fresh reader requires a lowercase blob SHA and the expected blob is exactly bound to the lowercase validated context.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Write-DevelopmentControlJournal: operator ''-cne'' -> -ine in ''(Get-DevelopmentControlRevision -Value $updated -ExpectedRef refs/heads/platform-control) -cne $created.sha''#1'
+            Reason = 'Equivalent: the ref reader and the created-commit guard both require lowercase full SHAs before this comparison.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Write-DevelopmentControlJournal: operator ''-cne'' -> -ine in ''$after.ControlRevision -cne $created.sha''#1'
+            Reason = 'Equivalent: the immutable readback ref and the created-commit guard both require lowercase full SHAs.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Write-DevelopmentControlJournal: operator ''-cne'' -> -ine in ''$after.ControlBlobSha -cne $ExpectedControlBlobSha''#1'
+            Reason = 'Equivalent: readback requires a lowercase blob SHA and the expected blob is exactly bound to the lowercase validated context.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'New-DevelopmentTokenContext: operator ''-cne'' -> -ine in ''$record.repository.Split(''/'')[0] -cne $record.referenceOwner''#1'
+            Reason = 'Equivalent: both the repository owner and referenceOwner have already passed lowercase ASCII-only validation.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'New-DevelopmentTokenContext: operator ''-cnotmatch'' -> -inotmatch in ''$record[$field] -cnotmatch ''^[1-9][0-9]{0,18}\z''''#1'
+            Reason = 'Equivalent: decimal digits and anchors have no letter case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$canonical -cne $entry.context''#1'
+            Reason = 'Equivalent: exact context field names and ASCII values are validated first. Canonical serialization preserves repository-name case; alternate JSON syntax cannot differ solely by case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$origin -cne $contextValue.apiUrl''#1'
+            Reason = 'Equivalent: every context API origin is independently constrained to lowercase ASCII before the origin is stored or compared.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cnotin'' -> -inotin in ''$phase -cnotin @(''clear'', ''retired'')''#1'
+            Reason = 'Equivalent: phase starts at literal clear and is assigned only an event accepted by the exact pending/issued/retired branches.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$phase -cne ''pending''''#1'
+            Reason = 'Equivalent: phase starts at literal clear and is assigned only an event accepted by the exact pending/issued/retired branches.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$phase -cne ''issued''''#1'
+            Reason = 'Equivalent: phase starts at literal clear and is assigned only an event accepted by the exact pending/issued/retired branches.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$entry.context -cne $lastContext''#1'
+            Reason = 'Equivalent: both contexts are canonical; all fields constrain case except repository-name case, whose exact stability is already enforced by the preceding journal repository check.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$entry.context -cne $lastContext''#2'
+            Reason = 'Equivalent: both contexts are canonical; all fields constrain case except repository-name case, whose exact stability is already enforced by the preceding journal repository check.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$entry.activeInstallationId -cne $contextValue.installationId''#1'
+            Reason = 'Equivalent: the expected installation ID contains only decimal digits, so no case variant can compare equal to it.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$entry.event -cne ''retired''''#1'
+            Reason = 'Equivalent: the preceding exact event dispatch has already rejected every event except canonical pending, issued and retired.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$entry.event -cne ''issued''''#1'
+            Reason = 'Equivalent: the preceding exact event dispatch has already rejected every event except canonical pending, issued and retired.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cne'' -> -ine in ''$entry.event -cne ''issued''''#2'
+            Reason = 'Equivalent: the preceding exact event dispatch has already rejected every event except canonical pending, issued and retired.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenJournal: operator ''-cnotmatch'' -> -inotmatch in ''$entry.retirementRunId -cnotmatch ''^[1-9][0-9]{0,18}\z''''#1'
+            Reason = 'Equivalent: decimal digits and anchors have no letter case.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Get-DevelopmentRecoveryKey: operator ''-cne'' -> -ine in ''[Convert]::ToBase64String($bytes) -cne $RecoveryKey''#1'
+            Reason = 'Equivalent: accepted noncanonical base64 differs by whitespace or at most 4 discarded padding bits. ASCII letter-case changes alter a sextet by 26, so cannot preserve decoded bytes or hide either noncanonical form.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenEnvelope: operator ''-cne'' -> -ine in ''$value.keySha256 -cne $keyDigest''#1'
+            Reason = 'Equivalent: the envelope key digest is first validated as lowercase hexadecimal and the computed SHA256 is explicitly lowercased.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Read-DevelopmentTokenEnvelope: operator ''-cne'' -> -ine in ''[Convert]::ToBase64String($decoded[$field]) -cne $value[$field]''#1'
+            Reason = 'Equivalent: accepted noncanonical base64 differs by whitespace or at most 4 discarded padding bits. ASCII letter-case changes alter a sextet by 26, so cannot preserve decoded bytes or hide either noncanonical form.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
+        @{
+            Mutant = 'Assert-DevelopmentRecoveredTokenDigest: operator ''-cne'' -> -ine in ''$Actual -cne $Expected''#1'
+            Reason = 'Equivalent: Actual is the explicitly lowercased computed SHA256 and Expected passed the strict lowercase token-digest expression before decryption.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
+        }
         @{
             Mutant = 'Assert-DevelopmentStateAttributes: operator ''-cnotmatch'' -> -inotmatch in ''$Attributes[''id''] -cnotmatch ''^[1-9][0-9]{0,17}\z''''#1'
             Reason = 'Equivalent mutant: the numeric ID pattern contains only decimal digits and anchors, which have no letter case.'
