@@ -1224,5 +1224,5 @@ jobs:
         env:
           DEPLOYMENT_NEEDS: ${{ toJSON(needs) }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
-          APPLY_REQUESTED: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.operation != 'plan' }}
+          APPLY_REQUESTED: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' }}
         run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS -Apply -ApplyRequested $env:APPLY_REQUESTED -RunAttempt $env:RUN_ATTEMPT

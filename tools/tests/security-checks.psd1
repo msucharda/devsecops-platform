@@ -1487,12 +1487,12 @@
             Issue = 'https://github.com/msucharda/devsecops-platform/pull/263'
         }
         @{
-            Mutant = 'Assert-DevelopmentStateAttributes: operator ''-cnotmatch'' -> -inotmatch in ''$Attributes[''id''] -cnotmatch ''^[1-9][0-9]{0,17}\z''''#1'
+            Mutant = 'Assert-DevelopmentStateAttributeMap: operator ''-cnotmatch'' -> -inotmatch in ''$Attributes[''id''] -cnotmatch ''^[1-9][0-9]{0,17}\z''''#1'
             Reason = 'Equivalent mutant: the numeric ID pattern contains only decimal digits and anchors, which have no letter case.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
         }
         @{
-            Mutant = 'Assert-DevelopmentStateAttributes: operator ''-cne'' -> -ine in ''[string] $response[''id''] -cne $Attributes[''id'']''#1'
+            Mutant = 'Assert-DevelopmentStateAttributeMap: operator ''-cne'' -> -ine in ''[string] $response[''id''] -cne $Attributes[''id'']''#1'
             Reason = 'Equivalent mutant: the response ID is a validated integer and the state ID is a validated decimal string; neither representation contains letters.'
             Issue = 'https://github.com/msucharda/devsecops-platform/issues/259'
         }

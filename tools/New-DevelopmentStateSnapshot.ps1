@@ -17,7 +17,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # security-check: development-state-attributes
-function Assert-DevelopmentStateAttributes {
+function Assert-DevelopmentStateAttributeMap {
     param([AllowNull()][object] $Attributes, [string] $Type, [string] $Org)
     if ($Attributes -isnot [Collections.IDictionary]) { throw 'Development state requires complete organization attributes.' }
     switch -CaseSensitive ($Type) {
@@ -59,7 +59,7 @@ function Assert-DevelopmentStateAttributes {
 }
 
 # security-check: development-state-field-names
-function Assert-DevelopmentStateFieldNames {
+function Assert-DevelopmentStateFieldSet {
     param([Collections.IDictionary] $Value)
     foreach ($name in $Value.get_Keys()) {
         # Terraform's Go decoder folds struct-field names; PowerShell dictionaries do not.
@@ -78,12 +78,12 @@ function Assert-DevelopmentStateClosure {
         $State['resources'] -isnot [Collections.IList]) {
         throw 'Development state requires a complete version-4 snapshot with lineage and serial.'
     }
-    Assert-DevelopmentStateFieldNames -Value $State
+    Assert-DevelopmentStateFieldSet -Value $State
     if ($State['outputs'] -isnot [Collections.IDictionary] -or
         $State['outputs']['organizations'] -isnot [Collections.IDictionary]) {
         throw 'Development state outputs must identify exactly the selected organization.'
     }
-    Assert-DevelopmentStateFieldNames -Value $State['outputs']['organizations']
+    Assert-DevelopmentStateFieldSet -Value $State['outputs']['organizations']
     $organizations = $State['outputs']['organizations']['value']
     if ($organizations -isnot [Collections.IList] -or $organizations.Count -ne 1 -or
         $organizations[0] -isnot [string] -or $organizations[0] -cne $Org) {
@@ -98,7 +98,7 @@ function Assert-DevelopmentStateClosure {
         if ($resource -isnot [Collections.IDictionary] -or $resource.Contains('module') -or
             $resource['mode'] -isnot [string] -or $resource['type'] -isnot [string] -or
             $resource['name'] -isnot [string]) { throw 'Development state contains an unsupported resource address.' }
-        Assert-DevelopmentStateFieldNames -Value $resource
+        Assert-DevelopmentStateFieldSet -Value $resource
         $address = "$($resource['mode']):$($resource['type']):$($resource['name'])"
         if ($expected -cnotcontains $address -or -not $seen.Add($address)) {
             throw 'Development state contains a foreign or duplicate resource address.'
@@ -110,8 +110,8 @@ function Assert-DevelopmentStateClosure {
             $instances[0]['status'] -or $instances[0]['deposed']) {
             throw 'Development state contains a foreign, incomplete, tainted or deposed organization instance.'
         }
-        Assert-DevelopmentStateFieldNames -Value $instances[0]
-        Assert-DevelopmentStateAttributes -Attributes $instances[0]['attributes'] -Type $resource['type'] -Org $Org
+        Assert-DevelopmentStateFieldSet -Value $instances[0]
+        Assert-DevelopmentStateAttributeMap -Attributes $instances[0]['attributes'] -Type $resource['type'] -Org $Org
     }
     if ($seen.Count -ne $expected.Count) { throw 'Development state is missing part of the selected organization resource closure.' }
 }

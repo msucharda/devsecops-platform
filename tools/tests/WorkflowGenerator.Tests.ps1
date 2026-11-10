@@ -124,6 +124,46 @@ BeforeAll {
 }
 
 Describe 'Deployment workflow generation' {
+    It 'reports apply requests using only declared outputs and preserves standard and development event boundaries' {
+        $output = Join-Path $TestDrive 'summary-contract/deploy.yml'
+        & $generator -ModulesPath $fixtures -OutputPath $output
+        foreach ($mode in @('standard', 'development')) {
+            $path = if ($mode -ceq 'standard') { $output } else { Join-Path (Split-Path $output) 'development.yml' }
+            $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $path -Raw)
+            $summary = @($workflow.jobs.deployment_complete.steps | Where-Object { $_.Contains('env') -and $_.env.Contains('APPLY_REQUESTED') })
+            $summary.Count | Should -Be 1
+            $expression = $summary[0].env.APPLY_REQUESTED
+            foreach ($reference in [regex]::Matches($expression, 'needs\.authorize\.outputs\.(\w+)')) {
+                $workflow.jobs.authorize.outputs.Contains($reference.Groups[1].Value) | Should -BeTrue
+            }
+            $workflow.jobs.deployment_complete.if = $expression
+            $workflow.jobs.deployment_complete.needs = @()
+            $cases = if ($mode -ceq 'standard') {
+                @(
+                    @{ Ref = 'refs/heads/main'; Event = 'push'; Expected = $true }
+                    @{ Ref = 'refs/heads/main'; Event = 'workflow_dispatch'; Expected = $true }
+                    @{ Ref = 'refs/heads/feature'; Event = 'push'; Expected = $false }
+                    @{ Ref = 'refs/heads/main'; Event = 'pull_request_target'; Expected = $false }
+                )
+            }
+            else {
+                @(
+                    @{ Ref = 'refs/heads/main'; Event = 'workflow_dispatch'; Operation = 'plan'; Expected = $false }
+                    @{ Ref = 'refs/heads/main'; Event = 'workflow_dispatch'; Operation = 'apply'; Expected = $true }
+                    @{ Ref = 'refs/heads/feature'; Event = 'workflow_dispatch'; Operation = 'apply'; Expected = $false }
+                    @{ Ref = 'refs/heads/main'; Event = 'pull_request_target'; Operation = 'apply'; Expected = $false }
+                )
+            }
+            foreach ($case in $cases) {
+                $context = Get-SubsetWorkflowContext $workflow
+                $context.github.ref = $case.Ref
+                $context.github.event_name = $case.Event
+                if ($mode -ceq 'development') { $context.needs.authorize.outputs.operation = $case.Operation }
+                (Get-WorkflowConditionResult $workflow deployment_complete $context).Allowed | Should -Be $case.Expected
+            }
+        }
+    }
+
     It 'generates and checks every workflow without ambient user modules in a fresh process' {
         $output = Join-Path $TestDrive 'isolated-modules/deploy.yml'
         $command = @"

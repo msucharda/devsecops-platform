@@ -489,7 +489,7 @@ Add-WorkflowBlock @'
         env:
           DEPLOYMENT_NEEDS: ${{ toJSON(needs) }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
-          APPLY_REQUESTED: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' && needs.authorize.outputs.operation != 'plan' }}
+          APPLY_REQUESTED: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target' }}
         run: ./trusted/platform/tools/Write-DeploymentSummary.ps1 -NeedsJson $env:DEPLOYMENT_NEEDS -Apply -ApplyRequested $env:APPLY_REQUESTED -RunAttempt $env:RUN_ATTEMPT
 '@
 $deployContent = ($lines -join "`n") + "`n"
@@ -549,6 +549,10 @@ foreach ($step in $authorization['steps']) {
 foreach ($jobId in @($development['jobs'].get_Keys())) {
     $job = $development['jobs'][$jobId]
     foreach ($step in $job['steps']) {
+        if ($jobId -ceq 'deployment_complete' -and $step['name'] -ceq 'Report apply status without deployment credentials') {
+            $step['env']['APPLY_REQUESTED'] = $step['env']['APPLY_REQUESTED'].Replace(
+                ' }}', " && needs.authorize.outputs.operation != 'plan' }}")
+        }
         if ($step.Contains('with') -and $step['with']['path'] -ceq 'candidate') { $step['with']['fetch-depth'] = 0 }
         if ($step['name'] -ceq 'Upload public module outputs') {
             $step['id'] = 'public_outputs'
