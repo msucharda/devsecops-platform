@@ -1,6 +1,45 @@
 #Requires -Version 7.4
 Set-StrictMode -Version Latest
 
+function Invoke-InterruptionScript {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][hashtable] $Arguments,
+        [Parameter(Mandatory)][scriptblock] $WebRequest,
+        [Parameter(Mandatory)][scriptblock] $RestMethod,
+        [hashtable] $Command = @{}
+    )
+
+    # Keep cmdlet parameter validation, but omit Pester's per-request call history in large matrices.
+    $null = @($WebRequest, $RestMethod)
+    foreach ($transport in @(
+        @{ Command = 'Invoke-WebRequest'; Function = 'Invoke-InterruptionWebRequest'; Callback = 'WebRequest' }
+        @{ Command = 'Invoke-RestMethod'; Function = 'Invoke-InterruptionRestMethod'; Callback = 'RestMethod' }
+    )) {
+        $metadata = [Management.Automation.CommandMetadata]::new((Get-Command -Name $transport.Command -CommandType Cmdlet))
+        $parameters = [Management.Automation.ProxyCommand]::GetParamBlock($metadata)
+        $body = @"
+[CmdletBinding()] param($parameters)
+if (`$PSBoundParameters.ContainsKey('Method')) {
+    `$PSBoundParameters['Method'] = `$PSBoundParameters['Method'].ToString().ToUpperInvariant()
+}
+& `$$($transport.Callback) @PSBoundParameters
+"@
+        Set-Item -LiteralPath "Function:$($transport.Function)" -Value ([scriptblock]::Create($body))
+        Set-Alias -Name $transport.Command -Value $transport.Function
+    }
+    foreach ($name in $Command.get_Keys()) {
+        if ($name -cnotmatch '^[A-Za-z][A-Za-z0-9-]*$' -or $Command[$name] -isnot [scriptblock]) {
+            throw 'Interruption commands require a simple command name and a scriptblock.'
+        }
+        $functionName = "Invoke-InterruptionStub-$name"
+        Set-Item -LiteralPath "Function:$functionName" -Value ([scriptblock]::Create("& `$Command['$name'] @args"))
+        Set-Alias -Name $name -Value $functionName
+    }
+    & $Path @Arguments
+}
+
 <#
 Interruption harness for state-changing tools.
 
@@ -259,4 +298,4 @@ function Format-InterruptionResult {
     return $lines -join [Environment]::NewLine
 }
 
-Export-ModuleMember -Function Get-InterruptionPlan, Clear-InterruptionPlan, Invoke-InterruptionStep, Invoke-InterruptionMatrix, Get-InterruptionShard, Format-InterruptionResult
+Export-ModuleMember -Function Get-InterruptionPlan, Clear-InterruptionPlan, Invoke-InterruptionStep, Invoke-InterruptionMatrix, Get-InterruptionShard, Format-InterruptionResult, Invoke-InterruptionScript

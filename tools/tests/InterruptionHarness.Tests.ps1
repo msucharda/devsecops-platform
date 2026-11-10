@@ -55,6 +55,65 @@ BeforeAll {
 }
 
 Describe 'Interruption harness' {
+    It 'dispatches nested script requests through scoped transports without Pester call-history overhead' {
+        $nested = Join-Path $TestDrive 'nested.ps1'
+        Set-Content -LiteralPath $nested -Value @'
+param($Address)
+Invoke-RestMethod -Uri $Address -Method POST -Headers @{ test = 'rest' } -Body '{"value":1}' -ContentType application/json -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
+'@
+        $entry = Join-Path $TestDrive 'entry.ps1'
+        Set-Content -LiteralPath $entry -Value @'
+param($Address, $Nested)
+Invoke-WebRequest -Uri $Address -Method PUT -Headers @{ test = 'web' } -Body '{"value":2}' -ContentType application/json -SkipHttpErrorCheck -MaximumRetryCount 0 -MaximumRedirection 0 -TimeoutSec 60
+& $Nested -Address $Address
+gh fixture-argument
+'@
+        Mock Invoke-WebRequest { throw 'Unexpected Pester web dispatcher.' }
+        Mock Invoke-RestMethod { throw 'Unexpected Pester REST dispatcher.' }
+        $calls = [Collections.Generic.List[string]]::new()
+        $web = {
+            param($Uri, $Method, $Headers, $Body)
+            $calls.Add("$Method $Uri $($Headers.test) $Body")
+            'web-result'
+        }
+        $rest = {
+            param($Uri, $Method, $Headers, $Body)
+            $calls.Add("$Method $Uri $($Headers.test) $Body")
+            'rest-result'
+        }
+
+        $result = @(Invoke-InterruptionScript -Path $entry -Arguments @{ Address = 'https://offline.invalid/app'; Nested = $nested } `
+                -WebRequest $web -RestMethod $rest -Command @{ gh = { "cli-result:$($args -join ',')" } })
+
+        $result | Should -BeExactly @('web-result', 'rest-result', 'cli-result:fixture-argument')
+        $calls.ToArray() | Should -BeExactly @(
+            'PUT https://offline.invalid/app web {"value":2}'
+            'POST https://offline.invalid/app rest {"value":1}'
+        )
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+        { Invoke-WebRequest -Uri 'https://offline.invalid/app' } | Should -Throw '*Unexpected Pester web dispatcher*'
+        { Invoke-RestMethod -Uri 'https://offline.invalid/app' } | Should -Throw '*Unexpected Pester REST dispatcher*'
+    }
+
+    It 'propagates transport failures rather than returning a successful script result' {
+        $entry = Join-Path $TestDrive 'failed-transport.ps1'
+        Set-Content -LiteralPath $entry -Value "Invoke-WebRequest -Uri 'https://offline.invalid/app'; 'must not succeed'"
+
+        { Invoke-InterruptionScript -Path $entry -Arguments @{} -WebRequest { throw 'Injected transport failure.' } `
+                -RestMethod { throw 'Unexpected REST request.' } } | Should -Throw '*Injected transport failure*'
+    }
+
+    It 'rejects unsupported cmdlet parameters before dispatching a request' {
+        $entry = Join-Path $TestDrive 'invalid-parameters.ps1'
+        Set-Content -LiteralPath $entry -Value "Invoke-WebRequest -Uri 'https://offline.invalid/app' -UnsupportedParameter value"
+        $observed = @{ Dispatched = $false }
+
+        { Invoke-InterruptionScript -Path $entry -Arguments @{} -WebRequest { $observed.Dispatched = $true } `
+                -RestMethod { throw 'Unexpected REST request.' } } | Should -Throw '*UnsupportedParameter*'
+        $observed.Dispatched | Should -BeFalse
+    }
+
     It 'reports a duplicate after an abrupt stop when the tool saves its intent only in a finally block' {
         $run = { Invoke-ToyTool }
 

@@ -36,6 +36,7 @@ BeforeAll {
 Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
     BeforeEach {
         . $stubBlocks.BeforeEach
+        $command = @{ gh = $ghTransport; az = $azureTransport; 'Get-RandomPlatformDeploymentIdentifier' = $deploymentIdentifierTransport }
         # The workflow check costs about one second per run and has its own tests. The harness tests recovery only.
         Set-Content -LiteralPath (Join-Path $release 'tools/Generate-DeploymentWorkflow.ps1') -Value 'param($ModulesPath, $OutputPath, [switch] $Check)'
         $plan = Get-InterruptionPlan
@@ -66,7 +67,7 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
                 return [pscustomobject]@{ StatusCode = 303; Content = '' }
             }
         }
-        Mock Invoke-WebRequest {
+        $interruptionTransport = {
             param([uri] $Uri, [string] $Body, [string] $Method = 'GET', [hashtable] $Headers)
             $call = @{ Uri = $Uri; Body = $Body; Method = $Method; Headers = $Headers }
             $path = $Uri.AbsolutePath
@@ -129,7 +130,10 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
 
     It 'recovers from an interruption at every mutating step of resource setup' {
         $arguments.ResourcesOnly = $true
-        $run = { $null = & $bootstrap @arguments 3>$null 6>$null }
+        $run = {
+            $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
+                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
+        }
 
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
 
@@ -142,7 +146,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         # The documented order runs resource setup first, then registers the Apps and runs credential setup.
         # Interruptions of the resource steps are covered by the previous test.
         $arguments.ResourcesOnly = $true
-        $null = & $bootstrap @arguments 3>$null 6>$null
+        $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
+            -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
         Initialize-TestVendoringAppSet -Instance $instance -Cloud $cloud -KeysPath $keysPath -CasePath $casePath
         ConvertTo-Yaml $instance | Set-Content -LiteralPath $instancePath
         $arguments.VendoringActionApp = 'action-import'
@@ -152,7 +157,10 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $initialCloud = Copy-TestValue $cloud
         $initialInventory = [IO.File]::ReadAllText($inventory)
         $arguments.ResourcesOnly = $false
-        $run = { $null = & $bootstrap @arguments 3>$null 6>$null }
+        $run = {
+            $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
+                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
+        }
 
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal @shard)
 
@@ -164,7 +172,8 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
     It 'recovers from an interruption at every mutating step of a supported inventory upgrade' -Tag 'BootstrapUpgrade' {
         $arguments.ResourcesOnly = $false
         $cloud.commitShaOverride = $upgradeMainSha
-        $null = & $bootstrap @arguments 3>$null 6>$null
+        $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
+            -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
         $record = Get-Content -LiteralPath $inventory -Raw | ConvertFrom-Json -AsHashtable
         $record.releaseVersion = '0.1.0-rc.5'
         $record.apps.authorization.previousKeys = @(@{
@@ -184,7 +193,10 @@ Describe 'GitHub bootstrap interruption harness' -Tag 'Interruption' {
         $cloud.resources.Remove($credential)
         $initialCloud = Copy-TestValue $cloud
         $initialInventory = [IO.File]::ReadAllText($inventory)
-        $run = { $null = & $bootstrap @arguments 3>$null 6>$null }
+        $run = {
+            $null = Invoke-InterruptionScript -Path $bootstrap -Arguments $arguments `
+                -WebRequest $interruptionTransport -RestMethod $appTransport -Command $command 3>$null 6>$null
+        }
 
         # Two writes have eight interruption cases; share their preflight cost across all four CI shards.
         $result = @(Invoke-InterruptionMatrix -Plan $plan -Reset $reset -Run $run -Snapshot $snapshot -CaptureLocal $captureLocal -RestoreLocal $restoreLocal -ShardByInterruption @shard)
