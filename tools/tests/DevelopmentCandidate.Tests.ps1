@@ -374,6 +374,7 @@ Describe 'Development candidate trust boundary' {
             @{ Path = 'platform/tools/Test-DeploymentCandidate.ps1' }
             @{ Path = 'platform/tools/DevelopmentCandidate.psm1' }
             @{ Path = 'platform/tools/DevelopmentControl.psm1' }
+            @{ Path = 'platform/tools/DevelopmentTokenLifecycle.psm1' }
             @{ Path = 'platform/tools/Read-DevelopmentControl.ps1' }
             @{ Path = 'platform/tools/New-PlatformGitHubToken.ps1' }
             @{ Path = 'platform/tools/New-DevelopmentStateSnapshot.ps1' }

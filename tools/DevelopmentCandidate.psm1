@@ -111,7 +111,7 @@ function Assert-DevelopmentCandidateBoundary {
         # Authorization and credential contracts are deliberately outside the candidate's editable boundary.
         if ($path -cnotmatch '^platform/(modules/|tools/)' -or $path -imatch '(^|/)module\.yaml\z' -or
             $path -imatch '(^|/)\.dependencies(/|$)' -or
-            $path -imatch '^platform/tools/(DevelopmentCandidate|DevelopmentControl|Read-DevelopmentControl|New-DevelopmentStateSnapshot|Test-StandardDeployment|Test-Deployment|Test-Development|New-PlatformGitHubToken|Remove-PlatformGitHubToken|GitHubToken|PlatformTools|ToolDependencies|Select-InstanceModules|ReleaseIntegrity|Get-VendoringSource|ConvertTo-VendoredSource|Resolve-PlatformReleaseImport|VendoringCatalog|Install-ToolDependencies)') {
+            $path -imatch '^platform/tools/(DevelopmentCandidate|DevelopmentControl|DevelopmentToken|Read-DevelopmentControl|New-DevelopmentStateSnapshot|Test-StandardDeployment|Test-Deployment|Test-Development|New-PlatformGitHubToken|Remove-PlatformGitHubToken|GitHubToken|PlatformTools|ToolDependencies|Select-InstanceModules|ReleaseIntegrity|Get-VendoringSource|ConvertTo-VendoredSource|Resolve-PlatformReleaseImport|VendoringCatalog|Install-ToolDependencies)') {
             throw "Development candidate changes protected authorization or instance content: '$path'."
         }
     }

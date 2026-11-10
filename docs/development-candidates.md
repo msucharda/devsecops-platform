@@ -15,6 +15,9 @@ Pozitivní Rulesets cyklus zatím blokuje neprokázaná izolace credentials
 a opakovatelnost jejich ukončení. Níže uvedené autorizační kontroly ani
 lokální snapshot samy tuto podmínku nesplňují. Běžná all-org konfigurace
 zůstává určená pro standardní deployment; development ji nesmí obejít.
+Nové journal helpers ještě netvoří dvoujobový orchestrátor. Chybí také
+doložené získání chráněného writeru a důvěryhodný zdroj potvrzeného headu
+pro obnovu v nové VM. Tento stav nepovoluje aktivaci development apply.
 
 ## Zavedení důvěryhodné cesty
 
@@ -63,7 +66,7 @@ Ve chráněném control refu spravuj mimo kandidáta:
 
 | Pole | Obsah |
 |---|---|
-| `version` | JSON integer `1`. |
+| `version` | JSON integer `2` pro token journal; legacy `1` lze pouze číst bez journalu. |
 | `reference` | Přesná HTTPS identita povoleného repozitáře včetně hostu: `<server-url>/<owner>/<repo>`. |
 | `source` | Výslovná HTTPS identita source repozitáře pro standardní attestaci. |
 | `approval` | JSON string obsahující schválení přesného obsahu a operace ve tvaru níže; prázdný string development nepovolí. |
@@ -73,7 +76,7 @@ Prázdný záznam před prvním cyklem má například tento tvar:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "reference": "https://example.ghe.com/reference-platform/instance",
   "source": "https://github.com/example/platform",
   "approval": "",
@@ -81,9 +84,26 @@ Prázdný záznam před prvním cyklem má například tento tvar:
 }
 ```
 
+Verze 2 vyžaduje ve stejném pevném commitu také regular blob `100644`
+`development-token-journal.json`. Před prvním cyklem obsahuje:
+
+```json
+{"version":1,"records":[]}
+```
+
+Nový reader odmítne verzi 1 s přítomným journalem. Původní v1 reader odmítne
+control document verze 2; kompatibilitu ověřuje skutečná historická čtečka
+v testech. Nová issuance nesmí použít verzi 1. Jde o kompatibilitu parseru,
+nikoli o ochranu před starším workflow, které control document vůbec nečte.
+Před aktivací musí správce doložit skutečné standardní consumers a všechny
+již queued nebo rerun historické workflow cesty v chráněném contextu.
+Tento provozní důkaz dosud chybí.
+
 Approval a disposition vlož jako serializované JSON strings; následující
-příklady zobrazují jejich dekódovaný obsah. Každá změna control commitu
-zneplatní rozpracované běhy a vyžaduje nový dispatch. Původní environment
+příklady zobrazují jejich dekódovaný obsah. Standardní cesta nadále vyžaduje
+přesný autorizační commit; jeho změna zneplatní rozpracovaný běh.
+Journal helper odděluje původní authorization SHA od vlastního potvrzeného
+append headu podle kontraktu níže. Původní environment
 proměnné nejsou náhradním zdrojem autorizace.
 
 Pouze správce této důvěryhodné konfigurace smí schválení zapsat. Kandidát,
@@ -211,6 +231,89 @@ Kontrolní commit musí zůstat stejný také proti authorize jobu.
 Po síťových krocích nástroj znovu posoudí expiraci schválení.
 Čtení konfigurace a vydání deployment tokenu nejsou jedna atomická GitHub
 transakce; kontrakt neumožňuje cache ani opětovné použití starého výsledku.
+
+## Dílčí kontrakt token journalu
+
+`DevelopmentTokenLifecycle.psm1` vytváří canonical context a recoverable
+encrypted envelope (obnovitelnou šifrovanou obálku) přesného leaf tokenu.
+Context váže API origin, repository, reference owner, non-reference org,
+App a installation IDs, run a attempt 1, trusted workflow a baseline SHA,
+oddělené candidate SHA, authorization SHA a blob, snapshot digest
+a public-key artifact ID, digest a hash klíče.
+AES-GCM používá samostatný 32byte purpose-only recovery key a context digest
+jako authenticated data. App signing key se pro tuto funkci nepoužívá.
+Skutečné chráněné získání recovery key není touto implementací zapojené.
+
+`Write-DevelopmentTokenEvent` vyžaduje explicitní protected-ref writer
+ještě před API voláním; nepoužívá ambient credential ani reader jako fallback.
+Writer identity, její získání ve stejném protected controller contextu
+a serverová ochrana před candidate zápisem zatím nejsou provozně doložené.
+Chybějící důkaz blokuje mint i handoff; samotný source parametr není
+permission ani ruleset evidence.
+
+Append-only journal přechází `pending → issued → retired`.
+`pending` předchází mint. `issued` uchová přesný autentizovaně zašifrovaný
+token až po přímém GET `/installation/repositories` 200 se stejným bearerem.
+Před candidate-visible handoffem musí být `issued` potvrzený a zpětně přečtený.
+Mint ani handoff dosud tyto helpers neprovádějí.
+
+Každý append vytvoří jediný direct-child commit nad explicitním `ExpectedHead`,
+mění pouze journal, zachová původní authorization blob a použije non-force
+update refu. Helper ověří odpověď i immutable readback stejného headu
+a journalu. Cizí nebo novější head nepřebírá. Standardní i development reader
+odmítnou `pending` a `issued` před vydáním autorizačních outputs.
+
+`Complete-DevelopmentTokenRetirement` dešifruje pouze známý persistovaný
+`issued` token s přesným contextem a klíčem. Používá výslovný leaf bearer
+na původním API, pevné endpoints, bez redirectu a credential fallbacku:
+
+| `proofKind` | Povinný důkaz |
+|---|---|
+| `revoked` | DELETE `/installation/token` 204 a následný přímý GET `/installation/repositories` 401. |
+| `already-invalid` | Přímý GET `/installation/repositories` 401 a App-JWT readback přesné původní aktivní, nesuspendované org instalace. Předchozí DELETE zůstává neznámý, nikoli úspěšný. |
+
+403, 404, 429, 5xx, síťová chyba, jiný token, host nebo context, neznámý
+pending a samotné uplynutí TTL nejsou retirement. Obnova ztracené DELETE
+odpovědi zachová rozdíl mezi oběma druhy důkazu. Pozitivní offline obnova
+předpokládá explicitně dodaný dříve potvrzený issued head.
+
+Ztráta CAS odpovědi po skutečném update refu představuje jinou hranici.
+Fresh caller s původní authorization a protected refem umí přečíst
+a dešifrovat známý issued leaf, nesmí však latest přijmout jako vlastní
+potvrzený head. Zůstává blokovaný další candidate, retirement append,
+adopt i rollback. Offline negativní test modeluje přesně tyto vstupy;
+neprokazuje obnovu mezi skutečnými VM. Důvěryhodný zdroj potvrzeného
+`ExpectedHead` pro celý orchestrátor dosud chybí.
+
+Journal má nejvýš 256 records a 1 MiB UTF-8. Před novým pending helper rezervuje
+prostor na issued i retired včetně maximálního envelope. Limit records dovolí
+nejvýš 85 úplných cyklů; byte limit může nové vydání zastavit dříve.
+Automatické mazání, reset ani archivace historie nejsou implementované.
+Zaplnění blokuje nové vydání před mintem, nikoli až po něm.
+
+Writer používá GitHub REST API `2026-03-10`:
+[`GET /repos/{owner}/{repo}/git/commits/{commit_sha}`](https://docs.github.com/en/rest/git/commits#get-a-commit),
+[`POST /repos/{owner}/{repo}/git/trees`](https://docs.github.com/en/rest/git/trees#create-a-tree),
+[`POST /repos/{owner}/{repo}/git/commits`](https://docs.github.com/en/rest/git/commits#create-a-commit)
+a [`PATCH /repos/{owner}/{repo}/git/refs/{ref}`](https://docs.github.com/en/rest/git/refs#update-a-reference).
+Retirement vychází z operací
+[`GET /installation/repositories`](https://docs.github.com/en/rest/apps/installations#list-repositories-accessible-to-the-app-installation),
+[`DELETE /installation/token`](https://docs.github.com/en/rest/apps/installations#revoke-an-installation-access-token)
+a [`GET /app/installations/{installation_id}`](https://docs.github.com/en/rest/apps/apps#get-an-installation-for-the-authenticated-app).
+Null a Enterprise account variants installation response jsou pro tento
+org-only recovery kontrakt výslovně nepodporované.
+
+## Omezení aktivace a opakování
+
+Vybraný směr vyžaduje dva samostatné GitHub-hosted VM jobs: trusted controller
+s chráněnými App/Azure credentials a candidate bez environment, id-token
+a secret refs. Candidate smí dostat pouze jeden serverově omezený org
+installation token a přesný lokální state. Candidate-written state se nesmí
+vrátit do baseline backendu. Současné helpers tuto execution hranici,
+artifact handshake, serverový scope tokenu ani cancellation a runner-loss
+recovery neprokazují. Nejde o uzavření F2 ani o dokončení živých kritérií D.
+
+## Freshness existujících autorizačních cest
 
 „Re-run failed jobs“ ani opakování celého starého workflow nepovolí
 credentials; vytvoř nový dispatch. Zdrojový repozitář attestace musí

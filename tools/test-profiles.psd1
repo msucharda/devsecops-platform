@@ -19,6 +19,8 @@
         'TerraformTestProcess.Tests.ps1'
     )
     Contract = @(
+        'DevelopmentTokenLifecycle.Tests.ps1'
+        'DevelopmentTokenController.Tests.ps1'
         'DevelopmentState.Tests.ps1'
         'DevelopmentControl.Tests.ps1'
         'DevelopmentCandidate.Tests.ps1'

@@ -4,6 +4,82 @@
     # FullName holds Pester full-name wildcard patterns; keep them narrow because each mutant runs them in a fresh process.
     Checks = @(
         @{
+            Name = 'development-token-capacity'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*Protected development token journal*' })
+        }
+        @{
+            Name = 'development-control-write-http'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-control-issuance'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-token-retirement'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-token-active-installation'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-control-writer'
+            Tests = @(
+                @{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' }
+                @{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = '*explicit protected writer*' }
+            )
+        }
+        @{
+            Name = 'development-control-append'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenController.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-control-journal'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentControl.Tests.ps1'; FullName = 'Protected development control snapshot*' })
+        }
+        @{
+            Name = 'development-protocol-object'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-protocol-unique-fields'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-token-context'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-token-journal'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = '*' })
+        }
+        @{
+            Name = 'development-token-key'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = @(
+                '*rejects a recovery <Case>*', '*recovers the exact known leaf*'
+            ) })
+        }
+        @{
+            Name = 'development-token-value'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = @(
+                '*rejects <Case> token values*', '*recovers the exact known leaf*', '*round-trips the maximum*'
+            ) })
+        }
+        @{
+            Name = 'development-token-envelope'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = @(
+                '*rejects encrypted token <Case>*', '*rejects malformed encrypted token document <Case>*',
+                '*rejects a recovery <Case>*', '*recovers the exact known leaf*', '*round-trips the maximum*'
+            ) })
+        }
+        @{
+            Name = 'development-token-recovered-digest'
+            Tests = @(@{ Path = 'tools/tests/DevelopmentTokenLifecycle.Tests.ps1'; FullName = @(
+                '*rejects encrypted token <Case>*', '*recovers the exact known leaf*'
+            ) })
+        }
+        @{
             Name = 'development-state-field-names'
             Tests = @(
                 @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(

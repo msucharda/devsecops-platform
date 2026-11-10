@@ -44,6 +44,9 @@ function Assert-DevelopmentControlDesignation {
         $State.Source -cnotmatch '^https://[a-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z') {
         throw 'Control state requires the exact reference, explicit source repository and a fresh dispatch.'
     }
+    if ($State.TokenJournalPhase -cnotin @('absent', 'clear', 'retired')) {
+        throw 'Unfinished development token blocks candidate, standard adopt and rollback; complete trusted recovery first.'
+    }
 }
 
 Assert-DevelopmentControlContext -Name $Repository -Server $ServerUrl -Api $ApiUrl -Token $ReadToken

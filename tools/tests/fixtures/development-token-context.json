@@ -1,0 +1,19 @@
+{
+  "apiUrl": "https://api.example.test",
+  "repository": "platform/instance",
+  "referenceOwner": "platform",
+  "organization": "workloads",
+  "appId": "123",
+  "installationId": "456",
+  "runId": "789",
+  "runAttempt": "1",
+  "workflowRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baselineRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "candidateRevision": "cccccccccccccccccccccccccccccccccccccccc",
+  "authorizationRevision": "dddddddddddddddddddddddddddddddddddddddd",
+  "authorizationBlob": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "snapshotSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "publicKeyArtifactId": "1234",
+  "publicKeyArtifactDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+  "publicKeySha256": "2222222222222222222222222222222222222222222222222222222222222222"
+}

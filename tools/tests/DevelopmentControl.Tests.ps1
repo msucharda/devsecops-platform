@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot '../DevelopmentTokenLifecycle.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot '../DevelopmentControl.psm1') -Force
     $controlCommand = Join-Path $PSScriptRoot '../Read-DevelopmentControl.ps1'
 }
@@ -19,6 +20,9 @@ Describe 'Protected development control snapshot' {
         $mainRef = Get-GitHubApiFixture -Name git/get-ref -Set @{ ref = 'refs/heads/main' }
         $content = Get-GitHubApiFixture -Name repos/get-content.file -Set @{
             name = 'development-control.json'; path = 'development-control.json'
+        }
+        $journalContent = Get-GitHubApiFixture -Name repos/get-content.file -Set @{
+            name = 'development-token-journal.json'; path = 'development-token-journal.json'; sha = 'f' * 40
         }
         $tree = Get-GitHubApiFixture -Name git/get-tree -Set @{
             'tree.0.path' = 'development-control.json'; 'tree.0.sha' = $content.sha
@@ -59,10 +63,27 @@ Describe 'Protected development control snapshot' {
                 elseif ($Uri -like '*/rules/branches/platform-control`?*') { ,$rules }
                 elseif ($Uri -like '*/rulesets/42`?includes_parents=true') { ,$ruleset }
                 elseif ($Uri -ceq ('https://api.example.test/repos/platform/instance/contents/development-control.json?ref=' + ('c' * 40))) { $content }
+                elseif ($Uri -ceq ('https://api.example.test/repos/platform/instance/contents/development-token-journal.json?ref=' + ('c' * 40))) { $journalContent }
                 else { throw "Unexpected offline request: $Uri" }
             [pscustomobject]@{ StatusCode = 200; Content = ConvertTo-Json $body -Depth 30 }
         }
         $arguments = @{ ApiUrl = 'https://api.example.test'; Repository = 'platform/instance'; ReadToken = 'fake-token' }
+        function Set-TestControlV2 {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Changes only offline fixture state.')]
+            [CmdletBinding()]
+            param([string] $Journal = '{"version":1,"records":[]}')
+            $state.version = 2
+            $controlBytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json $state -Compress))
+            $content.content = [Convert]::ToBase64String($controlBytes)
+            $content.size = $controlBytes.Length
+            $journalBytes = [Text.Encoding]::UTF8.GetBytes($Journal)
+            $journalContent.content = [Convert]::ToBase64String($journalBytes)
+            $journalContent.size = $journalBytes.Length
+            $entry = Get-GitHubApiFixture -Name git/get-tree -Set @{
+                'tree.0.path' = 'development-token-journal.json'; 'tree.0.sha' = $journalContent.sha
+            }
+            $tree.tree += $entry.tree[0]
+        }
     }
 
     It 'reads the protected file at a fixed commit and reconfirms the ref without minting credentials' {
@@ -273,7 +294,7 @@ Describe 'Protected development control snapshot' {
         @{ Case = 'array'; Json = '[{"version":1}]'; Error = '*must be an object*' }
         @{ Case = 'string version'; Json = '{"version":"1","reference":"","source":"","approval":"","disposition":""}'; Error = '*document version*' }
         @{ Case = 'fractional version'; Json = '{"version":1.0,"reference":"","source":"","approval":"","disposition":""}'; Error = '*document version*' }
-        @{ Case = 'different version'; Json = '{"version":2,"reference":"","source":"","approval":"","disposition":""}'; Error = '*document version*' }
+        @{ Case = 'different version'; Json = '{"version":3,"reference":"","source":"","approval":"","disposition":""}'; Error = '*document version*' }
         @{ Case = 'duplicate field'; Json = '{"version":1,"reference":"","reference":"x","source":"","approval":"","disposition":""}'; Error = '*duplicate*' }
         @{ Case = 'case-folded duplicate'; Json = '{"version":1,"reference":"","Reference":"x","source":"","approval":"","disposition":""}'; Error = '*duplicate*' }
         @{ Case = 'non-string reference'; Json = '{"version":1,"reference":null,"source":"","approval":"","disposition":""}'; Error = "*requires string 'reference'*" }
@@ -285,6 +306,102 @@ Describe 'Protected development control snapshot' {
         $content.content = [Convert]::ToBase64String($bytes)
         $content.size = $bytes.Length
         { Read-DevelopmentControl @arguments } | Should -Throw $Error
+    }
+
+    It 'reads the mandatory immutable journal for control v2 with the same reader identity' {
+        Set-TestControlV2
+        $result = Read-DevelopmentControl @arguments
+        $result.ControlVersion | Should -Be 2
+        $result.ControlBlobSha | Should -BeExactly $content.sha
+        $result.TokenJournalPhase | Should -BeExactly 'clear'
+        $result.TokenJournal | Should -BeExactly '{"version":1,"records":[]}'
+        Should -Invoke Invoke-WebRequest -ModuleName DevelopmentControl -Times 1 -Exactly -ParameterFilter {
+            $Uri -ceq ('https://api.example.test/repos/platform/instance/contents/development-token-journal.json?ref=' + ('c' * 40)) -and
+            $Method -ceq 'GET'
+        }
+    }
+
+    It 'proves the exact historical v1 reader accepts v1 and rejects v2' {
+        $historical = Join-Path $PSScriptRoot 'fixtures/DevelopmentControlV1.psm1'
+        # Exact tools/DevelopmentControl.psm1 at 480e86681e347718678494aed9dfe2590997a9c5.
+        (Get-FileHash -LiteralPath $historical -Algorithm SHA256).Hash |
+            Should -BeExactly 'F248138DC825BDCC90781BF7220055BFAA6FAF20206C193E863DCBE1C4778521'
+        Import-Module $historical -Prefix Historical -Force
+        try {
+            Mock Invoke-WebRequest -ModuleName DevelopmentControlV1 {
+                param($Uri)
+                $body = if ($Uri -like '*/git/ref/heads/main') { $mainRef }
+                    elseif ($Uri -like '*/git/ref/heads/platform-control') { $controlRef }
+                    elseif ($Uri -like '*/git/trees/*') { $tree }
+                    elseif ($Uri -like '*/contents/development-control.json`?*') { $content }
+                    elseif ($Uri -like '*/rules/branches/platform-control`?*') { ,$rules }
+                    elseif ($Uri -like '*/rulesets/42`?includes_parents=true') { $ruleset }
+                    else { throw "Unexpected historical offline request: $Uri" }
+                [pscustomobject]@{ StatusCode = 200; Content = ConvertTo-Json $body -Depth 30 }
+            }
+            (Read-HistoricalDevelopmentControl @arguments).ControlRevision | Should -BeExactly ('c' * 40)
+            Set-TestControlV2
+            { Read-HistoricalDevelopmentControl @arguments } | Should -Throw '*Unsupported control document version*'
+        }
+        finally { Remove-Module DevelopmentControlV1 -Force }
+    }
+
+    It 'rejects a v1 downgrade while a lifecycle journal is present' {
+        Set-TestControlV2
+        $state.version = 1
+        $bytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json $state -Compress))
+        $content.content = [Convert]::ToBase64String($bytes)
+        $content.size = $bytes.Length
+        { Read-DevelopmentControl @arguments } | Should -Throw '*journal requires protected control document v2*'
+    }
+
+    It 'requires an explicit protected writer before any read, mint or handoff without a workflow-token fallback' {
+        $contextValue = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/development-token-context.json') -Raw |
+            ConvertFrom-Json -AsHashtable
+        $context = New-DevelopmentTokenContext -Value $contextValue
+        {
+            Write-DevelopmentTokenEvent @arguments -WriterToken '' -RecoveryKey ([Convert]::ToBase64String([byte[]] (1..32))) `
+                -Event pending -Context $context -ExpectedHead ('c' * 40) -ExpectedControlBlobSha $content.sha
+        } | Should -Throw '*explicit protected control-ref writer*'
+        Should -Invoke Invoke-WebRequest -ModuleName DevelopmentControl -Times 0
+    }
+
+    It 'does not issue from a legacy v1 control snapshot without a journal' {
+        $value = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/development-token-context.json') -Raw |
+            ConvertFrom-Json -AsHashtable
+        $value.authorizationBlob = $content.sha
+        $value.authorizationRevision = 'c' * 40
+        {
+            Write-DevelopmentTokenEvent @arguments -WriterToken 'offline-writer' -RecoveryKey ([Convert]::ToBase64String([byte[]] (1..32))) `
+                -Event pending -Context (New-DevelopmentTokenContext -Value $value) -ExpectedHead ('c' * 40) -ExpectedControlBlobSha $content.sha
+        } | Should -Throw '*New token issuance requires protected control document v2*'
+        Should -Invoke Invoke-WebRequest -ModuleName DevelopmentControl -Times 0 -ParameterFilter { $Method -ne 'GET' }
+    }
+
+    It 'rejects a journal copied from another <Field> at the protected reader boundary' -ForEach @(
+        @{ Field = 'apiUrl'; Value = 'https://api.other.test' }
+        @{ Field = 'repository'; Value = 'platform/other' }
+    ) {
+        $contextFields = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/development-token-context.json') -Raw |
+            ConvertFrom-Json -AsHashtable
+        $contextFields[$Field] = $Value
+        $journal = Add-DevelopmentTokenJournalEvent -Json (New-DevelopmentTokenJournal) -Event pending `
+            -Context (New-DevelopmentTokenContext -Value $contextFields) -PreviousHead ('d' * 40)
+        Set-TestControlV2 -Journal $journal
+        { Read-DevelopmentControl @arguments } | Should -Throw '*journal origin or repository*'
+    }
+
+    It 'rejects control v2 without its journal before deployment credentials' {
+        Set-TestControlV2
+        $tree.tree = @($tree.tree | Where-Object path -CNE development-token-journal.json)
+        { Read-DevelopmentControl @arguments } | Should -Throw '*development-token-journal.json*'
+    }
+
+    It 'rejects an unreadable or malformed v2 journal rather than assuming retirement' -ForEach @(
+        @{ Json = '{}' }; @{ Json = 'null' }; @{ Json = '{"version":1,"records":null}' }
+    ) {
+        Set-TestControlV2 -Journal $Json
+        { Read-DevelopmentControl @arguments } | Should -Throw
     }
 
     It 'rejects a missing version or <Field> field explicitly' -ForEach @(
@@ -409,6 +526,29 @@ Describe 'Protected development control snapshot' {
         It 'rejects reruns for a configured reference before publishing outputs' {
             $command.RunAttempt = '2'
             { & $controlCommand @command } | Should -Throw '*fresh dispatch*'
+            Test-Path $command.GitHubOutputPath | Should -BeFalse
+        }
+
+        It 'blocks <Mode> while a protected token remains <Phase>' -ForEach @(
+            @{ Mode = 'standard'; Phase = 'pending' }; @{ Mode = 'standard'; Phase = 'issued' }
+            @{ Mode = 'development'; Phase = 'pending' }; @{ Mode = 'development'; Phase = 'issued' }
+        ) {
+            Import-Module (Join-Path $PSScriptRoot '../DevelopmentTokenLifecycle.psm1')
+            $value = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/development-token-context.json') -Raw |
+                ConvertFrom-Json -AsHashtable
+            $context = New-DevelopmentTokenContext -Value $value
+            $journal = Add-DevelopmentTokenJournalEvent -Json (New-DevelopmentTokenJournal) -Event pending `
+                -Context $context -PreviousHead ('d' * 40)
+            if ($Phase -ceq 'issued') {
+                $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($context))).ToLowerInvariant()
+                $envelope = Protect-DevelopmentLeafToken -Token 'offline-leaf' -ContextSha256 $digest `
+                    -RecoveryKey ([Convert]::ToBase64String([byte[]] (1..32)))
+                $journal = Add-DevelopmentTokenJournalEvent -Json $journal -Event issued -Context $context `
+                    -PreviousHead ('3' * 40) -Envelope $envelope -IssuanceProbeStatusCode 200
+            }
+            Set-TestControlV2 -Journal $journal
+            $command.Mode = $Mode
+            { & $controlCommand @command } | Should -Throw '*Unfinished development token*'
             Test-Path $command.GitHubOutputPath | Should -BeFalse
         }
 

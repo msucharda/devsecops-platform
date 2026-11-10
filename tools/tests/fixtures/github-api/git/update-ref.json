@@ -1,0 +1,26 @@
+{
+  "source": {
+    "operation": "PATCH /repos/{owner}/{repo}/git/refs/{ref}",
+    "operationId": "git/update-ref",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/refs#update-a-reference",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 200,
+    "schema": "#/components/schemas/git-ref",
+    "note": "force:false only permits a fast-forward. The source protocol creates one child of the exact previously read head and verifies the returned ref and immutable readback."
+  },
+  "required": {
+    "": ["ref", "node_id", "url", "object"],
+    "object": ["type", "sha", "url"]
+  },
+  "body": {
+    "ref": "refs/heads/featureA",
+    "node_id": "MDM6UmVmcmVmcy9oZWFkcy9mZWF0dXJlQQ==",
+    "url": "https://api.github.com/repos/octocat/Hello-World/git/refs/heads/featureA",
+    "object": {
+      "type": "commit",
+      "sha": "aa218f56b14c9653891f9e74264a383fa43fefbd",
+      "url": "https://api.github.com/repos/octocat/Hello-World/git/commits/aa218f56b14c9653891f9e74264a383fa43fefbd"
+    }
+  }
+}

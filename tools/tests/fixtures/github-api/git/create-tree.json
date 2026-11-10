@@ -1,0 +1,31 @@
+{
+  "source": {
+    "operation": "POST /repos/{owner}/{repo}/git/trees",
+    "operationId": "git/create-tree",
+    "documentation": "https://docs.github.com/en/enterprise-cloud@latest/rest/git/trees#create-a-tree",
+    "apiVersion": "2026-03-10",
+    "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
+    "status": 201,
+    "schema": "#/components/schemas/git-tree",
+    "note": "The git-tree schema and example are shared with GET git/trees. base_tree preserves entries not explicitly replaced."
+  },
+  "required": {
+    "": ["sha", "tree", "truncated"],
+    "tree.[]": ["path", "mode", "type", "sha"]
+  },
+  "body": {
+    "sha": "9fb037999f264ba9a7fc6274d15fa3ae2ab98312",
+    "url": "https://api.github.com/repos/octocat/Hello-World/trees/9fb037999f264ba9a7fc6274d15fa3ae2ab98312",
+    "tree": [
+      {
+        "path": "file.rb",
+        "mode": "100644",
+        "type": "blob",
+        "size": 30,
+        "sha": "44b4fc6d56897b048c772eb4087f854f46256132",
+        "url": "https://api.github.com/repos/octocat/Hello-World/git/blobs/44b4fc6d56897b048c772eb4087f854f46256132"
+      }
+    ],
+    "truncated": false
+  }
+}
