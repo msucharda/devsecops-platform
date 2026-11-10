@@ -332,12 +332,15 @@ Describe 'Tagged vendoring source and attestation policy' {
         Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
     }
 
-    It 'does not accept valid retained proofs under another ZIP asset name' -Tag RetainedPublicationImport {
+    It 'does not accept valid retained proofs under <Case> ZIP asset name' -Tag RetainedPublicationImport -ForEach @(
+        @{ Case = 'another'; Asset = 'other.zip' }
+        @{ Case = 'a case-variant'; Asset = 'PLATFORM-v1.2.3.zip' }
+    ) {
         . $retainedSourceSetup
-        $release.assets[0].name = 'other.zip'
+        $release.assets[0].name = $Asset
         { & $download -Repository upstream/action -Tag v1.2.3 -ApiUrl https://api.github.com -WorkPath $work `
             -RequireAttestation -SignerWorkflow upstream/action/.github/workflows/release.yml -ProtectedBranch main `
-            -SourcePolicy PlatformReleaseV1 -AssetName other.zip } |
+            -SourcePolicy PlatformReleaseV1 -AssetName $Asset } |
             Should -Throw '*exact ZIP asset*'
         Test-Path -LiteralPath (Join-Path $work 'receipt.json') | Should -BeFalse
     }

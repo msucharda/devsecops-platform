@@ -622,7 +622,7 @@
         @{
             Name = 'release-asset-digest'
             Tests = @(
-                @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*published release with different content*', '*uploaded asset reports another digest*', '*replaces stale, partial and foreign assets*', '*identical published release*') }
+                @{ Path = 'tools/tests/PlatformRelease.Tests.ps1'; FullName = @('*published release with different content*', '*uploaded asset reports another digest*', '*upload response whose asset name*', '*replaces stale, partial and foreign assets*', '*identical published release*') }
             )
         }
         @{
@@ -1114,6 +1114,11 @@
     # A surviving mutant fails the run unless it is listed here with a reason and an issue or pull request link.
     # An exception that matches no mutant, or whose mutant is killed, also fails the run.
     Exceptions = @(
+        @{
+            Mutant = 'Get-PlatformReleaseEvidence: operator ''-cne'' -> -ine in ''$digest -cne $asset[''digest'']''#1'
+            Reason = 'Equivalent mutant: the preceding scalar-string guard and case-sensitive sha256:[0-9a-f]{64} pattern reject uppercase or nonstring asset digests. The downloaded digest is computed with ToLowerInvariant. Both compared values therefore contain only the same lowercase ASCII prefix and lowercase hex; case-insensitive comparison accepts no additional value. Existing retained metadata tests separately reject uppercase prefix and hex.'
+            Issue = 'https://github.com/msucharda/devsecops-platform/pull/265'
+        }
         @{
             Mutant = 'Assert-RetainedReleaseEvidence: operator ''-cne'' -> -ine in ''$remotePredicate[$key] -cne $Predicate[$key]''#1'
             Reason = 'Equivalent for the closed v1 predicates: both have already passed Get-PlatformPublicationAttestation against identical repository, commit, App and signer pins. Fixed string fields are exact; the only variable receipt is lowercase hex and check IDs are integral. No two accepted values differ only by case. PublicationAttestation.Tests.ps1 separately rejects an uppercase receipt before this comparison.'

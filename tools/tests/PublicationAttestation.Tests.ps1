@@ -58,6 +58,7 @@ Describe 'Retained release attestation bundles' {
         @{ Case = 'the release tag is different'; Change = { $release.tag_name = 'v9.9.9' } }
         @{ Case = 'the release tag differs in case'; Change = { $release.tag_name = 'V1.2.3' } }
         @{ Case = 'the release tag is numeric'; Change = { $release.tag_name = 123 } }
+        @{ Case = 'the release tag is a matching single-element array'; Change = { $release.tag_name = @('v1.2.3') } }
         @{ Case = 'the release tag is absent'; Change = { $release.Remove('tag_name') } }
         @{ Case = 'the asset inventory is scalar'; Change = { $release.assets = $release.assets[0] } }
         @{ Case = 'the asset inventory is absent'; Change = { $release.Remove('assets') } }
@@ -73,6 +74,7 @@ Describe 'Retained release attestation bundles' {
             foreach ($variant in @(
                 @{ Case = 'the asset is absent'; Field = 'name'; Value = 'unrelated.json'; Error = '*exactly one retained*' }
                 @{ Case = 'the asset name differs in case'; Field = 'name'; Value = 'CASE'; Error = '*asset metadata*' }
+                @{ Case = 'the asset name is a matching single-element array'; Field = 'name'; Value = 'ARRAY'; Error = '*asset metadata*' }
                 @{ Case = 'the ID is zero'; Field = 'id'; Value = 0; Error = '*asset metadata*' }
                 @{ Case = 'the ID is negative'; Field = 'id'; Value = -1; Error = '*asset metadata*' }
                 @{ Case = 'the ID is a numeric string'; Field = 'id'; Value = '21'; Error = '*asset metadata*' }
@@ -80,9 +82,11 @@ Describe 'Retained release attestation bundles' {
                 @{ Case = 'the upload is incomplete'; Field = 'state'; Value = 'starter'; Error = '*asset metadata*' }
                 @{ Case = 'the state differs in case'; Field = 'state'; Value = 'Uploaded'; Error = '*asset metadata*' }
                 @{ Case = 'the state is numeric'; Field = 'state'; Value = 1; Error = '*asset metadata*' }
+                @{ Case = 'the state is a matching single-element array'; Field = 'state'; Value = 'ARRAY'; Error = '*asset metadata*' }
                 @{ Case = 'the state is absent'; Field = 'state'; Value = $null; Error = '*asset metadata*' }
                 @{ Case = 'the digest is absent'; Field = 'digest'; Value = $null; Error = '*asset metadata*' }
                 @{ Case = 'the digest is numeric'; Field = 'digest'; Value = 1; Error = '*asset metadata*' }
+                @{ Case = 'the digest is a matching single-element array'; Field = 'digest'; Value = 'ARRAY'; Error = '*asset metadata*' }
                 @{ Case = 'the digest is malformed'; Field = 'digest'; Value = 'sha256:abc'; Error = '*asset metadata*' }
                 @{ Case = 'the digest prefix differs in case'; Field = 'digest'; Value = ('SHA256:' + 'a' * 64); Error = '*asset metadata*' }
                 @{ Case = 'the digest hex differs in case'; Field = 'digest'; Value = ('sha256:' + 'A' * 64); Error = '*asset metadata*' }
@@ -94,6 +98,7 @@ Describe 'Retained release attestation bundles' {
     ) {
         # Deliberately invalid variants of the documented release asset response.
         if ($Value -is [string] -and $Value -ceq 'CASE') { $Value = $release.assets[$Index].name.ToUpperInvariant() }
+        if ($Value -is [string] -and $Value -ceq 'ARRAY') { $Value = @($release.assets[$Index][$Field]) }
         if ($null -eq $Value) { $release.assets[$Index].Remove($Field) }
         else { $release.assets[$Index][$Field] = $Value }
 
@@ -238,6 +243,7 @@ Describe 'Durable publication attestation' {
         @{ Case = 'the revision is different'; Field = 'commit'; Value = 'cccccccccccccccccccccccccccccccccccccccc'; Error = '*check head_sha*' }
         @{ Case = 'the App is different'; Field = 'publisherAppId'; Value = 8; Error = '*pinned publisher App*' }
         @{ Case = 'the repository is different'; Field = 'repository'; Value = 'other/platform'; Error = '*predicate repository*' }
+        @{ Case = 'the repository is a matching single-element array'; Field = 'repository'; Value = @('upstream/platform'); Error = '*predicate repository*' }
         @{ Case = 'the ref is different'; Field = 'ref'; Value = 'refs/heads/main'; Error = '*witness ref*' }
         @{ Case = 'the receipt digest is invalid'; Field = 'receiptSha256'; Value = 'short'; Error = '*receiptSha256*' }
         @{ Case = 'the receipt digest differs in case'; Field = 'receiptSha256'; Value = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'; Error = '*receiptSha256*' }
@@ -268,14 +274,20 @@ Describe 'Durable publication attestation' {
         @{ Case = 'a scalar statement'; Change = { $verification[0].verificationResult.statement = 1 }; Error = '*verified statement object*' }
         @{ Case = 'a missing statement schema'; Change = { $verification[0].verificationResult.statement.Remove('_type') }; Error = '*statement schema*' }
         @{ Case = 'a numeric statement schema'; Change = { $verification[0].verificationResult.statement._type = 1 }; Error = '*statement schema*' }
+        @{ Case = 'a statement schema differing in case'; Change = { $verification[0].verificationResult.statement._type = 'https://in-toto.io/statement/v1' }; Error = '*statement schema*' }
         @{ Case = 'a missing predicate type'; Change = { $verification[0].verificationResult.statement.Remove('predicateType') }; Error = '*predicate type*' }
         @{ Case = 'a numeric predicate type'; Change = { $verification[0].verificationResult.statement.predicateType = 1 }; Error = '*predicate type*' }
+        @{ Case = 'a predicate type differing in case'; Change = { $verification[0].verificationResult.statement.predicateType = $verification[0].verificationResult.statement.predicateType.ToUpperInvariant() }; Error = '*predicate type*' }
         @{ Case = 'missing subjects'; Change = { $verification[0].verificationResult.statement.Remove('subject') }; Error = '*archive subject inventory*' }
         @{ Case = 'a scalar subject list'; Change = { $verification[0].verificationResult.statement.subject = $verification[0].verificationResult.statement.subject[0] }; Error = '*archive subject inventory*' }
         @{ Case = 'a scalar subject'; Change = { $verification[0].verificationResult.statement.subject = @(1) }; Error = '*archive subject name or digest*' }
         @{ Case = 'a numeric subject name'; Change = { $verification[0].verificationResult.statement.subject[0].name = 1 }; Error = '*archive subject name or digest*' }
+        @{ Case = 'a matching single-element subject name array'; Change = { $verification[0].verificationResult.statement.subject[0].name = @('platform-v1.2.3.zip') }; Error = '*archive subject name or digest*' }
+        @{ Case = 'a subject name differing in case'; Change = { $verification[0].verificationResult.statement.subject[0].name = 'PLATFORM-v1.2.3.zip' }; Error = '*archive subject name or digest*' }
         @{ Case = 'a scalar digest'; Change = { $verification[0].verificationResult.statement.subject[0].digest = 'sha256:invalid' }; Error = '*archive subject name or digest*' }
         @{ Case = 'a numeric digest'; Change = { $verification[0].verificationResult.statement.subject[0].digest.sha256 = 1 }; Error = '*archive subject name or digest*' }
+        @{ Case = 'a matching single-element subject digest array'; Change = { $verification[0].verificationResult.statement.subject[0].digest.sha256 = @($verification[0].verificationResult.statement.subject[0].digest.sha256) }; Error = '*archive subject name or digest*' }
+        @{ Case = 'a subject digest differing in case'; Change = { $verification[0].verificationResult.statement.subject[0].digest.sha256 = $verification[0].verificationResult.statement.subject[0].digest.sha256.ToUpperInvariant() }; Error = '*archive subject name or digest*' }
     ) {
         Import-Module $modulePath -Force
         # Deliberately invalid variants of the documented CLI verification output.

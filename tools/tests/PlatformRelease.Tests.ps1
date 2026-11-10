@@ -152,6 +152,20 @@ Describe 'Platform release publication' {
             Should -Invoke gh -ModuleName PublicationAttestation -Times 4 -Exactly
         }
 
+        It 'replaces a case-variant ZIP asset before finalizing a retained draft' -Tag CaseVariantRecovery {
+            $release = & $newRelease @{ tag_name = 'v1.2.0'; draft = $true; prerelease = $false; target_commitish = $commit; name = 'v1.2.0' }
+            $release.assets.Add((& $newAsset 'PLATFORM-v1.2.0.zip' $digest))
+            $cloud.releases.Add($release)
+
+            $result = & $publish @arguments 6>$null
+
+            $result.Created | Should -BeTrue
+            $release.draft | Should -BeFalse
+            @($release.assets).Count | Should -Be 3
+            @($release.assets | Where-Object { $_.name -ceq 'PLATFORM-v1.2.0.zip' }).Count | Should -Be 0
+            $writes[0] | Should -BeLike 'DELETE */releases/assets/*'
+        }
+
         It 'confirms an existing published proof without replacing it with fresh signature bytes' {
             $null = & $publish @arguments 6>$null
             $originalDigests = @($cloud.releases[0].assets.digest)
@@ -564,11 +578,48 @@ Describe 'Platform release publication' {
             @($writes | Where-Object { $_ -like 'POST *' }).Count | Should -Be 0
         }
 
+        It 'replaces a case-variant ZIP asset before finalizing a legacy draft' -Tag CaseVariantRecovery {
+            $release = & $newRelease @{ tag_name = 'v1.2.0'; draft = $true; prerelease = $false; target_commitish = $commit; name = 'v1.2.0' }
+            $release.assets.Add((& $newAsset 'PLATFORM-v1.2.0.zip' $digest))
+            $cloud.releases.Add($release)
+
+            $result = & $publish @arguments 6>$null
+
+            $result.Created | Should -BeTrue
+            $release.draft | Should -BeFalse
+            @($release.assets).Count | Should -Be 1
+            $release.assets[0].name | Should -BeExactly 'platform-v1.2.0.zip'
+            $writes[0] | Should -BeLike 'DELETE */releases/assets/*'
+        }
+
         It 'keeps the release a draft when the uploaded asset reports another digest: <Case>' -ForEach @(
             @{ Case = 'different digest'; Reported = 'sha256:' + '0' * 64 }
             @{ Case = 'null digest'; Reported = 'null' }
         ) {
             $cloud.uploadDigest = $Reported
+
+            { & $publish @arguments 6>$null } | Should -Throw '*does not report the digest*'
+            $cloud.releases[0].draft | Should -BeTrue
+            @($writes | Where-Object { $_ -like 'PATCH *' }).Count | Should -Be 0
+        }
+
+        It 'rejects an upload response whose asset name is <Case> before publishing' -ForEach @(
+            @{ Case = 'different'; Reported = 'other.zip' }
+            @{ Case = 'different only in case'; Reported = 'PLATFORM-v1.2.0.zip' }
+        ) {
+            Mock Invoke-WebRequest {
+                param([uri] $Uri, [string] $Method = 'GET', $Body)
+                $Method = $Method.ToUpperInvariant()
+                if ($Method -ne 'GET') { $writes.Add("$Method $($Uri.AbsolutePath)") }
+                $response = & $cloudTransport -Uri $Uri -Method $Method -Body $Body
+                if ($Method -eq 'POST' -and $Uri.Host -ceq 'uploads.github.com') {
+                    # Deliberately invalid name in the documented upload response.
+                    $metadata = ConvertFrom-Json -InputObject $response.Content -AsHashtable
+                    $metadata.name = $Reported
+                    $response.Content = ConvertTo-Json -InputObject $metadata -Depth 20 -Compress
+                }
+                return $response
+            }
 
             { & $publish @arguments 6>$null } | Should -Throw '*does not report the digest*'
             $cloud.releases[0].draft | Should -BeTrue

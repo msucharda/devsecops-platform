@@ -274,7 +274,7 @@ if ("$releaseId" -cnotmatch '^[1-9][0-9]*$') { throw 'GitHub returned a release 
 $uploaded = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($asset in @(Get-ReleaseField $release 'assets')) {
     $name = [string] (Get-ReleaseField $asset 'name')
-    if ($requiredAssets.Contains($name) -and -not $uploaded.Contains($name) -and
+    if ($requiredAssets.get_Keys() -ccontains $name -and -not $uploaded.Contains($name) -and
         (Test-ReleaseAsset -Asset $asset -Name $name -Digest $requiredAssets[$name].Digest)) {
         $null = $uploaded.Add($name)
         continue
