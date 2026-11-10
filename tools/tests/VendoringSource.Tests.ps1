@@ -159,7 +159,12 @@ Describe 'Tagged vendoring source and attestation policy' {
     It 'verifies a platform publication only after provenance, anonymously and without changing the source receipt shape' {
         $fakeAttestations = Get-AttestationList 'https://bundles.test/1.json.sn'
         $sourcePolicyJson = '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}'
-        Mock Invoke-WebRequest { [pscustomobject]@{ Content = '{"id":42}' } } -ParameterFilter { $Uri -like '*/rulesets/42' }
+        Mock Invoke-WebRequest {
+            [pscustomobject]@{
+                Content = (Get-GitHubApiFixture -Name repos/get-repo-ruleset.no-bypass -Set @{ source = 'upstream/action' } |
+                    ConvertTo-Json -Depth 20 -Compress)
+            }
+        } -ParameterFilter { $Uri -like '*/rulesets/42' }
         Mock Assert-PlatformPublishedSource {
             param($Read)
             $readback = & $Read 'rulesets/42'

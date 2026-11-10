@@ -16,45 +16,8 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$maxWait = $MaxRateLimitWaitSeconds
 $ErrorActionPreference = 'Stop'
-
-function Invoke-SourceRequest {
-    # Unauthenticated api.github.com calls share the runner IP limit; follow the documented rate-limit backoff:
-    # https://docs.github.com/en/enterprise-cloud@latest/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit
-    param([Parameter(Mandatory)][scriptblock] $Request)
-    $secondaryWait = 60
-    for ($attempt = 1; ; $attempt++) {
-        try { return & $Request }
-        catch {
-            $response = if ($_.Exception.PSObject.Properties['Response']) { $_.Exception.Response } else { $null }
-            $status = if ($response) { [int] $response.StatusCode } else { 0 }
-            if ($status -notin @(403, 429)) { throw }
-            $header = {
-                param($Name)
-                $values = $null
-                if ($response.Headers.TryGetValues($Name, [ref] $values)) { return @($values)[0] }
-                return $null
-            }
-            $remaining = & $header 'x-ratelimit-remaining'
-            $retryAfter = & $header 'retry-after'
-            $message = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { '' }
-            if ($remaining -eq '0') {
-                $reset = & $header 'x-ratelimit-reset'
-                $resetAt = if ($reset -match '^[0-9]+$') { [DateTimeOffset]::FromUnixTimeSeconds([long] $reset) } else { [DateTimeOffset]::UtcNow.AddHours(1) }
-                $wait = [Math]::Max(1, [int] [Math]::Ceiling(($resetAt - [DateTimeOffset]::UtcNow).TotalSeconds))
-            }
-            elseif ($retryAfter -match '^[0-9]+$') { $wait = [Math]::Max(1, [int] $retryAfter) }
-            elseif ($message -match 'secondary rate limit') { $wait = $secondaryWait; $secondaryWait *= 2 }
-            else { throw }
-            if ($attempt -gt 3 -or $wait -gt $maxWait) {
-                throw "GitHub API rate limit for the source is exhausted (HTTP $status); retry after $wait s or import a private source with its installation token. $($_.Exception.Message)"
-            }
-            Write-Warning "GitHub API rate limit reached (HTTP $status); retrying in $wait s."
-            Start-Sleep -Seconds $wait
-        }
-    }
-}
+. (Join-Path $PSScriptRoot 'SourceRequest.ps1')
 
 # security-check: vendoring-required-attestation
 function Test-AttestationRequirementMet {
@@ -215,7 +178,7 @@ $headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '
 if ($InstallationToken) { $headers.Authorization = "Bearer $InstallationToken" }
 $base = "$($ApiUrl.TrimEnd('/'))/repos/$Repository"
 try {
-    $reference = Invoke-SourceRequest { Invoke-RestMethod -Uri "$base/git/ref/tags/$([uri]::EscapeDataString($Tag))" -Headers $headers }
+    $reference = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-RestMethod -Uri "$base/git/ref/tags/$([uri]::EscapeDataString($Tag))" -Headers $headers }
 }
 catch {
     throw "Cannot read source tag '$Repository@$Tag'. If a private source is unavailable to the enterprise App, use the declared manual import; no PAT/OAuth fallback. $($_.Exception.Message)"
@@ -224,7 +187,7 @@ $object = $reference.object
 $depth = 0
 while ($object.type -ceq 'tag') {
     if (++$depth -gt 10 -or $object.sha -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid annotated tag chain.' }
-    $annotation = Invoke-SourceRequest { Invoke-RestMethod -Uri "$base/git/tags/$($object.sha)" -Headers $headers }
+    $annotation = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-RestMethod -Uri "$base/git/tags/$($object.sha)" -Headers $headers }
     $object = $annotation.object
 }
 if ($object.type -cne 'commit' -or $object.sha -cnotmatch '^[a-f0-9]{40}$') { throw 'Source tag must resolve to a commit SHA.' }
@@ -233,14 +196,14 @@ if ($RequireAttestation -and -not $ProtectedBranch) { throw 'A required attestat
 if ($ProtectedBranch -and $SourcePolicy -cne 'PlatformReleaseV1') {
     # per_page=1 keeps the response small; status and merge_base_commit cover the whole comparison.
     $basehead = "$([uri]::EscapeDataString($ProtectedBranch))...$commit"
-    $comparison = Invoke-SourceRequest { Invoke-RestMethod -Uri "$base/compare/${basehead}?per_page=1" -Headers $headers }
+    $comparison = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-RestMethod -Uri "$base/compare/${basehead}?per_page=1" -Headers $headers }
     if (-not (Test-CommitOnBranch -Comparison $comparison -Commit $commit)) {
         throw "Source tag '$Tag' points to commit $commit, which is not on the protected branch '$ProtectedBranch'; import stopped."
     }
 }
 $downloadUrl = "$base/zipball/$commit"
 if ($AssetName) {
-    $release = Invoke-SourceRequest { Invoke-RestMethod -Uri "$base/releases/tags/$([uri]::EscapeDataString($Tag))" -Headers $headers }
+    $release = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-RestMethod -Uri "$base/releases/tags/$([uri]::EscapeDataString($Tag))" -Headers $headers }
     $assets = @($release.assets | Where-Object { $_.name -ceq $AssetName })
     if ($assets.Count -ne 1 -or $assets[0].id -notmatch '^[1-9][0-9]*$') { throw "Release '$Tag' must contain exactly one asset '$AssetName'." }
     $downloadUrl = "$base/releases/assets/$($assets[0].id)"
@@ -249,13 +212,13 @@ $null = New-Item -ItemType Directory -Path $WorkPath
 $archivePath = Join-Path $WorkPath 'source.zip'
 $downloadHeaders = @{} + $headers
 if ($AssetName) { $downloadHeaders.Accept = 'application/octet-stream' }
-$null = Invoke-SourceRequest { Invoke-WebRequest -Uri $downloadUrl -Headers $downloadHeaders -OutFile $archivePath }
+$null = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-WebRequest -Uri $downloadUrl -Headers $downloadHeaders -OutFile $archivePath }
 $digest = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 # GitHub.com returns 404 for an unrecorded digest, but private access failures can look identical.
 $digestUri = "$base/attestations/sha256:$digest"
 $pageHeaders = $null
 try {
-    $firstPage = Invoke-SourceRequest {
+    $firstPage = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds {
         $responseHeaders = $null
         $body = Invoke-RestMethod -Uri $digestUri -Headers $headers -ResponseHeadersVariable responseHeaders -MaximumRedirection 0
         [pscustomobject]@{ Body = $body; Headers = $responseHeaders }
@@ -266,7 +229,7 @@ try {
 catch {
     $status = if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) { [int] $_.Exception.Response.StatusCode } else { 0 }
     if ($status -ne 404 -or ([uri] $ApiUrl).Host -cne 'api.github.com') { throw }
-    $repositoryInfo = Invoke-SourceRequest { Invoke-RestMethod -Uri $base -Headers $headers }
+    $repositoryInfo = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-RestMethod -Uri $base -Headers $headers }
     if ($repositoryInfo.full_name -ine $Repository -or $repositoryInfo.private -ne $false) {
         throw 'Cannot prove attestation absence for a private source; use the declared manual import rather than bypassing verification.'
     }
@@ -326,7 +289,7 @@ while ($true) {
     if ($null -eq $nextPage) { break }
     $null = $visited.Add($nextPage)
     $pageUri = $nextPage
-    $page = Invoke-SourceRequest {
+    $page = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds {
         $responseHeaders = $null
         $body = Invoke-RestMethod -Uri $pageUri -Headers $headers -ResponseHeadersVariable responseHeaders -MaximumRedirection 0
         [pscustomobject]@{ Body = $body; Headers = $responseHeaders }
@@ -380,7 +343,7 @@ if ($SourcePolicy -ceq 'PlatformReleaseV1') {
     Assert-VendoringSourceMode -Mode $SourcePolicy -Required $RequireAttestation.IsPresent -ProtectedBranch $ProtectedBranch `
         -PublicationLine $policy.Line -ApiUrl $ApiUrl
     if ($policy.Line -ceq 'main') {
-        $comparison = Invoke-SourceRequest { Invoke-RestMethod -Uri "$base/compare/main...${commit}?per_page=1" -Headers $headers }
+        $comparison = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds { Invoke-RestMethod -Uri "$base/compare/main...${commit}?per_page=1" -Headers $headers }
         if (-not (Test-CommitOnBranch -Comparison $comparison -Commit $commit)) {
             throw "Source tag '$Tag' is not on the legacy main authority; import stopped."
         }
@@ -390,7 +353,7 @@ if ($SourcePolicy -ceq 'PlatformReleaseV1') {
         $readPublication = {
             param($Route)
             $requestUri = "$base/$Route"
-            $response = Invoke-SourceRequest {
+            $response = Invoke-SourceRequest -MaxRateLimitWaitSeconds $MaxRateLimitWaitSeconds {
                 Invoke-WebRequest -Uri $requestUri -Headers $publicHeaders -MaximumRedirection 0
             }
             return ,($response.Content | ConvertFrom-Json -AsHashtable -NoEnumerate)

@@ -68,6 +68,18 @@ Describe 'Published platform source evidence' {
         $evidence.NoBypassEvidence | Should -BeExactly 'publisher-attested'
     }
 
+    It 'rejects a missing or expired witness even when publication ref and ancestry remain valid' -Tag WitnessRetention {
+        (Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $read).Commit |
+            Should -BeExactly $commit
+        $reads.Clear()
+        $checks.total_count = 0
+        $checks.check_runs = @()
+        { Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $read } |
+            Should -Throw '*Missing or ambiguous publication witness checks*'
+        $reads | Should -Contain "commits/$commit/check-runs?filter=all&per_page=100&page=1"
+        $reads | Should -Not -Contain "compare/$commit...${commit}?per_page=1"
+    }
+
     It 'rejects a scalar valid binding rule at the helper list guard' -Tag BindingRuleType {
         InModuleScope PublicationSource -Parameters @{ Rule = $branchRules[1] } {
             { Get-PublicationBindingRule -Rules @($Rule) -PublisherAppId 1 } | Should -Not -Throw

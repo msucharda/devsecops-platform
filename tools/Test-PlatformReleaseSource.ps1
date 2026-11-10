@@ -9,6 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PublicationSource.psm1')
+. (Join-Path $PSScriptRoot 'SourceRequest.ps1')
 
 # security-check: platform-release-build-boundary
 function Assert-PlatformReleaseBuildSource {
@@ -33,7 +34,9 @@ function Assert-PlatformReleaseBuildSource {
     $headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
     $read = {
         param($Route)
-        $response = Invoke-WebRequest -Uri "$base/$Route" -Headers $headers -MaximumRedirection 0
+        $response = Invoke-SourceRequest {
+            Invoke-WebRequest -Uri "$base/$Route" -Headers $headers -MaximumRedirection 0
+        }
         return ,($response.Content | ConvertFrom-Json -AsHashtable -NoEnumerate)
     }
     Assert-PlatformPublishedSource -Repository $Repository -Commit $Commit -PublisherAppId $policy.PublisherAppId -Read $read

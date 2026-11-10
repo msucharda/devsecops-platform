@@ -165,6 +165,24 @@ publikační ref a znovu přečte ref před návratem. Změnu ref odmítne.
 Původní tag, signer workflow, digest assetu a attestace zůstávají povinné.
 Nová čtení github.com používají REST `2026-03-10`, bez credentials.
 Nezřizují source App ani přístup instance.
+Build i importer sdílejí bounded retry pro doložený rate limit HTTP 403/429:
+nejvýš tři opakování, podle resetu primárního limitu, `Retry-After` nebo
+backoffu sekundárního limitu. Výchozí horní mez jednoho čekání je 300 s;
+importer zachovává vlastní `MaxRateLimitWaitSeconds`. Jiné chyby nebo
+překročená mez ověření zastaví, bez změny identity, credentials či požadavku.
+
+Check-run není trvalé svědectví. [Retenční pravidla GitHubu](https://docs.github.com/en/organizations/managing-organization-settings/configuring-the-retention-period-for-github-actions-artifacts-and-logs-in-your-organization)
+od 1. října 2026 zahrnují check suites, check runs a commit statuses,
+včetně kontrol externích integrací. Výchozí retence je 90 dní;
+veřejný repozitář dovoluje 1–90 dní, soukromý 1–400 dní.
+Jde o limity služby, nikoli ověřenou konfiguraci konkrétního repozitáře.
+Po smazání svědectví consumer release odmítne i při zachovaném tagu,
+assetu, publikační ref a ancestry. Chybějící check nenahradí obecným CI
+success ani přechodem na legacy autoritu. Současný protokol proto
+nezaručuje ověřitelnost release po celou dobu jeho uchování.
+Tato dostupnostní mez zůstává otevřená; dokumentace ani negativní test
+nejsou opravou pozitivní cesty. Trvalé svědectví nebo jeho obnova
+vyžadují samostatně schválený protokol a nejsou implementované.
 
 No-bypass skutečné publikace je **publisher-attested** (doložený publisherem),
 nikoli nezávislý aktuální audit bypass listu anonymním consumerem.

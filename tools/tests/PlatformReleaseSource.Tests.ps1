@@ -77,4 +77,55 @@ Describe 'Platform release source build boundary' {
         { & $scriptPath -SourcePath $source -Repository upstream/platform -Commit $commit } | Should -Throw '*not published*'
         Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args -contains 'merge-base' }
     }
+
+    It 'retries a rate-limited anonymous publication read without changing its request' -Tag PublicationRateLimit {
+        '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}' |
+            Set-Content -LiteralPath (Join-Path $source 'release-source-policy.json')
+        $reference = Get-GitHubApiFixture -Name git/get-ref
+        $attempts = @{ Count = 0 }
+        $response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::TooManyRequests)
+        $null = $response.Headers.TryAddWithoutValidation('retry-after', '7')
+        $failure = [Microsoft.PowerShell.Commands.HttpResponseException]::new('rate limited', $response)
+        Mock Start-Sleep { }
+        Mock Invoke-WebRequest {
+            $attempts.Count++
+            if ($attempts.Count -eq 1) { throw $failure }
+            [pscustomobject]@{ Content = ($reference | ConvertTo-Json -Depth 20) }
+        }
+        Mock Assert-PlatformPublishedSource {
+            param($Read)
+            (& $Read 'git/ref/heads/source-publication/v1').object.type | Should -BeExactly 'commit'
+        }
+        { & $scriptPath -SourcePath $source -Repository upstream/platform -Commit $commit } | Should -Not -Throw
+        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 7 }
+        Should -Invoke Invoke-WebRequest -Times 2 -Exactly -ParameterFilter {
+            $Uri -ceq 'https://api.github.com/repos/upstream/platform/git/ref/heads/source-publication/v1' -and
+            -not $Headers.ContainsKey('Authorization') -and $MaximumRedirection -eq 0
+        }
+    }
+
+    It 'rejects <Case> without waiting or falling back to main' -Tag PublicationRateLimit -ForEach @(
+        @{ Case = 'a non-rate-limit forbidden response'; Status = 403; RetryAfter = $null; Error = '*publication read denied*' }
+        @{ Case = 'a missing publication resource'; Status = 404; RetryAfter = $null; Error = '*publication read denied*' }
+        @{ Case = 'a rate-limit wait exceeding 300 seconds'; Status = 429; RetryAfter = '301'; Error = '*rate limit for the source is exhausted*' }
+    ) {
+        '{"schemaVersion":1,"line":"ghe-publication","publisherAppId":7}' |
+            Set-Content -LiteralPath (Join-Path $source 'release-source-policy.json')
+        $response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode] $Status)
+        if ($RetryAfter) { $null = $response.Headers.TryAddWithoutValidation('retry-after', $RetryAfter) }
+        $failure = [Microsoft.PowerShell.Commands.HttpResponseException]::new('publication read denied', $response)
+        Mock Start-Sleep { }
+        Mock Invoke-WebRequest { throw $failure }
+        Mock Assert-PlatformPublishedSource {
+            param($Read)
+            & $Read 'git/ref/heads/source-publication/v1'
+        }
+        { & $scriptPath -SourcePath $source -Repository upstream/platform -Commit $commit } | Should -Throw $Error
+        Should -Invoke Start-Sleep -Times 0 -Exactly
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -ceq 'https://api.github.com/repos/upstream/platform/git/ref/heads/source-publication/v1' -and
+            -not $Headers.ContainsKey('Authorization') -and $MaximumRedirection -eq 0
+        }
+        Should -Invoke git -Times 0 -Exactly -ParameterFilter { $args -contains 'merge-base' }
+    }
 }
