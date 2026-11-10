@@ -129,6 +129,23 @@ $Invocation
         Should -Invoke Invoke-RestMethod -Times 0 -Exactly
     }
 
+    It 'dispatches every pipeline input using the default <Transport> parameter set' -ForEach @(
+        @{ Transport = 'web'; Cmdlet = 'Invoke-WebRequest' }
+        @{ Transport = 'rest'; Cmdlet = 'Invoke-RestMethod' }
+    ) {
+        $entry = Join-Path $TestDrive "pipeline-$Transport.ps1"
+        Set-Content -LiteralPath $entry -Value "'first', 'second' | $Cmdlet -Uri https://offline.invalid/app -Method POST"
+        Mock Invoke-WebRequest { throw 'Unexpected Pester web dispatcher.' }
+        Mock Invoke-RestMethod { throw 'Unexpected Pester REST dispatcher.' }
+
+        $result = @(Invoke-InterruptionScript -Path $entry -Arguments @{} `
+                -WebRequest { param($Body) "web:$Body" } -RestMethod { param($Body) "rest:$Body" })
+
+        $result | Should -BeExactly @("${Transport}:first", "${Transport}:second")
+        Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
     It 'preserves supplied nested script defaults without changing caller defaults' {
         $nested = Join-Path $TestDrive 'nested-default.ps1'
         Set-Content -LiteralPath $nested -Value "[CmdletBinding()] param([string] `$StatePath = 'unexpected-user-state'); `$StatePath"

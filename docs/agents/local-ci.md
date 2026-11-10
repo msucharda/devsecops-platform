@@ -22,6 +22,8 @@ Adaptér přebírá také `PSDefaultParameterValues` testu, aby vnořené skript
 zachovaly izolované cesty v `TestDrive`, včetně pending state pro token issuance.
 HTTP callbacks jsou vázané pomocí closures a CLI callbacks přímo na lokální
 funkce. Proměnné volaného skriptu proto nemohou nahradit dodané callbacks.
+HTTP proxy přebírají také výchozí parameter set původního cmdletu a předávají
+každý pipeline input samostatně.
 
 Vzdálené mutation shardy mají pro mutační fázi limit 720 s a pro celý job
 20 minut. Baseline si zachovává samostatný limit 480 s. Run `42283655555`

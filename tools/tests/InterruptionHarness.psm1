@@ -20,13 +20,16 @@ function Invoke-InterruptionScript {
         @{ Command = 'Invoke-RestMethod'; Function = 'Invoke-InterruptionRestMethod'; Callback = 'RestMethod' }
     )) {
         $metadata = [Management.Automation.CommandMetadata]::new((Get-Command -Name $transport.Command -CommandType Cmdlet))
+        $binding = [Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($metadata)
         $parameters = [Management.Automation.ProxyCommand]::GetParamBlock($metadata)
         $body = @"
-[CmdletBinding()] param($parameters)
-if (`$PSBoundParameters.ContainsKey('Method')) {
-    `$PSBoundParameters['Method'] = `$PSBoundParameters['Method'].ToString().ToUpperInvariant()
+$binding param($parameters)
+process {
+    if (`$PSBoundParameters.ContainsKey('Method')) {
+        `$PSBoundParameters['Method'] = `$PSBoundParameters['Method'].ToString().ToUpperInvariant()
+    }
+    & `$$($transport.Callback) @PSBoundParameters
 }
-& `$$($transport.Callback) @PSBoundParameters
 "@
         Set-Item -LiteralPath "Function:$($transport.Function)" -Value ([scriptblock]::Create($body).GetNewClosure())
         Set-Alias -Name $transport.Command -Value $transport.Function
