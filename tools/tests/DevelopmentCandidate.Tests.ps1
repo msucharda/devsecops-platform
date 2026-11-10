@@ -2,6 +2,7 @@ BeforeAll {
     $tools = Split-Path $PSScriptRoot -Parent
     $verifier = Join-Path $tools 'Test-DeploymentCandidate.ps1'
     $authorize = Join-Path $tools 'Test-DevelopmentDeploymentAuthorization.ps1'
+    Get-Module -Name DevelopmentCandidate -All | Remove-Module -Force
     Import-Module (Join-Path $tools 'DevelopmentCandidate.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'GitHubApiFixture.psm1') -Force
 }
