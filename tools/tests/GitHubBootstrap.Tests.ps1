@@ -320,9 +320,10 @@ Describe 'GitHub bootstrap public interface' {
             takenOrganizations = @()
         }
         $deploymentIdentifiers = [Collections.Generic.Queue[string]]::new()
-        Mock Get-RandomPlatformDeploymentIdentifier {
+        $deploymentIdentifierTransport = {
             if ($deploymentIdentifiers.Count) { $deploymentIdentifiers.Dequeue() } else { 'a1b2c3' }
         }
+        Mock Get-RandomPlatformDeploymentIdentifier $deploymentIdentifierTransport
         foreach ($module in $azure.Modules) {
             foreach ($phase in @('plan', 'apply')) {
                 $cloud.resources[$module[$phase].ResourceId] = @{
@@ -331,14 +332,16 @@ Describe 'GitHub bootstrap public interface' {
                 }
             }
         }
-        Mock gh {
+        $ghTransport = {
             $global:LASTEXITCODE = 0
             if ($args[0] -eq 'secret') { 'encrypted-key' } else { 'gho_test' }
         }
-        Mock az {
+        Mock gh $ghTransport
+        $azureTransport = {
             $global:LASTEXITCODE = 0
             '{"tenant":"11111111-1111-1111-1111-111111111111","accessToken":"azure-test"}'
         }
+        Mock az $azureTransport
         $cloudTransport = {
             param([uri] $Uri, [string] $Body, [string] $Method = 'GET', [hashtable] $Headers)
             $path = $Uri.AbsolutePath
