@@ -144,7 +144,10 @@ ani development kandidáta.
 `PublicationSource.psm1` ověří aktivní exact-ref (přesnou ref) vazbu required
 checku `GHE accepted source` na tuto App. Vyžaduje vlastní repository ruleset,
 jediný přesný include bez excludes, strict required checks a vynucení také
-při vytvoření ref. Potom načte všechny stránky check runs přesného SHA
+při vytvoření ref. Branch rules načítá přes pevné stránkované cesty až
+po prázdnou stránku, nejvýše 100 stránek po 100 položkách. Pozdější chyba,
+nadměrná stránka nebo další binding nesmějí změnit neúplný inventář v úspěch.
+Potom načte všechny stránky check runs přesného SHA
 s `filter=all`. Duplicitní ID, více odpovídajících checks, neúplný inventář,
 změněný počet nebo více než 100 stránek znamenají chybu; nástroj nevybírá
 nejnovější check podle jména.
@@ -173,10 +176,20 @@ a následný skutečný rule-suite pass bez bypassu.
 Dvoufázový protokol zachovává stejné check ID, context, App, digest
 a `external_id`. `admitted` dovoluje pouze server admission (přijetí
 serverem); consumer jej odmítne. `Resolve-PlatformPublicationWitness`
-dovolí finalizaci teprve po exact-ref readbacku a odpovídající pass rule suite,
-vázané na repository, actor, before/after SHA a aktivní check ruleset.
-Při obnově nesmí platný `published` klesnout na `admitted`. Ztracená odpověď
-nebo exit code `0` nenahrazují readback.
+ověří exact-ref readback a pass rule suite, vázané na repository, actor,
+before/after SHA a aktivní check ruleset. Nullable `evaluation_result`
+patří k evaluate-only pravidlům a nenahrazuje povinný enforced `result`.
+Ani platný pass neprokazuje konkrétní vyhodnocené check-run ID:
+metadata mohou chybět nebo být `null` a schéma nezaručuje mapování jejich
+status-check ID na check-run ID.
+
+Resolver proto i po platném readbacku vrací `Disposition=unverified`
+a `Requires=protected-check-binding`, nikdy `ready-to-finalize`
+ani přijatou dispozici `published`. Zachová pouze již přečtenou `Phase`;
+nejde o její potvrzení ani downgrade na `admitted`. Neexistuje vstup
+`verified=true` ani odhad typu, stavu nebo ID. Doložení tohoto bindingu
+zůstává samostatnou důkazní mezerou vedle chybějící chráněné execution
+identity publisheru. Ztracená odpověď nebo exit code `0` nenahrazují readback.
 
 Veřejný build volá `Test-PlatformReleaseSource.ps1` před archivací. Nástroj
 ověří přesný checkout a nezměněnou deklaraci včetně její absence.

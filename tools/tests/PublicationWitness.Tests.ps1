@@ -529,15 +529,58 @@ Describe 'Publication witness reconciliation' {
         $result.Requires | Should -BeExactly 'rule-suite'
     }
 
-    It 'reconciles exact pass/no-bypass readbacks without changing the <Phase> phase' -ForEach @(
-        @{ Phase = 'admitted'; Disposition = 'ready-to-finalize'; Requires = 'published-check' }
-        @{ Phase = 'published'; Disposition = 'published'; Requires = 'none' }
+    It 'does not treat <Case> metadata as a protected check binding for <Phase>' -Tag ProtectedCheckBinding -ForEach @(
+        foreach ($phase in @('admitted', 'published')) {
+            @{ Phase = $phase; Case = 'absent' }
+            @{ Phase = $phase; Case = 'null' }
+        }
+    ) {
+        $parameters = New-PublicationReconciliation -Phase $Phase
+        $evaluation = $parameters.RuleSuite.rule_evaluations[0]
+        if ($Case -eq 'absent') { $null = $evaluation.Remove('metadata') }
+        else { $evaluation.metadata = $null }
+        $result = Resolve-PlatformPublicationWitness @parameters
+        $result.Phase | Should -BeExactly $Phase
+        $result.Disposition | Should -BeExactly 'unverified'
+        $result.Requires | Should -BeExactly 'protected-check-binding'
+    }
+
+    It 'does not infer protected binding for <Phase> from <Case> in documented metadata shapes' -Tag ProtectedCheckBinding -ForEach @(
+        foreach ($phase in @('admitted', 'published')) {
+            @{ Phase = $phase; Case = 'opaque status-check ID' }
+            @{ Phase = $phase; Case = 'an apparent check-run ID match' }
+            @{ Phase = $phase; Case = 'a changed App and context under the same ruleset ID' }
+        }
+    ) {
+        $parameters = New-PublicationReconciliation -Phase $Phase
+        $parameters.RuleSuite = Get-GitHubApiFixture -Name repos/get-repo-rule-suite.opaque-metadata -Set @{
+            ref = 'refs/heads/source-publication/v1'
+            after_sha = $parameters.Commit
+            'rule_evaluations.0.rule_source.id' = $parameters.RulesetId
+            'rule_evaluations.0.metadata.checks.0.context' = 'GHE accepted source'
+            'rule_evaluations.0.metadata.checks.0.app.id' = $parameters.PublisherAppId
+        }
+        $metadataCheck = $parameters.RuleSuite.rule_evaluations[0].metadata.checks[0]
+        if ($Case -eq 'an apparent check-run ID match') { $metadataCheck.id = $parameters.CheckId }
+        if ($Case -eq 'a changed App and context under the same ruleset ID') {
+            $metadataCheck.app.id = 999
+            $metadataCheck.context = 'Other check'
+        }
+        $result = Resolve-PlatformPublicationWitness @parameters
+        $result.Phase | Should -BeExactly $Phase
+        $result.Disposition | Should -BeExactly 'unverified'
+        $result.Requires | Should -BeExactly 'protected-check-binding'
+    }
+
+    It 'keeps exact pass readbacks unverified without changing the <Phase> phase' -ForEach @(
+        @{ Phase = 'admitted' }
+        @{ Phase = 'published' }
     ) {
         $parameters = New-PublicationReconciliation -Phase $Phase
         $result = Resolve-PlatformPublicationWitness @parameters
         $result.Phase | Should -BeExactly $Phase
-        $result.Disposition | Should -BeExactly $Disposition
-        $result.Requires | Should -BeExactly $Requires
+        $result.Disposition | Should -BeExactly 'unverified'
+        $result.Requires | Should -BeExactly 'protected-check-binding'
         $result.CheckId | Should -Be 4
     }
 
@@ -549,7 +592,7 @@ Describe 'Publication witness reconciliation' {
         @{ Field = 'after_sha'; Value = ('b' * 40) }
         @{ Field = 'ref'; Value = 'refs/heads/main' }
         @{ Field = 'result'; Value = 'bypass' }
-        @{ Field = 'evaluation_result'; Value = 'fail' }
+        @{ Field = 'evaluation_result'; Value = 'unknown' }
     ) {
         $parameters = New-PublicationReconciliation
         $parameters.RuleSuite[$Field] = $Value
@@ -595,7 +638,7 @@ Describe 'Publication witness reconciliation' {
     }
 
     It 'rejects a missing or wrong-type rule-suite binding field <Field>/<Case>' -ForEach @(
-        foreach ($field in @('id', 'actor_id', 'repository_id', 'before_sha', 'after_sha', 'ref', 'result', 'evaluation_result')) {
+        foreach ($field in @('id', 'actor_id', 'repository_id', 'before_sha', 'after_sha', 'ref', 'result')) {
             @{ Field = $field; Case = 'missing' }
             @{ Field = $field; Case = 'matching array' }
         }
@@ -642,14 +685,51 @@ Describe 'Publication witness reconciliation' {
     ) {
         $parameters = New-PublicationReconciliation
         $parameters.RuleSuite.rule_evaluations[2].enforcement = $Enforcement
-        (Resolve-PlatformPublicationWitness @parameters).Disposition | Should -BeExactly 'published'
+        (Resolve-PlatformPublicationWitness @parameters).Disposition | Should -BeExactly 'unverified'
+    }
+
+    It 'accepts the documented null evaluation result when only active rules ran' -Tag RuleSuiteEvaluation {
+        $parameters = New-PublicationReconciliation
+        $parameters.RuleSuite = Get-GitHubApiFixture -Name repos/get-repo-rule-suite.pass-no-evaluate -Set @{
+            ref = 'refs/heads/source-publication/v1'
+            after_sha = $parameters.Commit
+            'rule_evaluations.0.rule_type' = 'required_status_checks'
+            'rule_evaluations.0.rule_source.id' = $parameters.RulesetId
+        }
+        (Resolve-PlatformPublicationWitness @parameters).Disposition | Should -BeExactly 'unverified'
+    }
+
+    It 'does not confuse documented evaluation-only <Value> with an active-rule bypass' -Tag RuleSuiteEvaluation -ForEach @(
+        @{ Value = 'pass' }; @{ Value = 'fail' }; @{ Value = 'bypass' }
+    ) {
+        $parameters = New-PublicationReconciliation
+        $parameters.RuleSuite.evaluation_result = $Value
+        if ($Value -eq 'pass') { $parameters.RuleSuite.rule_evaluations[2].result = 'pass' }
+        (Resolve-PlatformPublicationWitness @parameters).Disposition | Should -BeExactly 'unverified'
+    }
+
+    It 'accepts an omitted optional evaluation result without weakening active-rule proof' -Tag RuleSuiteEvaluation {
+        $parameters = New-PublicationReconciliation
+        $null = $parameters.RuleSuite.Remove('evaluation_result')
+        (Resolve-PlatformPublicationWitness @parameters).Disposition | Should -BeExactly 'unverified'
+    }
+
+    It 'rejects malformed optional evaluation result <Case>' -ForEach @(
+        @{ Case = 'number'; Value = 0 }
+        @{ Case = 'array'; Value = @('fail') }
+        @{ Case = 'unknown'; Value = 'unknown' }
+        @{ Case = 'case-folded enum'; Value = 'Fail' }
+    ) {
+        $parameters = New-PublicationReconciliation
+        $parameters.RuleSuite.evaluation_result = $Value
+        { Resolve-PlatformPublicationWitness @parameters } | Should -Throw '*rule suite evaluation_result*'
     }
 
     It 'keeps reconciliation monotonic and idempotent across lost responses at <Boundary>' -ForEach @(
         @{ Boundary = 'check admission'; Phase = 'admitted'; Reference = $false; Suite = $false; Expected = 'unverified' }
         @{ Boundary = 'reference write'; Phase = 'admitted'; Reference = $true; Suite = $false; Expected = 'unverified' }
-        @{ Boundary = 'suite readback'; Phase = 'admitted'; Reference = $true; Suite = $true; Expected = 'ready-to-finalize' }
-        @{ Boundary = 'final check update'; Phase = 'published'; Reference = $true; Suite = $true; Expected = 'published' }
+        @{ Boundary = 'suite readback'; Phase = 'admitted'; Reference = $true; Suite = $true; Expected = 'unverified' }
+        @{ Boundary = 'final check update'; Phase = 'published'; Reference = $true; Suite = $true; Expected = 'unverified' }
     ) {
         $parameters = New-PublicationReconciliation -Phase $Phase
         if (-not $Reference) { $parameters.Reference = $null }

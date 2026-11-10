@@ -117,7 +117,16 @@ function Assert-PlatformPublishedSource {
     )
 
     if ($Commit -cnotmatch '\A[0-9a-f]{40}\z') { throw 'Invalid published source commit.' }
-    $branchRules = & $Read 'rules/branches/source-publication%2Fv1'
+    $branchRules = [Collections.Generic.List[object]]::new()
+    for ($page = 1; ; $page++) {
+        if ($page -gt 100) { throw 'Publication binding rules pagination exceeds 100 pages.' }
+        $part = & $Read "rules/branches/source-publication%2Fv1?per_page=100&page=$page"
+        if ($part -isnot [Collections.IList] -or $part.Count -gt 100) {
+            throw 'Invalid active publication binding rules pagination response.'
+        }
+        if ($part.Count -eq 0) { break }
+        foreach ($rule in $part) { $branchRules.Add($rule) }
+    }
     $binding = Get-PublicationBindingRule -Rules $branchRules -PublisherAppId $PublisherAppId
     $rulesetId = $binding['ruleset_id']
     if (($rulesetId -isnot [long] -and $rulesetId -isnot [int]) -or $rulesetId -le 0 -or

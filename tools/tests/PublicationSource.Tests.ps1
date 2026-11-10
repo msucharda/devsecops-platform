@@ -49,6 +49,12 @@ Describe 'Published platform source evidence' {
         $read = {
             param($Route)
             $reads.Add($Route)
+            if ($Route -ceq 'rules/branches/source-publication%2Fv1?per_page=100&page=1') {
+                $Route = 'rules/branches/source-publication%2Fv1'
+            }
+            elseif ($Route.StartsWith('rules/branches/source-publication%2Fv1?per_page=100&page=', [StringComparison]::Ordinal)) {
+                return ,@()
+            }
             if (-not $documents.ContainsKey($Route)) { throw "Unexpected publication API route: $Route" }
             return ,$documents[$Route]
         }.GetNewClosure()
@@ -60,6 +66,70 @@ Describe 'Published platform source evidence' {
         $evidence.ReceiptSha256 | Should -BeExactly ('a' * 64)
         $evidence.ProtectionEvidence | Should -BeExactly 'active-exact-ref-app-binding'
         $evidence.NoBypassEvidence | Should -BeExactly 'publisher-attested'
+    }
+
+    It 'rejects another matching binding hidden on a later branch-rules page' -Tag BranchRulePagination {
+        $original = $read
+        $later = $branchRules[1] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable
+        $pagedRead = {
+            param($Route)
+            if ($Route -ceq 'rules/branches/source-publication%2Fv1?per_page=100&page=2') { return ,@($later) }
+            return ,(& $original $Route)
+        }.GetNewClosure()
+        { Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $pagedRead } |
+            Should -Throw '*ambiguous active publication App binding*'
+    }
+
+    It 'finds a binding after a short nonempty first branch-rules page' -Tag BranchRulePagination {
+        $original = $read
+        $pagedRead = {
+            param($Route)
+            if ($Route -ceq 'rules/branches/source-publication%2Fv1?per_page=100&page=1') { return ,@($branchRules[0]) }
+            if ($Route -ceq 'rules/branches/source-publication%2Fv1?per_page=100&page=2') { return ,@($branchRules[1]) }
+            return ,(& $original $Route)
+        }.GetNewClosure()
+        $evidence = Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $pagedRead
+        $evidence.ProtectionEvidence | Should -BeExactly 'active-exact-ref-app-binding'
+    }
+
+    It 'rejects a malformed later branch-rules page: <Case>' -Tag BranchRulePagination -ForEach @(
+        @{ Case = 'non-array'; Value = @{} }
+        @{ Case = 'too many records'; Value = @(1..101) }
+        @{ Case = 'null'; Value = $null }
+    ) {
+        $original = $read
+        $pagedRead = {
+            param($Route)
+            if ($Route -ceq 'rules/branches/source-publication%2Fv1?per_page=100&page=2') { return ,$Value }
+            return ,(& $original $Route)
+        }.GetNewClosure()
+        { Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $pagedRead } |
+            Should -Throw '*binding rules pagination response*'
+    }
+
+    It 'does not use a first-page binding after a later branch-rules read error' -Tag BranchRulePagination {
+        $original = $read
+        $pagedRead = {
+            param($Route)
+            if ($Route -ceq 'rules/branches/source-publication%2Fv1?per_page=100&page=2') { throw 'branch-rules page unavailable' }
+            return ,(& $original $Route)
+        }.GetNewClosure()
+        { Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $pagedRead } |
+            Should -Throw '*branch-rules page unavailable*'
+    }
+
+    It 'bounds branch-rules pagination without accepting a partial inventory' -Tag BranchRulePagination {
+        $original = $read
+        $pagedRead = {
+            param($Route)
+            if ($Route.StartsWith('rules/branches/source-publication%2Fv1?per_page=100&page=', [StringComparison]::Ordinal)) {
+                if ([int] $Route.Split('=')[-1] -gt 100) { throw 'Unexpected read beyond the pagination limit.' }
+                return ,@($branchRules[0])
+            }
+            return ,(& $original $Route)
+        }.GetNewClosure()
+        { Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $pagedRead } |
+            Should -Throw '*binding rules pagination exceeds 100 pages*'
     }
 
     It 'accepts hidden bypass visibility without claiming an independently current audit' {
@@ -217,8 +287,9 @@ Describe 'Published platform source evidence' {
                 return ,(& $original $Route)
             }.GetNewClosure()
         }
+        $expectedError = if ($Resource -eq 'ref') { 'Invalid published source reference.' } else { $Error }
         { Assert-PlatformPublishedSource -Repository upstream/platform -Commit $commit -PublisherAppId 1 -Read $negativeRead } |
-            Should -Throw $Error
+            Should -Throw $expectedError
     }
 
     It 'rejects admitted success at the consumer seam' {

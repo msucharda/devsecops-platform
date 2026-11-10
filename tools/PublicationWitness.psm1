@@ -174,12 +174,17 @@ function Resolve-PlatformPublicationWitness {
     }
     $suiteValues = @{
         before_sha = $BeforeCommit; after_sha = $Commit; ref = 'refs/heads/source-publication/v1'
-        result = 'pass'; evaluation_result = 'pass'
+        result = 'pass'
     }
     foreach ($field in $suiteValues.get_Keys()) {
         if ($RuleSuite[$field] -isnot [string] -or $RuleSuite[$field] -cne $suiteValues[$field]) {
             throw "Invalid publication rule suite $field."
         }
+    }
+    $evaluationResult = $RuleSuite['evaluation_result']
+    if ($null -ne $evaluationResult -and ($evaluationResult -isnot [string] -or
+            $evaluationResult -cnotin @('pass', 'fail', 'bypass'))) {
+        throw 'Invalid publication rule suite evaluation_result.'
     }
     if ($RuleSuite['rule_evaluations'] -isnot [Collections.IList] -or $RuleSuite['rule_evaluations'].Count -eq 0) {
         throw 'Missing publication rule suite evaluations.'
@@ -210,14 +215,8 @@ function Resolve-PlatformPublicationWitness {
     if ($publicationEvaluations -ne 1) {
         throw 'Missing or ambiguous active publication check rule evaluation.'
     }
-    if ($witness['phase'] -ceq 'published') {
-        $result.Disposition = 'published'
-        $result.Requires = 'none'
-    }
-    else {
-        $result.Disposition = 'ready-to-finalize'
-        $result.Requires = 'published-check'
-    }
+    # The API does not document a mapping from suite metadata IDs to the persisted check-run ID.
+    $result.Requires = 'protected-check-binding'
     return $result
 }
 

@@ -7,7 +7,7 @@
     "description": "https://github.com/github/rest-api-description/blob/bb754941722779d8a5b3a2f25a5fbb7ce794e1ea/descriptions/ghec/ghec.2026-03-10.json",
     "status": 200,
     "schema": "#/components/schemas/rule-suite",
-    "note": "Primary example with result/evaluation_result and active evaluations set to pass. The evaluate-only failure remains to distinguish enforcement. Ref, actor and SHA must still be bound by behavior tests."
+    "note": "Primary example with result and active evaluations set to pass. The documented evaluate-only failure and evaluation_result=fail remain consistent. Ref, actor and SHA must still be bound by behavior tests."
   },
   "required": {
     "": null
@@ -23,7 +23,7 @@
     "repository_name": "octo-repo",
     "pushed_at": "2023-07-06T08:43:03Z",
     "result": "pass",
-    "evaluation_result": "pass",
+    "evaluation_result": "fail",
     "rule_evaluations": [
       {
         "rule_source": {
