@@ -34,8 +34,9 @@ function Assert-PlatformReleaseBuildSource {
     $headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
     $read = {
         param($Route)
+        $requestUri = "$base/$Route"
         $response = Invoke-SourceRequest {
-            Invoke-WebRequest -Uri "$base/$Route" -Headers $headers -MaximumRedirection 0
+            Invoke-WebRequest -Uri $requestUri -Headers $headers -MaximumRedirection 0
         }
         return ,($response.Content | ConvertFrom-Json -AsHashtable -NoEnumerate)
     }
