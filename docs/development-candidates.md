@@ -256,6 +256,14 @@ rozpracované soubory přepsat. Lock soubor zůstává na disku; ukončení proc
 uvolní jeho OS handle. Nástroj před úspěchem znovu ověří publikované bajty
 i manifest.
 
+Regresní test spustí dva skutečné procesy nad stejným cílem a různými
+vstupními state i provenance. První publisher pozastaví před atomickým
+přejmenováním se získanou lease. Druhý musí odmítnout zápis bez změny staging;
+po uvolnění lease musí odmítnout nahrazení dokončeného snapshotu. Test ověří
+původní bajty lock souboru, oba nezměněné vstupy a nerozmíchaný publikovaný
+state s manifestem. Patří do běžné kontraktní sady Source CI i mutací
+publikační kontroly. Lokální Windows výsledek nenahrazuje Linux CI.
+
 Lokální kontraktní test přes skutečný `Invoke-Module -Backend local`
 ověřuje přesný snapshot v cestě
 `<StatePath>/organization-rulesets/organizations/<org>/terraform.rulesets.tfstate`,

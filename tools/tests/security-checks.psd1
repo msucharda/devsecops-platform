@@ -25,7 +25,8 @@
             Tests = @(
                 @{ Path = 'tools/tests/DevelopmentState.Tests.ps1'; FullName = @(
                     '*publishes an exact root snapshot*', '*recovers publication*',
-                    '*preserves an unexpected staging*', '*altered published*', '*second publisher*'
+                    '*preserves an unexpected staging*', '*altered published*', '*second publisher*',
+                    '*two real competing processes*'
                 ) }
             )
         }

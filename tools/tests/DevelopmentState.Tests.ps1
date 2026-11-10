@@ -325,6 +325,76 @@ Describe 'Development state isolation' {
         Test-Path -LiteralPath $staging | Should -BeFalse
     }
 
+    It 'keeps one unmixed publication and the same lease file under two real competing processes' {
+        $firstDigest = $arguments.ExpectedSha256
+        $firstArguments = Join-Path $directory 'first-arguments.json'
+        [IO.File]::WriteAllText($firstArguments, (ConvertTo-Json $arguments))
+        $firstSource = $source
+        $source = Join-Path $directory 'second.tfstate'
+        $state.serial = 4
+        Write-TestState
+        $arguments.SourcePath = $source
+        $arguments.CandidateRevision = 'd' * 40
+        $secondDigest = $arguments.ExpectedSha256
+        $secondArguments = Join-Path $directory 'second-arguments.json'
+        [IO.File]::WriteAllText($secondArguments, (ConvertTo-Json $arguments))
+        $lockIdentity = [guid]::NewGuid().ToString()
+        [IO.File]::WriteAllText("$output.lock", $lockIdentity)
+        $worker = Join-Path $PSScriptRoot 'fixtures/Invoke-SnapshotPublisher.ps1'
+        $children = [Collections.Generic.List[object]]::new()
+        try {
+            foreach ($mode in @('first', 'second')) {
+                $info = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+                $info.UseShellExecute = $false
+                $info.RedirectStandardOutput = $true
+                $info.RedirectStandardError = $true
+                foreach ($argument in @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $worker,
+                    '-SnapshotCommand', $snapshotCommand, '-ArgumentsPath', (Join-Path $directory "$mode-arguments.json"),
+                    '-Mode', $mode, '-SyncRoot', $directory)) {
+                    $info.ArgumentList.Add($argument)
+                }
+                $process = [Diagnostics.Process]::Start($info)
+                $children.Add(@{ Process = $process; Output = $process.StandardOutput.ReadToEndAsync(); Error = $process.StandardError.ReadToEndAsync() })
+                $marker = Join-Path $directory $(if ($mode -ceq 'first') { 'first-staged' } else { 'second-blocked' })
+                $timer = [Diagnostics.Stopwatch]::StartNew()
+                while (-not [IO.File]::Exists($marker)) {
+                    if ($process.HasExited) { throw "Publisher $mode exited: $($children[-1].Error.GetAwaiter().GetResult())" }
+                    if ($timer.Elapsed.TotalSeconds -ge 30) { throw "Publisher $mode did not reach its barrier." }
+                    Start-Sleep -Milliseconds 20
+                }
+            }
+            $stagedManifest = Get-Content -LiteralPath (Join-Path "$output.new" 'snapshot.json') -Raw | ConvertFrom-Json
+            $stagedManifest.source.sha256 | Should -BeExactly $firstDigest
+            $stagedManifest.source.serial | Should -Be 3
+            (Get-FileHash -LiteralPath (Join-Path "$output.new" 'terraform.rulesets.tfstate')).Hash.ToLowerInvariant() |
+                Should -BeExactly $firstDigest
+            Test-Path -LiteralPath $output | Should -BeFalse
+            [IO.File]::WriteAllText((Join-Path $directory 'release-first'), '')
+            foreach ($child in $children) {
+                $child.Process.WaitForExit(30000) | Should -BeTrue
+                $child.Process.ExitCode | Should -Be 0 -Because $child.Error.GetAwaiter().GetResult()
+            }
+            Test-Path -LiteralPath (Join-Path $directory 'second-complete') | Should -BeTrue
+            Test-Path -LiteralPath "$output.new" | Should -BeFalse
+            [IO.File]::ReadAllText("$output.lock") | Should -BeExactly $lockIdentity
+            $manifest = Get-Content -LiteralPath (Join-Path $output 'snapshot.json') -Raw | ConvertFrom-Json
+            $manifest.source.sha256 | Should -BeExactly $firstDigest
+            $manifest.source.serial | Should -Be 3
+            $manifest.candidateRevision | Should -BeExactly ('b' * 40)
+            (Get-FileHash -LiteralPath (Join-Path $output 'terraform.rulesets.tfstate')).Hash.ToLowerInvariant() |
+                Should -BeExactly $firstDigest
+            (Get-FileHash -LiteralPath $firstSource).Hash.ToLowerInvariant() | Should -BeExactly $firstDigest
+            (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() | Should -BeExactly $secondDigest
+        }
+        finally {
+            [IO.File]::WriteAllText((Join-Path $directory 'release-first'), '')
+            foreach ($child in $children) {
+                if (-not $child.Process.HasExited) { Stop-Process -Id $child.Process.Id -Force }
+                $child.Process.Dispose()
+            }
+        }
+    }
+
     It 'recovers publication interrupted <Boundary> without changing the source' -ForEach @(
         @{ Boundary = 'after staging directory'; Files = @() }
         @{ Boundary = 'after state'; Files = @('terraform.rulesets.tfstate') }
